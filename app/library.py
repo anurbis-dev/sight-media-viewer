@@ -807,6 +807,11 @@ class Library:
                 )
                 """
             )
+        bicols = {r[1] for r in self.conn.execute("PRAGMA table_info(board_items)")}
+        if "flip_x" not in bicols:
+            self.conn.execute("ALTER TABLE board_items ADD COLUMN flip_x INTEGER NOT NULL DEFAULT 0")
+        if "flip_y" not in bicols:
+            self.conn.execute("ALTER TABLE board_items ADD COLUMN flip_y INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
 
     def _load_thumb_cache(self) -> None:
@@ -2324,8 +2329,8 @@ class Library:
         self.execute(
             "INSERT INTO board_items(id, board_id, asset_id, group_id, x, y, w, h, rotation, "
             "z_index, opacity, desaturate, always_on_top, crop_x, crop_y, crop_w, crop_h, "
-            "color_label, locked, playback_state, created_at, updated_at, revision) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            "color_label, locked, playback_state, flip_x, flip_y, created_at, updated_at, revision) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
             (
                 iid, bid, str(body.get("asset_id") or ""), body.get("group_id"),
                 float(body.get("x", 0)), float(body.get("y", 0)),
@@ -2336,6 +2341,7 @@ class Library:
                 body.get("crop_x"), body.get("crop_y"), body.get("crop_w"), body.get("crop_h"),
                 body.get("color_label"), 1 if body.get("locked") else 0,
                 json.dumps(playback) if playback is not None else None,
+                1 if body.get("flip_x") else 0, 1 if body.get("flip_y") else 0,
                 now, now,
             ),
         )
@@ -2345,7 +2351,7 @@ class Library:
     _BOARD_ITEM_FIELDS = (
         "group_id", "x", "y", "w", "h", "rotation", "z_index", "opacity", "desaturate",
         "always_on_top", "crop_x", "crop_y", "crop_w", "crop_h", "color_label", "locked",
-        "playback_state",
+        "playback_state", "flip_x", "flip_y",
     )
 
     def _board_item_values(self, body: dict) -> dict:

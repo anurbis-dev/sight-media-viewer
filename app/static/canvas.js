@@ -10,9 +10,12 @@
 // button or toolbar here, and no separate "add files" UI, because the grid itself is the source
 // for the existing card drag (application/x-sight-ids), same as dropping onto a Collection.
 
+import { runHotkeys } from "/static/keys.js";
+
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
 const MIN_ITEM = 24; // smallest item side, world units
+const TRACKED = ["x", "y", "w", "h", "z_index", "rotation", "flip_x", "flip_y", "crop_x", "crop_y", "crop_w", "crop_h"]; // fields a layout command may change
 const GRID = 24; // world units between snap-grid points (Ctrl while moving/resizing)
 
 async function api(path, opts){
@@ -44,25 +47,45 @@ function injectStyles(){
 .canvas-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 /* An item is styled exactly like a library card (same theme variables: radius, padding, background,
    frame, hover and active frame). Frame widths are divided by the board zoom (--cz, set in
-   worldTransform) so they stay the same on-screen thickness as the library's at any zoom. */
+   worldTransform) so they stay the same on-screen thickness as the library's at any zoom.
+   The thumbnail block padding (--card-pad) is divided by the zoom the same way. The frame is an inset box-shadow, not a border: browsers snap border widths to whole layout pixels
+   (anything under 1px becomes 1px), so a border divided by the zoom grew back to full size when zoomed
+   in; a shadow spread keeps its fractional width. The selected frame is drawn 2x wide because a library
+   card's active frame is its border plus an inset shadow of the same width. */
 .citem { position: absolute; left: 0; top: 0; border-radius: var(--card-radius); overflow: visible; cursor: grab; touch-action: none; }
-.citem .citem-box { position: absolute; inset: 0; display: flex; flex-direction: column; box-sizing: border-box; padding: var(--card-pad); border-radius: var(--card-radius); overflow: hidden; background: var(--card-bg); }
-.citem .citem-box::after { content: ""; position: absolute; inset: 0; border: calc(var(--card-border-w) / var(--cz, 1)) solid var(--border); border-radius: inherit; pointer-events: none; z-index: 3; }
-.citem:hover .citem-box::after { border-width: calc(var(--card-hover-border-w) / var(--cz, 1)); border-color: var(--card-hover-color); }
+.citem .citem-box { position: absolute; inset: 0; display: flex; flex-direction: column; box-sizing: border-box; padding: calc(var(--card-pad) / var(--cz, 1)); border-radius: var(--card-radius); overflow: hidden; background: var(--card-bg); }
+.citem .citem-box::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 3; box-shadow: inset 0 0 0 calc(var(--card-border-w) / var(--cz, 1)) var(--border); }
+.citem:hover .citem-box::after { box-shadow: inset 0 0 0 calc(var(--card-hover-border-w) / var(--cz, 1)) var(--card-hover-color); }
 .citem.selected .citem-box { background: var(--surface-2); }
-.citem.selected .citem-box::after { border-width: calc(var(--card-active-border-w) / var(--cz, 1)); border-color: var(--card-active-color); box-shadow: inset 0 0 0 calc(var(--card-active-border-w) / var(--cz, 1)) var(--card-active-color); }
+.citem.selected .citem-box::after { box-shadow: inset 0 0 0 calc(2 * var(--card-active-border-w) / var(--cz, 1)) var(--card-active-color); }
 .citem .citem-thumb { position: relative; flex: 1; min-height: 0; overflow: hidden; border-radius: var(--thumb-radius); background: var(--card-bg); }
 .citem img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
 .citem .citem-ph { width: 100%; height: 100%; display: grid; place-items: center; padding: 8px; text-align: center; font-size: 11px; color: var(--subtle); }
-.citem .citem-meta { flex: none; padding: 8px 2px 0; min-width: 0; }
+/* The name is laid over the bottom of the thumbnail (like the library cards), not stacked under it. */
+.citem .citem-meta { position: absolute; left: calc(var(--card-pad) / var(--cz, 1)); right: calc(var(--card-pad) / var(--cz, 1)); bottom: calc(var(--card-pad) / var(--cz, 1)); z-index: 2; min-width: 0; padding: 14px 8px 5px; border-radius: 0 0 var(--thumb-radius) var(--thumb-radius); background: linear-gradient(to top, rgb(0 0 0 / .72), rgb(0 0 0 / .4) 62%, transparent); color: #fff; pointer-events: none; text-shadow: 0 1px 2px rgb(0 0 0 / .5); }
 .citem .citem-meta .n { font-size: calc(var(--text-size) - 2px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-no-names .citem .citem-meta { display: none; }
 /* Ctrl held = box-select mode (Ctrl-drag draws a marquee even over an item): show a plain arrow instead of the grab hand. */
 .canvas-viewport.ctrl-box, .canvas-viewport.ctrl-box .citem { cursor: default; }
-.citem .chandle, .citem .crot { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 1.5px solid var(--bg); display: none; }
-.citem.selected .chandle, .citem.selected .crot { display: block; }
-.citem .chandle { right: -6px; bottom: -6px; cursor: nwse-resize; }
-.citem .crot { left: 50%; top: -20px; margin-left: -6px; cursor: grab; }
+/* The transform frame lives in screen space (a sibling of the world, not inside it), so its handles
+   keep the same pixel size at any board zoom. One frame: the item's own rotated box when a single item
+   is selected, the common bounding box when several are. */
+.cframe { position: absolute; left: 0; top: 0; pointer-events: none; transform-origin: 50% 50%; }
+.cframe.group { outline: 1px dashed var(--card-active-color); }
+.cframe .chandle, .cframe .crot { position: absolute; box-sizing: border-box; width: 12px; height: 12px; border-radius: 50%; background: var(--card-active-color); border: 1.5px solid var(--bg); pointer-events: auto; }
+.cframe .chandle { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.cframe .crot { left: 50%; top: -22px; margin-left: -6px; cursor: grab; }
+/* Crop grips (Alt held over an item): screen-space like the transform frame, so they stay the same size at any zoom. */
+.ccrop { position: absolute; left: 0; top: 0; pointer-events: none; transform-origin: 50% 50%; outline: 1px solid var(--card-active-color); }
+.ccrop i { position: absolute; pointer-events: auto; background: var(--card-active-color); border: 1px solid var(--bg); box-sizing: border-box; }
+.ccrop i[data-edge="l"], .ccrop i[data-edge="r"] { top: 50%; margin-top: -14px; height: 28px; width: 8px; border-radius: 4px; cursor: ew-resize; }
+.ccrop i[data-edge="t"], .ccrop i[data-edge="b"] { left: 50%; margin-left: -14px; width: 28px; height: 8px; border-radius: 4px; cursor: ns-resize; }
+.ccrop i[data-edge="l"] { left: -4px; } .ccrop i[data-edge="r"] { right: -4px; }
+.ccrop i[data-edge="t"] { top: -4px; } .ccrop i[data-edge="b"] { bottom: -4px; }
+.ccrop i[data-edge="tl"], .ccrop i[data-edge="tr"], .ccrop i[data-edge="bl"], .ccrop i[data-edge="br"] { width: 14px; height: 14px; border-radius: 3px; }
+.canvas-viewport.alt-crop .citem { cursor: move; }
+.ccrop i[data-edge="tl"] { left: -7px; top: -7px; cursor: nwse-resize; } .ccrop i[data-edge="br"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.ccrop i[data-edge="tr"] { right: -7px; top: -7px; cursor: nesw-resize; } .ccrop i[data-edge="bl"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
 .canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 13px; pointer-events: none; text-align: center; padding: 24px; }
 `;
   document.head.appendChild(style);
@@ -89,9 +112,11 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   injectStyles();
   const zoomSettings = getZoomSettings || (() => ({ zoomAxis: "y", zoomSpeed: 1, zoomInvert: false }));
 
-  mount.innerHTML = `<div class="canvas-viewport" data-el="viewport"><div class="canvas-world" data-el="world"></div></div>`;
+  mount.innerHTML = `<div class="canvas-viewport" data-el="viewport"><div class="canvas-world" data-el="world"></div><div class="cframe" data-el="frame" hidden><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div></div><div class="ccrop" data-el="crop" hidden><i data-edge="l"></i><i data-edge="r"></i><i data-edge="t"></i><i data-edge="b"></i><i data-edge="tl"></i><i data-edge="tr"></i><i data-edge="bl"></i><i data-edge="br"></i></div></div>`;
   const viewportEl = mount.querySelector('[data-el="viewport"]');
   const worldEl = mount.querySelector('[data-el="world"]');
+  const frameEl = mount.querySelector('[data-el="frame"]');
+  const cropEl = mount.querySelector('[data-el="crop"]');
 
   let isOpen = false;
   let boardId = null;
@@ -107,7 +132,10 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   // on-screen box size is item size * zoom, so it flips as the board is zoomed.
   function syncItemPixelation(item){
     const img = dom.get(item.id)?.querySelector("img");
-    if (img) syncPixelation(img, { clientWidth: item.w * zoom, clientHeight: item.h * zoom });
+    if (!img) return;
+    if (item.crop_w == null || !img.naturalWidth){ syncPixelation(img, { clientWidth: item.w * zoom, clientHeight: item.h * zoom }); return; }
+    const W = item.w * zoom / item.crop_w; // the whole image's on-screen size when cropped
+    syncPixelation(img, { clientWidth: W, clientHeight: W * img.naturalHeight / img.naturalWidth });
   }
   function syncAllPixelation(){
     for (const item of items.values()) syncItemPixelation(item);
@@ -128,6 +156,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     viewportEl.style.backgroundSize = `${g}px ${g}px`;
     viewportEl.style.backgroundPosition = `${vx}px ${vy}px`;
     syncAllPixelation();
+    updateFrame();
   }
   function screenToWorld(clientX, clientY){
     const r = viewportEl.getBoundingClientRect();
@@ -147,6 +176,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     dom.clear();
     items.clear();
     selection.clear();
+    updateFrame();
   }
 
   function buildItemEl(item){
@@ -154,12 +184,10 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     el.className = "citem";
     el.dataset.id = item.id;
     el.dataset.assetId = item.asset_id;
-    el.innerHTML = `<div class="citem-box"><div class="citem-thumb"><div class="citem-ph">…</div></div><div class="citem-meta"><div class="n"></div></div></div><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div>`;
-    el.querySelector('[data-act="resize"]').addEventListener("pointerdown", (e) => startResize(e, item.id));
-    el.querySelector('[data-act="rotate"]').addEventListener("pointerdown", (e) => startRotate(e, item.id));
+    el.innerHTML = `<div class="citem-box"><div class="citem-thumb"><div class="citem-ph">…</div></div><div class="citem-meta"><div class="n"></div></div></div>`;
     el.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("[data-act]")) return;
       if (e.ctrlKey || e.metaKey) return; // Ctrl+drag starts a box-select even over an item — see the viewport handler
+      if (e.altKey && e.button === 0){ startCropPan(e, item.id); return; }
       startMove(e, item.id);
     });
     worldEl.appendChild(el);
@@ -171,6 +199,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
         thumb.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
         const img = thumb.querySelector("img");
         img.addEventListener("load", () => { markSmallSrc(img); syncItemPixelation(items.get(item.id) || item); }, { once: true });
+        applyCropFlip(items.get(item.id) || item);
       } else {
         thumb.innerHTML = `<div class="citem-ph">${esc(a ? a.name : "?")}</div>`;
       }
@@ -187,7 +216,145 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     el.style.zIndex = String(item.z_index || 0);
     el.style.opacity = item.opacity == null ? "1" : String(item.opacity);
     el.classList.toggle("selected", selection.has(item.id));
+    applyCropFlip(item);
     syncItemPixelation(item);
+    scheduleFrame();
+  }
+
+  // Crop is stored as a normalized rectangle of the source image (crop_x/y/w/h, null = uncropped):
+  // the image is drawn oversized and offset inside the thumb area, which clips it. Mirroring flips the
+  // thumb area as a whole, so the crop rectangle stays in un-mirrored source coordinates.
+  function applyCropFlip(item){
+    const el = dom.get(item.id);
+    if (!el) return;
+    const thumb = el.querySelector(".citem-thumb");
+    thumb.style.transform = item.flip_x || item.flip_y ? `scale(${item.flip_x ? -1 : 1}, ${item.flip_y ? -1 : 1})` : "";
+    const img = thumb.querySelector("img");
+    if (!img) return;
+    if (item.crop_w == null || item.crop_h == null){ img.style.cssText = ""; return; }
+    const cx = item.crop_x || 0, cy = item.crop_y || 0, cw = item.crop_w, ch = item.crop_h;
+    // Width alone sets the scale and the height follows the image's own aspect, so the picture can never be stretched,
+    // whatever shape the box ends up (the crop window's vertical extent simply follows the box).
+    img.style.cssText = `position:absolute;left:0;top:0;max-width:none;width:${100 / cw}%;height:auto;transform:translate(${-cx * 100}%, ${-cy * 100}%)`;
+  }
+
+  // ---- crop mode: hold Alt over an item to get grips on its edges and corners -----------------------
+  let altDown = false, cropItemId = null, lastPtr = null;
+  function updateCrop(){
+    const it = cropItemId && items.get(cropItemId);
+    viewportEl.classList.toggle("alt-crop", isOpen && altDown);
+    if (!isOpen || !it || !(altDown || drag?.kind === "crop")){ cropEl.hidden = true; return; }
+    const sw = it.w * zoom, sh = it.h * zoom;
+    cropEl.style.width = sw + "px";
+    cropEl.style.height = sh + "px";
+    cropEl.style.transform = `translate(${vx + (it.x + it.w / 2) * zoom - sw / 2}px, ${vy + (it.y + it.h / 2) * zoom - sh / 2}px) rotate(${it.rotation || 0}deg)`;
+    cropEl.hidden = false;
+  }
+  // Which item the Alt-crop grips belong to: the one under the pointer (or the current one while the
+  // pointer is on its grips, which sit on top of the item).
+  function refreshCropTarget(){
+    if (!lastPtr || drag?.kind === "crop" || drag?.kind === "croppan") return;
+    const under = document.elementFromPoint(lastPtr.x, lastPtr.y);
+    if (under?.closest?.(".ccrop")) return;
+    cropItemId = under?.closest?.(".citem")?.dataset.id || null;
+    updateCrop();
+  }
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Alt" || !isOpen) return;
+    e.preventDefault(); // a bare Alt tap would otherwise focus the browser menu
+    altDown = true;
+    refreshCropTarget();
+    updateCrop();
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key !== "Alt") return;
+    if (isOpen) e.preventDefault();
+    altDown = false;
+    updateCrop();
+  });
+  window.addEventListener("blur", () => { altDown = false; updateCrop(); });
+
+  // Dragging a grip moves that edge of the item's box and the matching edge of the crop rectangle by the
+  // same amount, so the image itself stays where it is. Deltas are taken along the item's own (possibly
+  // rotated) axes; edges can also be dragged back out until the full image shows again.
+  // basis: the item's thumb area and the whole image's on-screen size (S = px per full image, per axis), plus the
+  // crop window as it is drawn right now (an uncropped item shows the cover-fitted window, so cropping never jumps).
+  function cropBasis(it){
+    const thumb = dom.get(it.id).querySelector(".citem-thumb"), img = thumb.querySelector("img");
+    const tw = Math.max(8, thumb.clientWidth), th = Math.max(8, thumb.clientHeight);
+    const a = assetResolved.get(it.asset_id);
+    const R = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : (a && a.width && a.height ? a.width / a.height : tw / th);
+    let Sx, x, y, w;
+    if (it.crop_w == null){ Sx = Math.max(tw, th * R); w = tw / Sx; x = (1 - w) / 2; y = null; }
+    else { Sx = tw / it.crop_w; w = it.crop_w; x = it.crop_x || 0; y = it.crop_y || 0; }
+    const Sy = Sx / R, h = Math.min(1, th / Sy);
+    if (y == null) y = (1 - h) / 2;
+    y = Math.max(0, Math.min(y, 1 - h));
+    return { tw, th, Sx, Sy, k: { x, y, w, h } };
+  }
+  const sameCrop = (cx, cy, cw, ch) => cw > 0.9999 && ch > 0.9999 && cx < 0.0001 && cy < 0.0001;
+  // Dragging a grip moves that edge of the item's box and the matching edge of the crop window by the same
+  // amount, so the image itself stays where it is. Deltas are taken along the item's own (possibly rotated)
+  // axes; an edge can also be dragged back out until the full image shows again.
+  function cropAxis(edgeIsLow, m, size0, S, pos0, len0, flipped){
+    const t0 = len0 * S;
+    const srcLow = edgeIsLow !== flipped; // does this screen edge sit at the low end of the source image?
+    const lmax = srcLow ? pos0 + len0 : 1 - pos0; // longest the window may become without leaving the image
+    let lo, hi;
+    if (edgeIsLow){ hi = Math.min(size0 - MIN_ITEM, t0 - 4); lo = (len0 - lmax) * S; }
+    else { lo = Math.max(MIN_ITEM - size0, 4 - t0); hi = (lmax - len0) * S; }
+    m = Math.min(hi, Math.max(lo, m));
+    const len = edgeIsLow ? len0 - m / S : len0 + m / S;
+    const pos = srcLow ? pos0 + len0 - len : pos0;
+    return { m, size: edgeIsLow ? size0 - m : size0 + m, pos, len };
+  }
+  function startCrop(e){
+    if (e.button !== 0) return;
+    const it = cropItemId && items.get(cropItemId);
+    if (!it) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const basis = cropBasis(it);
+    drag = { kind: "crop", id: it.id, ids: [it.id], edge: e.currentTarget.dataset.edge, basis, crop0: basis.k, start: { ...it }, startWorld: screenToWorld(e.clientX, e.clientY), moved: false, before: [{ ...it }] };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  }
+  // Alt + drag on the picture itself: pan the image inside its crop window (the box stays put).
+  function startCropPan(e, id){
+    e.stopPropagation();
+    e.preventDefault();
+    const it = items.get(id);
+    const basis = cropBasis(it);
+    drag = { kind: "croppan", id, ids: [id], basis, crop0: basis.k, start: { ...it }, startWorld: screenToWorld(e.clientX, e.clientY), moved: false, before: [{ ...it }] };
+    el_setPointerCapture(e);
+  }
+  for (const grip of cropEl.querySelectorAll("i")) grip.addEventListener("pointerdown", startCrop);
+
+  // ---- transform frame (screen space) --------------------------------------------------------
+  let frameRAF = 0;
+  function scheduleFrame(){
+    if (!frameRAF) frameRAF = requestAnimationFrame(() => { frameRAF = 0; updateFrame(); });
+  }
+  function updateFrame(){
+    updateSelectionFrame();
+    updateCrop();
+  }
+  function updateSelectionFrame(){
+    const list = [...selection].map((id) => items.get(id)).filter(Boolean);
+    if (!isOpen || !list.length){ frameEl.hidden = true; return; }
+    let cx, cy, w, h, rot = 0;
+    if (list.length === 1){
+      const it = list[0];
+      cx = it.x + it.w / 2; cy = it.y + it.h / 2; w = it.w; h = it.h; rot = it.rotation || 0;
+    } else {
+      const u = unionOf(list);
+      w = u.r - u.l; h = u.b - u.t; cx = (u.l + u.r) / 2; cy = (u.t + u.b) / 2;
+    }
+    const sw = w * zoom, sh = h * zoom;
+    frameEl.style.width = sw + "px";
+    frameEl.style.height = sh + "px";
+    frameEl.style.transform = `translate(${vx + cx * zoom - sw / 2}px, ${vy + cy * zoom - sh / 2}px) rotate(${rot}deg)`;
+    frameEl.classList.toggle("group", list.length > 1);
+    frameEl.hidden = false;
   }
 
   function addItemLocal(item){
@@ -202,7 +369,9 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     dom.delete(id);
     items.delete(id);
     selection.delete(id);
+    if (cropItemId === id) cropItemId = null;
     updateEmptyState();
+    updateFrame();
   }
   function updateEmptyState(){
     if (emptyMsg) { emptyMsg.remove(); emptyMsg = null; }
@@ -218,6 +387,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     selection.clear();
     for (const id of ids) selection.add(id);
     for (const item of items.values()) layoutItemEl(item);
+    updateFrame();
   }
   function applyMarqueeSelection(mode, origin, hits){
     setSelection(combineSelection(mode, origin, hits)); // same rules as the library grid's box-select
@@ -286,13 +456,15 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   // the old ones — board_items ids are content-hashed with a creation timestamp, so there's no
   // "undelete" endpoint. The fresh ids are written back onto `entry.items` so a *later* undo/redo
   // of this same entry deletes/recreates the right server rows instead of drifting out of sync.
+  const createBody = (it, extra = {}) => ({
+    asset_id: it.asset_id, x: it.x, y: it.y, w: it.w, h: it.h, rotation: it.rotation, z_index: it.z_index, opacity: it.opacity,
+    crop_x: it.crop_x, crop_y: it.crop_y, crop_w: it.crop_w, crop_h: it.crop_h, flip_x: it.flip_x, flip_y: it.flip_y, ...extra,
+  });
   async function recreateOnServer(entry){
     const fresh = [];
     for (const it of entry.items){
       try {
-        const created = await api(`/api/boards/${boardId}/items`, jsonOpts("POST", {
-          asset_id: it.asset_id, x: it.x, y: it.y, w: it.w, h: it.h, rotation: it.rotation, z_index: it.z_index,
-        }));
+        const created = await api(`/api/boards/${boardId}/items`, jsonOpts("POST", createBody(it)));
         addItemLocal(created);
         fresh.push(created);
       } catch {}
@@ -324,36 +496,80 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     const startWorld = screenToWorld(e.clientX, e.clientY);
     const starts = [...selection].map((sid) => ({ id: sid, x: items.get(sid).x, y: items.get(sid).y }));
     const before = starts.map((s) => ({ ...items.get(s.id) }));
-    drag = { kind: "move", id, startWorld, starts, pointerId: e.pointerId, moved: false, before };
+    drag = { kind: "move", id, ids: starts.map((s) => s.id), startWorld, starts, pointerId: e.pointerId, moved: false, before };
     el_setPointerCapture(e);
   }
-  function startResize(e, id){
+  // The frame's handles act on the whole selection: one item resizes/rotates by itself, several are
+  // scaled (uniformly, from the frame's top-left) or rotated (about its centre) together.
+  function startResize(e){
+    if (e.button !== 0) return;
+    const list = [...selection].map((id) => items.get(id)).filter(Boolean);
+    if (!list.length) return;
     e.stopPropagation();
-    setSelection([id]);
-    const item = items.get(id);
-    const before = [{ ...item }];
-    const a = assetResolved.get(item.asset_id);
-    const ratio = a && a.width && a.height ? a.width / a.height : item.w / item.h;
-    drag = { kind: "resize", id, ratio, startWorld: screenToWorld(e.clientX, e.clientY), startW: item.w, startH: item.h, pointerId: e.pointerId, moved: false, before };
+    const before = list.map((it) => ({ ...it }));
+    const startWorld = screenToWorld(e.clientX, e.clientY);
+    if (list.length === 1){
+      const item = list[0];
+      const a = assetResolved.get(item.asset_id);
+      const ratio = a && a.width && a.height ? a.width / a.height : item.w / item.h;
+      let cropInfo = null;
+      if (item.crop_w != null){
+        const b = cropBasis(item);
+        cropInfo = { tw: b.tw, th: b.th, padW: item.w - b.tw, padH: item.h - b.th };
+      }
+      drag = { kind: "resize", id: item.id, ids: [item.id], ratio, startWorld, startW: item.w, startH: item.h, moved: false, before, cropInfo };
+    } else {
+      const u = unionOf(list);
+      drag = { kind: "gresize", ids: list.map((it) => it.id), l: u.l, t: u.t, w: u.r - u.l, h: u.b - u.t, starts: before, moved: false, before };
+    }
     el_setPointerCapture(e);
   }
-  function startRotate(e, id){
+  function startRotate(e){
+    if (e.button !== 0) return;
+    const list = [...selection].map((id) => items.get(id)).filter(Boolean);
+    if (!list.length) return;
     e.stopPropagation();
-    setSelection([id]);
-    const item = items.get(id);
-    const before = [{ ...item }];
-    const cx = item.x + item.w / 2, cy = item.y + item.h / 2;
+    const before = list.map((it) => ({ ...it }));
     const w0 = screenToWorld(e.clientX, e.clientY);
-    const startAngle = Math.atan2(w0.y - cy, w0.x - cx) * 180 / Math.PI;
-    drag = { kind: "rotate", id, cx, cy, startAngle, startRotation: item.rotation || 0, pointerId: e.pointerId, moved: false, before };
+    if (list.length === 1){
+      const item = list[0];
+      const cx = item.x + item.w / 2, cy = item.y + item.h / 2;
+      const startAngle = Math.atan2(w0.y - cy, w0.x - cx) * 180 / Math.PI;
+      drag = { kind: "rotate", id: item.id, ids: [item.id], cx, cy, startAngle, startRotation: item.rotation || 0, moved: false, before };
+    } else {
+      const u = unionOf(list);
+      const cx = (u.l + u.r) / 2, cy = (u.t + u.b) / 2;
+      drag = { kind: "grotate", ids: list.map((it) => it.id), cx, cy, startAngle: Math.atan2(w0.y - cy, w0.x - cx) * 180 / Math.PI, starts: before, moved: false, before };
+    }
     el_setPointerCapture(e);
   }
+  frameEl.querySelector('[data-act="resize"]').addEventListener("pointerdown", startResize);
+  frameEl.querySelector('[data-act="rotate"]').addEventListener("pointerdown", startRotate);
   function el_setPointerCapture(e){
     try { e.target.setPointerCapture(e.pointerId); } catch {}
   }
 
+  // Un-crops an item mid-resize: the box grows outward to the full image at the same scale (the picture stays
+  // put), then the resize carries on from that box.
+  function uncropForResize(it, d, pointerWorld){
+    const B = cropBasis(it), k = B.k;
+    const fx = !!it.flip_x, fy = !!it.flip_y;
+    const lowX = k.x * B.Sx, highX = (1 - k.x - k.w) * B.Sx, lowY = k.y * B.Sy, highY = (1 - k.y - k.h) * B.Sy;
+    const extL = fx ? highX : lowX, extR = fx ? lowX : highX, extT = fy ? highY : lowY, extB = fy ? lowY : highY;
+    const rad = (it.rotation || 0) * Math.PI / 180, c = Math.cos(rad), sn = Math.sin(rad);
+    const ax = (extR - extL) / 2, ay = (extB - extT) / 2;
+    const ncx = it.x + it.w / 2 + ax * c - ay * sn, ncy = it.y + it.h / 2 + ax * sn + ay * c;
+    it.w += extL + extR; it.h += extT + extB;
+    it.x = ncx - it.w / 2; it.y = ncy - it.h / 2;
+    it.crop_x = it.crop_y = it.crop_w = it.crop_h = null;
+    d.cropInfo = null;
+    d.startW = it.w; d.startH = it.h;
+    d.startWorld = pointerWorld;
+    layoutItemEl(it);
+  }
+
   function onPointerMove(e){
-    if (drag && (drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate")){
+    if (drag && (drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate" || drag.kind === "gresize" || drag.kind === "grotate" || drag.kind === "crop" || drag.kind === "croppan")){
       drag.moved = true;
       if (drag.kind === "move"){
         const w = screenToWorld(e.clientX, e.clientY);
@@ -374,13 +590,23 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       } else if (drag.kind === "resize"){
         const w = screenToWorld(e.clientX, e.clientY);
         const it = items.get(drag.id);
+        if (drag.cropInfo && e.shiftKey){ // Shift while resizing: drop the crop, showing the whole image again
+          uncropForResize(it, drag, w);
+        }
         let nw = drag.startW + (w.x - drag.startWorld.x), nh = drag.startH + (w.y - drag.startWorld.y);
         if (e.ctrlKey || e.metaKey){ // snap the bottom-right corner to the grid
           const step = gridStep();
           nw = snapTo(it.x + nw, step) - it.x;
           nh = snapTo(it.y + nh, step) - it.y;
         }
-        if (e.shiftKey){
+        if (drag.cropInfo){
+          // A cropped picture keeps its proportions: the thumb area scales uniformly, the card padding stays fixed.
+          const ci = drag.cropInfo;
+          const kMin = Math.max((MIN_ITEM - ci.padW) / ci.tw, (MIN_ITEM - ci.padH) / ci.th, 0.02);
+          const k = Math.max(kMin, (nw - ci.padW) / ci.tw, (nh - ci.padH) / ci.th);
+          nw = ci.padW + ci.tw * k;
+          nh = ci.padH + ci.th * k;
+        } else if (e.shiftKey){
           // Lock the asset's original proportions (the item's own if the asset size is unknown);
           // the larger of the two requested dimensions wins so the corner always follows the cursor.
           const ar = drag.ratio;
@@ -402,7 +628,57 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
         if (e.shiftKey) rotation = Math.round(rotation / 15) * 15; // snap to absolute 15° steps
         it.rotation = Math.round(rotation);
         layoutItemEl(it);
+      } else if (drag.kind === "crop" || drag.kind === "croppan"){
+        const w = screenToWorld(e.clientX, e.clientY);
+        const dxw = w.x - drag.startWorld.x, dyw = w.y - drag.startWorld.y;
+        const rad = (drag.start.rotation || 0) * Math.PI / 180, c = Math.cos(rad), sn = Math.sin(rad);
+        const dx = dxw * c + dyw * sn, dy = -dxw * sn + dyw * c; // pointer movement along the item's own axes
+        const st = drag.start, k = drag.crop0, B = drag.basis, it = items.get(drag.id);
+        const fx = !!st.flip_x, fy = !!st.flip_y;
+        let cx = k.x, cw = k.w, cy = k.y, ch = k.h;
+        if (drag.kind === "croppan"){
+          cx = Math.max(0, Math.min(1 - k.w, k.x - (fx ? -1 : 1) * dx / B.Sx));
+          cy = Math.max(0, Math.min(1 - k.h, k.y - (fy ? -1 : 1) * dy / B.Sy));
+        } else {
+          const edge = drag.edge;
+          const horiz = edge.includes("l") || edge.includes("r"), vert = edge.includes("t") || edge.includes("b");
+          let mx = 0, my = 0, nw = st.w, nh = st.h;
+          if (horiz){ const r = cropAxis(edge.includes("l"), dx, st.w, B.Sx, k.x, k.w, fx); mx = r.m; nw = r.size; cx = r.pos; cw = r.len; }
+          if (vert){ const r = cropAxis(edge.includes("t"), dy, st.h, B.Sy, k.y, k.h, fy); my = r.m; nh = r.size; cy = r.pos; ch = r.len; }
+          // The box's centre moves by half of each edge's movement, along the item's own axes.
+          const ax = horiz ? mx / 2 : 0, ay = vert ? my / 2 : 0;
+          const ncx = st.x + st.w / 2 + ax * c - ay * sn, ncy = st.y + st.h / 2 + ax * sn + ay * c;
+          it.w = nw; it.h = nh; it.x = ncx - nw / 2; it.y = ncy - nh / 2;
+        }
+        const full = sameCrop(cx, cy, cw, ch);
+        it.crop_x = full ? null : cx; it.crop_y = full ? null : cy; it.crop_w = full ? null : cw; it.crop_h = full ? null : ch;
+        layoutItemEl(it);
+      } else if (drag.kind === "gresize"){
+        const w = screenToWorld(e.clientX, e.clientY);
+        const minScale = Math.max(...drag.starts.map((st) => MIN_ITEM / Math.min(st.w, st.h)));
+        const scale = Math.max(minScale, (w.x - drag.l) / drag.w, (w.y - drag.t) / drag.h);
+        for (const st of drag.starts){
+          const it = items.get(st.id);
+          const cx = drag.l + (st.x + st.w / 2 - drag.l) * scale, cy = drag.t + (st.y + st.h / 2 - drag.t) * scale;
+          it.w = st.w * scale; it.h = st.h * scale;
+          it.x = cx - it.w / 2; it.y = cy - it.h / 2;
+          layoutItemEl(it);
+        }
+      } else if (drag.kind === "grotate"){
+        const w = screenToWorld(e.clientX, e.clientY);
+        let delta = Math.atan2(w.y - drag.cy, w.x - drag.cx) * 180 / Math.PI - drag.startAngle;
+        delta = e.shiftKey ? Math.round(delta / 15) * 15 : Math.round(delta);
+        const rad = delta * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+        for (const st of drag.starts){
+          const it = items.get(st.id);
+          const dx = st.x + st.w / 2 - drag.cx, dy = st.y + st.h / 2 - drag.cy;
+          it.x = drag.cx + dx * cos - dy * sin - it.w / 2;
+          it.y = drag.cy + dx * sin + dy * cos - it.h / 2;
+          it.rotation = (st.rotation || 0) + delta;
+          layoutItemEl(it);
+        }
       }
+      updateFrame();
       return;
     }
     if (drag && drag.kind === "marquee"){
@@ -439,9 +715,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   }
   function onPointerUp(){
     if (!drag) return;
-    if ((drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate") && drag.moved){
-      const affectedIds = drag.kind === "move" ? drag.starts.map((s) => s.id) : [drag.id];
-      const after = affectedIds.map((id) => ({ ...items.get(id) }));
+    if (drag.ids && drag.moved){
+      const after = drag.ids.map((id) => ({ ...items.get(id) }));
       pushUndo({ type: "move", before: drag.before, after });
       for (const it of after) scheduleSave(it.id, it);
     } else if (drag.kind === "marquee"){
@@ -494,7 +769,14 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   window.addEventListener("keydown", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlCursor(true); });
   window.addEventListener("keyup", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlCursor(false); });
   window.addEventListener("blur", () => setCtrlCursor(false));
-  window.addEventListener("pointermove", (e) => { if (isOpen){ setCtrlCursor(e.ctrlKey || e.metaKey); onPointerMove(e); } });
+  window.addEventListener("pointermove", (e) => {
+    if (!isOpen) return;
+    setCtrlCursor(e.ctrlKey || e.metaKey);
+    lastPtr = { x: e.clientX, y: e.clientY };
+    if (altDown !== e.altKey){ altDown = e.altKey; updateCrop(); }
+    onPointerMove(e);
+    if (altDown) refreshCropTarget();
+  });
   window.addEventListener("pointerup", () => {
     if (!isOpen) return;
     if (drag && drag.kind === "pan") viewportEl.style.cursor = "default";
@@ -578,11 +860,11 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     it.x += l - b.l;
     it.y += t - b.t;
   }
-  // Runs `mutate` over the items, then repaints, saves and records ONE undo step (no-op if nothing moved).
+  // Runs `mutate` over the items, then repaints, saves and records ONE undo step (no-op if nothing changed).
   function commitLayout(list, mutate){
     const before = list.map((it) => ({ ...it }));
     mutate();
-    const same = list.every((it, i) => Math.abs(it.x - before[i].x) < 0.01 && Math.abs(it.y - before[i].y) < 0.01 && Math.abs(it.w - before[i].w) < 0.01 && Math.abs(it.h - before[i].h) < 0.01);
+    const same = list.every((it, i) => TRACKED.every((f) => (Number(it[f]) || 0) === (Number(before[i][f]) || 0) || Math.abs((Number(it[f]) || 0) - (Number(before[i][f]) || 0)) < 0.01));
     for (const it of list) layoutItemEl(it);
     if (same) return false;
     const after = list.map((it) => ({ ...it }));
@@ -591,20 +873,59 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     return true;
   }
 
-  // Align left/right/top/bottom (Ctrl+arrows): push every item to that edge of the selection's box.
+  // Align left/right/top/bottom (Ctrl+arrows), like PureRef: items are pushed toward that edge of the
+  // selection's box and stop against each other (with the padding) instead of piling up, so they end up
+  // lined up along their edges. Items that share no rows/columns slide all the way to the edge.
+  function gravity(list, axis, sign){
+    const x = axis === "x";
+    const lo = (b) => (x ? b.l : b.t), hi = (b) => (x ? b.r : b.b);
+    const plo = (b) => (x ? b.t : b.l), phi = (b) => (x ? b.b : b.r);
+    const u = unionOf(list);
+    const sorted = [...list].sort((a, b) => (sign < 0 ? lo(boundsOf(a)) - lo(boundsOf(b)) : hi(boundsOf(b)) - hi(boundsOf(a))));
+    const placed = [];
+    for (const it of sorted){
+      const b = boundsOf(it);
+      let newLo;
+      if (sign < 0){
+        newLo = lo(u);
+        for (const p of placed){ const pb = boundsOf(p); if (plo(pb) < phi(b) && phi(pb) > plo(b)) newLo = Math.max(newLo, hi(pb) + PAD); }
+      } else {
+        let newHi = hi(u);
+        for (const p of placed){ const pb = boundsOf(p); if (plo(pb) < phi(b) && phi(pb) > plo(b)) newHi = Math.min(newHi, lo(pb) - PAD); }
+        newLo = newHi - (hi(b) - lo(b));
+      }
+      if (x) moveBoundsTo(it, newLo, b.t); else moveBoundsTo(it, b.l, newLo);
+      placed.push(it);
+    }
+  }
   function alignItems(dir){
     const list = arrangeTargets();
     if (list.length < 2) return;
-    const u = unionOf(list);
-    commitLayout(list, () => {
-      for (const it of list){
-        const b = boundsOf(it);
-        if (dir === "left") it.x += u.l - b.l;
-        else if (dir === "right") it.x += u.r - b.r;
-        else if (dir === "top") it.y += u.t - b.t;
-        else it.y += u.b - b.b;
+    commitLayout(list, () => gravity(list, dir === "left" || dir === "right" ? "x" : "y", dir === "left" || dir === "top" ? -1 : 1));
+  }
+
+  // Pushes overlapping items apart (along the axis with the smaller overlap, half each) until every
+  // pair is clear of each other by the padding. Used after Normalize, which can make items collide.
+  function separateItems(list){
+    for (let pass = 0; pass < 200; pass++){
+      let moved = false;
+      for (let i = 0; i < list.length; i++){
+        for (let j = i + 1; j < list.length; j++){
+          const a = boundsOf(list[i]), b = boundsOf(list[j]);
+          const ox = Math.min(a.r, b.r) - Math.max(a.l, b.l) + PAD, oy = Math.min(a.b, b.b) - Math.max(a.t, b.t) + PAD;
+          if (ox <= 0 || oy <= 0) continue;
+          moved = true;
+          if (ox < oy){
+            const d = ox / 2 + 0.01, dir = (a.l + a.r) / 2 <= (b.l + b.r) / 2 ? -1 : 1;
+            list[i].x += dir * d; list[j].x -= dir * d;
+          } else {
+            const d = oy / 2 + 0.01, dir = (a.t + a.b) / 2 <= (b.t + b.b) / 2 ? -1 : 1;
+            list[i].y += dir * d; list[j].y -= dir * d;
+          }
+        }
       }
-    });
+      if (!moved) break;
+    }
   }
 
   // Normalize height/width/size/scale (Ctrl+Alt+arrows): resize proportionally, about each item's
@@ -635,6 +956,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
         it.w *= k; it.h *= k;
         it.x = cx - it.w / 2; it.y = cy - it.h / 2;
       }
+      separateItems(list); // like PureRef, normalized items line up along their edges instead of overlapping
     });
   }
 
@@ -722,74 +1044,94 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     });
   }
 
-  function reorderZ(toFront){
-    const zs = [...items.values()].map((it) => it.z_index || 0);
-    const target = toFront ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
-    for (const id of selection){
-      const it = items.get(id);
-      it.z_index = target;
-      layoutItemEl(it);
-      scheduleSave(id, { z_index: target });
+  // Layer order: "up"/"down" move the selection one layer, "front"/"back" to the very top/bottom.
+  // Layers are renumbered 0..n-1 as they change, so each step is exactly one visible position.
+  function restack(kind){
+    if (!selection.size) return;
+    const all = [...items.values()].sort((a, b) => (a.z_index || 0) - (b.z_index || 0) || String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""), undefined, { numeric: true }) || a.id.localeCompare(b.id));
+    const sel = (it) => selection.has(it.id);
+    let order = all;
+    if (kind === "front") order = [...all.filter((it) => !sel(it)), ...all.filter(sel)];
+    else if (kind === "back") order = [...all.filter(sel), ...all.filter((it) => !sel(it))];
+    else if (kind === "up"){
+      order = [...all];
+      for (let i = order.length - 2; i >= 0; i--) if (sel(order[i]) && !sel(order[i + 1])) [order[i], order[i + 1]] = [order[i + 1], order[i]];
+    } else {
+      order = [...all];
+      for (let i = 1; i < order.length; i++) if (sel(order[i]) && !sel(order[i - 1])) [order[i], order[i - 1]] = [order[i - 1], order[i]];
     }
+    const rank = new Map(order.map((it, i) => [it.id, i]));
+    const changed = order.filter((it) => (it.z_index || 0) !== rank.get(it.id));
+    if (changed.length) commitLayout(changed, () => { for (const it of changed) it.z_index = rank.get(it.id); });
   }
 
-  const ARROW_DIRS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "bottom" };
-  const NORMALIZE_BY_ARROW = { ArrowLeft: "height", ArrowRight: "width", ArrowUp: "size", ArrowDown: "scale" };
-  const ARRANGE_BY_CODE = { KeyN: "name", KeyA: "addition", KeyO: "order", KeyD: "path", KeyR: "random" };
-  // Returns true when the key combo was one of the arrange shortcuts (and was handled).
-  function handleArrangeKey(e){
-    const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.altKey){
-      if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")){ distributeItems(e.key === "ArrowUp" ? "h" : "v"); return true; }
-      if (!e.shiftKey && NORMALIZE_BY_ARROW[e.key]){ normalizeItems(NORMALIZE_BY_ARROW[e.key]); return true; }
-      if (!e.shiftKey && ARRANGE_BY_CODE[e.code]){ arrangeItems(ARRANGE_BY_CODE[e.code]); return true; }
-      if (!e.shiftKey && e.code === "KeyS"){ stackItems(); return true; }
-      return false;
-    }
-    if (mod && !e.altKey && !e.shiftKey){
-      if (ARROW_DIRS[e.key]){ alignItems(ARROW_DIRS[e.key]); return true; }
-      if (e.code === "KeyP"){ arrangeItems("optimal"); return true; }
-    }
-    if (!mod && !e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && selection.size){
-      reorderZ(e.key === "ArrowUp");
-      return true;
-    }
-    return false;
+  // Alt+X / Alt+V: mirror each selected image horizontally / vertically, in place.
+  function mirrorItems(axis){
+    const list = arrangeTargets();
+    if (!selection.size || !list.length) return;
+    const f = axis === "x" ? "flip_x" : "flip_y";
+    commitLayout(list, () => { for (const it of list) it[f] = it[f] ? 0 : 1; });
   }
+
+  // Ctrl+D: a new instance of each selected item (same asset, same transform/crop) nudged down-right and
+  // selected, so it can be dragged away right away. Items are separate placements of one library asset.
+  async function duplicateSelection(){
+    const src = [...selection].map((id) => items.get(id)).filter(Boolean).sort((a, b) => (a.z_index || 0) - (b.z_index || 0));
+    if (!src.length) return;
+    let z = Math.max(0, ...[...items.values()].map((it) => it.z_index || 0));
+    const created = [];
+    for (const it of src){
+      try {
+        const copy = await api(`/api/boards/${boardId}/items`, jsonOpts("POST", createBody(it, { x: it.x + 24, y: it.y + 24, z_index: ++z })));
+        addItemLocal(copy);
+        created.push(copy);
+      } catch {}
+    }
+    if (!created.length) return;
+    pushUndo({ type: "add", items: created });
+    setSelection(created.map((it) => it.id));
+  }
+  function deleteSelection(){
+    if (!selection.size) return;
+    const removed = [...selection].map((id) => ({ ...items.get(id) }));
+    for (const it of removed) removeItemLocal(it.id);
+    api(`/api/boards/${boardId}/items/batch-delete`, jsonOpts("POST", { ids: removed.map((i) => i.id) })).catch(() => {});
+    pushUndo({ type: "delete", items: removed });
+  }
+
+  // Every canvas shortcut lives in this table and goes through runHotkeys() (keys.js): a combo fires only
+  // when exactly its modifiers are held, so adding a command here can never be triggered by a longer combo.
+  const allItems = () => [...items.values()];
+  const selectedItems = () => [...selection].map((id) => items.get(id)).filter(Boolean);
+  const ifSelected = (fn) => () => (selection.size ? fn() : false);
+  const KEYMAP = [
+    ["KeyF", () => frameItems(selection.size ? selectedItems() : allItems())], // frame the selection (all if none)
+    ["KeyA", () => frameItems(allItems())], // frame everything (Ctrl+A, select all, is index.html's)
+    // Align, normalize, distribute, arrange — the same shortcuts PureRef uses.
+    ["Ctrl+ArrowLeft", () => alignItems("left")], ["Ctrl+ArrowRight", () => alignItems("right")],
+    ["Ctrl+ArrowUp", () => alignItems("top")], ["Ctrl+ArrowDown", () => alignItems("bottom")],
+    ["Ctrl+Alt+ArrowLeft", () => normalizeItems("height")], ["Ctrl+Alt+ArrowRight", () => normalizeItems("width")],
+    ["Ctrl+Alt+ArrowUp", () => normalizeItems("size")], ["Ctrl+Alt+ArrowDown", () => normalizeItems("scale")],
+    ["Ctrl+Alt+Shift+ArrowUp", () => distributeItems("h")], ["Ctrl+Alt+Shift+ArrowDown", () => distributeItems("v")],
+    ["Ctrl+KeyP", () => arrangeItems("optimal")],
+    ["Ctrl+Alt+KeyN", () => arrangeItems("name")], ["Ctrl+Alt+KeyA", () => arrangeItems("addition")],
+    ["Ctrl+Alt+KeyO", () => arrangeItems("order")], ["Ctrl+Alt+KeyD", () => arrangeItems("path")],
+    ["Ctrl+Alt+KeyR", () => arrangeItems("random")], ["Ctrl+Alt+KeyS", () => stackItems()],
+    ["Ctrl+KeyD", ifSelected(duplicateSelection)], // new instance of the selected items
+    ["Alt+KeyX", ifSelected(() => mirrorItems("x"))], ["Alt+KeyV", ifSelected(() => mirrorItems("y"))],
+    ["ArrowUp", ifSelected(() => restack("front"))], ["ArrowDown", ifSelected(() => restack("back"))],
+    ["BracketRight", ifSelected(() => restack("up"))], ["BracketLeft", ifSelected(() => restack("down"))], // one layer
+    ["Ctrl+KeyZ", () => undo()], ["Ctrl+Shift+KeyZ", () => redo()],
+    ["KeyX", ifSelected(deleteSelection)], ["Delete", ifSelected(deleteSelection)], ["Backspace", ifSelected(deleteSelection)],
+    ["Escape", () => { setSelection([]); return false; }], // clears the selection but leaves Esc to the rest of the app
+  ];
 
   // ---- keyboard -------------------------------------------------------------------------------
   document.addEventListener("keydown", (e) => {
     if (!isOpen || (keysEnabled && !keysEnabled())) return;
     const tag = e.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    // F = frame the selection, A = frame everything. By physical key (e.code) so they work on any
-    // keyboard layout; bare keys only, so Ctrl+A (select all, handled by index.html) stays separate.
-    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "KeyF" || e.code === "KeyA")){
-      e.preventDefault();
-      const list = e.code === "KeyF" && selection.size ? [...selection].map((id) => items.get(id)) : [...items.values()];
-      frameItems(list);
-      return;
-    }
-    if (handleArrangeKey(e)){ e.preventDefault(); return; }
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z"){
-      e.preventDefault();
-      if (e.shiftKey) redo(); else undo();
-      return;
-    }
-    if ((e.key === "Delete" || e.key === "Backspace") && selection.size){
-      e.preventDefault();
-      const removed = [...selection].map((id) => ({ ...items.get(id) }));
-      for (const it of removed) removeItemLocal(it.id);
-      api(`/api/boards/${boardId}/items/batch-delete`, jsonOpts("POST", { ids: removed.map((i) => i.id) })).catch(() => {});
-      pushUndo({ type: "delete", items: removed });
-      return;
-    }
-    if ((e.key === "]" || e.key === "[") && selection.size){
-      e.preventDefault();
-      reorderZ(e.key === "]");
-      return;
-    }
-    if (e.key === "Escape") setSelection([]);
+    runHotkeys(e, KEYMAP);
   });
 
   // ---- open/close ------------------------------------------------------------------------------
@@ -818,6 +1160,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   }
   function close(){
     isOpen = false;
+    updateFrame();
     persistCurrent();
   }
 

@@ -115,6 +115,7 @@ button:disabled { cursor: default; opacity: .4; }
 .brand { display: flex; gap: var(--space-3); align-items: center; }
 .mark { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--display); font-size: 18px; color: var(--accent); }
 .brand h1 { font-family: var(--display); font-size: 22px; font-weight: 400; margin: 0; letter-spacing: -0.02em; }
+.brand h1 .ver { margin-left: 8px; font-family: var(--font, inherit); font-size: 11px; letter-spacing: 0; color: var(--subtle); vertical-align: baseline; }
 .sub { font-size: 11px; color: var(--subtle); }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: 40px; padding: 0 14px; border-radius: var(--radius-sm); background: var(--primary); color: var(--bg); font-weight: 500; transition: opacity var(--motion-quick) var(--ease), transform var(--motion-quick) var(--ease); }
 .btn:hover { opacity: .92; }
@@ -180,6 +181,8 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .card.on { background: var(--surface-2); }
 .card.on::after { border-width: var(--card-active-border-w); border-color: var(--card-active-color); box-shadow: inset 0 0 0 var(--card-active-border-w) var(--card-active-color); }
 .card.miss { opacity: .5; }
+/* Ctrl held = box-select mode (same arrow cursor as on a canvas board); see the ctrl-down toggle in the key handlers. */
+html.ctrl-down .card { cursor: default; }
 .card.compact { flex-direction: row; align-items: center; height: 36px; border-radius: 6px; padding: calc(var(--card-pad) / 2); gap: 8px; background: var(--card-bg); }
 .thumb { position: relative; aspect-ratio: 1; width: 100%; background: var(--card-bg); overflow: hidden; border-radius: var(--thumb-radius); }
 .card.compact .thumb { width: 28px; height: 28px; aspect-ratio: auto; border-radius: 4px; flex: none; }
@@ -189,7 +192,7 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 /* Small sources (icons, pixel art) stretched to fill a larger box: nearest-neighbor instead of
    the browser's default smoothing, which turns crisp pixel edges into mush. Toggled in JS once
    the source's real resolution is known and compared against the box it's displayed in. */
-.thumb img.pixelated, .stack i img.pixelated, .view-media.pixelated, .citem img.pixelated {
+.thumb img.pixelated, .stack i img.pixelated, .preview img.pixelated, .view-media.pixelated, .citem img.pixelated {
   image-rendering: crisp-edges;
   image-rendering: pixelated;
 }
@@ -197,16 +200,27 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .anim-badge { position: absolute; right: 6px; top: 6px; z-index: 2; padding: 2px 6px; border-radius: 999px; background: rgb(10 10 11 / .7); color: var(--fg); font-size: 9px; letter-spacing: .06em; font-weight: 500; }
 .meta { padding: 8px 2px 0; min-width: 0; }
 .card.compact .meta { padding: 0; flex: 1; }
+/* The name/info block is laid over the bottom of the thumbnail instead of sitting under it, so it takes
+   no layout space (the thumbnail always fills the card's frame) and needs only a slim margin of its own.
+   Compact rows keep their inline text. */
+.card:not(.compact) .meta { position: absolute; left: var(--card-pad); right: var(--card-pad); bottom: var(--card-pad); z-index: 2; padding: 14px 8px 5px; border-radius: 0 0 var(--thumb-radius) var(--thumb-radius); background: linear-gradient(to top, rgb(0 0 0 / .72), rgb(0 0 0 / .4) 62%, transparent); color: #fff; pointer-events: none; text-shadow: 0 1px 2px rgb(0 0 0 / .5); }
 .meta .n, .meta .k, .meta .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta .n { font-size: calc(var(--text-size) - 2px); }
 .meta .k, .meta .x { font-size: calc(var(--text-size) - 4px); color: var(--subtle); margin-top: 2px; }
+.card:not(.compact) .meta .k, .card:not(.compact) .meta .x { color: rgb(255 255 255 / .72); }
+.card.short .meta { padding-top: 8px; }
+.card.short .meta .k, .card.short .meta .x { display: none; }
 .empty { display: grid; place-items: center; min-height: 50vh; color: var(--subtle); font-family: var(--display); font-size: 22px; text-align: center; padding: 24px; }
 .shimmer { background: linear-gradient(90deg, var(--subtle), var(--fg), var(--subtle)); background-size: 180% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sh 1.6s linear infinite; }
 @keyframes sh { to { background-position: -80% 0; } }
 .menu { display: none; width: 40px; height: 40px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.preview { aspect-ratio: 16/9; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: #050506; display: grid; place-items: center; }
-.preview img, .preview video, .preview audio { max-width: 100%; max-height: 100%; }
-.preview .view3d { width: 100%; height: 100%; }
+/* Square, like the library thumbnails; the picture is fitted whole inside the frame (never cropped or left
+   small in a corner) on the same background a card thumbnail has, so transparency reads the same. */
+.preview { aspect-ratio: 1; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--card-bg); display: grid; place-items: center; }
+.preview img, .preview video { width: 100%; height: 100%; object-fit: contain; }
+.preview audio { max-width: 100%; }
+.preview .view3d, .preview .m3d-thumb { width: 100%; height: 100%; display: grid; place-items: center; }
+.preview .stack i { inset: 16%; }
 .view3d { position: relative; }
 /* The backdrop is the model's square thumbnail, rendered with the same vertical fov the live camera
    uses — so fitting it to the window *height* (not "cover") puts the model at the size the real
@@ -239,8 +253,11 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .wave-light .wave-bars { height: 96px; }
 .wave-light .wave-play { width: 44px; height: 44px; font-size: 16px; }
 .stack { position: relative; width: 100%; height: 100%; }
-.stack i { position: absolute; inset: 18px 36px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #050506; box-shadow: 0 12px 28px rgb(0 0 0 / .5); }
+.stack i { position: absolute; inset: 18px 36px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border-strong); background: var(--card-bg); box-shadow: 0 12px 28px rgb(0 0 0 / .5); }
 .stack i img { width: 100%; height: 100%; object-fit: cover; }
+/* Ghost under the cursor while cards are dragged: the same pile as the inspector's, built off-screen. */
+.drag-ghost { position: fixed; left: -1000px; top: 0; width: 200px; height: 140px; pointer-events: none; }
+.drag-ghost .more { padding: 2px 9px; border-radius: 999px; background: var(--surface-3); color: var(--fg); border: 1px solid var(--border-strong); }
 .stack .more { position: absolute; right: 10px; bottom: 8px; z-index: 8; font-size: 11px; color: var(--subtle); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 6px 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: calc(var(--text-size) - 3px); color: var(--fg); }
@@ -344,7 +361,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .opts.expanded #settingsHead { flex: none; }
 .settings-body { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; }
 .settings-body[hidden] { display: none; }
-.settings-sub { margin: 14px 0 4px; padding: 0 8px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); }
+/* Section titles: larger and brighter than the option rows under them (.opt is 12px / --muted). */
+.settings-sub { margin: 16px 0 4px; padding: 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--fg); }
 .opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 8px; font-size: 12px; color: var(--muted); }
 /* Sliders sit right next to their label instead of being pushed to the row's far edge. */
 .opt:has(.bslider) { justify-content: flex-start; }
@@ -437,7 +455,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
   <aside class="side" id="side">
     <div class="brand">
       <div class="mark">S</div>
-      <div><h1>Sight</h1><div class="sub">in-place index</div><div class="sub" id="buildTag" style="opacity:.7"></div></div>
+      <div><h1>Sight<span class="ver" id="verTag"></span></h1><div class="sub">in-place index</div><div class="sub" id="buildTag" style="opacity:.7"></div></div>
     </div>
     <button class="btn" id="add">Folder</button>
     <div id="ffmpegBanner"></div>
@@ -495,6 +513,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 </script>
 <script type="module">
 import { createCanvasView } from "/static/canvas.js";
+import { hotkey } from "/static/keys.js";
 const KIND = { image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
 const TILE_MIN = 48, TILE_MAX = 360, COMPACT = 72;
@@ -742,7 +761,6 @@ let panDrag = null, tileDrag = null, marquee = null, boxEl = null;
 // lightbox stuck on "Loading model…" forever, since its render loop had already been stopped
 // before it ever got to call mesh.initialized.
 let threeCtls = new Map();
-let inspBoot3dTimer = 0;
 // Set by boot3d() while the lightbox 3D rig is live; renderV3DPanel()'s environment picker
 // calls through these rather than touching the renderer/scene directly.
 let onV3DEnvPresetChange = null, onV3DEnvFile = null, onV3DRotate = null;
@@ -804,6 +822,8 @@ function applyUi(){
   r.setProperty("--card-active-border-w", t.cardActiveBorder + "px");
   r.setProperty("--card-hover-color", `color-mix(in oklab, ${t.border} ${t.cardHover}%, transparent)`);
   r.setProperty("--card-hover-border-w", Math.max(1, t.cardBorder) + "px"); // visible even when the base border is 0
+  // Canvas items follow the same "Name" display option as the library cards.
+  document.documentElement.classList.toggle("canvas-no-names", !t.name);
   r.setProperty("--card-pad", t.cardPad + "px");
   r.setProperty("--card-bg", t.cardBg);
   r.setProperty("--menu-row-h", t.menuRowH + "px");
@@ -853,22 +873,14 @@ function fmtDate(ts){
 }
 
 function renderBuildTag(){
+  const ver = state.meta.version;
+  if ($("verTag")) $("verTag").textContent = ver ? "v" + ver : "";
+  document.title = ver ? "Sight " + ver : "Sight";
   const el = $("buildTag");
   if (!el) return;
   const ms = state.meta.buildMs;
   el.textContent = ms ? "build " + fmtDate(ms) : "";
   el.title = "This process's newest .py file — restart Sight.bat to pick up backend changes. HTML/JS edits are always live on a refresh.";
-}
-function metaH(){
-  const o = state.theme;
-  let n = 0;
-  if (o.name) n++;
-  if (o.kind) n++;
-  if (o.created) n++;
-  if (o.res) n++;
-  if (o.size) n++;
-  if (!n) return 8;
-  return 8 + n * 16;
 }
 function bytes(n){
   if (n < 1024) return n + " B";
@@ -1095,7 +1107,7 @@ function layout(){
   if (compact) return { cols: 1, cell: w, rowH: 36 + gap, gap, compact: true, pad, meta: 0, mode: "grid" };
   const cell = state.tile;
   const cols = Math.max(1, Math.floor((w + gap) / (cell + gap)));
-  const meta = metaH();
+  const meta = 0; // the info block overlays the thumbnail (see .meta), so it adds no height
   if (state.viewMode === "masonry"){
     const cardPad = Math.max(0, Number(state.theme.cardPad) || 0);
     return { cols, cell, gap, compact: false, pad, meta, mode: "masonry", cardPad };
@@ -1167,6 +1179,13 @@ function scheduleRender(){
 function markSmallSrc(img){
   img.dataset.smallSrc = (img.naturalWidth && img.naturalWidth <= 768) || (img.naturalHeight && img.naturalHeight <= 768) ? "1" : "0";
 }
+// Same nearest-neighbour switch for an <img> that fills its own box (the inspector preview): once it
+// has loaded, small sources shown larger than they are get crisp pixels instead of smoothing.
+function watchPixelation(img){
+  const sync = () => { markSmallSrc(img); syncPixelation(img, img); };
+  if (img.complete && img.naturalWidth) sync();
+  else img.addEventListener("load", sync, { once: true });
+}
 function syncPixelation(img, host){
   if (img.dataset.smallSrc !== "1") return;
   const cw = host.clientWidth, ch = host.clientHeight;
@@ -1227,11 +1246,13 @@ function ensureCard(a, i, L, pos){
       const ids = state.selectedIds.includes(id) ? state.selectedIds : [id];
       if (!state.selectedIds.includes(id)) selectOnly(id);
       ev.dataTransfer.setData("application/x-sight-ids", JSON.stringify(ids));
+      // The dragged card goes last so it sits on top of the pile.
+      const list = [...ids.filter((x) => x !== id), id].map(assetById).filter(Boolean);
       const g = document.createElement("div");
-      g.textContent = ids.length + (ids.length === 1 ? " file" : " files");
-      g.style.cssText = "position:absolute;top:-999px;left:0;padding:6px 10px;background:#1a1a1e;border:1px solid #333;border-radius:8px;color:#f2f2f0;font:12px sans-serif";
+      g.className = "drag-ghost";
+      g.innerHTML = `<div class="stack">${stackHtml(list)}</div>`;
       document.body.append(g);
-      ev.dataTransfer.setDragImage(g, 12, 12);
+      ev.dataTransfer.setDragImage(g, 100, 70);
       requestAnimationFrame(() => g.remove());
     });
     el.addEventListener("dragend", () => { el.draggable = false; });
@@ -1241,7 +1262,10 @@ function ensureCard(a, i, L, pos){
   el.dataset.i = String(i);
   const on = state.selectedIds.includes(a.id);
   const masonry = L.mode === "masonry";
-  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "");
+  // A short thumbnail (a wide image in masonry, a small tile) can't spare much of itself for the overlaid
+  // info block — it keeps only the name line (see .card.short .meta).
+  const thumbH = masonry && pos ? pos.imgH : L.cell - 2 * (Number(state.theme.cardPad) || 0);
+  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + (!L.compact && thumbH < 130 ? " short" : "");
   if (masonry && pos){
     el.style.left = pos.x + "px";
     el.style.top = pos.y + "px";
@@ -1985,12 +2009,19 @@ splitHandle.addEventListener("dblclick", () => {
   saveLayout();
 });
 
-// Which pane last received a press — decides where Ctrl+A goes when both are on screen.
+// The pane under the cursor is the active one when both are on screen — hotkeys (Ctrl+A, canvas
+// F/A/Delete/…) go there without needing a click first. Over other UI (nav, inspector) the last
+// pane stays active.
 let activePane = "library";
-grid.addEventListener("pointerdown", () => { activePane = "library"; }, true);
-canvasView.addEventListener("pointerdown", () => { activePane = "canvas"; }, true);
+document.addEventListener("pointerover", (e) => {
+  if (canvasView.contains(e.target)) activePane = "canvas";
+  else if (grid.contains(e.target)) activePane = "library";
+}, true);
+function canvasPaneActive(){
+  return state.view === "canvas" && (!state.canvasSplit || activePane === "canvas");
+}
 function selectAllInActivePane(){
-  if (state.view === "canvas" && (!state.canvasSplit || activePane === "canvas")) canvasCtl?.selectAll();
+  if (canvasPaneActive()) canvasCtl?.selectAll();
   else selectSet(state.items.map((a) => a.id));
 }
 function setView(mode){
@@ -2012,7 +2043,7 @@ function ensureCanvasCtl(){
       // Shared with the library grid rather than re-implemented: the marquee modifier rules and the
       // nearest-neighbour switch for small (pixel-art) sources.
       combineSelection, markSmallSrc, syncPixelation,
-      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden,
+      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && canvasPaneActive(),
     });
   }
   return canvasCtl;
@@ -2506,8 +2537,6 @@ async function refreshThumbs(){
 function renderInsp(){
   const sel = selectedAssets();
   if (!sel.length){
-    clearTimeout(inspBoot3dTimer);
-    if (!light) dispose3d("v3d");
     insp.innerHTML = `<div class="sub" style="padding:24px 8px">Select a file</div>`;
     return;
   }
@@ -2524,7 +2553,9 @@ function renderInsp(){
   else if (a.kind === "image") preview = `<img src="${thumb || file}" alt="" />`;
   else if (a.kind === "video") preview = `<video src="${file}" controls preload="auto"></video>`;
   else if (a.kind === "audio") preview = `<div class="wave" id="waveInsp"></div>`;
-  else if (a.kind === "model3d") preview = `<div class="view3d" id="v3d"></div>`;
+  // A model's inspector preview is just its thumbnail — the live viewer (a full download + parse)
+  // only starts in the lightbox. applyThumb() fills the slot if the thumbnail isn't rendered yet.
+  else if (a.kind === "model3d") preview = `<div class="m3d-thumb" data-m3d="${a.id}">${thumb ? `<img src="${thumb}" alt="" />` : `<div class="ph">${KIND[a.kind]||a.kind}</div>`}</div>`;
   else if (a.kind === "font") preview = `<div id="fontInsp" style="width:100%;height:100%"></div>`;
   else if (a.kind === "document") preview = `<div id="docInsp" style="width:100%;height:100%"></div>`;
   const st = a.status === "missing" ? "missing" : "on disk";
@@ -2552,44 +2583,25 @@ function renderInsp(){
     <div id="layerBox"></div>
     ${actionButtons()}
   `;
+  insp.querySelectorAll(".preview img").forEach(watchPixelation);
   paintTagChips(sel);
   $("rating").onchange = () => patchMany(sel.map(x => x.id), { rating: Number($("rating").value) });
   bindTagInput(sel);
   $("note").onblur = () => patchMany(sel.map(x => x.id), { note: $("note").value });
   bindActions(sel);
-  clearTimeout(inspBoot3dTimer);
-  if (a.kind === "model3d" && a.status !== "missing"){
-    // Loading a model is a full fetch + synchronous parse that can't be cancelled once
-    // started — clicking through several 3D thumbnails in a row used to fire one of these
-    // per click and pile them up on the main thread until the UI stopped responding.
-    // Debounce so only the selection the user actually settles on triggers a load.
-    // While the lightbox is open the inspector is hidden behind it — booting a second copy of
-    // the same model there doubled the fetch + parse and made the lightbox load slower;
-    // closeLight() boots it once the lightbox is gone.
-    if (light) dispose3d("v3d");
-    else scheduleInspBoot3d(a);
-  } else if (!light){
-    // Selection moved off a 3D asset — tear down its still-running viewer/render loop instead
-    // of leaving it rendering forever in the background (skip while the lightbox owns it).
-    dispose3d("v3d");
-  }
   if (a.kind === "audio" && a.status !== "missing") mountWave("waveInsp", a.id, file);
   if (a.kind === "font" && a.status !== "missing") mountFontStage($("fontInsp"), a);
   if (a.kind === "document" && a.status !== "missing") mountDocStage($("docInsp"), a);
   if (a.ext === ".psd") loadPsdLayers(a.id);
 }
 
-function scheduleInspBoot3d(a){
-  clearTimeout(inspBoot3dTimer);
-  inspBoot3dTimer = setTimeout(() => {
-    if (state.selected === a.id && !light && $("v3d")) boot3d("v3d", a.id, `/api/file/${a.id}`, a.ext, thumbSrc(a));
-  }, 150);
-}
-
-function renderInspMany(sel){
-  const show = sel.slice(0, 5);
+// A fanned pile of up to five thumbnails (the last one on top) with a "N files" note past that —
+// the multi-selection preview in the inspector, and the ghost that follows the cursor while cards
+// are dragged (see buildDragGhost), so both look alike.
+function stackHtml(list){
+  const show = list.slice(0, 5);
   const n = show.length;
-  const stack = show.map((a, i) => {
+  const tiles = show.map((a, i) => {
     const t = (n - 1) / 2;
     const rot = (i - t) * 8;
     const x = (i - t) * 12;
@@ -2598,6 +2610,11 @@ function renderInspMany(sel){
     const inner = src ? `<img src="${src}" alt="">` : `<div class="ph">${(KIND[a.kind]||"?")[0]}</div>`;
     return `<i style="transform:translate(${x}px,${y}px) rotate(${rot}deg);z-index:${i}">${inner}</i>`;
   }).join("");
+  return `${tiles}${list.length > 5 ? `<span class="more">${list.length} files</span>` : ""}`;
+}
+
+function renderInspMany(sel){
+  const stack = stackHtml(sel);
   const type = shared(sel.map(a => (KIND[a.kind]||a.kind) + " " + a.ext));
   const size = shared(sel.map(a => bytes(a.size)));
   const frame = shared(sel.map(a => a.width && a.height ? a.width+"×"+a.height : "—"));
@@ -2606,7 +2623,7 @@ function renderInspMany(sel){
   const note = shared(sel.map(a => a.note || ""));
   const dd = (s) => s.multi ? `<dd class="dd-multi">Multiple values</dd>` : `<dd>${esc(s.value)}</dd>`;
   insp.innerHTML = `
-    <div class="preview"><div class="stack">${stack}${sel.length>5?`<span class="more">${sel.length} files</span>`:""}</div></div>
+    <div class="preview"><div class="stack">${stack}</div></div>
     <h2 style="font-family:var(--display);font-weight:400;font-size:18px;margin:12px 0 4px">${sel.length} selected</h2>
     <dl>
       <dt>Type</dt>${dd(type)}
@@ -2959,6 +2976,92 @@ async function loadModel(THREE, url, ext, onProgress, aid){
     return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xc5cdd8, vertexColors: hasColor, metalness: 0.2, roughness: 0.6 }));
   }
   return null;
+}
+
+// ---- In-memory cache of parsed models -------------------------------------------------------------
+// Re-opening the same model (Space, close, Space …) used to re-download and re-parse it every time.
+// Parsed models are kept here up to the same RAM budget as the video cache (Settings → RAM cache),
+// least recently used out first. The cache keeps a pristine copy that no viewer ever touches; each
+// viewer gets a clone that shares geometry and textures (the heavy parts) but owns its materials,
+// because the shading / x-ray modes mutate materials in place. Splats are not cached (Spark owns them).
+const modelCache = new Map(); // key -> { obj, bytes }; Map order is recency, oldest first
+const modelPending = new Map(); // key -> Promise<Object3D|null>, so concurrent opens share one load
+let modelCacheBytes = 0;
+
+function estimateObjBytes(obj){
+  const seen = new Set();
+  let n = 0;
+  obj.traverse((c) => {
+    const g = c.geometry;
+    if (g && !seen.has(g)){
+      seen.add(g);
+      for (const at of Object.values(g.attributes)) n += at.array ? at.array.byteLength : 0;
+      if (g.index && g.index.array) n += g.index.array.byteLength;
+    }
+    const mats = Array.isArray(c.material) ? c.material : (c.material ? [c.material] : []);
+    for (const m of mats){
+      for (const k in m){
+        const t = m[k];
+        if (!t || !t.isTexture || seen.has(t)) continue;
+        seen.add(t);
+        const im = t.image;
+        if (im && im.width && im.height) n += im.width * im.height * 4 * 1.33; // RGBA + mip chain
+      }
+    }
+  });
+  return n;
+}
+
+function trimModelCache(){
+  const limit = clampCache(state.theme.videoCache) * 1048576;
+  for (const [k, e] of modelCache){
+    if (modelCacheBytes <= limit) break;
+    modelCache.delete(k);
+    modelCacheBytes -= e.bytes;
+  }
+}
+
+async function cloneModel(obj){
+  const { clone } = await import("three/addons/utils/SkeletonUtils.js");
+  const c = clone(obj); // also rebinds skinned meshes to the cloned skeleton
+  c.traverse((m) => {
+    if (m.material) m.material = Array.isArray(m.material) ? m.material.map((x) => x.clone()) : m.material.clone();
+  });
+  return c;
+}
+
+// loadModel() + applyCompanions() through the cache — for the interactive viewer. (Thumbnail
+// rendering stays uncached: it sweeps many models once and would only evict the ones being viewed.)
+async function loadModelCached(THREE, url, ext, onProgress, aid){
+  const a = assetById(aid);
+  const prefix = aid + ":", key = prefix + (a ? a.mtime : "");
+  const hit = modelCache.get(key);
+  if (hit){
+    modelCache.delete(key);
+    modelCache.set(key, hit); // most recently used
+    return await cloneModel(hit.obj);
+  }
+  let p = modelPending.get(key);
+  if (!p){
+    p = (async () => {
+      const obj = await loadModel(THREE, url, ext, onProgress, aid);
+      if (!obj) return null;
+      await applyCompanions(THREE, obj, aid);
+      const bytes = estimateObjBytes(obj);
+      if (bytes <= clampCache(state.theme.videoCache) * 1048576){
+        for (const [k, e] of modelCache){ // drop an older version of the same file
+          if (k.startsWith(prefix)){ modelCache.delete(k); modelCacheBytes -= e.bytes; }
+        }
+        modelCache.set(key, { obj, bytes });
+        modelCacheBytes += bytes;
+        trimModelCache();
+      }
+      return obj;
+    })().finally(() => modelPending.delete(key));
+    modelPending.set(key, p);
+  }
+  const obj = await p;
+  return obj ? await cloneModel(obj) : null;
 }
 
 // A splat .ply's header carries per-splat opacity + spherical-harmonic/scale/rotation properties
@@ -3537,15 +3640,13 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       lightEl?.classList.remove("v3d-loading");
       return;
     }
-    obj = await loadModel(THREE, url, ext, onModelProgress, aid);
+    obj = await loadModelCached(THREE, url, ext, onModelProgress, aid);
     if (!live) return; // viewer was torn down (asset switched / lightbox closed) mid-load
     if (!obj){
       el.innerHTML = `<div class="ph">${low.slice(1) || "3D"} — open in an external viewer</div>`;
       lightEl?.classList.remove("v3d-loading");
       return;
     }
-    await applyCompanions(THREE, obj, aid);
-    if (!live) return;
     endLoading();
     const baseQuat = obj.quaternion.clone(), basePos = obj.position.clone();
     const qTurn = new THREE.Quaternion(), xAxis = new THREE.Vector3(1, 0, 0);
@@ -4233,10 +4334,12 @@ function toggleLight(a){
   });
   attachPanScroll(wrap.querySelector("#v3dPanel"));
   const framePop = wrap.querySelector("#framePop");
-  wrap.querySelector("#frameBtn").onclick = () => {
+  const frameBtn = wrap.querySelector("#frameBtn");
+  frameBtn.onclick = () => {
     framePop.hidden = !framePop.hidden;
-    wrap.querySelector("#frameBtn").classList.toggle("on", !framePop.hidden);
+    frameBtn.classList.toggle("on", !framePop.hidden);
   };
+  registerAutoClose(framePop, () => { framePop.hidden = true; frameBtn.classList.remove("on"); }, frameBtn);
   framePop.querySelectorAll(".mask-chip").forEach((b) => {
     b.onclick = () => { state.theme.maskShape = b.dataset.mask; putSetting("sight.theme", JSON.stringify(state.theme)); applyLightFrame(); };
   });
@@ -4270,10 +4373,7 @@ function showInLight(a){
   light.audio = null;
   light.setZoom = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
-  // alone. The inspector is hidden behind the lightbox, so just stop its 3D viewer / media from
-  // running (closeLight() boots the selected model's viewer again).
-  clearTimeout(inspBoot3dTimer);
-  dispose3d("v3d");
+  // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
   insp.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch {} });
   light.el.querySelector(".t").textContent = a.name;
   const bar = light.bar;
@@ -4331,8 +4431,6 @@ function closeLight(){
     done = true;
     el.remove();
     releaseGL?.();
-    const sel = assetById(state.selected);
-    if (sel && sel.kind === "model3d" && sel.status !== "missing") scheduleInspBoot3d(sel);
     // Once faded out, cut the stream too so the browser stops pulling the file through the cache.
     if (vid){ vid.removeAttribute("src"); vid.load(); }
   };
@@ -4477,19 +4575,41 @@ function renderV3DPanel(){
   bindSliders(el, state.v3d, RUNTIME_DEFAULT_V3D, () => saveV3D());
 }
 
-// Popovers built on top of #ctx (currently just the icon picker) can register cleanup here —
-// e.g. a document-level listener they added — that always runs when the popover closes,
-// however it closes (picked something, clicked away, Escape, ...).
-let ctxCloseExtra = null;
+// ---- Base auto-close for every popup / menu / widget -----------------------------------------------
+// ONE rule for all of them: a popup closes when the cursor moves more than AUTO_CLOSE_MARGIN px away
+// from every edge of it. Any new menu or popover gets it by calling registerAutoClose() once — no
+// per-widget listeners. Details:
+//  - `anchor` (optional): the button that opened it. The cursor over the anchor counts as "near", so
+//    a popup that opens beside its button doesn't vanish before the cursor gets to it.
+//  - The rule arms once the cursor has been near the popup (or its anchor) and only then can close
+//    it, so a popup opened from the keyboard, or away from the cursor, is left alone.
+//  - Nothing closes while a mouse button is held: dragging a slider or colour handle inside a popup
+//    can wander far outside it.
+//  - Entries whose element has been removed from the page are dropped automatically.
+const AUTO_CLOSE_MARGIN = 25;
+const autoCloseEntries = [];
+function registerAutoClose(el, close, anchor){
+  if (!autoCloseEntries.some((r) => r.el === el)) autoCloseEntries.push({ el, close, anchor: anchor || null, armed: false });
+}
+const nearRect = (r, x, y, m) => x >= r.left - m && x <= r.right + m && y >= r.top - m && y <= r.bottom + m;
+document.addEventListener("pointermove", (e) => {
+  if (e.buttons) return;
+  for (let i = autoCloseEntries.length - 1; i >= 0; i--){
+    const r = autoCloseEntries[i];
+    if (!r.el.isConnected){ autoCloseEntries.splice(i, 1); continue; }
+    if (r.el.hidden || !r.el.getClientRects().length){ r.armed = false; continue; }
+    const near = nearRect(r.el.getBoundingClientRect(), e.clientX, e.clientY, AUTO_CLOSE_MARGIN)
+      || (r.anchor && r.anchor.isConnected && nearRect(r.anchor.getBoundingClientRect(), e.clientX, e.clientY, 0));
+    if (near) r.armed = true;
+    else if (r.armed){ r.armed = false; r.close(); }
+  }
+}, { passive: true });
+
 function hideCtx(){
   const m = $("ctx");
   if (m) m.hidden = true;
-  if (ctxCloseExtra){
-    const fn = ctxCloseExtra;
-    ctxCloseExtra = null;
-    fn();
-  }
 }
+registerAutoClose($("ctx"), hideCtx);
 
 function showCtx(x, y, id){
   const menu = $("ctx");
@@ -4685,11 +4805,9 @@ function showTagCtx(x, y, tag){
 // "colored version" of each icon needed. `mode: "tag"` adds a "Color only" action, since a tag's
 // default look is just a colored dot (see tagColor()) — no icon shape required.
 //
-// Closes itself two extra ways, on top of the usual click-away: letting go of the native color
-// dialog (its "change" event fires once, on release — "input" fires continuously while still
-// dragging inside it, which must NOT close this), and moving the cursor more than 25px past any
-// edge of the popover, tracked via a document-level pointermove registered through
-// ctxCloseExtra so it's always torn down with the popover, however it closes.
+// Closes itself one extra way, on top of the usual click-away and the base cursor-distance rule
+// (registerAutoClose): letting go of the native color dialog (its "change" event fires once, on
+// release — "input" fires continuously while still dragging inside it, which must NOT close this).
 function showIconPicker(x, y, { icon, color, mode = "collection", onPick, onColorOnly, onClear }){
   const menu = $("ctx");
   menu.className = "ctx icon-picker";
@@ -4727,15 +4845,6 @@ function showIconPicker(x, y, { icon, color, mode = "collection", onPick, onColo
     if (selectedIcon){ hideCtx(); onPick(selectedIcon, colorInp.value); }
     else if (mode === "tag"){ hideCtx(); onColorOnly(colorInp.value); }
   });
-  const onMove = (e) => {
-    const r = menu.getBoundingClientRect();
-    const margin = 25;
-    if (e.clientX < r.left - margin || e.clientX > r.right + margin || e.clientY < r.top - margin || e.clientY > r.bottom + margin){
-      hideCtx();
-    }
-  };
-  document.addEventListener("pointermove", onMove);
-  ctxCloseExtra = () => document.removeEventListener("pointermove", onMove);
 }
 
 // Right-click on empty grid space (no card under the cursor, so nothing needs to be selected) —
@@ -4851,6 +4960,7 @@ async function purgeMissing(scoped){
 
 async function refreshMeta(){
   state.meta = await api("/api/state");
+  renderBuildTag(); // version + build stamp come with the state; the first call at boot runs before it is loaded
   renderNav();
   renderStatus();
   renderFfmpeg();
@@ -4971,6 +5081,12 @@ function applyThumb(id, hasThumb, animated, v, width, height){
   }
   const el = cardPool.get(id);
   if (el) fillThumb(el, a || { id, has_thumb: hasThumb ? 1 : 0, thumb_v: v, kind: "image" }, true);
+  // A 3D model's inspector preview is its thumbnail — refresh it in place when a new one lands.
+  const m3d = hasThumb && a && a.kind === "model3d" ? insp.querySelector(`[data-m3d="${id}"]`) : null;
+  if (m3d){
+    m3d.innerHTML = `<img src="${thumbSrc(a)}" alt="" />`;
+    watchPixelation(m3d.firstElementChild);
+  }
   if (resized){ masonryCache = null; scheduleRender(); }
 }
 
@@ -5311,6 +5427,7 @@ function bindThemeSliders(root){
   bindSliders(root, state.theme, RUNTIME_DEFAULT_THEME, (key, v) => {
     saveTheme();
     if (key === "videoCache"){
+      trimModelCache(); // the model cache shares this budget
       fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mb: v }) }).catch(() => {});
     }
   });
@@ -5540,6 +5657,8 @@ document.addEventListener("pointerdown", (e) => {
   const btn = topPopOpen === "sortPop" ? $("sortBtn") : $("viewOptBtn");
   if (pop && !pop.contains(e.target) && !btn.contains(e.target)) closeTopPops();
 }, true);
+registerAutoClose($("sortPop"), closeTopPops, $("sortBtn"));
+registerAutoClose($("viewOptPop"), closeTopPops, $("viewOptBtn"));
 
 const sideScrollEl = $("sideScroll");
 // Shared middle-click-drag-to-scroll behavior — every scrollable menu/panel gets it, not just
@@ -5672,12 +5791,21 @@ function isHeavyAsset(a){
 // after a scroll without mouse movement) — remember the last pointer position and hit-test it
 // when Space is pressed instead.
 let lastPtr = null;
-window.addEventListener("pointermove", (e) => { lastPtr = { x: e.clientX, y: e.clientY }; }, { passive: true });
+const setCtrlDown = (on) => document.documentElement.classList.toggle("ctrl-down", on);
+window.addEventListener("keydown", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlDown(true); });
+window.addEventListener("keyup", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlDown(false); });
+window.addEventListener("blur", () => setCtrlDown(false));
+window.addEventListener("pointermove", (e) => { lastPtr = { x: e.clientX, y: e.clientY }; setCtrlDown(e.ctrlKey || e.metaKey); }, { passive: true });
 document.documentElement.addEventListener("pointerleave", () => { lastPtr = null; });
 function assetUnderPointer(){
   if (!lastPtr) return null;
-  const card = document.elementFromPoint(lastPtr.x, lastPtr.y)?.closest(".card[data-id]");
-  return card && grid.contains(card) ? assetById(card.dataset.id) : null;
+  const hit = document.elementFromPoint(lastPtr.x, lastPtr.y);
+  const card = hit?.closest(".card[data-id]");
+  if (card && grid.contains(card)) return assetById(card.dataset.id);
+  // Canvas board items preview the same way (their asset may not be in the current library list).
+  const item = hit?.closest(".citem[data-asset-id]");
+  if (item && canvasView.contains(item)) return assetById(item.dataset.assetId) || canvasCtl?.assetOf(item.dataset.assetId) || null;
+  return null;
 }
 function heavyKeyBlocked(e, asset){
   if (!isHeavyAsset(asset)) return false;
@@ -5690,20 +5818,31 @@ function heavyKeyBlocked(e, asset){
 document.addEventListener("keydown", (e) => {
   const tag = e.target.tagName;
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k"){ e.preventDefault(); togglePalette(); return; }
-  if (paletteOpen && e.key === "Escape"){ e.preventDefault(); closePalette(); return; }
+  // Shortcut rule (keys.js): a combo fires only with EXACTLY its modifiers — use hotkey(e, "KeyD"),
+  // never a bare e.key/e.code test, so Shift+D / Ctrl+D / Alt+D can't trigger the plain-D command.
+  if (hotkey(e, "Ctrl+KeyK")){ e.preventDefault(); togglePalette(); return; }
+  if (paletteOpen && hotkey(e, "Escape")){ e.preventDefault(); closePalette(); return; }
   if (paletteOpen) return;
-  if (!$("fbOverlay").hidden && e.key === "Escape"){ e.preventDefault(); fbClose(); return; }
+  if (!$("fbOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); fbClose(); return; }
   if (!$("fbOverlay").hidden) return;
-  if (e.key === "Backspace" && !typing && hoveredSliderReset){ e.preventDefault(); hoveredSliderReset(); return; }
-  if (e.key === "/" && !typing){ e.preventDefault(); $("q").focus(); return; }
+  if (hotkey(e, "Backspace") && !typing && hoveredSliderReset){ e.preventDefault(); hoveredSliderReset(); return; }
+  // "/" may need Shift on some layouts, so it is matched by the character, not through hotkey().
+  if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing){ e.preventDefault(); $("q").focus(); return; }
   // Ctrl+A selects items (of whichever pane was last used), not the interface text.
-  if ((e.metaKey || e.ctrlKey) && e.code === "KeyA" && !e.shiftKey && !e.altKey && !typing && !light){
+  if (hotkey(e, "Ctrl+KeyA") && !typing && !light){
     e.preventDefault();
     selectAllInActivePane();
     return;
   }
-  if (e.key === "Escape"){
+  // X / Delete: remove the selection from the collection currently open (same as the inspector's
+  // "Remove From Folder" button). On a canvas board, Delete belongs to the board's own handler.
+  if ((hotkey(e, "KeyX") || hotkey(e, "Delete")) && !typing && !light
+      && !canvasPaneActive() && canRemoveFromFolder()){
+    e.preventDefault();
+    if (!e.repeat) removeFromFolder();
+    return;
+  }
+  if (hotkey(e, "Escape")){
     if (light){ closeLight(); return; }
     if (document.activeElement === $("q") || state.filter.q){ clearSearch(); $("q").blur(); return; }
     if (!typing && state.selectedIds.length) selectOnly(null);
@@ -5711,7 +5850,7 @@ document.addEventListener("keydown", (e) => {
     insp.classList.remove("open");
     return;
   }
-  if (e.key === " " && !typing){
+  if (hotkey(e, "Space") && !typing){
     e.preventDefault();
     if (e.repeat) return; // holding Space must not flip the lightbox 30 times a second
     const media = light && (light.video || light.audio);
@@ -5781,7 +5920,7 @@ document.addEventListener("keydown", (e) => {
       if (e.code === "KeyG"){ e.preventDefault(); toggleV3DPanel(); return; }
     }
   }
-  if ((e.key === "d" || e.key === "D") && !typing && !in3d) toggleDetails();
+  if (hotkey(e, "KeyD") && !typing && !in3d) toggleDetails();
 });
 // Held-key tracking for the WASD camera — released keys are dropped regardless of what else is
 // going on, and losing window focus drops everything (a keyup would never arrive, leaving the

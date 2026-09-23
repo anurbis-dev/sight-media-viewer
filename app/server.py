@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from .settings import SettingsStore, load_defaults, save_defaults
+from .version import APP_VERSION
 
 STATIC = Path(__file__).resolve().parent / "static"
 DEFAULTS_FILE = STATIC / "defaults.json"
@@ -311,6 +312,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             "collections": lib.collections(),
             "boards": lib.boards(),
             "buildMs": BUILD_TIME_MS,
+            "version": APP_VERSION,
         }
 
     @app.get("/api/tags")
