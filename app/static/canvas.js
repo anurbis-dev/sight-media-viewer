@@ -12,6 +12,8 @@
 
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
+const MIN_ITEM = 24; // smallest item side, world units
+const GRID = 24; // world units between snap-grid points (Ctrl while moving/resizing)
 
 async function api(path, opts){
   const r = await fetch(path, opts);
@@ -40,12 +42,23 @@ function injectStyles(){
   background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px); background-size: 24px 24px;
   user-select: none; -webkit-user-select: none; }
 .canvas-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.citem { position: absolute; left: 0; top: 0; border-radius: 6px; overflow: visible; cursor: grab; touch-action: none; }
-.citem .citem-box { position: absolute; inset: 0; border-radius: 6px; overflow: hidden; background: var(--card-bg); border: 1px solid var(--border); box-shadow: 0 1px 3px rgb(0 0 0 / .3); }
+/* An item is styled exactly like a library card (same theme variables: radius, padding, background,
+   frame, hover and active frame). Frame widths are divided by the board zoom (--cz, set in
+   worldTransform) so they stay the same on-screen thickness as the library's at any zoom. */
+.citem { position: absolute; left: 0; top: 0; border-radius: var(--card-radius); overflow: visible; cursor: grab; touch-action: none; }
+.citem .citem-box { position: absolute; inset: 0; display: flex; flex-direction: column; box-sizing: border-box; padding: var(--card-pad); border-radius: var(--card-radius); overflow: hidden; background: var(--card-bg); }
+.citem .citem-box::after { content: ""; position: absolute; inset: 0; border: calc(var(--card-border-w) / var(--cz, 1)) solid var(--border); border-radius: inherit; pointer-events: none; z-index: 3; }
+.citem:hover .citem-box::after { border-width: calc(var(--card-hover-border-w) / var(--cz, 1)); border-color: var(--card-hover-color); }
+.citem.selected .citem-box { background: var(--surface-2); }
+.citem.selected .citem-box::after { border-width: calc(var(--card-active-border-w) / var(--cz, 1)); border-color: var(--card-active-color); box-shadow: inset 0 0 0 calc(var(--card-active-border-w) / var(--cz, 1)) var(--card-active-color); }
+.citem .citem-thumb { position: relative; flex: 1; min-height: 0; overflow: hidden; border-radius: var(--thumb-radius); background: var(--card-bg); }
 .citem img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
 .citem .citem-ph { width: 100%; height: 100%; display: grid; place-items: center; padding: 8px; text-align: center; font-size: 11px; color: var(--subtle); }
-.citem .citem-label { position: absolute; inset: auto 0 0 0; padding: 4px 6px; font-size: 11px; color: #fff; background: linear-gradient(transparent, rgb(0 0 0 / .55)); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.citem.selected .citem-box { outline: 2px solid var(--accent); outline-offset: 1px; }
+.citem .citem-meta { flex: none; padding: 8px 2px 0; min-width: 0; }
+.citem .citem-meta .n { font-size: calc(var(--text-size) - 2px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-no-names .citem .citem-meta { display: none; }
+/* Ctrl held = box-select mode (Ctrl-drag draws a marquee even over an item): show a plain arrow instead of the grab hand. */
+.canvas-viewport.ctrl-box, .canvas-viewport.ctrl-box .citem { cursor: default; }
 .citem .chandle, .citem .crot { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 1.5px solid var(--bg); display: none; }
 .citem.selected .chandle, .citem.selected .crot { display: block; }
 .citem .chandle { right: -6px; bottom: -6px; cursor: nwse-resize; }
@@ -58,12 +71,14 @@ function injectStyles(){
 // asset_id -> asset record (name/kind/has_thumb/thumb_v/width/height), fetched on demand and
 // reused for the lifetime of the page — assets don't change kind/size once indexed.
 const assetCache = new Map();
+const assetResolved = new Map(); // same records once fetched, readable synchronously (Space preview)
 async function getAsset(aid){
   if (assetCache.has(aid)) return assetCache.get(aid);
   const p = api("/api/assets/" + aid).catch(() => null);
   assetCache.set(aid, p);
   const a = await p;
   assetCache.set(aid, a);
+  if (a) assetResolved.set(aid, a);
   return a;
 }
 function thumbUrl(a){
@@ -97,8 +112,21 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   function syncAllPixelation(){
     for (const item of items.values()) syncItemPixelation(item);
   }
+  // Snap grid, in world units. The background dots are drawn on the same lattice (and follow pan and
+  // zoom), so what Ctrl-snap lands on is what the dots show; the step doubles when zoomed far out
+  // so the dots never get denser than ~12px on screen.
+  function gridStep(){
+    let step = GRID;
+    while (step * zoom < 12) step *= 2;
+    return step;
+  }
+  const snapTo = (v, step) => Math.round(v / step) * step;
   function worldTransform(){
     worldEl.style.transform = `translate(${vx}px, ${vy}px) scale(${zoom})`;
+    worldEl.style.setProperty("--cz", String(zoom));
+    const g = gridStep() * zoom;
+    viewportEl.style.backgroundSize = `${g}px ${g}px`;
+    viewportEl.style.backgroundPosition = `${vx}px ${vy}px`;
     syncAllPixelation();
   }
   function screenToWorld(clientX, clientY){
@@ -125,7 +153,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     const el = document.createElement("div");
     el.className = "citem";
     el.dataset.id = item.id;
-    el.innerHTML = `<div class="citem-box"><div class="citem-ph">…</div></div><div class="citem-label"></div><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div>`;
+    el.dataset.assetId = item.asset_id;
+    el.innerHTML = `<div class="citem-box"><div class="citem-thumb"><div class="citem-ph">…</div></div><div class="citem-meta"><div class="n"></div></div></div><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div>`;
     el.querySelector('[data-act="resize"]').addEventListener("pointerdown", (e) => startResize(e, item.id));
     el.querySelector('[data-act="rotate"]').addEventListener("pointerdown", (e) => startRotate(e, item.id));
     el.addEventListener("pointerdown", (e) => {
@@ -136,15 +165,14 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     worldEl.appendChild(el);
     getAsset(item.asset_id).then((a) => {
       if (!dom.has(item.id)) return; // item was removed before the fetch resolved
-      const box = el.querySelector(".citem-box");
-      const label = el.querySelector(".citem-label");
-      label.textContent = a ? a.name : "";
+      const thumb = el.querySelector(".citem-thumb");
+      el.querySelector(".citem-meta .n").textContent = a ? a.name : "";
       if (a && a.has_thumb){
-        box.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
-        const img = box.querySelector("img");
+        thumb.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
+        const img = thumb.querySelector("img");
         img.addEventListener("load", () => { markSmallSrc(img); syncItemPixelation(items.get(item.id) || item); }, { once: true });
       } else {
-        box.innerHTML = `<div class="citem-ph">${esc(a ? a.name : "?")}</div>`;
+        thumb.innerHTML = `<div class="citem-ph">${esc(a ? a.name : "?")}</div>`;
       }
     });
     return el;
@@ -243,7 +271,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     redoStack = [];
   }
   function applyItemsSnapshot(snap){
-    for (const s of snap){
+    for (const snapItem of snap){
+      const s = { ...snapItem }; // copy: later edits must not mutate the undo entry itself
       items.set(s.id, s);
       if (!dom.has(s.id)) addItemLocal(s);
       else layoutItemEl(s);
@@ -295,7 +324,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     const startWorld = screenToWorld(e.clientX, e.clientY);
     const starts = [...selection].map((sid) => ({ id: sid, x: items.get(sid).x, y: items.get(sid).y }));
     const before = starts.map((s) => ({ ...items.get(s.id) }));
-    drag = { kind: "move", startWorld, starts, pointerId: e.pointerId, moved: false, before };
+    drag = { kind: "move", id, startWorld, starts, pointerId: e.pointerId, moved: false, before };
     el_setPointerCapture(e);
   }
   function startResize(e, id){
@@ -303,7 +332,9 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     setSelection([id]);
     const item = items.get(id);
     const before = [{ ...item }];
-    drag = { kind: "resize", id, startWorld: screenToWorld(e.clientX, e.clientY), startW: item.w, startH: item.h, pointerId: e.pointerId, moved: false, before };
+    const a = assetResolved.get(item.asset_id);
+    const ratio = a && a.width && a.height ? a.width / a.height : item.w / item.h;
+    drag = { kind: "resize", id, ratio, startWorld: screenToWorld(e.clientX, e.clientY), startW: item.w, startH: item.h, pointerId: e.pointerId, moved: false, before };
     el_setPointerCapture(e);
   }
   function startRotate(e, id){
@@ -326,7 +357,15 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       drag.moved = true;
       if (drag.kind === "move"){
         const w = screenToWorld(e.clientX, e.clientY);
-        const dx = w.x - drag.startWorld.x, dy = w.y - drag.startWorld.y;
+        let dx = w.x - drag.startWorld.x, dy = w.y - drag.startWorld.y;
+        // Ctrl held once the drag is under way (Ctrl at press would start a box-select instead):
+        // snap the grabbed item's corner to the grid, the rest of the selection keeps its offsets.
+        if (e.ctrlKey || e.metaKey){
+          const anchor = drag.starts.find((s) => s.id === drag.id) || drag.starts[0];
+          const step = gridStep();
+          dx = snapTo(anchor.x + dx, step) - anchor.x;
+          dy = snapTo(anchor.y + dy, step) - anchor.y;
+        }
         for (const s of drag.starts){
           const it = items.get(s.id);
           it.x = s.x + dx; it.y = s.y + dy;
@@ -335,8 +374,25 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       } else if (drag.kind === "resize"){
         const w = screenToWorld(e.clientX, e.clientY);
         const it = items.get(drag.id);
-        it.w = Math.max(24, drag.startW + (w.x - drag.startWorld.x));
-        it.h = Math.max(24, drag.startH + (w.y - drag.startWorld.y));
+        let nw = drag.startW + (w.x - drag.startWorld.x), nh = drag.startH + (w.y - drag.startWorld.y);
+        if (e.ctrlKey || e.metaKey){ // snap the bottom-right corner to the grid
+          const step = gridStep();
+          nw = snapTo(it.x + nw, step) - it.x;
+          nh = snapTo(it.y + nh, step) - it.y;
+        }
+        if (e.shiftKey){
+          // Lock the asset's original proportions (the item's own if the asset size is unknown);
+          // the larger of the two requested dimensions wins so the corner always follows the cursor.
+          const ar = drag.ratio;
+          const wFromH = nh * ar;
+          nw = Math.max(nw, wFromH, MIN_ITEM, MIN_ITEM * ar);
+          nh = nw / ar;
+        } else {
+          nw = Math.max(MIN_ITEM, nw);
+          nh = Math.max(MIN_ITEM, nh);
+        }
+        it.w = nw;
+        it.h = nh;
         layoutItemEl(it);
       } else if (drag.kind === "rotate"){
         const w = screenToWorld(e.clientX, e.clientY);
@@ -432,7 +488,13 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       el_setPointerCapture(e);
     }
   });
-  window.addEventListener("pointermove", (e) => { if (isOpen) onPointerMove(e); });
+  // Ctrl (or Cmd) held: arrow cursor, so it is clear the box-select mode is armed. Tracked from the
+  // key events, and re-synced from pointer events in case the key went up while the window was unfocused.
+  const setCtrlCursor = (on) => viewportEl.classList.toggle("ctrl-box", on);
+  window.addEventListener("keydown", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlCursor(true); });
+  window.addEventListener("keyup", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlCursor(false); });
+  window.addEventListener("blur", () => setCtrlCursor(false));
+  window.addEventListener("pointermove", (e) => { if (isOpen){ setCtrlCursor(e.ctrlKey || e.metaKey); onPointerMove(e); } });
   window.addEventListener("pointerup", () => {
     if (!isOpen) return;
     if (drag && drag.kind === "pan") viewportEl.style.cursor = "default";
@@ -490,6 +552,211 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     if (Array.isArray(ids) && ids.length) placeAssetsAt(ids, screenToWorld(e.clientX, e.clientY));
   });
 
+  // ---- arrange / align / normalize --------------------------------------------------------------
+  // Mirrors PureRef's Arrange menu and shortcuts. Like PureRef, each command acts on the selected
+  // items, or on every item when nothing is selected. Layout works on each item's rotated bounding
+  // box; the only setting PureRef exposes here, "alignment padding", is its default of 10.
+  const PAD = 10;
+  const arrangeTargets = () => (selection.size ? [...selection] : [...items.keys()]).map((id) => items.get(id)).filter(Boolean);
+  function boundsOf(it){
+    const rad = (it.rotation || 0) * Math.PI / 180;
+    const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+    const hw = (it.w * c + it.h * s) / 2, hh = (it.w * s + it.h * c) / 2;
+    const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+    return { l: cx - hw, r: cx + hw, t: cy - hh, b: cy + hh };
+  }
+  function unionOf(list){
+    const u = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity };
+    for (const it of list){
+      const b = boundsOf(it);
+      u.l = Math.min(u.l, b.l); u.t = Math.min(u.t, b.t); u.r = Math.max(u.r, b.r); u.b = Math.max(u.b, b.b);
+    }
+    return u;
+  }
+  function moveBoundsTo(it, l, t){
+    const b = boundsOf(it);
+    it.x += l - b.l;
+    it.y += t - b.t;
+  }
+  // Runs `mutate` over the items, then repaints, saves and records ONE undo step (no-op if nothing moved).
+  function commitLayout(list, mutate){
+    const before = list.map((it) => ({ ...it }));
+    mutate();
+    const same = list.every((it, i) => Math.abs(it.x - before[i].x) < 0.01 && Math.abs(it.y - before[i].y) < 0.01 && Math.abs(it.w - before[i].w) < 0.01 && Math.abs(it.h - before[i].h) < 0.01);
+    for (const it of list) layoutItemEl(it);
+    if (same) return false;
+    const after = list.map((it) => ({ ...it }));
+    pushUndo({ type: "move", before, after });
+    for (const it of after) scheduleSave(it.id, it);
+    return true;
+  }
+
+  // Align left/right/top/bottom (Ctrl+arrows): push every item to that edge of the selection's box.
+  function alignItems(dir){
+    const list = arrangeTargets();
+    if (list.length < 2) return;
+    const u = unionOf(list);
+    commitLayout(list, () => {
+      for (const it of list){
+        const b = boundsOf(it);
+        if (dir === "left") it.x += u.l - b.l;
+        else if (dir === "right") it.x += u.r - b.r;
+        else if (dir === "top") it.y += u.t - b.t;
+        else it.y += u.b - b.b;
+      }
+    });
+  }
+
+  // Normalize height/width/size/scale (Ctrl+Alt+arrows): resize proportionally, about each item's
+  // centre, to the average of the selection. "Size" matches the on-screen area; "scale" matches the
+  // zoom relative to each image's native pixels (items whose asset has no pixel size are left alone).
+  function nativeSize(it){
+    const a = assetResolved.get(it.asset_id);
+    return a && a.width && a.height ? a : null;
+  }
+  function normalizeItems(kind){
+    const list = arrangeTargets();
+    if (list.length < 2) return;
+    const mean = (f, arr = list) => arr.reduce((s, it) => s + f(it), 0) / arr.length;
+    let factor;
+    if (kind === "height"){ const t = mean((it) => it.h); factor = (it) => t / it.h; }
+    else if (kind === "width"){ const t = mean((it) => it.w); factor = (it) => t / it.w; }
+    else if (kind === "size"){ const t = mean((it) => Math.sqrt(it.w * it.h)); factor = (it) => t / Math.sqrt(it.w * it.h); }
+    else {
+      const known = list.filter(nativeSize);
+      if (known.length < 2) return;
+      const s = mean((it) => it.w / nativeSize(it).width, known);
+      factor = (it) => { const n = nativeSize(it); return n ? (n.width * s) / it.w : 1; };
+    }
+    commitLayout(list, () => {
+      for (const it of list){
+        const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+        const k = Math.max(factor(it), MIN_ITEM / Math.min(it.w, it.h));
+        it.w *= k; it.h *= k;
+        it.x = cx - it.w / 2; it.y = cy - it.h / 2;
+      }
+    });
+  }
+
+  // Distribute horizontal/vertical (Ctrl+Alt+Shift+Up/Down): one neat row (or column), in the items'
+  // current left-to-right (top-to-bottom) order, starting at the selection's top-left.
+  function distributeItems(axis){
+    const list = arrangeTargets();
+    if (list.length < 2) return;
+    const u = unionOf(list);
+    const key = axis === "h" ? (it) => boundsOf(it).l : (it) => boundsOf(it).t;
+    const ordered = [...list].sort((a, b) => key(a) - key(b));
+    commitLayout(list, () => {
+      let cursor = axis === "h" ? u.l : u.t;
+      for (const it of ordered){
+        const b = boundsOf(it);
+        if (axis === "h"){ moveBoundsTo(it, cursor, u.t); cursor += (b.r - b.l) + PAD; }
+        else { moveBoundsTo(it, u.l, cursor); cursor += (b.b - b.t) + PAD; }
+      }
+    });
+  }
+
+  // Row packing (shelf algorithm) for the Arrange commands: tries a range of row widths and keeps
+  // the one whose overall shape is closest to the visible area's aspect ratio without wasting space.
+  function packRows(sizes, aspect){
+    const totalArea = sizes.reduce((s, z) => s + z.w * z.h, 0);
+    const maxW = Math.max(...sizes.map((z) => z.w));
+    const sumW = sizes.reduce((s, z) => s + z.w + PAD, 0);
+    let best = null;
+    for (let i = 0; i <= 40; i++){
+      const rowW = maxW + (Math.max(sumW, maxW) - maxW) * (i / 40) ** 2;
+      let x = 0, y = 0, rowH = 0, usedW = 0;
+      const pos = [];
+      for (const z of sizes){
+        if (x > 0 && x + z.w > rowW){ y += rowH + PAD; x = 0; rowH = 0; }
+        pos.push({ x, y });
+        x += z.w + PAD;
+        usedW = Math.max(usedW, x - PAD);
+        rowH = Math.max(rowH, z.h);
+      }
+      const w = usedW, h = y + rowH;
+      const score = Math.abs(Math.log((w / h) / aspect)) + 0.4 * (1 - totalArea / (w * h));
+      if (!best || score < best.score) best = { score, pos, w, h };
+    }
+    return best;
+  }
+  const assetName = (it) => (assetResolved.get(it.asset_id)?.name || "").toLowerCase();
+  const assetPath = (it) => (assetResolved.get(it.asset_id)?.path || assetResolved.get(it.asset_id)?.name || "").toLowerCase();
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  const SORTERS = {
+    optimal: null, // current order
+    name: (a, b) => collator.compare(assetName(a), assetName(b)),
+    addition: (a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""), undefined, { numeric: true }),
+    order: (a, b) => (a.z_index || 0) - (b.z_index || 0),
+    path: (a, b) => collator.compare(assetPath(a), assetPath(b)),
+    random: () => Math.random() - 0.5,
+  };
+  let lastArrange = { kind: null, reversed: false };
+  // Ctrl+P (optimal) and Ctrl+Alt+N/A/O/D/R. Repeating the same sorted command reverses its order,
+  // like PureRef's toggling commands. The result keeps the selection's centre and is framed in view.
+  function arrangeItems(kind){
+    const list = arrangeTargets();
+    if (!list.length) return;
+    const reversed = lastArrange.kind === kind && !lastArrange.reversed && kind !== "optimal" && kind !== "random";
+    lastArrange = { kind, reversed };
+    const sorter = SORTERS[kind];
+    const ordered = sorter ? [...list].sort(sorter) : [...list];
+    if (reversed) ordered.reverse();
+    const u = unionOf(list);
+    const vp = viewportEl.getBoundingClientRect();
+    const sizes = ordered.map((it) => { const b = boundsOf(it); return { w: b.r - b.l, h: b.b - b.t }; });
+    const packed = packRows(sizes, Math.max(0.2, vp.width / Math.max(1, vp.height)));
+    const l0 = (u.l + u.r) / 2 - packed.w / 2, t0 = (u.t + u.b) / 2 - packed.h / 2;
+    commitLayout(list, () => ordered.forEach((it, i) => moveBoundsTo(it, l0 + packed.pos[i].x, t0 + packed.pos[i].y)));
+    frameItems(list);
+  }
+
+  // Ctrl+Alt+S: pile the items on top of each other, centred on the selection, in layer order.
+  function stackItems(){
+    const list = arrangeTargets();
+    if (list.length < 2) return;
+    const u = unionOf(list);
+    const cx = (u.l + u.r) / 2, cy = (u.t + u.b) / 2;
+    commitLayout(list, () => {
+      for (const it of list){ it.x = cx - it.w / 2; it.y = cy - it.h / 2; }
+    });
+  }
+
+  function reorderZ(toFront){
+    const zs = [...items.values()].map((it) => it.z_index || 0);
+    const target = toFront ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
+    for (const id of selection){
+      const it = items.get(id);
+      it.z_index = target;
+      layoutItemEl(it);
+      scheduleSave(id, { z_index: target });
+    }
+  }
+
+  const ARROW_DIRS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "bottom" };
+  const NORMALIZE_BY_ARROW = { ArrowLeft: "height", ArrowRight: "width", ArrowUp: "size", ArrowDown: "scale" };
+  const ARRANGE_BY_CODE = { KeyN: "name", KeyA: "addition", KeyO: "order", KeyD: "path", KeyR: "random" };
+  // Returns true when the key combo was one of the arrange shortcuts (and was handled).
+  function handleArrangeKey(e){
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.altKey){
+      if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")){ distributeItems(e.key === "ArrowUp" ? "h" : "v"); return true; }
+      if (!e.shiftKey && NORMALIZE_BY_ARROW[e.key]){ normalizeItems(NORMALIZE_BY_ARROW[e.key]); return true; }
+      if (!e.shiftKey && ARRANGE_BY_CODE[e.code]){ arrangeItems(ARRANGE_BY_CODE[e.code]); return true; }
+      if (!e.shiftKey && e.code === "KeyS"){ stackItems(); return true; }
+      return false;
+    }
+    if (mod && !e.altKey && !e.shiftKey){
+      if (ARROW_DIRS[e.key]){ alignItems(ARROW_DIRS[e.key]); return true; }
+      if (e.code === "KeyP"){ arrangeItems("optimal"); return true; }
+    }
+    if (!mod && !e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && selection.size){
+      reorderZ(e.key === "ArrowUp");
+      return true;
+    }
+    return false;
+  }
+
   // ---- keyboard -------------------------------------------------------------------------------
   document.addEventListener("keydown", (e) => {
     if (!isOpen || (keysEnabled && !keysEnabled())) return;
@@ -503,6 +770,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       frameItems(list);
       return;
     }
+    if (handleArrangeKey(e)){ e.preventDefault(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z"){
       e.preventDefault();
       if (e.shiftKey) redo(); else undo();
@@ -518,14 +786,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     }
     if ((e.key === "]" || e.key === "[") && selection.size){
       e.preventDefault();
-      const zs = [...items.values()].map((it) => it.z_index || 0);
-      const target = e.key === "]" ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
-      for (const id of selection){
-        const it = items.get(id);
-        it.z_index = target;
-        layoutItemEl(it);
-        scheduleSave(id, { z_index: target });
-      }
+      reorderZ(e.key === "]");
       return;
     }
     if (e.key === "Escape") setSelection([]);
@@ -560,5 +821,9 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     persistCurrent();
   }
 
-  return { open, close, selectAll };
+  // Asset record for an item's asset_id once loaded (null before) — lets index.html's Space
+  // preview open the lightbox for whatever item is under the cursor, same as for a library card.
+  function assetOf(aid){ return assetResolved.get(aid) || null; }
+
+  return { open, close, selectAll, assetOf };
 }
