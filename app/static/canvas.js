@@ -35,7 +35,7 @@ function injectStyles(){
 /* :not([hidden]) rather than a bare display:flex here: a same-specificity class rule declared
    after the UA [hidden]{display:none} rule would otherwise win the cascade by source order and
    defeat "hidden" entirely — this way the rule simply doesn't match while hidden is set. */
-.canvas-view:not([hidden]) { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); border-left: 1px solid var(--border); }
+.canvas-view:not([hidden]) { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: default; background-color: var(--surface);
   background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px); background-size: 24px 24px;
   user-select: none; -webkit-user-select: none; }
@@ -70,7 +70,7 @@ function thumbUrl(a){
   return "/api/thumb/" + a.id + (a.thumb_v ? "?v=" + a.thumb_v : "");
 }
 
-export function createCanvasView({ mount, getZoomSettings }){
+export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled }){
   injectStyles();
   const zoomSettings = getZoomSettings || (() => ({ zoomAxis: "y", zoomSpeed: 1, zoomInvert: false }));
 
@@ -88,8 +88,18 @@ export function createCanvasView({ mount, getZoomSettings }){
   let drag = null; // active pointer interaction, see pointerdown handlers below
   let emptyMsg = null;
 
+  // Same nearest-neighbour switch as the library thumbnails (index.html's syncPixelation): the
+  // on-screen box size is item size * zoom, so it flips as the board is zoomed.
+  function syncItemPixelation(item){
+    const img = dom.get(item.id)?.querySelector("img");
+    if (img) syncPixelation(img, { clientWidth: item.w * zoom, clientHeight: item.h * zoom });
+  }
+  function syncAllPixelation(){
+    for (const item of items.values()) syncItemPixelation(item);
+  }
   function worldTransform(){
     worldEl.style.transform = `translate(${vx}px, ${vy}px) scale(${zoom})`;
+    syncAllPixelation();
   }
   function screenToWorld(clientX, clientY){
     const r = viewportEl.getBoundingClientRect();
@@ -120,6 +130,7 @@ export function createCanvasView({ mount, getZoomSettings }){
     el.querySelector('[data-act="rotate"]').addEventListener("pointerdown", (e) => startRotate(e, item.id));
     el.addEventListener("pointerdown", (e) => {
       if (e.target.closest("[data-act]")) return;
+      if (e.ctrlKey || e.metaKey) return; // Ctrl+drag starts a box-select even over an item — see the viewport handler
       startMove(e, item.id);
     });
     worldEl.appendChild(el);
@@ -130,6 +141,8 @@ export function createCanvasView({ mount, getZoomSettings }){
       label.textContent = a ? a.name : "";
       if (a && a.has_thumb){
         box.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
+        const img = box.querySelector("img");
+        img.addEventListener("load", () => { markSmallSrc(img); syncItemPixelation(items.get(item.id) || item); }, { once: true });
       } else {
         box.innerHTML = `<div class="citem-ph">${esc(a ? a.name : "?")}</div>`;
       }
@@ -146,6 +159,7 @@ export function createCanvasView({ mount, getZoomSettings }){
     el.style.zIndex = String(item.z_index || 0);
     el.style.opacity = item.opacity == null ? "1" : String(item.opacity);
     el.classList.toggle("selected", selection.has(item.id));
+    syncItemPixelation(item);
   }
 
   function addItemLocal(item){
@@ -177,20 +191,32 @@ export function createCanvasView({ mount, getZoomSettings }){
     for (const id of ids) selection.add(id);
     for (const item of items.values()) layoutItemEl(item);
   }
-  // Mirrors applyMarquee()'s replace/add/toggle rules for the library grid's own box-select
-  // (index.html, bound to the same modifier keys: plain drag = replace, Ctrl+drag = toggle,
-  // Ctrl+Shift+drag = add) so box-select behaves identically in both places.
   function applyMarqueeSelection(mode, origin, hits){
-    if (mode === "add") setSelection([...new Set([...origin, ...hits])]);
-    else if (mode === "toggle"){
-      const originSet = new Set(origin);
-      const next = new Set(origin);
-      for (const id of hits){
-        if (originSet.has(id)) next.delete(id);
-        else next.add(id);
-      }
-      setSelection([...next]);
-    } else setSelection(hits);
+    setSelection(combineSelection(mode, origin, hits)); // same rules as the library grid's box-select
+  }
+  function selectAll(){ setSelection([...items.keys()]); }
+  function toggleInSelection(id){
+    setSelection(selection.has(id) ? [...selection].filter((x) => x !== id) : [...selection, id]);
+  }
+
+  // Fit the given items (or all) into the viewport. Rotated items count by their rotated corners.
+  function frameItems(list){
+    if (!list.length) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const it of list){
+      const cx = it.x + it.w / 2, cy = it.y + it.h / 2, rad = (it.rotation || 0) * Math.PI / 180;
+      const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+      const hw = (it.w * c + it.h * s) / 2, hh = (it.w * s + it.h * c) / 2;
+      minX = Math.min(minX, cx - hw); maxX = Math.max(maxX, cx + hw);
+      minY = Math.min(minY, cy - hh); maxY = Math.max(maxY, cy + hh);
+    }
+    const r = viewportEl.getBoundingClientRect();
+    const pad = 48;
+    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((r.width - pad * 2) / bw, (r.height - pad * 2) / bh)));
+    vx = r.width / 2 - (minX + bw / 2) * zoom;
+    vy = r.height / 2 - (minY + bh / 2) * zoom;
+    worldTransform();
   }
 
   // ---- persistence -------------------------------------------------------------------------
@@ -365,6 +391,7 @@ export function createCanvasView({ mount, getZoomSettings }){
     } else if (drag.kind === "marquee"){
       if (drag.el) drag.el.remove();
       if (!drag.active && drag.mode === "replace") setSelection([]);
+      else if (!drag.active && drag.itemId && items.has(drag.itemId)) toggleInSelection(drag.itemId);
     }
     drag = null;
   }
@@ -388,14 +415,17 @@ export function createCanvasView({ mount, getZoomSettings }){
       return;
     }
     if (e.button !== 0) return;
-    if (e.target !== viewportEl && e.target !== worldEl) return; // clicked an item — its own handler deals with it
+    // Same as the grid: Ctrl starts a box-select anywhere, including over an item; a Ctrl-click
+    // that never grows into a box toggles the item under the cursor (see onPointerUp).
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl){
       e.preventDefault();
-      drag = { kind: "marquee", startClient: { x: e.clientX, y: e.clientY }, mode: e.shiftKey ? "add" : "toggle", active: false, origin: [...selection] };
+      const hit = e.target.closest?.(".citem");
+      drag = { kind: "marquee", startClient: { x: e.clientX, y: e.clientY }, mode: e.shiftKey ? "add" : "toggle", active: false, origin: [...selection], itemId: hit?.dataset.id || null };
       el_setPointerCapture(e);
       return;
     }
+    if (e.target !== viewportEl && e.target !== worldEl) return; // clicked an item — its own handler deals with it
     if (!e.shiftKey){
       e.preventDefault();
       drag = { kind: "marquee", startClient: { x: e.clientX, y: e.clientY }, mode: "replace", active: false, origin: [...selection] };
@@ -462,9 +492,17 @@ export function createCanvasView({ mount, getZoomSettings }){
 
   // ---- keyboard -------------------------------------------------------------------------------
   document.addEventListener("keydown", (e) => {
-    if (!isOpen) return;
+    if (!isOpen || (keysEnabled && !keysEnabled())) return;
     const tag = e.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    // F = frame the selection, A = frame everything. By physical key (e.code) so they work on any
+    // keyboard layout; bare keys only, so Ctrl+A (select all, handled by index.html) stays separate.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "KeyF" || e.code === "KeyA")){
+      e.preventDefault();
+      const list = e.code === "KeyF" && selection.size ? [...selection].map((id) => items.get(id)) : [...items.values()];
+      frameItems(list);
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z"){
       e.preventDefault();
       if (e.shiftKey) redo(); else undo();
@@ -522,5 +560,5 @@ export function createCanvasView({ mount, getZoomSettings }){
     persistCurrent();
   }
 
-  return { open, close };
+  return { open, close, selectAll };
 }

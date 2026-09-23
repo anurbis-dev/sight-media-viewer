@@ -106,6 +106,11 @@ button:disabled { cursor: default; opacity: .4; }
 .side.panning { cursor: grabbing; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .main-body { flex: 1; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
+.main-body.stacked { flex-direction: column; }
+.split-handle:not([hidden]) { flex: none; position: relative; z-index: 5; background: var(--border); touch-action: none; transition: background var(--motion-quick) var(--ease); }
+.main-body:not(.stacked) > .split-handle { width: 5px; cursor: col-resize; }
+.main-body.stacked > .split-handle { height: 5px; cursor: row-resize; }
+.split-handle:hover, .split-handle.drag { background: var(--accent); }
 .insp { width: 300px; flex: none; border-left: 1px solid var(--border); padding: var(--space-4); overflow: auto; min-height: 0; background: var(--surface); }
 .brand { display: flex; gap: var(--space-3); align-items: center; }
 .mark { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--display); font-size: 18px; color: var(--accent); }
@@ -170,7 +175,7 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .card.masonry .thumb { aspect-ratio: auto; }
 .card { display: flex; flex-direction: column; overflow: hidden; position: relative; padding: var(--card-pad); border: 0; border-radius: var(--card-radius); background: var(--card-bg); text-align: left; contain: layout paint; min-height: 0; height: 100%; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
 .card::after { content: ""; position: absolute; inset: 0; border: var(--card-border-w) solid var(--border); border-radius: inherit; pointer-events: none; z-index: 3; }
-.card:hover::after { border-color: var(--border-strong); }
+.card:hover::after { border-width: var(--card-hover-border-w); border-color: var(--card-hover-color); }
 .card:focus { outline: none; }
 .card.on { background: var(--surface-2); }
 .card.on::after { border-width: var(--card-active-border-w); border-color: var(--card-active-color); box-shadow: inset 0 0 0 var(--card-active-border-w) var(--card-active-color); }
@@ -184,7 +189,7 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 /* Small sources (icons, pixel art) stretched to fill a larger box: nearest-neighbor instead of
    the browser's default smoothing, which turns crisp pixel edges into mush. Toggled in JS once
    the source's real resolution is known and compared against the box it's displayed in. */
-.thumb img.pixelated, .stack i img.pixelated, .view-media.pixelated {
+.thumb img.pixelated, .stack i img.pixelated, .view-media.pixelated, .citem img.pixelated {
   image-rendering: crisp-edges;
   image-rendering: pixelated;
 }
@@ -350,8 +355,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .opt .val { font-variant-numeric: tabular-nums; color: var(--subtle); min-width: 52px; text-align: right; }
 .theme-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 2px; }
 .theme-actions .btn { height: 30px; padding: 0 10px; font-size: 11px; flex: none; }
-.theme-list { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
-.theme-list .row { height: 32px; min-height: 32px; }
+.theme-list { padding: 0 4px; }
 /* Blender-style slider: click without dragging opens text-edit, drag scrubs at a fixed
    px→value rate (Shift = fine), the edge zones nudge by one step, right-click resets. */
 .bslider { position: relative; width: 128px; height: 26px; border-radius: 6px; background: var(--surface-3); overflow: hidden; cursor: ew-resize; user-select: none; touch-action: none; flex: none; }
@@ -480,6 +484,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
     </div>
     <div class="main-body" id="mainBody">
       <div class="grid" id="grid"></div>
+      <div class="split-handle" id="splitHandle" hidden title="Drag to resize · double-click to switch side-by-side / stacked"></div>
       <div class="canvas-view" id="canvasView" hidden></div>
     </div>
   </section>
@@ -519,6 +524,7 @@ const DEFAULT_THEME = {
   font: "IBM Plex Sans", textSize: 15,
   gridGap: 10, cardRadius: 16, cardBorder: 1, cardPad: 8, cardBg: "#1c1d21", menuRowH: 40, menuGap: 2,
   cardActiveColor: "#f2f2f0", cardActiveBorder: 1,
+  cardHover: 32, // hover frame brightness, % of the frame color mixed in on top of the base style
   waveColor: "#5b8cff", waveMode: "mirror",
   zoomSpeed: 1, zoomAxis: "y", zoomInvert: false,
   maskShape: "free", maskRadius: 0, // fullscreen preview frame — see MASKS / applyLightFrame()
@@ -527,10 +533,10 @@ const DEFAULT_THEME = {
 // Each entry only overrides the color/typography knobs — everything else (layout numbers,
 // zoom, masks) stays at DEFAULT_THEME, same merge behavior as a saved custom theme.
 const BUILTIN_THEMES = [
-  { name: "Тёмная", builtin: true, vars: { bg: DEFAULT_THEME.bg, fg: DEFAULT_THEME.fg, border: DEFAULT_THEME.border, button: DEFAULT_THEME.button, cardBg: DEFAULT_THEME.cardBg, cardActiveColor: DEFAULT_THEME.cardActiveColor, waveColor: DEFAULT_THEME.waveColor } },
-  { name: "Мягкая тёмная", builtin: true, vars: { bg: "#22242a", fg: "#eceef2", border: "#8ea3ff", button: "#e7e9ef", cardBg: "#2a2c33", cardActiveColor: "#8ea3ff", waveColor: "#8ea3ff" } },
-  { name: "Светлая", builtin: true, vars: { bg: "#f1f2ef", fg: "#1c1d1b", border: "#2f6fed", button: "#232420", cardBg: "#ffffff", cardActiveColor: "#2f6fed", waveColor: "#2f6fed" } },
-  { name: "Тёплая", builtin: true, vars: { bg: "#f4ecdd", fg: "#3a2c1c", border: "#b5651d", button: "#3b2a1a", cardBg: "#fbf5ea", cardActiveColor: "#b5651d", waveColor: "#c17a3d" } },
+  { name: "Dark", builtin: true, vars: { bg: DEFAULT_THEME.bg, fg: DEFAULT_THEME.fg, border: DEFAULT_THEME.border, button: DEFAULT_THEME.button, cardBg: DEFAULT_THEME.cardBg, cardActiveColor: DEFAULT_THEME.cardActiveColor, waveColor: DEFAULT_THEME.waveColor } },
+  { name: "Soft dark", builtin: true, vars: { bg: "#22242a", fg: "#eceef2", border: "#8ea3ff", button: "#e7e9ef", cardBg: "#2a2c33", cardActiveColor: "#8ea3ff", waveColor: "#8ea3ff" } },
+  { name: "Light", builtin: true, vars: { bg: "#f1f2ef", fg: "#1c1d1b", border: "#2f6fed", button: "#232420", cardBg: "#ffffff", cardActiveColor: "#2f6fed", waveColor: "#2f6fed" } },
+  { name: "Warm", builtin: true, vars: { bg: "#f4ecdd", fg: "#3a2c1c", border: "#b5651d", button: "#3b2a1a", cardBg: "#fbf5ea", cardActiveColor: "#b5651d", waveColor: "#c17a3d" } },
 ];
 // Fullscreen-preview masks: [id, label, width/height]. "free" = no mask (the preview fills the
 // stage); the rest clip the preview to a frame of that shape, centred in the stage.
@@ -670,11 +676,12 @@ function loadNavOrder(){
   return [...NAV_SECTIONS];
 }
 function saveLayout(){
-  putSetting(LAYOUT_KEY, JSON.stringify({ details: state.details, navCollapse: state.navCollapse, navOrder: state.navOrder, settingsOpen: state.settingsOpen, showIcons: state.showIcons, canvasSplit: state.canvasSplit }));
+  putSetting(LAYOUT_KEY, JSON.stringify({ details: state.details, navCollapse: state.navCollapse, navOrder: state.navOrder, settingsOpen: state.settingsOpen, showIcons: state.showIcons, canvasSplit: state.canvasSplit, canvasSplitRatio: state.canvasSplitRatio, canvasSplitStacked: state.canvasSplitStacked }));
 }
 function toggleDetails(){
   state.details = !state.details;
   insp.style.display = state.details ? "" : "none";
+  if (state.details) renderInsp(); // previews sized while hidden (pixelation check) need a redo
   saveLayout();
 }
 
@@ -713,10 +720,12 @@ const state = {
   view: "library", // "library" | "canvas" — a board is open; see setView()/applyViewDom()
   canvasBoardId: null,
   canvasSplit: savedLayout.canvasSplit !== false, // show the grid alongside an open board
+  canvasSplitRatio: Math.min(0.85, Math.max(0.15, Number(savedLayout.canvasSplitRatio) || 0.5)), // grid's share of the split
+  canvasSplitStacked: savedLayout.canvasSplitStacked === true, // false = side by side, true = grid above board
 };
 
 const $ = (id) => document.getElementById(id);
-const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status"), canvasView = $("canvasView"), splitBtn = $("splitBtn");
+const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status"), canvasView = $("canvasView"), splitBtn = $("splitBtn"), splitHandle = $("splitHandle"), mainBody = $("mainBody");
 let sliceEl = null, spaceEl = null;
 let visTimer = 0, pullTimer = 0, renderRAF = 0;
 const seenThumb = new Set();
@@ -793,6 +802,8 @@ function applyUi(){
   r.setProperty("--card-border-w", t.cardBorder + "px");
   r.setProperty("--card-active-color", t.cardActiveColor);
   r.setProperty("--card-active-border-w", t.cardActiveBorder + "px");
+  r.setProperty("--card-hover-color", `color-mix(in oklab, ${t.border} ${t.cardHover}%, transparent)`);
+  r.setProperty("--card-hover-border-w", Math.max(1, t.cardBorder) + "px"); // visible even when the base border is 0
   r.setProperty("--card-pad", t.cardPad + "px");
   r.setProperty("--card-bg", t.cardBg);
   r.setProperty("--menu-row-h", t.menuRowH + "px");
@@ -1541,18 +1552,23 @@ function idsInRect(rect){
   return hits;
 }
 
-function applyMarquee(rect){
-  const hits = idsInRect(rect);
-  if (marquee.mode === "add") selectSet([...new Set([...marquee.origin, ...hits])]);
-  else if (marquee.mode === "toggle"){
-    const origin = new Set(marquee.origin);
-    const next = new Set(marquee.origin);
+// Box-select modifier rules, shared with the canvas view: plain = replace, Ctrl = toggle the hit
+// items against the selection the drag started from, Ctrl+Shift = add.
+function combineSelection(mode, originIds, hits){
+  if (mode === "add") return [...new Set([...originIds, ...hits])];
+  if (mode === "toggle"){
+    const origin = new Set(originIds);
+    const next = new Set(originIds);
     for (const id of hits){
       if (origin.has(id)) next.delete(id);
       else next.add(id);
     }
-    selectSet([...next]);
-  } else selectSet(hits);
+    return [...next];
+  }
+  return hits;
+}
+function applyMarquee(rect){
+  selectSet(combineSelection(marquee.mode, marquee.origin, idsInRect(rect)));
 }
 
 grid.addEventListener("scroll", () => scheduleRender(), { passive: true });
@@ -1695,16 +1711,16 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 }, true);
 
-let lastGridW = 0;
+// Window / sidebar / inspector resizes rescale the tile so the column count stays put — measured on
+// #mainBody, not the grid, so the grid being hidden or squeezed by the board split (which
+// changes only the grid's own width) never touches the zoom.
+let lastBodyW = 0;
 new ResizeObserver(() => {
-  const w = grid.clientWidth;
-  if (lastGridW && Math.abs(w - lastGridW) >= 1){
-    setTile(state.tile * (w / lastGridW));
-  } else {
-    scheduleRender();
-  }
-  lastGridW = w;
-}).observe(grid);
+  const w = mainBody.clientWidth;
+  if (lastBodyW && w && Math.abs(w - lastBodyW) >= 1) setTile(state.tile * (w / lastBodyW));
+  if (w) lastBodyW = w;
+}).observe(mainBody);
+new ResizeObserver(() => scheduleRender()).observe(grid);
 
 function row(label, count, on, click){
   const b = document.createElement("button");
@@ -1930,10 +1946,52 @@ function renderTypes(set){
 // board when not needed.
 function applyViewDom(){
   const showCanvas = state.view === "canvas";
+  const split = showCanvas && state.canvasSplit;
   grid.hidden = showCanvas && !state.canvasSplit;
   canvasView.hidden = !showCanvas;
   splitBtn.hidden = !showCanvas;
   splitBtn.classList.toggle("on", state.canvasSplit);
+  splitHandle.hidden = !split;
+  mainBody.classList.toggle("stacked", split && state.canvasSplitStacked);
+  grid.style.flex = split ? `0 0 ${state.canvasSplitRatio * 100}%` : "";
+}
+
+// Draggable divider between the grid and the board. The ratio and orientation are remembered
+// (saveLayout) and re-applied every time the split is turned on again; double-click flips between
+// side by side and stacked.
+splitHandle.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  splitHandle.setPointerCapture(e.pointerId);
+  splitHandle.classList.add("drag");
+});
+splitHandle.addEventListener("pointermove", (e) => {
+  if (!splitHandle.classList.contains("drag")) return;
+  const r = mainBody.getBoundingClientRect();
+  const raw = state.canvasSplitStacked ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
+  state.canvasSplitRatio = Math.min(0.85, Math.max(0.15, raw));
+  grid.style.flex = `0 0 ${state.canvasSplitRatio * 100}%`;
+});
+function endSplitDrag(){
+  if (!splitHandle.classList.contains("drag")) return;
+  splitHandle.classList.remove("drag");
+  saveLayout();
+}
+splitHandle.addEventListener("pointerup", endSplitDrag);
+splitHandle.addEventListener("pointercancel", endSplitDrag);
+splitHandle.addEventListener("dblclick", () => {
+  state.canvasSplitStacked = !state.canvasSplitStacked;
+  applyViewDom();
+  saveLayout();
+});
+
+// Which pane last received a press — decides where Ctrl+A goes when both are on screen.
+let activePane = "library";
+grid.addEventListener("pointerdown", () => { activePane = "library"; }, true);
+canvasView.addEventListener("pointerdown", () => { activePane = "canvas"; }, true);
+function selectAllInActivePane(){
+  if (state.view === "canvas" && (!state.canvasSplit || activePane === "canvas")) canvasCtl?.selectAll();
+  else selectSet(state.items.map((a) => a.id));
 }
 function setView(mode){
   state.view = mode;
@@ -1951,6 +2009,10 @@ function ensureCanvasCtl(){
     canvasCtl = createCanvasView({
       mount: canvasView,
       getZoomSettings: () => state.theme,
+      // Shared with the library grid rather than re-implemented: the marquee modifier rules and the
+      // nearest-neighbour switch for small (pixel-art) sources.
+      combineSelection, markSmallSrc, syncPixelation,
+      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden,
     });
   }
   return canvasCtl;
@@ -2533,7 +2595,7 @@ function renderInspMany(sel){
     const x = (i - t) * 12;
     const y = Math.abs(i - t) * 3;
     const src = thumbSrc(a);
-    const inner = src ? `<img src="${src}" alt="" onload="markSmallSrc(this);syncPixelation(this,this.parentElement)">` : `<div class="ph">${(KIND[a.kind]||"?")[0]}</div>`;
+    const inner = src ? `<img src="${src}" alt="">` : `<div class="ph">${(KIND[a.kind]||"?")[0]}</div>`;
     return `<i style="transform:translate(${x}px,${y}px) rotate(${rot}deg);z-index:${i}">${inner}</i>`;
   }).join("");
   const type = shared(sel.map(a => (KIND[a.kind]||a.kind) + " " + a.ext));
@@ -2568,6 +2630,11 @@ function renderInspMany(sel){
     </label>
     ${actionButtons()}
   `;
+  for (const img of insp.querySelectorAll(".stack i img")){
+    const sync = () => { markSmallSrc(img); syncPixelation(img, img.parentElement); };
+    if (img.complete && img.naturalWidth) sync();
+    else img.addEventListener("load", sync, { once: true });
+  }
   paintTagChips(sel);
   $("rating").onchange = () => {
     const v = $("rating").value;
@@ -4274,7 +4341,7 @@ function closeLight(){
   el._finishClose = finish; // toggleLight() cuts the fade short if a new lightbox opens meanwhile
 }
 
-// Lightbox 3D settings panel — off by default (feedback: "выключена по умолчанию"), toggled
+// Lightbox 3D settings panel — off by default (requested: hidden by default), toggled
 // by the gear button or D while a 3D model is open. Writes land on state.v3d; the render
 // loop in boot3d() re-reads state.v3d every frame, so every change here is live immediately,
 // the same way the theme's color pickers already are — no separate "apply" step needed.
@@ -5259,29 +5326,33 @@ function sliderRow(label, key, min, max, step, unit){
 function renderThemeList(){
   const el = $("themeList");
   if (!el) return;
-  const row = (name, i, builtin) => `<div class="row" data-i="${i}" ${builtin ? 'data-builtin="1"' : ""}><span>${esc(name)}</span>${builtin ? "" : '<button class="tiny" data-act="del" aria-label="Delete">×</button>'}</div>`;
+  // Preselect the preset whose values match the current theme, else show a "Custom" placeholder.
+  const matches = (t) => Object.entries(t.vars).every(([k, v]) => state.theme[k] === v);
+  let cur = "";
+  BUILTIN_THEMES.forEach((t, i) => { if (!cur && matches(t)) cur = `b${i}`; });
+  state.themes.forEach((t, i) => { if (!cur && matches(t)) cur = `u${i}`; });
+  const opt = (v, name) => `<option value="${v}" ${cur === v ? "selected" : ""}>${esc(name)}</option>`;
   el.innerHTML = `
-    <div class="settings-sub" style="margin-top:2px">Built-in</div>
-    ${BUILTIN_THEMES.map((t, i) => row(t.name, i, true)).join("")}
-    <div class="settings-sub">My themes</div>
-    ${state.themes.length ? state.themes.map((t, i) => row(t.name, i, false)).join("") : `<p class="sub" style="padding:2px 8px">No saved themes yet.</p>`}
+    <label class="opt">Theme <select id="themeSel">
+      ${cur ? "" : `<option value="" selected disabled>Custom</option>`}
+      <optgroup label="Built-in">${BUILTIN_THEMES.map((t, i) => opt(`b${i}`, t.name)).join("")}</optgroup>
+      ${state.themes.length ? `<optgroup label="My themes">${state.themes.map((t, i) => opt(`u${i}`, t.name)).join("")}</optgroup>` : ""}
+    </select>${cur.startsWith("u") ? '<button class="tiny" id="themeDel" type="button" aria-label="Delete theme" title="Delete theme">×</button>' : ""}</label>
   `;
-  el.querySelectorAll(".row").forEach((rowEl) => {
-    const builtin = rowEl.dataset.builtin === "1";
-    const t = (builtin ? BUILTIN_THEMES : state.themes)[Number(rowEl.dataset.i)];
-    rowEl.onclick = (e) => {
-      if (e.target.dataset.act === "del"){
-        e.stopPropagation();
-        state.themes = state.themes.filter((x) => x !== t);
-        saveThemeList();
-        renderThemeList();
-        return;
-      }
-      state.theme = { ...DEFAULT_THEME, ...t.vars };
-      saveTheme();
-      renderOptions();
-    };
-  });
+  $("themeSel").onchange = () => {
+    const v = $("themeSel").value;
+    const t = (v[0] === "b" ? BUILTIN_THEMES : state.themes)[Number(v.slice(1))];
+    if (!t) return;
+    state.theme = { ...DEFAULT_THEME, ...t.vars };
+    saveTheme();
+    renderOptions();
+  };
+  const del = $("themeDel");
+  if (del) del.onclick = () => {
+    state.themes = state.themes.filter((_, i) => `u${i}` !== cur);
+    saveThemeList();
+    renderThemeList();
+  };
 }
 
 function renderOptions(){
@@ -5325,6 +5396,7 @@ function renderOptions(){
       ${sliderRow("Corner radius", "cardRadius", 0, 28, 1, "px")}
       ${sliderRow("Border width", "cardBorder", 0, 8, 1, "px")}
       ${sliderRow("Active border width", "cardActiveBorder", 0, 8, 1, "px")}
+      ${sliderRow("Hover frame brightness", "cardHover", 0, 100, 1, "%")}
       ${sliderRow("Thumb block thickness", "cardPad", 0, 32, 1, "px")}
       ${sliderRow("Menu row height", "menuRowH", Math.max(20, Math.round(t.textSize * 1.7)), 200, 1, "px")}
       ${sliderRow("Menu row gap", "menuGap", 0, 200, 1, "px")}
@@ -5625,6 +5697,12 @@ document.addEventListener("keydown", (e) => {
   if (!$("fbOverlay").hidden) return;
   if (e.key === "Backspace" && !typing && hoveredSliderReset){ e.preventDefault(); hoveredSliderReset(); return; }
   if (e.key === "/" && !typing){ e.preventDefault(); $("q").focus(); return; }
+  // Ctrl+A selects items (of whichever pane was last used), not the interface text.
+  if ((e.metaKey || e.ctrlKey) && e.code === "KeyA" && !e.shiftKey && !e.altKey && !typing && !light){
+    e.preventDefault();
+    selectAllInActivePane();
+    return;
+  }
   if (e.key === "Escape"){
     if (light){ closeLight(); return; }
     if (document.activeElement === $("q") || state.filter.q){ clearSearch(); $("q").blur(); return; }
