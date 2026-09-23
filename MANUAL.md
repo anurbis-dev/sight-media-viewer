@@ -48,6 +48,34 @@
   back on the next launch, whichever port or browser profile it opens on.
   **Reset all to defaults** (Settings panel, or `Ctrl/Cmd+K`) puts the theme, 3D viewer settings and
   tile size back to the app defaults; your saved views, model turns and named themes stay.
+- **Canvas (boards)** — the **Canvas** section in the sidebar holds boards: free-form moodboards.
+  `+` creates one; click a board to open it, click it again to close. Double-click a board to rename
+  it, right-click it to change its icon/colour, drag rows to reorder. A board opens **beside the
+  library** so you can drag files from the grid onto it (the header button ◧ hides/shows the library
+  pane; drag the divider to resize it — the size is remembered — and double-click the divider to
+  switch between side by side and stacked). The same asset can be placed on a board any number of times.
+  - **Move around:** middle-drag (or Alt+drag on empty space) pans, mouse wheel pans, Ctrl+wheel or
+    right-drag zooms — the same zoom controls as the full-screen preview. `F` frames the selection
+    (everything if nothing is selected), `A` frames everything.
+  - **Select:** click, Shift/Ctrl-click, or drag a box (plain drag replaces the selection, Ctrl-drag
+    toggles, Ctrl+Shift-drag adds — same as in the library, and it also works when you start over an
+    item). `Ctrl+A` selects all in the pane you last used. `Esc` clears.
+  - **Transform:** one frame with a corner handle (resize; Shift keeps the picture's proportions) and a
+    knob above (rotate; Shift = 15° steps). With several items selected the frame is common to all and
+    scales / rotates them together. Hold Ctrl while moving or resizing to snap to the dot grid.
+  - **Crop (non-destructive):** hold **Alt** over an item — grips appear on its edges and corners; drag
+    one to crop that side (the picture stays where it is; drag back out to restore). **Alt+drag on the
+    picture** slides it inside the crop. Resizing a cropped item keeps its proportions; **Shift** while
+    resizing removes the crop. The original file is never touched.
+  - **Edit:** `Ctrl+D` duplicates (a new instance of the same file), `X` / `Delete` removes from the
+    board, `Alt+X` / `Alt+V` mirror horizontally / vertically, `[` / `]` move one layer back / forward,
+    `↑` / `↓` bring to front / send to back, `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo.
+  - **Arrange (PureRef's shortcuts; act on the selection, or on everything if nothing is selected):**
+    `Ctrl+←/→/↑/↓` align left/right/top/bottom (items stop against each other, they don't overlap);
+    `Ctrl+Alt+←/→/↑/↓` normalize height / width / size / scale; `Ctrl+Alt+Shift+↑/↓` distribute in a
+    row / column; `Ctrl+P` arrange optimally to fit the view; `Ctrl+Alt+N/A/O/D/R` arrange by name /
+    addition / layer order / path / randomly (press again to reverse); `Ctrl+Alt+S` stack.
+  - Boards, their items, crops and the camera position are saved automatically.
 - **Excluding folders** — the × next to a subfolder removes it from the library; everything
   under it goes with it, so its subfolders aren't listed while it's excluded.
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
