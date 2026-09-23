@@ -105,6 +105,7 @@ button:disabled { cursor: default; opacity: .4; }
 .side { width: 248px; flex: none; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); border-right: 1px solid var(--border); min-height: 0; position: relative; }
 .side.panning { cursor: grabbing; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.main-body { flex: 1; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
 .insp { width: 300px; flex: none; border-left: 1px solid var(--border); padding: var(--space-4); overflow: auto; min-height: 0; background: var(--surface); }
 .brand { display: flex; gap: var(--space-3); align-items: center; }
 .mark { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--display); font-size: 18px; color: var(--accent); }
@@ -160,7 +161,7 @@ button:disabled { cursor: default; opacity: .4; }
 .top-pop .opt { padding: 0 10px; height: 34px; }
 input::placeholder, textarea::placeholder { color: var(--subtle); }
 .count { font-size: 12px; color: var(--subtle); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.grid { position: relative; overflow: auto; flex: 1; min-height: 0; padding: var(--space-4); cursor: default; user-select: none; -webkit-user-select: none; }
+.grid { position: relative; overflow: auto; flex: 1; min-width: 0; min-height: 0; padding: var(--space-4); cursor: default; user-select: none; -webkit-user-select: none; }
 .grid.panning { cursor: grabbing; }
 .space { position: relative; width: 100%; }
 .slice { position: absolute; left: 0; right: 0; top: 0; display: grid; gap: var(--grid-gap); align-content: start; grid-auto-rows: var(--row-h, auto); }
@@ -473,11 +474,14 @@ label.field textarea { min-height: 72px; resize: vertical; }
         <div class="top-pop" id="sortPop" hidden></div>
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
         <div class="top-pop" id="viewOptPop" hidden></div>
+        <button class="btn ghost icon" id="splitBtn" type="button" title="Show library alongside the board" hidden>◧</button>
       </div>
       <div class="count" id="count"></div>
     </div>
-    <div class="grid" id="grid"></div>
-    <div class="canvas-view" id="canvasView" hidden></div>
+    <div class="main-body" id="mainBody">
+      <div class="grid" id="grid"></div>
+      <div class="canvas-view" id="canvasView" hidden></div>
+    </div>
   </section>
   <aside class="insp" id="insp"></aside>
 </div>
@@ -666,7 +670,7 @@ function loadNavOrder(){
   return [...NAV_SECTIONS];
 }
 function saveLayout(){
-  putSetting(LAYOUT_KEY, JSON.stringify({ details: state.details, navCollapse: state.navCollapse, navOrder: state.navOrder, settingsOpen: state.settingsOpen, showIcons: state.showIcons }));
+  putSetting(LAYOUT_KEY, JSON.stringify({ details: state.details, navCollapse: state.navCollapse, navOrder: state.navOrder, settingsOpen: state.settingsOpen, showIcons: state.showIcons, canvasSplit: state.canvasSplit }));
 }
 function toggleDetails(){
   state.details = !state.details;
@@ -706,12 +710,13 @@ const state = {
   sourceTree: { expandedSources: new Set(), expandedPaths: new Set(), dirsCache: new Map() },
   v3d: loadV3D(),
   v3dPanelOpen: false,
-  view: "library", // "library" | "canvas" — see setView()
+  view: "library", // "library" | "canvas" — a board is open; see setView()/applyViewDom()
   canvasBoardId: null,
+  canvasSplit: savedLayout.canvasSplit !== false, // show the grid alongside an open board
 };
 
 const $ = (id) => document.getElementById(id);
-const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status"), canvasView = $("canvasView");
+const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status"), canvasView = $("canvasView"), splitBtn = $("splitBtn");
 let sliceEl = null, spaceEl = null;
 let visTimer = 0, pullTimer = 0, renderRAF = 0;
 const seenThumb = new Set();
@@ -1918,11 +1923,26 @@ function renderTypes(set){
 }
 
 // Swaps the main content area between the library grid and a canvas board — the first alternate
-// main view this app has ever had, so this stays a plain visibility toggle rather than a router.
+// main view this app has ever had, so this stays a plain visibility toggle rather than a router
+// (#mainBody lays grid+canvasView out side by side; applyViewDom() just decides which show).
+// A board is always shown split with the grid by default (state.canvasSplit) since the grid is
+// the drag source for placing files onto the board — splitBtn lets it be hidden for a full-width
+// board when not needed.
+function applyViewDom(){
+  const showCanvas = state.view === "canvas";
+  grid.hidden = showCanvas && !state.canvasSplit;
+  canvasView.hidden = !showCanvas;
+  splitBtn.hidden = !showCanvas;
+  splitBtn.classList.toggle("on", state.canvasSplit);
+}
 function setView(mode){
   state.view = mode;
-  grid.hidden = mode === "canvas";
-  canvasView.hidden = mode !== "canvas";
+  applyViewDom();
+}
+function toggleCanvasSplit(){
+  state.canvasSplit = !state.canvasSplit;
+  applyViewDom();
+  saveLayout();
 }
 
 let canvasCtl = null;
@@ -1930,13 +1950,22 @@ function ensureCanvasCtl(){
   if (!canvasCtl){
     canvasCtl = createCanvasView({
       mount: canvasView,
-      onClose: () => { canvasCtl.close(); state.canvasBoardId = null; setView("library"); renderNav(); },
+      getZoomSettings: () => state.theme,
     });
   }
   return canvasCtl;
 }
 
+// Clicking the already-open board's row again closes it (there is no separate "back" button —
+// see the Phase 1 feedback that removed the canvas toolbar entirely).
 async function openBoard(id){
+  if (state.view === "canvas" && state.canvasBoardId === id){
+    canvasCtl?.close();
+    state.canvasBoardId = null;
+    setView("library");
+    renderNav();
+    return;
+  }
   state.canvasBoardId = id;
   setView("canvas");
   renderNav();
@@ -1972,6 +2001,7 @@ function renderCanvasBoards(){
     b.innerHTML = `${iconHtml}<span>${esc(bd.name)}</span><em class="badge">${bd.itemCount || 0}</em><button class="tiny" data-act="del" aria-label="Delete board">×</button>`;
     b.onclick = (e) => {
       if (e.target.closest("button")) return;
+      if (navDblClick("board:" + bd.id)){ startRename(); return; }
       openBoard(bd.id);
     };
     const startRename = () => {
@@ -1992,13 +2022,20 @@ function renderCanvasBoards(){
         if (ev.key === "Escape") { inp.onblur = null; inp.blur(); refreshMeta(); }
       };
     };
-    b.ondblclick = (e) => { if (!e.target.closest("button")) startRename(); };
     b.querySelector('[data-act="del"]').onclick = async (e) => {
       e.stopPropagation();
       await api("/api/boards/" + bd.id, { method: "DELETE" });
-      if (state.canvasBoardId === bd.id) setView("library");
+      if (state.canvasBoardId === bd.id){
+        canvasCtl?.close();
+        state.canvasBoardId = null;
+        setView("library");
+      }
       await refreshMeta();
     };
+    b.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showBoardCtx(e.clientX, e.clientY, bd.id);
+    });
     bindRowDrag(b, { mime: "application/x-sight-board", rowSelector: ".board-row", idKey: "bid", reorderUrl: "/api/boards/reorder" });
     wrap.append(b);
   });
@@ -4514,6 +4551,36 @@ function showCollectionCtx(x, y, cid){
   };
 }
 
+function showBoardCtx(x, y, bid){
+  const menu = $("ctx");
+  menu.className = "ctx";
+  menu.innerHTML = `<button type="button" data-act="icon">Change icon…</button>`;
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  menu.onclick = (e) => {
+    if (!e.target.closest('[data-act="icon"]')) return;
+    const bd = (state.meta.boards || []).find((b) => b.id === bid);
+    if (!bd) return;
+    showIconPicker(x, y, {
+      icon: bd.icon || "",
+      color: bd.color || "",
+      mode: "board",
+      onPick: async (icon, color) => {
+        await api("/api/boards/" + bid, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ icon, color }) });
+        await refreshMeta();
+      },
+      onClear: async () => {
+        await api("/api/boards/" + bid, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ icon: null, color: null }) });
+        await refreshMeta();
+      },
+    });
+  };
+}
+
 function showTagCtx(x, y, tag){
   const menu = $("ctx");
   menu.className = "ctx";
@@ -4560,7 +4627,7 @@ function showIconPicker(x, y, { icon, color, mode = "collection", onPick, onColo
   const menu = $("ctx");
   menu.className = "ctx icon-picker";
   const curColor = /^#[0-9a-f]{6}$/i.test(color || "") ? color : "#8b8b8b";
-  let selectedIcon = icon || (mode === "collection" ? "folder" : "");
+  let selectedIcon = icon || (mode === "collection" ? "folder" : mode === "board" ? "pin" : "");
   menu.innerHTML = `
     <div class="ip-color">
       <input type="color" id="ipColor" value="${curColor}">
@@ -5376,6 +5443,7 @@ function renderViewOptPop(){
   });
 }
 $("viewOptBtn").onclick = () => toggleTopPop("viewOptPop", renderViewOptPop);
+splitBtn.onclick = toggleCanvasSplit;
 
 // Only one of the two top-bar dropdowns is open at a time; tracked by element id so the button
 // that owns it can show an "active" state.
@@ -5701,6 +5769,7 @@ function startWindowTracker(saved){
 applyUi();
 insp.style.display = state.details ? "" : "none";
 startWindowTracker(serverSettings?.window);
+applyViewDom();
 renderOptions();
 renderSortBtn();
 renderNav();

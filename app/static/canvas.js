@@ -1,8 +1,14 @@
 // Canvas boards — an infinite moodboard-style view for arranging library assets freely.
 // Self-contained ES module: no imports from index.html (an inline <script type="module"> has no
 // URL of its own to import from), so this file owns its own tiny api()/esc() helpers and asset
-// metadata cache instead of receiving them by dependency injection. index.html only hands it a
-// mount element and an onClose callback — see createCanvasView() at the bottom.
+// metadata cache instead of receiving them by dependency injection. index.html hands it a mount
+// element and a getZoomSettings() accessor (state.theme.zoomAxis/zoomSpeed/zoomInvert), so the
+// right-drag/wheel zoom feel matches the lightbox's image zoom exactly — see createCanvasView().
+//
+// The view is always shown split alongside the library grid (index.html's #mainBody puts them
+// side by side; a header button toggles whether the grid pane is visible) — there is no back
+// button or toolbar here, and no separate "add files" UI, because the grid itself is the source
+// for the existing card drag (application/x-sight-ids), same as dropping onto a Collection.
 
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
@@ -26,11 +32,10 @@ function injectStyles(){
   stylesInjected = true;
   const style = document.createElement("style");
   style.textContent = `
-.canvas-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
-.canvas-toolbar { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--border); flex: none; }
-.canvas-toolbar .btn { height: 32px; padding: 0 12px; }
-.canvas-board-name { font-weight: 600; color: var(--fg); font-size: 14px; }
-.canvas-zoom { margin-left: auto; color: var(--subtle); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+/* :not([hidden]) rather than a bare display:flex here: a same-specificity class rule declared
+   after the UA [hidden]{display:none} rule would otherwise win the cascade by source order and
+   defeat "hidden" entirely — this way the rule simply doesn't match while hidden is set. */
+.canvas-view:not([hidden]) { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); border-left: 1px solid var(--border); }
 .canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: default; background-color: var(--surface);
   background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px); background-size: 24px 24px;
   user-select: none; -webkit-user-select: none; }
@@ -45,15 +50,7 @@ function injectStyles(){
 .citem.selected .chandle, .citem.selected .crot { display: block; }
 .citem .chandle { right: -6px; bottom: -6px; cursor: nwse-resize; }
 .citem .crot { left: 50%; top: -20px; margin-left: -6px; cursor: grab; }
-.canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 13px; pointer-events: none; }
-.canvas-picker { position: absolute; top: 44px; left: 16px; z-index: 5; width: 280px; max-height: 360px; display: flex; flex-direction: column;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .35); overflow: hidden; }
-.canvas-picker input { height: 34px; margin: 8px; width: calc(100% - 16px); border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); padding: 0 8px; outline: none; }
-.canvas-picker-list { overflow: auto; padding: 0 4px 6px; }
-.canvas-picker-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 8px; border-radius: 6px; color: var(--fg); text-align: left; }
-.canvas-picker-row:hover { background: var(--surface-3); }
-.canvas-picker-row span.k { margin-left: auto; font-size: 11px; color: var(--subtle); }
-.canvas-picker-empty { padding: 10px; font-size: 12px; color: var(--subtle); }
+.canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 13px; pointer-events: none; text-align: center; padding: 24px; }
 `;
   document.head.appendChild(style);
 }
@@ -73,27 +70,13 @@ function thumbUrl(a){
   return "/api/thumb/" + a.id + (a.thumb_v ? "?v=" + a.thumb_v : "");
 }
 
-export function createCanvasView({ mount, onClose }){
+export function createCanvasView({ mount, getZoomSettings }){
   injectStyles();
+  const zoomSettings = getZoomSettings || (() => ({ zoomAxis: "y", zoomSpeed: 1, zoomInvert: false }));
 
-  mount.innerHTML = `
-    <div class="canvas-toolbar">
-      <button class="btn ghost" type="button" data-act="back">← Library</button>
-      <button class="btn ghost" type="button" data-act="add">+ Add files</button>
-      <span class="canvas-board-name" data-el="name"></span>
-      <span class="canvas-zoom" data-el="zoom" title="Reset zoom to 100%">100%</span>
-    </div>
-    <div class="canvas-viewport" data-el="viewport">
-      <div class="canvas-world" data-el="world"></div>
-    </div>
-  `;
-  const nameEl = mount.querySelector('[data-el="name"]');
-  const zoomEl = mount.querySelector('[data-el="zoom"]');
+  mount.innerHTML = `<div class="canvas-viewport" data-el="viewport"><div class="canvas-world" data-el="world"></div></div>`;
   const viewportEl = mount.querySelector('[data-el="viewport"]');
   const worldEl = mount.querySelector('[data-el="world"]');
-  const addBtn = mount.querySelector('[data-act="add"]');
-  mount.querySelector('[data-act="back"]').onclick = () => onClose?.();
-  zoomEl.onclick = () => setZoomAroundCenter(1);
 
   let isOpen = false;
   let boardId = null;
@@ -107,15 +90,10 @@ export function createCanvasView({ mount, onClose }){
 
   function worldTransform(){
     worldEl.style.transform = `translate(${vx}px, ${vy}px) scale(${zoom})`;
-    zoomEl.textContent = Math.round(zoom * 100) + "%";
   }
   function screenToWorld(clientX, clientY){
     const r = viewportEl.getBoundingClientRect();
     return { x: (clientX - r.left - vx) / zoom, y: (clientY - r.top - vy) / zoom };
-  }
-  function setZoomAroundCenter(z){
-    const r = viewportEl.getBoundingClientRect();
-    zoomAt(r.width / 2, r.height / 2, z);
   }
   function zoomAt(px, py, targetZoom){
     const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetZoom));
@@ -131,10 +109,6 @@ export function createCanvasView({ mount, onClose }){
     dom.clear();
     items.clear();
     selection.clear();
-  }
-
-  function itemLabel(a){
-    return a ? a.name : "";
   }
 
   function buildItemEl(item){
@@ -153,7 +127,7 @@ export function createCanvasView({ mount, onClose }){
       if (!dom.has(item.id)) return; // item was removed before the fetch resolved
       const box = el.querySelector(".citem-box");
       const label = el.querySelector(".citem-label");
-      label.textContent = itemLabel(a);
+      label.textContent = a ? a.name : "";
       if (a && a.has_thumb){
         box.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
       } else {
@@ -203,6 +177,22 @@ export function createCanvasView({ mount, onClose }){
     for (const id of ids) selection.add(id);
     for (const item of items.values()) layoutItemEl(item);
   }
+  // Mirrors applyMarquee()'s replace/add/toggle rules for the library grid's own box-select
+  // (index.html, bound to the same modifier keys: plain drag = replace, Ctrl+drag = toggle,
+  // Ctrl+Shift+drag = add) so box-select behaves identically in both places.
+  function applyMarqueeSelection(mode, origin, hits){
+    if (mode === "add") setSelection([...new Set([...origin, ...hits])]);
+    else if (mode === "toggle"){
+      const originSet = new Set(origin);
+      const next = new Set(origin);
+      for (const id of hits){
+        if (originSet.has(id)) next.delete(id);
+        else next.add(id);
+      }
+      setSelection([...next]);
+    } else setSelection(hits);
+  }
+
   // ---- persistence -------------------------------------------------------------------------
   let saveTimer = 0;
   const dirty = new Map(); // id -> partial fields pending a batch PATCH
@@ -326,24 +316,46 @@ export function createCanvasView({ mount, onClose }){
         const w = screenToWorld(e.clientX, e.clientY);
         const angle = Math.atan2(w.y - drag.cy, w.x - drag.cx) * 180 / Math.PI;
         const it = items.get(drag.id);
-        it.rotation = Math.round(drag.startRotation + (angle - drag.startAngle));
+        let rotation = drag.startRotation + (angle - drag.startAngle);
+        if (e.shiftKey) rotation = Math.round(rotation / 15) * 15; // snap to absolute 15° steps
+        it.rotation = Math.round(rotation);
         layoutItemEl(it);
       }
       return;
     }
     if (drag && drag.kind === "marquee"){
-      const x0 = Math.min(drag.startClient.x, e.clientX), x1 = Math.max(drag.startClient.x, e.clientX);
-      const y0 = Math.min(drag.startClient.y, e.clientY), y1 = Math.max(drag.startClient.y, e.clientY);
-      Object.assign(drag.el.style, { left: x0 + "px", top: y0 + "px", width: (x1 - x0) + "px", height: (y1 - y0) + "px" });
+      const w = e.clientX - drag.startClient.x, h = e.clientY - drag.startClient.y;
+      if (!drag.active && Math.hypot(w, h) > 4){
+        drag.active = true;
+        drag.el = document.createElement("div");
+        drag.el.className = "marquee";
+        document.body.appendChild(drag.el);
+      }
+      if (drag.active){
+        const x = Math.min(drag.startClient.x, e.clientX), y = Math.min(drag.startClient.y, e.clientY);
+        Object.assign(drag.el.style, { left: x + "px", top: y + "px", width: Math.abs(w) + "px", height: Math.abs(h) + "px" });
+        const a = screenToWorld(x, y), b = screenToWorld(x + Math.abs(w), y + Math.abs(h));
+        const hits = [...items.values()].filter((it) => it.x < b.x && it.x + it.w > a.x && it.y < b.y && it.y + it.h > a.y).map((it) => it.id);
+        applyMarqueeSelection(drag.mode, drag.origin, hits);
+      }
       return;
     }
     if (drag && drag.kind === "pan"){
       vx = drag.startVx + (e.clientX - drag.startClient.x);
       vy = drag.startVy + (e.clientY - drag.startClient.y);
       worldTransform();
+      return;
+    }
+    if (drag && drag.kind === "zoomdrag"){
+      // Right-drag zoom: same formula, and the same theme axis/speed/invert knobs, as the
+      // lightbox's image zoom (bindStageDrag in index.html) — one zoom control everywhere.
+      const zs = zoomSettings();
+      const raw = zs.zoomAxis === "x" ? (e.clientX - drag.x) : (drag.y - e.clientY);
+      const d = (zs.zoomInvert ? -raw : raw) * 0.012 * (zs.zoomSpeed ?? 1);
+      zoomAt(drag.mx, drag.my, drag.scale * Math.exp(d));
     }
   }
-  function onPointerUp(e){
+  function onPointerUp(){
     if (!drag) return;
     if ((drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate") && drag.moved){
       const affectedIds = drag.kind === "move" ? drag.starts.map((s) => s.id) : [drag.id];
@@ -351,57 +363,67 @@ export function createCanvasView({ mount, onClose }){
       pushUndo({ type: "move", before: drag.before, after });
       for (const it of after) scheduleSave(it.id, it);
     } else if (drag.kind === "marquee"){
-      drag.el.remove();
-      const r = drag.el._rect;
-      if (r){
-        const a = screenToWorld(r.x0, r.y0), b = screenToWorld(r.x1, r.y1);
-        const picked = [...items.values()].filter((it) => it.x < b.x && it.x + it.w > a.x && it.y < b.y && it.y + it.h > a.y).map((it) => it.id);
-        setSelection(picked);
-      }
+      if (drag.el) drag.el.remove();
+      if (!drag.active && drag.mode === "replace") setSelection([]);
     }
     drag = null;
   }
 
-  // ---- background: pan, marquee-select, wheel zoom -------------------------------------------
+  // ---- background: pan (middle button, or Alt+left), right-drag zoom, marquee-select --------
+  // Middle/right-button handling is checked before the "did we actually click the background"
+  // gate below so pan/zoom work with the cursor over an item too, not just over empty canvas.
   viewportEl.addEventListener("pointerdown", (e) => {
-    if (e.target !== viewportEl && e.target !== worldEl) return; // clicked an item, handled above
     if (e.button === 1 || (e.button === 0 && e.altKey)){
+      e.preventDefault();
       drag = { kind: "pan", startClient: { x: e.clientX, y: e.clientY }, startVx: vx, startVy: vy };
       viewportEl.style.cursor = "grabbing";
       el_setPointerCapture(e);
       return;
     }
+    if (e.button === 2){
+      e.preventDefault();
+      const r = viewportEl.getBoundingClientRect();
+      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom };
+      el_setPointerCapture(e);
+      return;
+    }
     if (e.button !== 0) return;
-    setSelection([]);
-    const marqueeEl = document.createElement("div");
-    marqueeEl.className = "marquee";
-    document.body.appendChild(marqueeEl);
-    drag = { kind: "marquee", startClient: { x: e.clientX, y: e.clientY }, el: marqueeEl };
-    el_setPointerCapture(e);
+    if (e.target !== viewportEl && e.target !== worldEl) return; // clicked an item — its own handler deals with it
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl){
+      e.preventDefault();
+      drag = { kind: "marquee", startClient: { x: e.clientX, y: e.clientY }, mode: e.shiftKey ? "add" : "toggle", active: false, origin: [...selection] };
+      el_setPointerCapture(e);
+      return;
+    }
+    if (!e.shiftKey){
+      e.preventDefault();
+      drag = { kind: "marquee", startClient: { x: e.clientX, y: e.clientY }, mode: "replace", active: false, origin: [...selection] };
+      el_setPointerCapture(e);
+    }
   });
   window.addEventListener("pointermove", (e) => { if (isOpen) onPointerMove(e); });
-  window.addEventListener("pointerup", (e) => {
+  window.addEventListener("pointerup", () => {
     if (!isOpen) return;
-    if (drag && drag.kind === "marquee"){
-      drag.el._rect = { x0: Math.min(drag.startClient.x, e.clientX), y0: Math.min(drag.startClient.y, e.clientY), x1: Math.max(drag.startClient.x, e.clientX), y1: Math.max(drag.startClient.y, e.clientY) };
-    }
     if (drag && drag.kind === "pan") viewportEl.style.cursor = "default";
-    onPointerUp(e);
+    onPointerUp();
   });
   viewportEl.addEventListener("wheel", (e) => {
     e.preventDefault();
     const r = viewportEl.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
     if (e.ctrlKey || e.metaKey){
-      zoomAt(px, py, zoom * Math.exp(-e.deltaY * 0.0015));
+      const zs = zoomSettings();
+      const d = (zs.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (zs.zoomSpeed ?? 1);
+      zoomAt(px, py, zoom * Math.exp(d));
     } else {
       vx -= e.deltaX; vy -= e.deltaY;
       worldTransform();
     }
   }, { passive: false });
 
-  // ---- placing assets (drag-from-library and the "+ Add files" picker share this) -----------
-  let placeCount = 0; // staggers items added from the picker, which has no drop point of its own
+  // ---- placing assets: drag a card in from the library grid (now shown side by side, see
+  // index.html's split view) the same way dropping onto a Collection already works. ----------
   async function placeAssetsAt(ids, anchor){
     const created = [];
     let i = 0;
@@ -425,8 +447,6 @@ export function createCanvasView({ mount, onClose }){
     if (created.length) pushUndo({ type: "add", items: created });
     return created;
   }
-
-  // ---- drag-from-library ----------------------------------------------------------------------
   viewportEl.addEventListener("dragover", (e) => {
     if (!e.dataTransfer.types.includes("application/x-sight-ids")) return;
     e.preventDefault();
@@ -438,52 +458,6 @@ export function createCanvasView({ mount, onClose }){
     let ids = [];
     try { ids = JSON.parse(e.dataTransfer.getData("application/x-sight-ids")); } catch { return; }
     if (Array.isArray(ids) && ids.length) placeAssetsAt(ids, screenToWorld(e.clientX, e.clientY));
-  });
-
-  // ---- "+ Add files" picker ---------------------------------------------------------------------
-  // The canvas view fully replaces the library grid (see setView() in index.html), so there is no
-  // visible card to drag from while a board is open — this search-and-click picker is the primary
-  // way to place assets; the native drag handler above still works for a future split-view.
-  let pickerEl = null, pickerReq = 0;
-  function closePicker(){ pickerEl?.remove(); pickerEl = null; }
-  function viewportCenterWorld(){
-    const r = viewportEl.getBoundingClientRect();
-    return screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
-  }
-  function openPicker(){
-    if (pickerEl) { closePicker(); return; }
-    pickerEl = document.createElement("div");
-    pickerEl.className = "canvas-picker";
-    pickerEl.innerHTML = `<input type="text" placeholder="Search files…"><div class="canvas-picker-list"></div>`;
-    mount.appendChild(pickerEl);
-    const input = pickerEl.querySelector("input");
-    const list = pickerEl.querySelector(".canvas-picker-list");
-    const search = async (q) => {
-      const reqId = ++pickerReq;
-      let data;
-      try { data = await api("/api/assets?limit=30" + (q ? "&q=" + encodeURIComponent(q) : "")); } catch { return; }
-      if (reqId !== pickerReq || !pickerEl) return;
-      const rows = data.items || [];
-      if (!rows.length){ list.innerHTML = `<div class="canvas-picker-empty">No matches</div>`; return; }
-      list.innerHTML = rows.map((a) => `<button type="button" class="canvas-picker-row" data-id="${a.id}"><span>${esc(a.name)}</span><span class="k">${esc(a.kind)}</span></button>`).join("");
-      list.querySelectorAll(".canvas-picker-row").forEach((row) => {
-        row.onclick = () => {
-          const anchor = viewportCenterWorld();
-          anchor.x += (placeCount % 5) * 24; anchor.y += (placeCount % 5) * 24;
-          placeCount++;
-          placeAssetsAt([row.dataset.id], anchor);
-        };
-      });
-    };
-    let searchTimer = 0;
-    input.oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => search(input.value.trim()), 200); };
-    search("");
-    requestAnimationFrame(() => input.focus());
-  }
-  addBtn.onclick = (e) => { e.stopPropagation(); openPicker(); };
-  document.addEventListener("pointerdown", (e) => {
-    if (!isOpen || !pickerEl) return;
-    if (!pickerEl.contains(e.target) && e.target !== addBtn) closePicker();
   });
 
   // ---- keyboard -------------------------------------------------------------------------------
@@ -534,10 +508,8 @@ export function createCanvasView({ mount, onClose }){
     isOpen = true;
     boardId = id;
     clearWorld();
-    nameEl.textContent = "Loading…";
     const full = await api(`/api/boards/${id}/full`);
     boardId = id; // guard against a stale response if the user switched boards mid-fetch
-    nameEl.textContent = full.board.name;
     vx = full.board.viewport_x || 0;
     vy = full.board.viewport_y || 0;
     zoom = full.board.viewport_zoom || 1;
@@ -547,7 +519,6 @@ export function createCanvasView({ mount, onClose }){
   }
   function close(){
     isOpen = false;
-    closePicker();
     persistCurrent();
   }
 
