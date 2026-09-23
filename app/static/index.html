@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Sight</title>
 <meta name="color-scheme" content="dark" />
-<meta name="theme-color" content="#0a0a0b" />
+<meta name="theme-color" content="#151619" />
 <script>
 // The UI fades in (see html.booting #app / #app transition below) once the module below has
 // applied the user's theme and laid out the shell — otherwise the first paint is the stock look
@@ -56,10 +56,10 @@
 <link href="/static/vendor/fonts.css" rel="stylesheet" />
 <style>
 :root {
-  --bg: #0a0a0b;
-  --surface: #121214;
-  --surface-2: #1a1a1e;
-  --surface-3: #222228;
+  --bg: #151619;
+  --surface: #1b1c20;
+  --surface-2: #212226;
+  --surface-3: #292a30;
   --fg: #f2f2f0;
   --muted: #a1a19a;
   --subtle: #71716c;
@@ -88,7 +88,7 @@
   --card-active-color: #f2f2f0;
   --card-active-border-w: 1px;
   --card-pad: 8px;
-  --card-bg: #121214;
+  --card-bg: #1c1d21;
   --text-size: 15px;
   --menu-row-h: 40px;
   --menu-gap: 2px;
@@ -237,21 +237,21 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .stack i img { width: 100%; height: 100%; object-fit: cover; }
 .stack .more { position: absolute; right: 10px; bottom: 8px; z-index: 8; font-size: 11px; color: var(--subtle); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 11px; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 6px 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: calc(var(--text-size) - 3px); color: var(--fg); }
 .chip.partial { opacity: .5; }
-.chip-x { all: unset; cursor: pointer; line-height: 1; font-size: 13px; padding: 0 2px; border-radius: 50%; color: var(--muted); }
+.chip-x { all: unset; cursor: pointer; line-height: 1; font-size: calc(var(--text-size) - 1px); padding: 0 2px; border-radius: 50%; color: var(--muted); }
 .chip-x:hover { color: var(--fg); background: var(--border); }
 .dd-multi { color: var(--subtle); font-style: italic; }
-dl { display: grid; grid-template-columns: 76px 1fr; gap: 6px 12px; font-size: 12px; color: var(--muted); }
+dl { display: grid; grid-template-columns: 76px 1fr; gap: 6px 12px; font-size: calc(var(--text-size) - 3px); color: var(--muted); }
 dd { margin: 0; color: var(--fg); word-break: break-all; }
-label.field { display: block; font-size: 11px; color: var(--subtle); margin-top: 12px; position: relative; }
+label.field { display: block; font-size: calc(var(--text-size) - 4px); color: var(--subtle); margin-top: 12px; position: relative; }
 label.field input, label.field textarea, label.field select {
   margin-top: 6px; width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border);
-  background: var(--surface-2); padding: 8px 10px; outline: none;
+  background: var(--surface-2); padding: 8px 10px; outline: none; font: calc(var(--text-size) - 1px)/1.5 var(--font); color: var(--fg);
 }
 label.field textarea { min-height: 72px; resize: vertical; }
 .suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 8; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-top: 4px; max-height: 160px; overflow: auto; }
-.suggest button { display: block; width: 100%; text-align: left; padding: 8px 10px; font-size: 12px; color: var(--fg); }
+.suggest button { display: block; width: 100%; text-align: left; padding: 8px 10px; font-size: calc(var(--text-size) - 3px); color: var(--fg); }
 .suggest button:hover, .suggest button.on { background: var(--surface-3); }
 .actions { display: flex; gap: 8px; margin-top: 16px; }
 .actions .btn { flex: 1; }
@@ -392,7 +392,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .palette-empty { padding: 24px; text-align: center; color: var(--subtle); font-size: 13px; }
 .banner { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .marquee { position: fixed; z-index: 80; border: 1px solid var(--accent); background: color-mix(in oklab, var(--accent) 18%, transparent); pointer-events: none; }
-.tagq { height: 32px; margin: 0 8px 6px; width: calc(100% - 16px); border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 8px; font-size: 12px; outline: none; }
+.tagq { height: 32px; margin: 0 8px 6px; width: calc(100% - 16px); border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 8px; font-size: calc(var(--text-size) - 3px); color: var(--fg); outline: none; }
 .fb-overlay { position: fixed; inset: 0; z-index: 110; background: rgb(0 0 0 / .5); display: flex; align-items: center; justify-content: center; }
 .fb-overlay[hidden] { display: none; }
 .fb-modal { width: min(92vw, 680px); height: min(74vh, 540px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 24px 64px rgb(0 0 0 / .5); overflow: hidden; }
@@ -509,14 +509,23 @@ const SORT_OPTIONS = [
 // must be defined before `state` below, since state.theme = loadTheme() reads DEFAULT_THEME.
 const DEFAULT_THEME = {
   name: true, kind: true, created: false, res: false, size: false, videoCache: 128,
-  bg: "#0a0a0b", fg: "#f2f2f0", border: "#f2f2f0", button: "#ece8e1",
+  bg: "#151619", fg: "#f2f2f0", border: "#f2f2f0", button: "#ece8e1",
   font: "IBM Plex Sans", textSize: 15,
-  gridGap: 10, cardRadius: 16, cardBorder: 1, cardPad: 8, cardBg: "#121214", menuRowH: 40, menuGap: 2,
+  gridGap: 10, cardRadius: 16, cardBorder: 1, cardPad: 8, cardBg: "#1c1d21", menuRowH: 40, menuGap: 2,
   cardActiveColor: "#f2f2f0", cardActiveBorder: 1,
   waveColor: "#5b8cff", waveMode: "mirror",
   zoomSpeed: 1, zoomAxis: "y", zoomInvert: false,
   maskShape: "free", maskRadius: 0, // fullscreen preview frame — see MASKS / applyLightFrame()
 };
+// Built-in theme presets, selectable in Settings alongside user-saved ones (renderThemeList()).
+// Each entry only overrides the color/typography knobs — everything else (layout numbers,
+// zoom, masks) stays at DEFAULT_THEME, same merge behavior as a saved custom theme.
+const BUILTIN_THEMES = [
+  { name: "Тёмная", builtin: true, vars: { bg: DEFAULT_THEME.bg, fg: DEFAULT_THEME.fg, border: DEFAULT_THEME.border, button: DEFAULT_THEME.button, cardBg: DEFAULT_THEME.cardBg, cardActiveColor: DEFAULT_THEME.cardActiveColor, waveColor: DEFAULT_THEME.waveColor } },
+  { name: "Мягкая тёмная", builtin: true, vars: { bg: "#22242a", fg: "#eceef2", border: "#8ea3ff", button: "#e7e9ef", cardBg: "#2a2c33", cardActiveColor: "#8ea3ff", waveColor: "#8ea3ff" } },
+  { name: "Светлая", builtin: true, vars: { bg: "#f1f2ef", fg: "#1c1d1b", border: "#2f6fed", button: "#232420", cardBg: "#ffffff", cardActiveColor: "#2f6fed", waveColor: "#2f6fed" } },
+  { name: "Тёплая", builtin: true, vars: { bg: "#f4ecdd", fg: "#3a2c1c", border: "#b5651d", button: "#3b2a1a", cardBg: "#fbf5ea", cardActiveColor: "#b5651d", waveColor: "#c17a3d" } },
+];
 // Fullscreen-preview masks: [id, label, width/height]. "free" = no mask (the preview fills the
 // stage); the rest clip the preview to a frame of that shape, centred in the stage.
 const MASKS = [
@@ -5080,16 +5089,17 @@ function sliderRow(label, key, min, max, step, unit){
 function renderThemeList(){
   const el = $("themeList");
   if (!el) return;
-  if (!state.themes.length){
-    el.innerHTML = `<p class="sub" style="padding:2px 8px">No saved themes yet.</p>`;
-    return;
-  }
-  el.innerHTML = state.themes.map((t, i) => `
-    <div class="row" data-i="${i}"><span>${esc(t.name)}</span><button class="tiny" data-act="del" aria-label="Delete">×</button></div>
-  `).join("");
-  el.querySelectorAll(".row").forEach((row) => {
-    const t = state.themes[Number(row.dataset.i)];
-    row.onclick = (e) => {
+  const row = (name, i, builtin) => `<div class="row" data-i="${i}" ${builtin ? 'data-builtin="1"' : ""}><span>${esc(name)}</span>${builtin ? "" : '<button class="tiny" data-act="del" aria-label="Delete">×</button>'}</div>`;
+  el.innerHTML = `
+    <div class="settings-sub" style="margin-top:2px">Built-in</div>
+    ${BUILTIN_THEMES.map((t, i) => row(t.name, i, true)).join("")}
+    <div class="settings-sub">My themes</div>
+    ${state.themes.length ? state.themes.map((t, i) => row(t.name, i, false)).join("") : `<p class="sub" style="padding:2px 8px">No saved themes yet.</p>`}
+  `;
+  el.querySelectorAll(".row").forEach((rowEl) => {
+    const builtin = rowEl.dataset.builtin === "1";
+    const t = (builtin ? BUILTIN_THEMES : state.themes)[Number(rowEl.dataset.i)];
+    rowEl.onclick = (e) => {
       if (e.target.dataset.act === "del"){
         e.stopPropagation();
         state.themes = state.themes.filter((x) => x !== t);
