@@ -617,6 +617,138 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             lib.prioritize([str(x) for x in extra], 1)
         return {"ok": True, "pending": lib.pending_thumbs()}
 
+    # ---- Canvas boards ---------------------------------------------------------------
+    # Infinite-canvas moodboards: named, ordered, holding freely positioned placements of
+    # library assets (board_items) plus text/drawing/shape annotations. Route shapes mirror
+    # the /api/collections block above.
+
+    @app.get("/api/boards")
+    def boards() -> list[dict]:
+        return lib.boards()
+
+    @app.post("/api/boards")
+    async def add_board(request: Request) -> dict:
+        body = await json_body(request)
+        return lib.add_board(str(body.get("name") or "Untitled"))
+
+    @app.patch("/api/boards/{bid}")
+    async def update_board(bid: str, request: Request) -> dict:
+        body = await json_body(request)
+        board = lib.update_board(bid, body)
+        if not board:
+            raise HTTPException(404)
+        return board
+
+    @app.delete("/api/boards/{bid}")
+    def drop_board(bid: str) -> dict:
+        lib.delete_board(bid)
+        return {"ok": True}
+
+    @app.post("/api/boards/reorder")
+    async def boards_reorder(request: Request) -> dict:
+        ids = (await json_body(request)).get("ids") or []
+        if not isinstance(ids, list):
+            raise HTTPException(400, "ids required")
+        lib.reorder_boards([str(x) for x in ids])
+        return {"ok": True}
+
+    @app.get("/api/boards/{bid}/full")
+    def board_full(bid: str) -> dict:
+        full = lib.board_full(bid)
+        if not full:
+            raise HTTPException(404)
+        return full
+
+    @app.post("/api/boards/{bid}/items")
+    async def add_board_item(bid: str, request: Request) -> dict:
+        body = await json_body(request)
+        if not body.get("asset_id"):
+            raise HTTPException(400, "asset_id required")
+        return lib.add_board_item(bid, body)
+
+    @app.patch("/api/boards/{bid}/items/{item_id}")
+    async def update_board_item(bid: str, item_id: str, request: Request) -> dict:
+        body = await json_body(request)
+        item = lib.update_board_item(item_id, body)
+        if not item:
+            raise HTTPException(404)
+        return item
+
+    @app.post("/api/boards/{bid}/items/batch")
+    async def batch_update_board_items(bid: str, request: Request) -> dict:
+        body = await json_body(request)
+        lib.batch_update_board_items(body.get("items") or [])
+        return {"ok": True}
+
+    @app.delete("/api/boards/{bid}/items/{item_id}")
+    def drop_board_item(bid: str, item_id: str) -> dict:
+        lib.delete_board_items([item_id])
+        return {"ok": True}
+
+    @app.post("/api/boards/{bid}/items/batch-delete")
+    async def batch_delete_board_items(bid: str, request: Request) -> dict:
+        ids = (await json_body(request)).get("ids") or []
+        lib.delete_board_items([str(x) for x in ids])
+        return {"ok": True}
+
+    @app.post("/api/boards/{bid}/groups")
+    async def add_board_group(bid: str, request: Request) -> dict:
+        body = await json_body(request)
+        item_ids = [str(x) for x in (body.get("item_ids") or [])]
+        annotation_ids = [str(x) for x in (body.get("annotation_ids") or [])]
+        return lib.add_board_group(bid, item_ids, annotation_ids, str(body.get("name") or ""))
+
+    @app.patch("/api/boards/{bid}/groups/{gid}")
+    async def update_board_group(bid: str, gid: str, request: Request) -> dict:
+        body = await json_body(request)
+        group = lib.update_board_group(gid, body)
+        if not group:
+            raise HTTPException(404)
+        return group
+
+    @app.post("/api/boards/{bid}/groups/{gid}/ungroup")
+    def ungroup_board_group(bid: str, gid: str) -> dict:
+        lib.ungroup_board_group(gid)
+        return {"ok": True}
+
+    @app.delete("/api/boards/{bid}/groups/{gid}")
+    def drop_board_group(bid: str, gid: str) -> dict:
+        lib.delete_board_group(gid)
+        return {"ok": True}
+
+    @app.get("/api/annotations")
+    def annotations_for_asset(asset_id: str = "") -> list[dict]:
+        if not asset_id:
+            raise HTTPException(400, "asset_id required")
+        return lib.annotations_for_asset(asset_id)
+
+    @app.post("/api/annotations")
+    async def add_annotation(request: Request) -> dict:
+        body = await json_body(request)
+        try:
+            return lib.add_annotation(body)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.patch("/api/annotations/{aid}")
+    async def update_annotation(aid: str, request: Request) -> dict:
+        body = await json_body(request)
+        anno = lib.update_annotation(aid, body)
+        if not anno:
+            raise HTTPException(404)
+        return anno
+
+    @app.delete("/api/annotations/{aid}")
+    def drop_annotation(aid: str) -> dict:
+        lib.delete_annotation(aid)
+        return {"ok": True}
+
+    @app.post("/api/annotations/batch")
+    async def batch_update_annotations(request: Request) -> dict:
+        body = await json_body(request)
+        lib.batch_update_annotations(body.get("items") or [])
+        return {"ok": True}
+
     @app.get("/api/events")
     def events():
         q = lib.bus.subscribe()

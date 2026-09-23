@@ -677,6 +677,88 @@ class Library:
               asset_id TEXT NOT NULL,
               PRIMARY KEY (collection_id, asset_id)
             );
+            CREATE TABLE IF NOT EXISTS boards (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              color TEXT,
+              icon TEXT,
+              bg_color TEXT,
+              viewport_x REAL NOT NULL DEFAULT 0,
+              viewport_y REAL NOT NULL DEFAULT 0,
+              viewport_zoom REAL NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
+              deleted_at INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS board_groups (
+              id TEXT PRIMARY KEY,
+              board_id TEXT NOT NULL,
+              parent_group_id TEXT,
+              name TEXT,
+              collapsed INTEGER NOT NULL DEFAULT 0,
+              x REAL, y REAL, w REAL, h REAL,
+              rotation REAL NOT NULL DEFAULT 0,
+              z_index INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
+              deleted_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_board_groups_board ON board_groups(board_id);
+            -- A placement of one library asset onto one board. Kept separate from `assets` so the
+            -- same asset can be placed on a board more than once, each with its own transform/crop.
+            CREATE TABLE IF NOT EXISTS board_items (
+              id TEXT PRIMARY KEY,
+              board_id TEXT NOT NULL,
+              asset_id TEXT NOT NULL,
+              group_id TEXT,
+              x REAL NOT NULL,
+              y REAL NOT NULL,
+              w REAL NOT NULL,
+              h REAL NOT NULL,
+              rotation REAL NOT NULL DEFAULT 0,
+              z_index INTEGER NOT NULL DEFAULT 0,
+              opacity REAL NOT NULL DEFAULT 1,
+              desaturate INTEGER NOT NULL DEFAULT 0,
+              always_on_top INTEGER NOT NULL DEFAULT 0,
+              crop_x REAL, crop_y REAL, crop_w REAL, crop_h REAL,
+              color_label TEXT,
+              locked INTEGER NOT NULL DEFAULT 0,
+              playback_state TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
+              deleted_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_board_items_board ON board_items(board_id);
+            CREATE INDEX IF NOT EXISTS idx_board_items_updated ON board_items(updated_at);
+            -- Universal annotation: a text note / freehand drawing / sticker / shape (incl. frames
+            -- and connector arrows via kind='shape'), living either free on a board (scope='board')
+            -- or attached to a single bare asset so it also shows in the lightbox (scope='asset').
+            CREATE TABLE IF NOT EXISTS annotations (
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              shape_kind TEXT,
+              scope TEXT NOT NULL,
+              target_asset_id TEXT,
+              target_board_item_id TEXT,
+              board_id TEXT,
+              group_id TEXT,
+              x REAL, y REAL, w REAL, h REAL,
+              rotation REAL NOT NULL DEFAULT 0,
+              z_index INTEGER NOT NULL DEFAULT 0,
+              color TEXT,
+              data TEXT NOT NULL DEFAULT '{}',
+              locked INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
+              deleted_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_annotations_board ON annotations(board_id);
+            CREATE INDEX IF NOT EXISTS idx_annotations_asset ON annotations(target_asset_id);
             CREATE TABLE IF NOT EXISTS tag_order (
               name TEXT PRIMARY KEY,
               sort_order INTEGER NOT NULL
@@ -2142,6 +2224,306 @@ class Library:
             "DELETE FROM collection_assets WHERE collection_id=? AND asset_id=?",
             [(cid, i) for i in ids],
         )
+
+    # ---- Canvas boards ----------------------------------------------------------------
+    # boards / board_groups / board_items / annotations all carry revision/updated_at/
+    # deleted_at so a future sync layer can diff by timestamp and learn about a remote
+    # deletion from the tombstone, without a schema change. See app/static/canvas.js.
+
+    def boards(self) -> list[dict]:
+        rows = [dict(r) for r in self.query(
+            "SELECT id, name, sort_order, color, icon, bg_color, viewport_x, viewport_y, "
+            "viewport_zoom, created_at, updated_at FROM boards WHERE deleted_at IS NULL "
+            "ORDER BY sort_order, created_at"
+        )]
+        counts = {
+            r["board_id"]: int(r["c"])
+            for r in self.query(
+                "SELECT board_id, COUNT(*) c FROM board_items WHERE deleted_at IS NULL GROUP BY board_id"
+            )
+        }
+        for b in rows:
+            b["itemCount"] = counts.get(b["id"], 0)
+        return rows
+
+    def add_board(self, name: str) -> dict:
+        bid = asset_id(f"board:{time.time_ns()}:{name}")
+        now = int(time.time() * 1000)
+        nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM boards")[0]["n"]
+        name = name.strip() or "Untitled"
+        self.execute(
+            "INSERT INTO boards(id, name, sort_order, created_at, updated_at, revision) VALUES (?,?,?,?,?,1)",
+            (bid, name, nxt, now, now),
+        )
+        return {
+            "id": bid, "name": name, "sort_order": nxt, "color": None, "icon": None, "bg_color": None,
+            "viewport_x": 0.0, "viewport_y": 0.0, "viewport_zoom": 1.0,
+            "created_at": now, "updated_at": now, "itemCount": 0,
+        }
+
+    def update_board(self, bid: str, body: dict) -> dict | None:
+        rows = self.query("SELECT * FROM boards WHERE id=? AND deleted_at IS NULL", (bid,))
+        if not rows:
+            return None
+        cur = dict(rows[0])
+        name = str(body.get("name", cur["name"])).strip() or "Untitled"
+        color = body.get("color", cur["color"])
+        icon = body.get("icon", cur["icon"])
+        bg_color = body.get("bg_color", cur["bg_color"])
+        vx = float(body.get("viewport_x", cur["viewport_x"]))
+        vy = float(body.get("viewport_y", cur["viewport_y"]))
+        vz = float(body.get("viewport_zoom", cur["viewport_zoom"]))
+        now = int(time.time() * 1000)
+        self.execute(
+            "UPDATE boards SET name=?, color=?, icon=?, bg_color=?, viewport_x=?, viewport_y=?, "
+            "viewport_zoom=?, updated_at=?, revision=revision+1 WHERE id=?",
+            (name, color, icon, bg_color, vx, vy, vz, now, bid),
+        )
+        rows = self.query("SELECT id, name, sort_order, color, icon, bg_color, viewport_x, viewport_y, "
+                           "viewport_zoom, created_at, updated_at FROM boards WHERE id=?", (bid,))
+        return dict(rows[0]) if rows else None
+
+    def reorder_boards(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        with self.lock:
+            for i, bid in enumerate(ids):
+                self.conn.execute("UPDATE boards SET sort_order=? WHERE id=?", (i, bid))
+            self.conn.commit()
+
+    def delete_board(self, bid: str) -> None:
+        now = int(time.time() * 1000)
+        with self.lock:
+            self.conn.execute("UPDATE annotations SET deleted_at=?, updated_at=? WHERE board_id=?", (now, now, bid))
+            self.conn.execute("UPDATE board_items SET deleted_at=?, updated_at=? WHERE board_id=?", (now, now, bid))
+            self.conn.execute("UPDATE board_groups SET deleted_at=?, updated_at=? WHERE board_id=?", (now, now, bid))
+            self.conn.execute("UPDATE boards SET deleted_at=?, updated_at=? WHERE id=?", (now, now, bid))
+            self.conn.commit()
+
+    def board_full(self, bid: str) -> dict | None:
+        rows = self.query("SELECT id, name, sort_order, color, icon, bg_color, viewport_x, viewport_y, "
+                           "viewport_zoom, created_at, updated_at FROM boards WHERE id=? AND deleted_at IS NULL", (bid,))
+        if not rows:
+            return None
+        board = dict(rows[0])
+        items = [dict(r) for r in self.query(
+            "SELECT * FROM board_items WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
+        )]
+        groups = [dict(r) for r in self.query(
+            "SELECT * FROM board_groups WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
+        )]
+        annotations = [self._annotation_out(r) for r in self.query(
+            "SELECT * FROM annotations WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
+        )]
+        return {"board": board, "items": items, "groups": groups, "annotations": annotations}
+
+    def add_board_item(self, bid: str, body: dict) -> dict:
+        iid = asset_id(f"bitem:{time.time_ns()}:{body.get('asset_id', '')}")
+        now = int(time.time() * 1000)
+        playback = body.get("playback_state")
+        self.execute(
+            "INSERT INTO board_items(id, board_id, asset_id, group_id, x, y, w, h, rotation, "
+            "z_index, opacity, desaturate, always_on_top, crop_x, crop_y, crop_w, crop_h, "
+            "color_label, locked, playback_state, created_at, updated_at, revision) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            (
+                iid, bid, str(body.get("asset_id") or ""), body.get("group_id"),
+                float(body.get("x", 0)), float(body.get("y", 0)),
+                float(body.get("w", 240)), float(body.get("h", 240)),
+                float(body.get("rotation", 0)), int(body.get("z_index", 0)),
+                float(body.get("opacity", 1)), 1 if body.get("desaturate") else 0,
+                1 if body.get("always_on_top") else 0,
+                body.get("crop_x"), body.get("crop_y"), body.get("crop_w"), body.get("crop_h"),
+                body.get("color_label"), 1 if body.get("locked") else 0,
+                json.dumps(playback) if playback is not None else None,
+                now, now,
+            ),
+        )
+        rows = self.query("SELECT * FROM board_items WHERE id=?", (iid,))
+        return dict(rows[0])
+
+    _BOARD_ITEM_FIELDS = (
+        "group_id", "x", "y", "w", "h", "rotation", "z_index", "opacity", "desaturate",
+        "always_on_top", "crop_x", "crop_y", "crop_w", "crop_h", "color_label", "locked",
+        "playback_state",
+    )
+
+    def _board_item_values(self, body: dict) -> dict:
+        vals = {f: body[f] for f in self._BOARD_ITEM_FIELDS if f in body}
+        if "playback_state" in vals and vals["playback_state"] is not None:
+            vals["playback_state"] = json.dumps(vals["playback_state"])
+        return vals
+
+    def update_board_item(self, item_id: str, body: dict) -> dict | None:
+        rows = self.query("SELECT id FROM board_items WHERE id=? AND deleted_at IS NULL", (item_id,))
+        if not rows:
+            return None
+        vals = self._board_item_values(body)
+        if vals:
+            now = int(time.time() * 1000)
+            set_sql = ", ".join(f"{k}=?" for k in vals) + ", updated_at=?, revision=revision+1"
+            self.execute(f"UPDATE board_items SET {set_sql} WHERE id=?", (*vals.values(), now, item_id))
+        rows = self.query("SELECT * FROM board_items WHERE id=?", (item_id,))
+        return dict(rows[0]) if rows else None
+
+    def batch_update_board_items(self, updates: list[dict]) -> None:
+        now = int(time.time() * 1000)
+        with self.lock:
+            for u in updates:
+                iid = u.get("id")
+                if not iid:
+                    continue
+                vals = self._board_item_values(u)
+                if not vals:
+                    continue
+                set_sql = ", ".join(f"{k}=?" for k in vals) + ", updated_at=?, revision=revision+1"
+                self.conn.execute(f"UPDATE board_items SET {set_sql} WHERE id=?", (*vals.values(), now, iid))
+            self.conn.commit()
+
+    def delete_board_items(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        now = int(time.time() * 1000)
+        with self.lock:
+            self.conn.executemany(
+                "UPDATE board_items SET deleted_at=?, updated_at=? WHERE id=?",
+                [(now, now, i) for i in ids],
+            )
+            self.conn.commit()
+
+    def add_board_group(self, bid: str, item_ids: list[str], annotation_ids: list[str], name: str = "") -> dict:
+        gid = asset_id(f"bgroup:{time.time_ns()}:{bid}")
+        now = int(time.time() * 1000)
+        self.execute(
+            "INSERT INTO board_groups(id, board_id, name, created_at, updated_at, revision) VALUES (?,?,?,?,?,1)",
+            (gid, bid, name or None, now, now),
+        )
+        with self.lock:
+            if item_ids:
+                self.conn.executemany(
+                    "UPDATE board_items SET group_id=?, updated_at=? WHERE id=?",
+                    [(gid, now, i) for i in item_ids],
+                )
+            if annotation_ids:
+                self.conn.executemany(
+                    "UPDATE annotations SET group_id=?, updated_at=? WHERE id=?",
+                    [(gid, now, i) for i in annotation_ids],
+                )
+            self.conn.commit()
+        rows = self.query("SELECT * FROM board_groups WHERE id=?", (gid,))
+        return dict(rows[0])
+
+    _BOARD_GROUP_FIELDS = ("name", "collapsed", "x", "y", "w", "h", "rotation", "z_index", "parent_group_id")
+
+    def update_board_group(self, gid: str, body: dict) -> dict | None:
+        rows = self.query("SELECT id FROM board_groups WHERE id=? AND deleted_at IS NULL", (gid,))
+        if not rows:
+            return None
+        vals = {f: body[f] for f in self._BOARD_GROUP_FIELDS if f in body}
+        if vals:
+            now = int(time.time() * 1000)
+            set_sql = ", ".join(f"{k}=?" for k in vals) + ", updated_at=?, revision=revision+1"
+            self.execute(f"UPDATE board_groups SET {set_sql} WHERE id=?", (*vals.values(), now, gid))
+        rows = self.query("SELECT * FROM board_groups WHERE id=?", (gid,))
+        return dict(rows[0]) if rows else None
+
+    def ungroup_board_group(self, gid: str) -> None:
+        now = int(time.time() * 1000)
+        with self.lock:
+            self.conn.execute("UPDATE board_items SET group_id=NULL, updated_at=? WHERE group_id=?", (now, gid))
+            self.conn.execute("UPDATE annotations SET group_id=NULL, updated_at=? WHERE group_id=?", (now, gid))
+            self.conn.execute("UPDATE board_groups SET deleted_at=?, updated_at=? WHERE id=?", (now, now, gid))
+            self.conn.commit()
+
+    def delete_board_group(self, gid: str) -> None:
+        now = int(time.time() * 1000)
+        with self.lock:
+            self.conn.execute("UPDATE board_items SET deleted_at=?, updated_at=? WHERE group_id=?", (now, now, gid))
+            self.conn.execute("UPDATE annotations SET deleted_at=?, updated_at=? WHERE group_id=?", (now, now, gid))
+            self.conn.execute("UPDATE board_groups SET deleted_at=?, updated_at=? WHERE id=?", (now, now, gid))
+            self.conn.commit()
+
+    def _annotation_out(self, row: sqlite3.Row | dict) -> dict:
+        d = dict(row)
+        try:
+            d["data"] = json.loads(d.get("data") or "{}")
+        except json.JSONDecodeError:
+            d["data"] = {}
+        return d
+
+    def annotations_for_asset(self, aid: str) -> list[dict]:
+        rows = self.query(
+            "SELECT * FROM annotations WHERE scope='asset' AND target_asset_id=? AND deleted_at IS NULL "
+            "ORDER BY z_index",
+            (aid,),
+        )
+        return [self._annotation_out(r) for r in rows]
+
+    def add_annotation(self, body: dict) -> dict:
+        scope = str(body.get("scope") or "").strip()
+        if scope not in ("asset", "board"):
+            raise ValueError("scope must be 'asset' or 'board'")
+        aid = asset_id(f"anno:{time.time_ns()}:{scope}")
+        now = int(time.time() * 1000)
+        self.execute(
+            "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, target_board_item_id, "
+            "board_id, group_id, x, y, w, h, rotation, z_index, color, data, locked, "
+            "created_at, updated_at, revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            (
+                aid, str(body.get("kind") or "shape"), body.get("shape_kind"), scope,
+                body.get("target_asset_id") if scope == "asset" else None,
+                body.get("target_board_item_id"),
+                body.get("board_id") if scope == "board" else None,
+                body.get("group_id"),
+                body.get("x"), body.get("y"), body.get("w"), body.get("h"),
+                float(body.get("rotation", 0)), int(body.get("z_index", 0)),
+                body.get("color"), json.dumps(body.get("data") or {}),
+                1 if body.get("locked") else 0, now, now,
+            ),
+        )
+        rows = self.query("SELECT * FROM annotations WHERE id=?", (aid,))
+        return self._annotation_out(rows[0])
+
+    _ANNOTATION_FIELDS = (
+        "shape_kind", "target_board_item_id", "group_id", "x", "y", "w", "h", "rotation",
+        "z_index", "color", "data", "locked",
+    )
+
+    def _annotation_values(self, body: dict) -> dict:
+        vals = {f: body[f] for f in self._ANNOTATION_FIELDS if f in body}
+        if "data" in vals:
+            vals["data"] = json.dumps(vals["data"] or {})
+        return vals
+
+    def update_annotation(self, aid: str, body: dict) -> dict | None:
+        rows = self.query("SELECT id FROM annotations WHERE id=? AND deleted_at IS NULL", (aid,))
+        if not rows:
+            return None
+        vals = self._annotation_values(body)
+        if vals:
+            now = int(time.time() * 1000)
+            set_sql = ", ".join(f"{k}=?" for k in vals) + ", updated_at=?, revision=revision+1"
+            self.execute(f"UPDATE annotations SET {set_sql} WHERE id=?", (*vals.values(), now, aid))
+        rows = self.query("SELECT * FROM annotations WHERE id=?", (aid,))
+        return self._annotation_out(rows[0]) if rows else None
+
+    def batch_update_annotations(self, updates: list[dict]) -> None:
+        now = int(time.time() * 1000)
+        with self.lock:
+            for u in updates:
+                aid = u.get("id")
+                if not aid:
+                    continue
+                vals = self._annotation_values(u)
+                if not vals:
+                    continue
+                set_sql = ", ".join(f"{k}=?" for k in vals) + ", updated_at=?, revision=revision+1"
+                self.conn.execute(f"UPDATE annotations SET {set_sql} WHERE id=?", (*vals.values(), now, aid))
+            self.conn.commit()
+
+    def delete_annotation(self, aid: str) -> None:
+        now = int(time.time() * 1000)
+        self.execute("UPDATE annotations SET deleted_at=?, updated_at=? WHERE id=?", (now, now, aid))
 
     def strip_tag(self, name: str) -> int:
         want = name.strip().lower()
