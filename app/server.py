@@ -309,6 +309,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             "kinds": KIND_LABEL,
             "tags": lib.tags(),
             "collections": lib.collections(),
+            "boards": lib.boards(),
             "buildMs": BUILD_TIME_MS,
         }
 

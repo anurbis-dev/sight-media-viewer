@@ -477,6 +477,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
       <div class="count" id="count"></div>
     </div>
     <div class="grid" id="grid"></div>
+    <div class="canvas-view" id="canvasView" hidden></div>
   </section>
   <aside class="insp" id="insp"></aside>
 </div>
@@ -484,6 +485,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 {"imports":{"three":"/static/vendor/three.module.js","three/addons/":"/static/vendor/jsm/","@sparkjsdev/spark":"/static/vendor/spark.module.js"}}
 </script>
 <script type="module">
+import { createCanvasView } from "/static/canvas.js";
 const KIND = { image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
 const TILE_MIN = 48, TILE_MAX = 360, COMPACT = 72;
@@ -657,7 +659,7 @@ const savedLayout = loadLayout();
 // always stays below it, so it never takes part). Falls back to the default set whenever the
 // saved list doesn't match it exactly — a stale/edited value, or a future app version that adds
 // or removes a section.
-const NAV_SECTIONS = ["types", "sources", "collections", "tags"];
+const NAV_SECTIONS = ["canvas", "types", "sources", "collections", "tags"];
 function loadNavOrder(){
   const saved = savedLayout.navOrder;
   if (Array.isArray(saved) && saved.length === NAV_SECTIONS.length && NAV_SECTIONS.every((k) => saved.includes(k))) return saved;
@@ -699,15 +701,17 @@ const state = {
   themes: loadThemeList(),
   settingsOpen: savedLayout.settingsOpen === true,
   showIcons: savedLayout.showIcons !== false,
-  navCollapse: { types: false, sources: false, collections: false, tags: false, ...savedLayout.navCollapse },
+  navCollapse: { types: false, sources: false, collections: false, tags: false, canvas: false, ...savedLayout.navCollapse },
   navOrder: loadNavOrder(),
   sourceTree: { expandedSources: new Set(), expandedPaths: new Set(), dirsCache: new Map() },
   v3d: loadV3D(),
   v3dPanelOpen: false,
+  view: "library", // "library" | "canvas" — see setView()
+  canvasBoardId: null,
 };
 
 const $ = (id) => document.getElementById(id);
-const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status");
+const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status"), canvasView = $("canvasView");
 let sliceEl = null, spaceEl = null;
 let visTimer = 0, pullTimer = 0, renderRAF = 0;
 const seenThumb = new Set();
@@ -1749,7 +1753,7 @@ function renderNav(){
   const y = sideScrollEl.scrollTop;
   nav.innerHTML = "";
   const set = (patch) => applyFilter(patch);
-  const sectionRenderers = { types: renderTypes, sources: renderSources, collections: renderCollections, tags: renderTags };
+  const sectionRenderers = { types: renderTypes, sources: renderSources, collections: renderCollections, tags: renderTags, canvas: renderCanvasBoards };
   for (const key of state.navOrder) sectionRenderers[key]?.(set);
   sideScrollEl.scrollTop = y;
 }
@@ -1911,6 +1915,93 @@ function renderTypes(set){
   missRow.innerHTML = `<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
   missRow.onclick = (e) => { if (e.target.closest("button")) purgeMissing(false); else set({ missing: true }); };
   wrap.append(missRow);
+}
+
+// Swaps the main content area between the library grid and a canvas board — the first alternate
+// main view this app has ever had, so this stays a plain visibility toggle rather than a router.
+function setView(mode){
+  state.view = mode;
+  grid.hidden = mode === "canvas";
+  canvasView.hidden = mode !== "canvas";
+}
+
+let canvasCtl = null;
+function ensureCanvasCtl(){
+  if (!canvasCtl){
+    canvasCtl = createCanvasView({
+      mount: canvasView,
+      onClose: () => { canvasCtl.close(); state.canvasBoardId = null; setView("library"); renderNav(); },
+    });
+  }
+  return canvasCtl;
+}
+
+async function openBoard(id){
+  state.canvasBoardId = id;
+  setView("canvas");
+  renderNav();
+  await ensureCanvasCtl().open(id);
+}
+
+function renderCanvasBoards(){
+  const wrap = document.createElement("div");
+  const head = sectionHeader("Canvas", "canvas", `<button type="button" aria-label="New board">+</button>`, "pin");
+  head.querySelector("button").onclick = async (e) => {
+    e.stopPropagation();
+    const b = await api("/api/boards", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Untitled board" }) });
+    await refreshMeta();
+    openBoard(b.id);
+  };
+  wrap.append(head);
+  bindSectionDrag(wrap, "canvas");
+  nav.append(wrap);
+  if (state.navCollapse.canvas) return;
+  const boards = state.meta.boards || [];
+  if (!boards.length){
+    const p = document.createElement("p");
+    p.className = "sub";
+    p.style.padding = "0 8px";
+    p.textContent = "No boards yet.";
+    wrap.append(p);
+  }
+  boards.forEach((bd) => {
+    const b = document.createElement("div");
+    b.className = "row board-row" + (state.view === "canvas" && state.canvasBoardId === bd.id ? " on" : "");
+    b.dataset.bid = bd.id;
+    const iconHtml = state.showIcons ? iconSpan(bd.icon || "pin", bd.color || "var(--subtle)", 15) : "";
+    b.innerHTML = `${iconHtml}<span>${esc(bd.name)}</span><em class="badge">${bd.itemCount || 0}</em><button class="tiny" data-act="del" aria-label="Delete board">×</button>`;
+    b.onclick = (e) => {
+      if (e.target.closest("button")) return;
+      openBoard(bd.id);
+    };
+    const startRename = () => {
+      const span = b.querySelector("span:not(.row-icon)");
+      const inp = document.createElement("input");
+      inp.value = bd.name;
+      inp.style.cssText = "flex:1;min-width:0;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);padding:0 6px";
+      inp.onclick = (ev) => ev.stopPropagation();
+      span.replaceWith(inp);
+      inp.focus();
+      inp.select();
+      const done = () => {
+        api("/api/boards/" + bd.id, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: inp.value }) }).then(refreshMeta);
+      };
+      inp.onblur = done;
+      inp.onkeydown = (ev) => {
+        if (ev.key === "Enter") inp.blur();
+        if (ev.key === "Escape") { inp.onblur = null; inp.blur(); refreshMeta(); }
+      };
+    };
+    b.ondblclick = (e) => { if (!e.target.closest("button")) startRename(); };
+    b.querySelector('[data-act="del"]').onclick = async (e) => {
+      e.stopPropagation();
+      await api("/api/boards/" + bd.id, { method: "DELETE" });
+      if (state.canvasBoardId === bd.id) setView("library");
+      await refreshMeta();
+    };
+    bindRowDrag(b, { mime: "application/x-sight-board", rowSelector: ".board-row", idKey: "bid", reorderUrl: "/api/boards/reorder" });
+    wrap.append(b);
+  });
 }
 
 function renderSources(set){
@@ -4771,6 +4862,11 @@ function togglePalette(){ paletteOpen ? closePalette() : openPalette(); }
 function paletteActions(){
   return [
     { label: "Add folder", run: () => $("add").click() },
+    { label: "New board", run: async () => {
+      const b = await api("/api/boards", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Untitled board" }) });
+      await refreshMeta();
+      openBoard(b.id);
+    } },
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
     ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
@@ -4825,6 +4921,11 @@ function paletteCollections(){
     label: c.name, hint: String(c.count || 0), run: () => applyFilter({ collection: c.id }),
   }));
 }
+function paletteBoards(){
+  return (state.meta.boards || []).map((bd) => ({
+    label: bd.name, hint: String(bd.itemCount || 0), run: () => openBoard(bd.id),
+  }));
+}
 
 async function renderPalette(q){
   const query = q.trim().toLowerCase();
@@ -4837,6 +4938,8 @@ async function renderPalette(q){
   if (kinds.length) sections.push(["Show", kinds]);
   const cols = filterLocal(paletteCollections());
   if (cols.length) sections.push(["Collections", cols]);
+  const boards = filterLocal(paletteBoards());
+  if (boards.length) sections.push(["Canvas", boards]);
 
   let files = [];
   if (query){
