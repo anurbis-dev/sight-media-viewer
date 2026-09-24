@@ -8,6 +8,7 @@ For "what changed lately" see `RECENT.md`. Update this file only when something 
 Sight.py                 launcher (venv bootstrap, window, port); --dev / SIGHT_DEV=1 = developer mode
 app/server.py            FastAPI app; routes are closures inside build_app(lib, settings, dev)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
+app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
 app/settings.py          settings.json store (UI prefs) + defaults
 app/version.py           APP_VERSION (single source; exposed in /api/state as "version")
 app/static/index.html    the whole UI: one inline <script type="module"> (no build step)
@@ -35,6 +36,24 @@ docs/                    RECENT.md (changelog, newest first), archive/, this fil
   (lightbox = canvas), marquee modes via `combineSelection` (plain = replace, Ctrl = toggle,
   Ctrl+Shift = add), `markSmallSrc`/`syncPixelation` (nearest-neighbour for small sources),
   `navDblClick` (double-click detection across nav re-renders), `showIconPicker`.
+- Popups: every menu/popover closes via `registerAutoClose(el, close, anchor)` (cursor more than
+  25 px away, never while a button is held; a popup anchored inside another keeps its parent open).
+  Every `<input type="color">` opens the in-page `#colorPop` picker, never the native popup, which
+  the page cannot close. It fires `input` while changing and `change` on close.
+  Likewise every `<select>` opens the in-page `#selPop` list (always inside the window, flips
+  upward near the bottom edge); it sets the select's value and fires `input` + `change`.
+- Lightbox 3D selection: `setInspectSel(sel, reveal)` is the one entry point (info panel lists and
+  Ctrl+click picking in the viewport); `v3dInspect.sel` is `{kind: "mat"|"tex"|"mesh", i}` or null.
+- Lightbox 3D shadows: `BasicShadowMap` + a PCSS `getShadow()` patched into three's shader chunk
+  (`patchSoftShadows`); `light.shadow.radius` means penumbra UV per unit shadow depth, not texels.
+  Floor shadow from ambient/env is accumulated by `makeSkyOcclusion` (layers 5/6 — three selects
+  shadow casters by the rendering camera's layers). Re-check the chunk markers after a three upgrade.
+- Shared pane helpers: `bindSplitDrag(handle, {box, stacked, set, end, dblclick})` is the one
+  divider drag (library/board split and the lightbox UV split); `attachViewer(stage, a, src,
+  {embedded:true})` shows any picture with the image lightbox's pan/zoom/fit and returns
+  `{fit, zoom}`; hover picks the pane that gets F/digits (`activePane`, `lightPane`).
+  `attachPanScroll` handles nested scrollers (inner one wins via `e._panScroll`).
+- `cloneModel` clones each distinct material once — meshes that shared a material keep sharing it.
 - Library grid tile rescaling on window resize is driven by `#mainBody` width (not the grid's), so
   hiding/squeezing the grid for the board split never changes the zoom.
 
@@ -46,7 +65,19 @@ docs/                    RECENT.md (changelog, newest first), archive/, this fil
 - New tables carry `created_at`, `updated_at`, `revision`, `deleted_at` (sync groundwork; no sync
   exists yet). Additive migrations live in `Library._migrate()` (`CREATE TABLE IF NOT EXISTS`,
   `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`).
-- `/api/state` returns sources, counts, tags, collections, **boards**, buildMs, **version**.
+- `/api/state` returns sources, counts, tags, collections, **boards**, scanIgnore, buildMs, **version**.
+- Asset `status`: `ready` | `missing` (file gone) | `excluded` (hidden: inside an excluded folder,
+  matched by the scan ignore list, or a compiled `.obj`). Excluded rows are kept so metadata survives;
+  anything that revives rows must check both folder exclusion and `Library.hidden()`.
+- Table `meta(key, value)` holds library-wide settings the backend needs without a page open
+  (`scan_ignore`: the Settings → Scanning ignore list, parsed by `IgnoreRules`).
+- Lightbox 3D explode: `buildExplodeRig` solves an explosion graph per assembly level of the node
+  hierarchy (box-based blocking, grounded largest part, one model axis per part, ride-along carry);
+  `applyExplode(rig, t)` only sets `position`. Rebuilt per load, independent of the 90° turns.
+  Guards: graph only up to `EXPLODE_GRAPH_MAX` parts per assembly and within `EXPLODE_BUDGET_MS`
+  (else O(n) axial mode); no explode above `EXPLODE_MAX_MESHES`; no per-part recursion or spreads.
+- 3D: `mesh.material` may be an **array** (multi-material mesh); code that walks materials must
+  handle both forms.
 
 ## Canvas (boards)
 
@@ -79,7 +110,7 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 - Interactions: left-drag item = move; Ctrl+drag anywhere = marquee (Ctrl toggle, Ctrl+Shift add, plain
   drag on background = replace); middle-drag / Alt+drag on background = pan; right-drag / Ctrl+wheel =
   zoom (lightbox formula); wheel = pan; Shift while rotating = 15° steps; Ctrl while moving/resizing =
-  snap to the dot grid; frame handles: bottom-right resize (single: free, Shift keeps asset ratio;
+  snap to the dot grid; frame handles: resize on the corner nearest the cursor, opposite corner pinned (single: free, Shift keeps asset ratio;
   cropped: proportional; Shift on a cropped item drops the crop), top knob rotate; multi-selection
   scales uniformly / rotates about the common box.
 - Crop: hold **Alt** over an item → grips on edges/corners (drag = crop that edge, picture stays put; drag
@@ -88,6 +119,12 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
   never be stretched; an uncropped item shows a cover-fitted image, and `cropBasis()` starts a first
   crop from exactly that window (no jump). Mirror flips the whole thumb area (crop stays in
   un-mirrored source coordinates; `cropAxis` accounts for flips and rotation).
+- Resolution: items load `/api/thumb` (360px). `syncResolution()` (debounced via `scheduleResCheck()` from
+  `worldTransform`, `layoutItemEl`, img `load`, window resize) swaps a visible item's `<img>` to the original
+  (`fullResUrl`: `/api/file` for browser-decodable rasters, `/api/psd/{id}/preview` for PSD; no SVG/TIFF/HEIC)
+  once the shown source width in device px exceeds 1.25× the thumbnail's, and back below 0.8×. State lives in
+  `img.dataset` (`res` = thumb/loading/full/failed, `thumbW`, `fullW`); at most 3 decodes at once, nearest the
+  view centre first. The original has the same aspect, so crop maths is unaffected.
 - Shortcuts (canvas.js `KEYMAP`; PureRef-compatible where PureRef has one): F frame selection, A frame
   all, Ctrl+A select all (index.html), Ctrl+arrows align, Ctrl+Alt+arrows normalize
   height/width/size/scale, Ctrl+Alt+Shift+↑/↓ distribute row/column, Ctrl+P arrange optimal,

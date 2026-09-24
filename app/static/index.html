@@ -208,8 +208,18 @@ html.ctrl-down .card { cursor: default; }
 .meta .n { font-size: calc(var(--text-size) - 2px); }
 .meta .k, .meta .x { font-size: calc(var(--text-size) - 4px); color: var(--subtle); margin-top: 2px; }
 .card:not(.compact) .meta .k, .card:not(.compact) .meta .x { color: rgb(255 255 255 / .72); }
-.card.short .meta { padding-top: 8px; }
-.card.short .meta .k, .card.short .meta .x { display: none; }
+/* A thumbnail too short for the stacked info lines (a wide image in masonry, a small tile) packs them:
+   "pack2" keeps the name line and joins the other fields into one line (.j); "pack1" puts that joined
+   line on the name's row, where the name gives way (ellipsis) so the fields stay readable. */
+.meta .j { display: none; }
+.card.pack1 .meta, .card.pack2 .meta { padding-top: 8px; }
+.card.pack1 .meta .k, .card.pack1 .meta .x, .card.pack2 .meta .k, .card.pack2 .meta .x { display: none; }
+.card.pack1 .meta .j, .card.pack2 .meta .j { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--text-size) - 4px); color: rgb(255 255 255 / .72); }
+.card.pack2 .meta .j { margin-top: 2px; }
+.card.pack1 .meta { display: flex; align-items: baseline; gap: 8px; }
+.card.pack1 .meta .n { flex: 1 1 auto; min-width: 24px; }
+.card.pack1 .meta .j { flex: 0 1 auto; min-width: 0; }
+.card.pack1 .meta .n[hidden] ~ .j { flex-grow: 1; }
 .empty { display: grid; place-items: center; min-height: 50vh; color: var(--subtle); font-family: var(--display); font-size: 22px; text-align: center; padding: 24px; }
 .shimmer { background: linear-gradient(90deg, var(--subtle), var(--fg), var(--subtle)); background-size: 180% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sh 1.6s linear infinite; }
 @keyframes sh { to { background-position: -80% 0; } }
@@ -219,7 +229,7 @@ html.ctrl-down .card { cursor: default; }
 .preview { aspect-ratio: 1; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--card-bg); display: grid; place-items: center; }
 .preview img, .preview video { width: 100%; height: 100%; object-fit: contain; }
 .preview audio { max-width: 100%; }
-.preview .view3d, .preview .m3d-thumb { width: 100%; height: 100%; display: grid; place-items: center; }
+.preview .view3d, .preview .insp-thumb { width: 100%; height: 100%; display: grid; place-items: center; }
 .preview .stack i { inset: 16%; }
 .view3d { position: relative; }
 /* The backdrop is the model's square thumbnail, rendered with the same vertical fov the live camera
@@ -278,11 +288,12 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .suggest button:hover, .suggest button.on { background: var(--surface-3); }
 .actions { display: flex; gap: 8px; margin-top: 16px; }
 .actions .btn { flex: 1; }
-.layers { margin-top: 16px; display: flex; flex-direction: column; gap: 2px; }
-.layers h3 { margin: 0 0 8px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
-.layer { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: var(--muted); text-align: left; width: 100%; }
+.layer { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: var(--muted); text-align: left; width: 100%; }
+.layer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .layer:hover { background: var(--surface-2); color: var(--fg); }
 .layer.on { background: var(--surface-2); color: var(--fg); }
+.layer.group { color: var(--subtle); cursor: default; }
+.layer.group:hover { background: none; color: var(--subtle); }
 .light { position: fixed; inset: 0; background: var(--bg); z-index: 50; display: flex; flex-direction: column; opacity: 0; transform: scale(0.985); transition: opacity var(--motion-fast) var(--ease), transform 220ms var(--ease); }
 .light.on { opacity: 1; transform: none; }
 .light-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
@@ -301,6 +312,49 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-stage.masked .light-frame { width: min(100cqw, calc(100cqh * var(--frame-ar))); height: min(100cqh, calc(100cqw / var(--frame-ar))); }
 .frame-pop { position: absolute; right: 16px; top: 56px; z-index: 12; width: 300px; padding: 10px; border-radius: var(--radius-lg); background: rgb(18 18 20 / .92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); box-shadow: 0 24px 64px rgb(0 0 0 / .5); }
 .frame-pop[hidden] { display: none; }
+/* File info overlay (I) — Blender-style: plain text over the picture, top-left, see renderLightInfo.
+   The "i" button sits in the stage's top-left corner (not in the bar), the panel opens beside it. */
+.info-fab { position: absolute; left: calc(16px + var(--uv-left, 0px)); top: 69px; z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font: italic 700 16px/1 Georgia, "Times New Roman", serif; }
+.info-fab:hover { background: rgb(10 10 11 / .8); }
+.info-fab.on { color: var(--accent); border-color: var(--accent); }
+.light-info { position: absolute; left: calc(64px + var(--uv-left, 0px)); top: 69px; z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
+.light-info[hidden] { display: none; }
+.light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
+.light-info h4:first-child { margin-top: 0; }
+.light-info dl { display: grid; grid-template-columns: 116px 1fr; gap: 1px 12px; font-size: inherit; color: inherit; margin: 0; }
+.light-info dt { color: var(--muted); white-space: nowrap; }
+.light-info dd { margin: 0; color: var(--fg); word-break: break-word; user-select: text; }
+.light-info .wait { color: var(--subtle); }
+.light-info .err { color: var(--muted); }
+.light-info .li-grid { display: grid; gap: 4px; margin-top: 4px; }
+.light-info .li-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 6px 3px 3px; border-radius: 8px; border: 1px solid transparent; text-align: left; color: var(--fg); font-size: 11px; }
+.light-info .li-item:hover { background: rgb(255 255 255 / .06); }
+.light-info .li-item.on { border-color: var(--accent); background: rgb(255 255 255 / .08); }
+.light-info .li-item.hid { opacity: .4; }
+.light-info .li-item img, .light-info .li-item i { flex: none; width: 36px; height: 36px; border-radius: 6px; background: rgb(255 255 255 / .05); object-fit: contain; }
+.light-info .li-item.mat img, .light-info .li-item.mat i { border-radius: 999px; background: none; }
+.light-info .li-item span { display: flex; flex-direction: column; min-width: 0; }
+.light-info .li-item b, .light-info .li-item em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.light-info .li-item b { font-weight: 500; }
+.light-info .li-item em { font-style: normal; color: var(--muted); font-size: 10px; }
+.light-info .li-hint { color: var(--subtle); font-size: 10px; margin-top: 4px; }
+/* Collapsible Materials / Textures / Meshes: the sidebar's .sec header, sized for the overlay. */
+.light-info .sec { margin: 8px 0 2px; padding: 0; font-size: 10px; font-weight: 500; letter-spacing: .1em; color: var(--subtle); }
+.light-info .sec:hover { color: var(--fg); }
+.light-info .li-list { max-height: 216px; overflow: auto; }
+.light-info .li-grid { grid-template-columns: repeat(2, minmax(0, 200px)); }
+.v3d-shade .uv-btn { font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+.v3d-shade .uv-btn.on { color: var(--accent); background: var(--surface-2); }
+/* UV split: UV pane | divider | 3D view (the same .split-handle as the library/board split). */
+.light-frame.uv-on { display: flex; place-items: stretch; }
+.light-frame.uv-on > .view3d { flex: 1 1 0; min-width: 0; width: auto; }
+.light-frame > .split-handle { width: 5px; cursor: col-resize; }
+.uv-pane { position: relative; min-width: 0; height: 100%; overflow: hidden; background: #1b1b1f; }
+/* With the UV split on, the 3D shading bar centres on the model's half (--uv-left = split edge). */
+#v3dShade { left: calc(50% + var(--uv-left, 0px) / 2); }
+.uv-pane .uv-bar { align-items: center; }
+.uv-pane .uv-bar select { height: 32px; border-radius: 7px; }
+.uv-pane .uv-wait { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 12px; }
 .frame-pop .settings-sub { margin-top: 4px; }
 .mask-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 4px 0 6px; }
 .mask-chip { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 5px; height: 54px; padding: 6px 2px 5px; border-radius: 8px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
@@ -353,6 +407,11 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .vplay { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; background: var(--fg); border-radius: 1px; pointer-events: none; box-shadow: 0 0 0 1px rgb(0 0 0 / .35); }
 .view { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; }
 .view-media { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; }
+/* Lightbox placeholder: the card thumbnail, stretched to the full image's box, shown while the full
+   file loads. The full image stays transparent until it is decoded, then fades in over it. */
+.view-ph { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; user-select: none; pointer-events: none; }
+.view-media.loading { opacity: 0; }
+.view-media.reveal { transition: opacity .25s ease; }
 .view-hud { position: absolute; left: 8px; bottom: 8px; z-index: 2; pointer-events: none; font-size: 11px; color: var(--muted); background: rgb(10 10 11 / .7); border-radius: 6px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
 .opts { flex: none; border-top: 1px solid var(--border); padding-top: 4px; position: relative; }
 .opts .sec { margin-top: 8px; }
@@ -369,10 +428,13 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .opt:has(.bslider) > span { flex: none; }
 .opt input[type="checkbox"] { accent-color: var(--accent); }
 .opt input[type="color"] { width: 36px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }
-.opt select { height: 26px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); padding: 0 6px; font-size: 12px; }
+.opt select, .uv-bar select { height: 26px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); padding: 0 6px; font-size: 12px; }
 .opt .val { font-variant-numeric: tabular-nums; color: var(--subtle); min-width: 52px; text-align: right; }
 .theme-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 2px; }
 .theme-actions .btn { height: 30px; padding: 0 10px; font-size: 11px; flex: none; }
+.settings-body label.field { margin: 4px 8px 0; }
+#scanIgnore { min-height: 96px; font-family: ui-monospace, Consolas, monospace; white-space: pre; }
+.ign-msg { flex: 1; align-self: center; font-size: 11px; color: var(--subtle); }
 .theme-list { padding: 0 4px; }
 /* Blender-style slider: click without dragging opens text-edit, drag scrubs at a fixed
    px→value rate (Shift = fine), the edge zones nudge by one step, right-click resets. */
@@ -394,6 +456,20 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .row-icon svg { display: block; }
 .row-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
 .sec-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-right: 2px; }
+.color-pop { position: fixed; z-index: 101; width: 220px; padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
+.color-pop[hidden] { display: none; }
+.sel-pop { z-index: 120; min-width: 0; overflow-y: auto; }
+.sel-pop button { height: 28px; white-space: nowrap; }
+.sel-pop button.on { background: var(--surface-3); font-weight: 600; }
+.sel-pop button:disabled { opacity: .45; pointer-events: none; }
+.color-pop .cp-sv { position: relative; height: 140px; border-radius: 6px; cursor: crosshair; touch-action: none; background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent); }
+.color-pop .cp-hue { position: relative; height: 12px; border-radius: 6px; cursor: pointer; touch-action: none; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.color-pop .cp-sv-dot, .color-pop .cp-hue-dot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / .5); pointer-events: none; }
+.color-pop .cp-hue-dot { top: 50%; background: transparent; }
+.color-pop .cp-row { display: flex; align-items: center; gap: 6px; }
+.color-pop .cp-swatch { flex: none; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px; }
+.color-pop .cp-hex { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-3); color: var(--fg); font-family: ui-monospace, monospace; }
+.color-pop .cp-eye { flex: none; width: 28px; min-width: 0; height: 28px; padding: 0; display: grid; place-items: center; }
 .icon-picker { width: 250px; }
 .icon-picker .ip-color { display: flex; align-items: center; gap: 6px; padding: 4px 4px 8px; }
 .icon-picker .ip-color input[type="color"] { flex: none; width: 30px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; }
@@ -466,6 +542,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
     <div class="sub" id="status"></div>
   </aside>
   <div id="ctx" class="ctx" hidden></div>
+  <div id="colorPop" class="color-pop" hidden></div>
+  <div id="selPop" class="ctx sel-pop" hidden></div>
   <div id="palette" class="palette-overlay" hidden>
     <div class="palette">
       <input id="paletteInput" class="palette-input" placeholder="Actions, kinds, collections, files…" autocomplete="off" />
@@ -582,17 +660,19 @@ function fontStack(name){
 // persisted the same way. The panel itself always starts closed (feedback: off by default).
 const DEFAULT_V3D = {
   bg: "#0a0a0b",
-  l1on: true,  l1i: 1.0, l1az: -50, l1el: 55, l1color: "#ffffff",
-  l2on: true,  l2i: 0.4, l2az: 130, l2el: 25, l2color: "#ffffff",
-  l3on: false, l3i: 0.5, l3az: 20,  l3el: -30, l3color: "#ffffff",
+  l1on: true,  l1i: 1.0, l1az: -50, l1el: 55, l1color: "#ffffff", l1size: 4, // size = angular diameter (°) → shadow softness
+  l2on: true,  l2i: 0.4, l2az: 130, l2el: 25, l2color: "#ffffff", l2size: 12,
+  l3on: false, l3i: 0.5, l3az: 20,  l3el: -30, l3color: "#ffffff", l3size: 8,
   ambient: 0.35,
   anchor: "world", // "world" | "camera"
   lightYaw: 0, // Alt+left-drag in the viewport rotates all lights + the env map around Y
-  floor: false, grid: false, shadowOnly: false, shadowStrength: 0.35,
+  floor: false, grid: false, shadowOnly: false, shadowStrength: 0.6,
   env: false, envStrength: 1, envPreset: "studio", // studio | sunset | overcast | night | custom
   shadeBase: "textured", // solid | vertex | textured | normal
   wireOn: false, xrayOn: false, // additive overlays — can combine with any base and each other
   explode: 0,
+  solidColor: "#b7bdc7", solidMetal: 0.05, solidRough: 0.85, // the Solid shading mode's material
+  camFov: 50, // lightbox camera vertical field of view, degrees
   camSpeed: 1, // WASD fly speed multiplier (1 ≈ crossing the model's bounding diagonal in ~1.7s)
   splatR: 1, splatG: 1, splatB: 1, splatOpacity: 1, // Gaussian splat tint/opacity (recolor is a plain RGB multiply, 1 = neutral)
 };
@@ -768,6 +848,8 @@ let onV3DEnvPresetChange = null, onV3DEnvFile = null, onV3DRotate = null;
 // the model is up, cleared by dispose3d("light3d"). camKeys holds the WASD codes currently held;
 // the viewer's render loop reads it every frame (see makeCameraRig).
 let v3dCam = null;
+// Lightbox 3D inspector (materials, textures, highlight) — see makeModelInspector().
+let v3dInspect = null;
 const camKeys = new Set();
 const CAM_MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
 // showInLight() sets this from the extension alone (a synchronous best guess); boot3d() corrects
@@ -863,6 +945,9 @@ function startHeartbeat(){
   const ping = () => fetch("/api/heartbeat", { method: "POST", keepalive: true }).catch(() => {});
   ping();
   setInterval(ping, 3000);
+  // After sleep/resume or un-minimizing, report in at once instead of waiting for the next tick.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
+  for (const ev of ["focus", "pageshow", "online"]) window.addEventListener(ev, ping);
 }
 function fmtDate(ts){
   if (!ts) return "";
@@ -1236,7 +1321,7 @@ function ensureCard(a, i, L, pos){
     el = document.createElement("button");
     el.type = "button";
     el.dataset.id = a.id;
-    el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div></div>`;
+    el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div>`;
     el.draggable = false;
     el.addEventListener("pointerdown", (ev) => {
       el.draggable = ev.button === 0 && !ev.ctrlKey && !ev.metaKey;
@@ -1262,10 +1347,17 @@ function ensureCard(a, i, L, pos){
   el.dataset.i = String(i);
   const on = state.selectedIds.includes(a.id);
   const masonry = L.mode === "masonry";
-  // A short thumbnail (a wide image in masonry, a small tile) can't spare much of itself for the overlaid
-  // info block — it keeps only the name line (see .card.short .meta).
-  const thumbH = masonry && pos ? pos.imgH : L.cell - 2 * (Number(state.theme.cardPad) || 0);
-  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + (!L.compact && thumbH < 130 ? " short" : "");
+  const o = state.theme;
+  // The overlaid info block may cover up to ~70% of the thumbnail (its gradient top is mostly transparent).
+  // When the stacked lines don't fit (a wide image in masonry, a small tile) they are packed instead of
+  // dropped — see .card.pack1/.pack2. The heights are estimates from the text size, not measurements.
+  const thumbH = masonry && pos ? pos.imgH : L.cell - 2 * (Number(o.cardPad) || 0);
+  const ts = Number(o.textSize) || 13, nameH = (ts - 2) * 1.3, lineH = (ts - 4) * 1.3 + 2;
+  const extras = [o.kind, o.created, o.res, o.size].filter(Boolean).length;
+  const room = thumbH * 0.7;
+  const pack = L.compact || !extras || 19 + (o.name ? nameH : 0) + extras * lineH <= room ? ""
+    : o.name && 13 + nameH + lineH <= room ? " pack2" : " pack1";
+  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + pack;
   if (masonry && pos){
     el.style.left = pos.x + "px";
     el.style.top = pos.y + "px";
@@ -1274,7 +1366,6 @@ function ensureCard(a, i, L, pos){
   } else {
     el.style.left = el.style.top = el.style.width = el.style.height = "";
   }
-  const o = state.theme;
   const showMeta = !L.compact && (o.name || o.kind || o.created || o.res || o.size);
   el.querySelector(".n").textContent = a.name;
   el.querySelector(".n").hidden = !o.name;
@@ -1290,6 +1381,7 @@ function ensureCard(a, i, L, pos){
   const s = el.querySelector(".s");
   s.textContent = bytes(a.size);
   s.hidden = !o.size;
+  el.querySelector(".j").textContent = pack ? [k, c, r, s].filter((x) => !x.hidden && x.textContent).map((x) => x.textContent).join(" · ") : "";
   el.querySelector(".meta").hidden = !showMeta;
   fillThumb(el, a, false, pos);
   return el;
@@ -1403,16 +1495,16 @@ function getThumbRenderer(THREE){
   return thumbRenderer;
 }
 
-// A fixed, always-on 3-point rig (independent of the user's live lightbox settings — those
-// tune interactive viewing, not a cached-once thumbnail) so default thumbnails are evenly lit
-// instead of the old single-ambient+single-directional look. Rendered on a transparent
-// background (feedback: thumbnails always looked like they had a baked-in black backdrop) so
-// the card's own "Thumb block" color shows through instead.
-const THUMB_RIG = [
-  { az: -50, el: 55, i: 1.0 },
-  { az: 130, el: 25, i: 0.55 },
-  { az: 20, el: -30, i: 0.35 },
-];
+// Fixed thumbnail lighting (independent of the user's live lightbox settings — those tune
+// interactive viewing, not a cached-once thumbnail): the "studio" environment map for soft
+// all-round fill and reflections, plus one directional key light for shape. The old
+// ambient + 3-directional rig had no env map, so PBR materials (most glTF) came out dark.
+// Rendered on a transparent background (feedback: thumbnails always looked like they had a
+// baked-in black backdrop) so the card's own "Thumb block" color shows through instead.
+// Changing this look → bump MODEL_THUMB_VERSION in library.py so cached thumbnails re-render.
+const THUMB_KEY = { az: 5, el: 50, i: 1.8 }; // ~40° left of and above the thumb camera (az ≈ 42°)
+const THUMB_ENV_INTENSITY = 1.2;
+let thumbEnvTex = null;
 async function renderModelThumb(a){
   try {
     const THREE = await import("three");
@@ -1426,14 +1518,20 @@ async function renderModelThumb(a){
     scene.background = null;
     const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 2000);
     camera.position.set(2, 1.4, 2.2);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-    const D2R = Math.PI / 180;
-    for (const l of THUMB_RIG){
-      const dl = new THREE.DirectionalLight(0xffffff, l.i);
-      const az = l.az * D2R, el = l.el * D2R;
-      dl.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(5);
-      scene.add(dl);
+    // Env texture belongs to the thumb renderer's GL context; rebuilt if that context was lost.
+    if (!thumbEnvTex || thumbEnvTex._renderer !== r){
+      thumbEnvTex = buildEnvTexture(THREE, r, ENV_PRESETS.studio);
+      if (thumbEnvTex) thumbEnvTex._renderer = r;
     }
+    scene.environment = thumbEnvTex;
+    scene.environmentIntensity = THUMB_ENV_INTENSITY;
+    // No env map (PMREM failed) → fall back to a flat ambient so the model isn't black.
+    if (!thumbEnvTex) scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const D2R = Math.PI / 180;
+    const key = new THREE.DirectionalLight(0xffffff, THUMB_KEY.i);
+    const az = THUMB_KEY.az * D2R, el = THUMB_KEY.el * D2R;
+    key.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(5);
+    scene.add(key);
     const obj = await loadModel(THREE, `/api/file/${a.id}`, a.ext, undefined, a.id);
     if (!obj) return;
     await applyCompanions(THREE, obj, a.id);
@@ -1458,7 +1556,7 @@ async function renderModelThumb(a){
   }
 }
 
-// Splats have no mesh/material to plug into the THUMB_RIG lighting — their color is baked in —
+// Splats have no mesh/material to plug into the thumbnail lighting — their color is baked in —
 // and depth-sorting runs in a background worker and is view-dependent, so the very first render
 // after load can catch it mid-sort. A few warm-up frames (rendered on real animation frames, so
 // the worker has a chance to post back) settle that before the kept frame is captured.
@@ -1638,6 +1736,10 @@ function clickSelect(id, e){
 }
 
 grid.addEventListener("pointerdown", (e) => {
+  // A new gesture starts: any skip flag left from the previous one is stale. Right-drag zoom never
+  // gets a "click", and a box released outside the grid gets it elsewhere, so the flag used to
+  // survive and swallow the next plain click on a card.
+  skipClick = false;
   if (e.button === 1){
     e.preventDefault();
     panDrag = { x: e.clientX, y: e.clientY, sl: grid.scrollLeft, st: grid.scrollTop };
@@ -1983,39 +2085,55 @@ function applyViewDom(){
 // Draggable divider between the grid and the board. The ratio and orientation are remembered
 // (saveLayout) and re-applied every time the split is turned on again; double-click flips between
 // side by side and stacked.
-splitHandle.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  splitHandle.setPointerCapture(e.pointerId);
-  splitHandle.classList.add("drag");
-});
-splitHandle.addEventListener("pointermove", (e) => {
-  if (!splitHandle.classList.contains("drag")) return;
-  const r = mainBody.getBoundingClientRect();
-  const raw = state.canvasSplitStacked ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
-  state.canvasSplitRatio = Math.min(0.85, Math.max(0.15, raw));
-  grid.style.flex = `0 0 ${state.canvasSplitRatio * 100}%`;
-});
-function endSplitDrag(){
-  if (!splitHandle.classList.contains("drag")) return;
-  splitHandle.classList.remove("drag");
-  saveLayout();
+// Draggable divider between two panes — used by the library/board split and the lightbox UV split.
+// o.box(): the element the ratio is measured against; o.stacked(): vertical split; o.set(ratio)
+// applies it live (clamped 0.15–0.85); o.end() persists it; o.dblclick optional.
+function bindSplitDrag(handle, o){
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("drag");
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!handle.classList.contains("drag")) return;
+    const r = o.box().getBoundingClientRect();
+    const raw = o.stacked?.() ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
+    o.set(Math.min(0.85, Math.max(0.15, raw)));
+  });
+  const end = () => {
+    if (!handle.classList.contains("drag")) return;
+    handle.classList.remove("drag");
+    o.end?.();
+  };
+  handle.addEventListener("pointerup", end);
+  handle.addEventListener("pointercancel", end);
+  if (o.dblclick) handle.addEventListener("dblclick", o.dblclick);
 }
-splitHandle.addEventListener("pointerup", endSplitDrag);
-splitHandle.addEventListener("pointercancel", endSplitDrag);
-splitHandle.addEventListener("dblclick", () => {
-  state.canvasSplitStacked = !state.canvasSplitStacked;
-  applyViewDom();
-  saveLayout();
+bindSplitDrag(splitHandle, {
+  box: () => mainBody,
+  stacked: () => state.canvasSplitStacked,
+  set: (r) => { state.canvasSplitRatio = r; grid.style.flex = `0 0 ${r * 100}%`; },
+  end: saveLayout,
+  dblclick: () => {
+    state.canvasSplitStacked = !state.canvasSplitStacked;
+    applyViewDom();
+    saveLayout();
+  },
 });
 
 // The pane under the cursor is the active one when both are on screen — hotkeys (Ctrl+A, canvas
 // F/A/Delete/…) go there without needing a click first. Over other UI (nav, inspector) the last
 // pane stays active.
 let activePane = "library";
+// The lightbox UV split works the same way: F / digits go to the UV pane or the 3D view under the cursor.
+let lightPane = "3d";
 document.addEventListener("pointerover", (e) => {
   if (canvasView.contains(e.target)) activePane = "canvas";
   else if (grid.contains(e.target)) activePane = "library";
+  const t = e.target.closest ? e.target : null;
+  if (t?.closest("#uvPane")) lightPane = "uv";
+  else if (t?.closest("#light3d")) lightPane = "3d";
 }, true);
 function canvasPaneActive(){
   return state.view === "canvas" && (!state.canvasSplit || activePane === "canvas");
@@ -2044,6 +2162,7 @@ function ensureCanvasCtl(){
       // nearest-neighbour switch for small (pixel-art) sources.
       combineSelection, markSmallSrc, syncPixelation,
       keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && canvasPaneActive(),
+      onContextMenu: showCanvasCtx,
     });
   }
   return canvasCtl;
@@ -2546,18 +2665,11 @@ function renderInsp(){
   }
   const a = sel[0];
   const thumb = thumbSrc(a);
-  const file = `/api/file/${a.id}`;
-  let preview = `<div class="ph">${KIND[a.kind]||a.kind}</div>`;
+  // The inspector preview is only the thumbnail, for every kind: players, waveforms, font/text
+  // stages, PSD layers and the live 3D viewer (all full-file downloads) live in the lightbox alone.
+  // applyThumb() fills the slot in place when a thumbnail that wasn't ready yet lands.
+  let preview = `<div class="insp-thumb" data-thumb="${a.id}">${thumb ? `<img src="${thumb}" alt="" />` : `<div class="ph">${KIND[a.kind]||a.kind}</div>`}</div>`;
   if (a.status === "missing") preview = `<div style="color:var(--danger)">File not found</div>`;
-  else if (a.ext === ".psd") preview = `<img id="psdPrev" src="/api/psd/${a.id}/preview" alt="" />`;
-  else if (a.kind === "image") preview = `<img src="${thumb || file}" alt="" />`;
-  else if (a.kind === "video") preview = `<video src="${file}" controls preload="auto"></video>`;
-  else if (a.kind === "audio") preview = `<div class="wave" id="waveInsp"></div>`;
-  // A model's inspector preview is just its thumbnail — the live viewer (a full download + parse)
-  // only starts in the lightbox. applyThumb() fills the slot if the thumbnail isn't rendered yet.
-  else if (a.kind === "model3d") preview = `<div class="m3d-thumb" data-m3d="${a.id}">${thumb ? `<img src="${thumb}" alt="" />` : `<div class="ph">${KIND[a.kind]||a.kind}</div>`}</div>`;
-  else if (a.kind === "font") preview = `<div id="fontInsp" style="width:100%;height:100%"></div>`;
-  else if (a.kind === "document") preview = `<div id="docInsp" style="width:100%;height:100%"></div>`;
   const st = a.status === "missing" ? "missing" : "on disk";
   insp.innerHTML = `
     <div class="preview">${preview}</div>
@@ -2580,7 +2692,6 @@ function renderInsp(){
     <label class="field">Note
       <textarea id="note">${esc(a.note||"")}</textarea>
     </label>
-    <div id="layerBox"></div>
     ${actionButtons()}
   `;
   insp.querySelectorAll(".preview img").forEach(watchPixelation);
@@ -2589,10 +2700,6 @@ function renderInsp(){
   bindTagInput(sel);
   $("note").onblur = () => patchMany(sel.map(x => x.id), { note: $("note").value });
   bindActions(sel);
-  if (a.kind === "audio" && a.status !== "missing") mountWave("waveInsp", a.id, file);
-  if (a.kind === "font" && a.status !== "missing") mountFontStage($("fontInsp"), a);
-  if (a.kind === "document" && a.status !== "missing") mountDocStage($("docInsp"), a);
-  if (a.ext === ".psd") loadPsdLayers(a.id);
 }
 
 // A fanned pile of up to five thumbnails (the last one on top) with a "N files" note past that —
@@ -2676,7 +2783,7 @@ function canRemoveFromFolder(){
 
 function actionButtons(){
   let html = `<div class="actions">
-      <button class="btn ghost" id="reveal">Locate</button>
+      <button class="btn ghost" id="reveal" title="Reveal in File System">Reveal</button>
       <button class="btn ghost" id="open">Open</button>
       <button class="btn ghost" id="refreshThumbs" type="button" style="flex:none;width:40px;padding:0" title="Refresh thumbnails of the selection" aria-label="Refresh thumbnails">⟳</button>`;
   if (canRemoveFromFolder()) html += `<button class="btn ghost" id="unfolder">Remove From Folder</button>`;
@@ -2685,7 +2792,7 @@ function actionButtons(){
 
 function bindActions(sel){
   $("open").onclick = () => api(`/api/assets/${sel[0].id}/open`, { method: "POST" });
-  $("reveal").onclick = () => api(`/api/assets/${sel[0].id}/reveal`, { method: "POST" });
+  $("reveal").onclick = () => revealAssets(sel.map((a) => a.id));
   $("refreshThumbs").onclick = refreshThumbs;
   $("unfolder")?.addEventListener("click", removeFromFolder);
 }
@@ -2778,26 +2885,6 @@ async function removeTagFromSelected(tag, sel){
   scheduleMeta();
 }
 
-async function loadPsdLayers(id){
-  const box = $("layerBox");
-  if (!box) return;
-  let layers = [];
-  try { layers = await api("/api/psd/" + id + "/layers"); } catch { layers = []; }
-  if (!layers.length) return;
-  box.className = "layers";
-  box.innerHTML = `<h3>Layers</h3>` + layers.map(l =>
-    `<button type="button" class="layer" data-i="${l.index}"><span>${esc(l.name)}</span><em class="badge">${l.kind === "group" ? "group" : (l.width+"×"+l.height)}</em></button>`
-  ).join("");
-  box.querySelectorAll(".layer").forEach((b) => {
-    b.onclick = () => {
-      box.querySelectorAll(".layer").forEach(x => x.classList.remove("on"));
-      b.classList.add("on");
-      const img = $("psdPrev");
-      if (img) img.src = `/api/psd/${id}/layer/${b.dataset.i}`;
-    };
-  });
-}
-
 async function patch(id, body, silent){
   const a = await api("/api/assets/"+id, { method:"PATCH", headers:{ "content-type":"application/json" }, body: JSON.stringify(body) });
   const i = state.items.findIndex(x => x.id === id);
@@ -2827,7 +2914,7 @@ function dispose3d(elId, defer){
   // onV3DEnvPresetChange/onV3DEnvFile are lightbox-only (the settings panel's environment
   // picker) — only clear them when it's the lightbox's own viewer being torn down, not the
   // inspector's, or closing the inspector preview would break the still-open lightbox's picker.
-  if (elId === "light3d"){ onV3DEnvPresetChange = null; onV3DEnvFile = null; onV3DRotate = null; v3dCam = null; camKeys.clear(); }
+  if (elId === "light3d"){ onV3DEnvPresetChange = null; onV3DEnvFile = null; onV3DRotate = null; v3dCam = null; camKeys.clear(); v3dInspect?.dispose(); v3dInspect = null; }
   const ctl = threeCtls.get(elId);
   if (!ctl) return null;
   try { ctl.stop(); } catch {}
@@ -3024,17 +3111,25 @@ function trimModelCache(){
 async function cloneModel(obj){
   const { clone } = await import("three/addons/utils/SkeletonUtils.js");
   const c = clone(obj); // also rebinds skinned meshes to the cloned skeleton
+  // One clone per material, not per mesh: meshes that shared a material must keep sharing it
+  // (the info overlay counts materials by identity, and N copies also cost N shader programs).
+  const copies = new Map();
+  const dup = (x) => { let y = copies.get(x); if (!y){ y = x.clone(); copies.set(x, y); } return y; };
   c.traverse((m) => {
-    if (m.material) m.material = Array.isArray(m.material) ? m.material.map((x) => x.clone()) : m.material.clone();
+    if (m.material) m.material = Array.isArray(m.material) ? m.material.map(dup) : dup(m.material);
   });
   return c;
 }
 
 // loadModel() + applyCompanions() through the cache — for the interactive viewer. (Thumbnail
 // rendering stays uncached: it sweeps many models once and would only evict the ones being viewed.)
-async function loadModelCached(THREE, url, ext, onProgress, aid){
+function modelCacheKey(aid){
   const a = assetById(aid);
-  const prefix = aid + ":", key = prefix + (a ? a.mtime : "");
+  return aid + ":" + (a ? a.mtime : "");
+}
+
+async function loadModelCached(THREE, url, ext, onProgress, aid){
+  const prefix = aid + ":", key = modelCacheKey(aid);
   const hit = modelCache.get(key);
   if (hit){
     modelCache.delete(key);
@@ -3176,7 +3271,20 @@ function makeCameraRig(THREE, camera, controls, aid, turns){
       home.target.copy(controls.target);
     },
     frame(){ view(home.pos, home.target); flashV3DToast("Frame all"); },
+    // Fit a world-space box (the inspector's selection) keeping the current viewing direction.
+    frameBox(box, label){
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      const r = Math.max(sphere.radius, 1e-4);
+      const dist = r / Math.sin(camera.fov * Math.PI / 360) * 1.1;
+      const dir = camera.position.clone().sub(controls.target);
+      if (dir.lengthSq() < 1e-12) dir.set(0.7, 0.45, 0.7);
+      view(sphere.center.clone().addScaledVector(dir.normalize(), dist), sphere.center);
+      flashV3DToast(label);
+    },
     step(now){
+      // Field of view is live from the Camera settings (mesh and splat viewers both call step()).
+      const fov = Number(state.v3d.camFov) || 50;
+      if (camera.fov !== fov){ camera.fov = fov; camera.updateProjectionMatrix(); }
       const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
       last = now;
       if (!dt || !camKeys.size) return;
@@ -3275,7 +3383,11 @@ function applyBaseMaterial(THREE, obj, origMats, mode){
     const cur = c.material;
     if (cur && cur.userData && cur.userData._v3dTemp) cur.dispose();
     let mat;
-    if (mode === "solid") mat = new THREE.MeshStandardMaterial({ color: 0xb7bdc7, roughness: 0.85, metalness: 0.05 });
+    if (mode === "solid"){
+      const v = state.v3d;
+      mat = new THREE.MeshStandardMaterial({ color: v.solidColor, roughness: v.solidRough, metalness: v.solidMetal });
+      mat.userData._v3dSolid = true;
+    }
     else if (mode === "vertex"){
       const hasColor = !!c.geometry.attributes.color;
       mat = new THREE.MeshBasicMaterial({ vertexColors: hasColor, color: hasColor ? 0xffffff : 0x555555 });
@@ -3287,25 +3399,29 @@ function applyBaseMaterial(THREE, obj, origMats, mode){
 }
 // Mutates the *current* material's transparency in place (instead of swapping to a dedicated
 // x-ray material) so it layers over whatever base mode is active; the original opacity is
-// stashed on first use and restored when toggled back off.
+// stashed on first use and restored when toggled back off. Multi-material meshes carry an array
+// (textured mode restores it from origMats) — every entry is handled.
 function applyXray(obj, on){
   if (!obj) return;
   obj.traverse((c) => {
     if (!c.isMesh || !c.material) return;
-    const m = c.material;
-    if (on){
-      if (m.userData._xraySaved === undefined){
-        m.userData._xraySaved = { opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite };
-      }
-      m.transparent = true;
-      m.opacity = 0.3;
-      m.depthWrite = false;
-    } else if (m.userData._xraySaved !== undefined){
-      Object.assign(m, m.userData._xraySaved);
-      delete m.userData._xraySaved;
-    }
-    m.needsUpdate = true;
+    for (const m of Array.isArray(c.material) ? c.material : [c.material]) xrayMaterial(m, on);
   });
+}
+function xrayMaterial(m, on){
+  if (!m) return;
+  if (on){
+    if (m.userData._xraySaved === undefined){
+      m.userData._xraySaved = { opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite };
+    }
+    m.transparent = true;
+    m.opacity = 0.3;
+    m.depthWrite = false;
+  } else if (m.userData._xraySaved !== undefined){
+    Object.assign(m, m.userData._xraySaved);
+    delete m.userData._xraySaved;
+  }
+  m.needsUpdate = true;
 }
 // A sibling LineSegments per mesh — toggling `.wireframe` on the base material would *replace*
 // its solid fill instead of drawing edges on top of it, so this adds a real overlay mesh.
@@ -3326,12 +3442,445 @@ function setWireOverlay(THREE, obj, on){
     } else if (ov) ov.visible = false;
   });
 }
-// Pushes each direct child of the loaded object outward from the object's own local center,
-// along that child's own center direction — a quick way to see how a multi-part model is put
-// together. `map` (child -> {pos, dir}) is built once per load, right after framing.
-function applyExplode(map, scale, t){
-  if (!map) return;
-  for (const [child, info] of map) child.position.copy(info.pos).addScaledVector(info.dir, t * scale);
+// ---- Exploded view ------------------------------------------------------------------------------
+// The explosion-graph method of Li, Agrawala, Curless & Salesin, "Automated Generation of
+// Interactive 3D Exploded View Diagrams" (SIGGRAPH 2008), which is also how CAD auto-explode
+// behaves (grounded component, one straight move per part, sub-assemblies exploded per level):
+// - Every node of the scene graph with 2+ geometric children is an assembly; its children are
+//   atomic parts at that level and nested assemblies explode inside their own parent's move.
+// - Per assembly, parts are removed one at a time: of the parts not blocked in at least one of the
+//   six model axes by the parts still in place, the one with the shortest escape (distance to
+//   clear the box of the remaining parts it touches) goes next, along that axis. Blocking and
+//   contact are tested on precise bounding boxes (an approximation of the paper's geometry tests).
+// - The largest part of each assembly is grounded and never moves; if everything left is
+//   interlocked, the part with the fewest blockers goes, still along one axis.
+// - A part rides along with the largest part it was resting on (its graph parent), so stacks
+//   spread out in sequence and screws leave together with their cover.
+// - The slider is staged: top-level assemblies before their insides, and within an assembly the
+//   parts in removal order, each easing over part of the range.
+// Guards (a model split into one mesh per face must not hang the page): the graph costs O(n²) per
+// assembly, so an assembly above EXPLODE_GRAPH_MAX parts, or any assembly solved after the time
+// budget ran out, falls back to the O(n) axial mode (each part along the dominant axis of its
+// offset from the assembly center, no blocking); above EXPLODE_MAX_MESHES meshes in total there is
+// no explode at all. Nothing here recurses per part or spreads per-part arrays into arguments.
+const EXPLODE_GRAPH_MAX = 1000, EXPLODE_MAX_MESHES = 50000, EXPLODE_BUDGET_MS = 400;
+function buildExplodeRig(THREE, obj){
+  // Nodes with a mesh in their subtree, in one post-order pass (traverse is pre-order).
+  const nodes = [];
+  obj.traverse((c) => nodes.push(c));
+  const meshCount = nodes.reduce((k, c) => k + (c.isMesh ? 1 : 0), 0);
+  if (meshCount < 2 || meshCount > EXPLODE_MAX_MESHES) return null;
+  const geo = new Set();
+  for (let k = nodes.length - 1; k >= 0; k--){
+    const c = nodes[k];
+    if (c.isMesh || c.children.some((ch) => geo.has(ch))) geo.add(c);
+  }
+  const hasMesh = (o) => geo.has(o);
+  const deadline = performance.now() + EXPLODE_BUDGET_MS;
+  // Solve in the model's own frame (its axes are the canonical explosion directions).
+  const saved = { p: obj.position.clone(), q: obj.quaternion.clone(), s: obj.scale.clone() };
+  const upM = new THREE.Vector3(0, 1, 0).applyQuaternion(saved.q.clone().invert());
+  const upAxis = [0, 1, 2].reduce((a, i) => (Math.abs(upM.getComponent(i)) > Math.abs(upM.getComponent(a)) ? i : a), 0);
+  const upSign = Math.sign(upM.getComponent(upAxis)) || 1;
+  obj.position.set(0, 0, 0); obj.quaternion.identity(); obj.scale.set(1, 1, 1);
+  obj.updateMatrixWorld(true);
+  const items = new Map(), levels = [];
+  const DIRS = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+  const place = (c, v, carry) => {
+    const w0 = c.getWorldPosition(new THREE.Vector3());
+    const vec = c.parent.worldToLocal(w0.clone().add(v)).sub(c.parent.worldToLocal(w0.clone()));
+    items.set(c, { pos: c.position.clone(), vec, carry, start: 0, span: 1, off: new THREE.Vector3() });
+  };
+  const pushAll = (depth, list) => { const l = (levels[depth] ||= []); for (const c of list) l.push(c); };
+  const largest = (vol) => { let m = 0; for (const x of vol) if (x > m) m = x; return m; };
+  // O(n) fallback for huge or late assemblies: grounded largest part stays, the rest move along the
+  // dominant axis of their offset from the assembly center, twice as far out plus a gap.
+  function solveAxial(parts, depth){
+    const boxes = parts.map((c) => new THREE.Box3().setFromObject(c));
+    const all = new THREE.Box3();
+    boxes.forEach((b) => all.union(b));
+    const mid = all.getCenter(new THREE.Vector3()), size = all.getSize(new THREE.Vector3());
+    const gap = size.length() * 0.03;
+    const vol = boxes.map((b) => { const z = b.getSize(new THREE.Vector3()); return z.x * z.y * z.z; });
+    const grounded = vol.indexOf(largest(vol));
+    const order = [];
+    parts.forEach((c, i) => {
+      if (i === grounded) return;
+      const d = boxes[i].getCenter(new THREE.Vector3()).sub(mid);
+      let a = 0;
+      for (let k = 1; k < 3; k++) if (Math.abs(d.getComponent(k)) / (size.getComponent(k) || 1) > Math.abs(d.getComponent(a)) / (size.getComponent(a) || 1)) a = k;
+      const x = d.getComponent(a);
+      if (Math.abs(x) < 1e-9) return;
+      place(c, new THREE.Vector3().setComponent(a, x + Math.sign(x) * gap), null);
+      order.push(c);
+    });
+    pushAll(depth, order);
+  }
+  function solve(parts, depth){
+    const n = parts.length;
+    if (n > EXPLODE_GRAPH_MAX || performance.now() > deadline) return solveAxial(parts, depth);
+    const boxes = parts.map((c) => new THREE.Box3().setFromObject(c, true));
+    const all = new THREE.Box3();
+    boxes.forEach((b) => all.union(b));
+    const diag = all.getSize(new THREE.Vector3()).length() || 1;
+    const eps = diag * 0.002, gap = diag * 0.06;
+    const lo = (b, a) => b.min.getComponent(a), hi = (b, a) => b.max.getComponent(a);
+    const vol = boxes.map((b) => { const z = b.getSize(new THREE.Vector3()); return (z.x + eps) * (z.y + eps) * (z.z + eps); });
+    // Grounded: the largest part; among near-equal ones, the one nearest the assembly's center.
+    const vmax = largest(vol), mid = all.getCenter(new THREE.Vector3());
+    let grounded = -1, gd = Infinity;
+    boxes.forEach((b, i) => {
+      if (vol[i] < vmax * 0.99) return;
+      const dist = b.getCenter(new THREE.Vector3()).distanceToSquared(mid);
+      if (dist < gd){ gd = dist; grounded = i; }
+    });
+    // Projections on the plane across axis a overlap (touching faces do not count).
+    const across = (b1, b2, a) => [0, 1, 2].every((k) => k === a || Math.min(hi(b1, k), hi(b2, k)) - Math.max(lo(b1, k), lo(b2, k)) > eps);
+    const blockCount = new Int32Array(n * 6);
+    const blocks = parts.map(() => []); // q -> [p * 6 + d] that q blocks
+    const contacts = parts.map(() => []);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++){
+      if (i === j) continue;
+      const bi = boxes[i], bj = boxes[j];
+      if (i < j && [0, 1, 2].every((k) => hi(bi, k) + eps >= lo(bj, k) && hi(bj, k) + eps >= lo(bi, k))){
+        contacts[i].push(j); contacts[j].push(i);
+      }
+      // j blocks i along +a if it overlaps i across a and reaches past i's leading face.
+      for (let d = 0; d < 6; d++){
+        const [a, sg] = DIRS[d];
+        if (!across(bi, bj, a)) continue;
+        if (sg > 0 ? hi(bj, a) > hi(bi, a) + eps && hi(bj, a) > lo(bi, a) + eps : lo(bj, a) < lo(bi, a) - eps && lo(bj, a) < hi(bi, a) - eps){
+          blockCount[i * 6 + d]++; blocks[j].push(i * 6 + d);
+        }
+      }
+    }
+    const active = new Array(n).fill(true);
+    const bias = (d) => (DIRS[d][0] === upAxis ? (DIRS[d][1] === upSign ? 1 : 1.25) : 1.1);
+    // Escape distances only change when a touching part leaves, so they are cached per part.
+    const escCache = new Float64Array(n * 6).fill(NaN);
+    const escape = (i, d) => {
+      if (!Number.isNaN(escCache[i * 6 + d])) return escCache[i * 6 + d];
+      const [a, sg] = DIRS[d], u = boxes[i].clone();
+      for (const j of contacts[i]) if (active[j]) u.union(boxes[j]);
+      return (escCache[i * 6 + d] = sg > 0 ? hi(u, a) - lo(boxes[i], a) : hi(boxes[i], a) - lo(u, a));
+    };
+    const order = [];
+    for (let left = n; left > 1; left--){
+      let best = null;
+      for (let pass = 0; pass < 2 && !best; pass++){
+        for (let i = 0; i < n; i++){
+          if (!active[i] || i === grounded) continue;
+          for (let d = 0; d < 6; d++){
+            const blocked = blockCount[i * 6 + d];
+            if (pass === 0 && blocked) continue;
+            const e = escape(i, d);
+            const score = blocked * 1e12 + e * bias(d);
+            if (!best || score < best.score) best = { i, d, e, score };
+          }
+        }
+      }
+      const { i, d, e } = best;
+      active[i] = false;
+      for (const k of blocks[i]) blockCount[k]--;
+      for (const j of contacts[i]) escCache.fill(NaN, j * 6, j * 6 + 6);
+      let carry = -1;
+      for (const j of contacts[i]) if (active[j] && (carry < 0 || vol[j] > vol[carry])) carry = j;
+      const c = parts[i], [a, sg] = DIRS[d];
+      place(c, new THREE.Vector3().setComponent(a, sg * (e + gap)), carry >= 0 ? parts[carry] : null);
+      order.push(c);
+    }
+    pushAll(depth, order);
+  }
+  // Breadth-first over assemblies (a queue, not recursion: hierarchies can be very deep).
+  const queue = [[obj, 0]];
+  for (let q = 0; q < queue.length; q++){
+    const [node, depth] = queue[q];
+    let parts = node.children.filter(hasMesh);
+    while (parts.length === 1 && !parts[0].isMesh) parts = parts[0].children.filter(hasMesh);
+    if (parts.length < 2) continue;
+    solve(parts, depth);
+    for (const c of parts) if (!c.isMesh) queue.push([c, depth + 1]);
+  }
+  obj.position.copy(saved.p); obj.quaternion.copy(saved.q); obj.scale.copy(saved.s);
+  obj.updateMatrixWorld(true);
+  if (!items.size) return null;
+  const m = items.size, span = m > 1 ? 0.4 : 1;
+  let k = 0;
+  for (const l of levels) if (l) for (const c of l){ const it = items.get(c); it.start = m > 1 ? (1 - span) * k++ / (m - 1) : 0; it.span = span; }
+  // A part's carry is always placed after it (it left later), so walking the list backwards
+  // computes every carry before the parts that ride on it.
+  return { items, list: [...items].reverse() };
+}
+// Moves every exploded part to its place for slider value t (0 = assembled, 1 = fully exploded).
+function applyExplode(rig, t){
+  if (!rig) return;
+  for (const [c, it] of rig.list){
+    let u = Math.min(1, Math.max(0, (t - it.start) / it.span));
+    u = u * u * (3 - 2 * u);
+    it.off.copy(it.vec).multiplyScalar(u);
+    const pc = it.carry && rig.items.get(it.carry);
+    if (pc) it.off.add(pc.off);
+    c.position.copy(it.pos).add(it.off);
+  }
+}
+
+// ---- Soft shadows for the lightbox 3D viewer ----------------------------------------------------
+// three's own filters blur by a fixed number of shadow-map texels, so a low-res map shows stair
+// steps and there is no notion of a light's size. The viewer runs BasicShadowMap (raw depth) and
+// this replaces that mode's getShadow() with PCSS: a blocker search finds the average occluder
+// depth, the penumbra grows with the receiver-to-blocker distance (contact-hardening), and a
+// rotated Vogel disk filters it. A minimum radius of 1.5 texels anti-aliases even a point light.
+// light.shadow.radius carries the penumbra radius in shadow-map UV per unit of shadow depth
+// (see pcssRadius). A receiver-plane depth bias keeps wide kernels from self-shadowing slopes.
+const PCSS_GLSL = `
+		float sightIGN( vec2 p ) { return fract( 52.9829189 * fract( dot( p, vec2( 0.06711056, 0.00583715 ) ) ) ); }
+		vec2 sightVogel( int i, int n, float phi ) {
+			float r = sqrt( ( float( i ) + 0.5 ) / float( n ) );
+			float t = float( i ) * 2.399963229728653 + phi;
+			return vec2( cos( t ), sin( t ) ) * r;
+		}
+		float getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowIntensity, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
+			float shadow = 1.0;
+			shadowCoord.xyz /= shadowCoord.w;
+			shadowCoord.z += shadowBias;
+			vec3 ddx = dFdx( shadowCoord.xyz ), ddy = dFdy( shadowCoord.xyz );
+			float det = ddx.x * ddy.y - ddx.y * ddy.x;
+			vec2 dzduv = abs( det ) > 1e-12 ? vec2( ddy.y * ddx.z - ddx.y * ddy.z, ddx.x * ddy.z - ddy.x * ddx.z ) / det : vec2( 0.0 );
+			dzduv = clamp( dzduv, vec2( -2.0 ), vec2( 2.0 ) );
+			bool inFrustum = shadowCoord.x >= 0.0 && shadowCoord.x <= 1.0 && shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0;
+			if ( inFrustum && shadowCoord.z <= 1.0 ) {
+				float texel = 1.0 / shadowMapSize.x;
+				float phi = sightIGN( gl_FragCoord.xy ) * PI2;
+				float searchR = clamp( shadowRadius * shadowCoord.z, 3.0 * texel, 0.2 );
+				float zSum = 0.0, nBlk = 0.0;
+				for ( int i = 0; i < 16; i ++ ) {
+					vec2 o = sightVogel( i, 16, phi ) * searchR;
+					float d = texture2D( shadowMap, shadowCoord.xy + o ).r;
+					if ( d < shadowCoord.z + dot( dzduv, o ) - texel * 0.5 ) { zSum += d; nBlk += 1.0; }
+				}
+				if ( nBlk > 0.0 ) {
+					float pen = clamp( shadowRadius * ( shadowCoord.z - zSum / nBlk ), 1.5 * texel, 0.2 );
+					float lit = 0.0;
+					for ( int i = 0; i < 32; i ++ ) {
+						vec2 o = sightVogel( i, 32, phi ) * pen;
+						lit += step( shadowCoord.z + dot( dzduv, o ) - texel * 0.5, texture2D( shadowMap, shadowCoord.xy + o ).r );
+					}
+					shadow = lit / 32.0;
+				}
+			}
+			return mix( 1.0, shadow, shadowIntensity );
+		}`;
+let softShadowsPatched = null;
+function patchSoftShadows(THREE){
+  if (softShadowsPatched !== null) return softShadowsPatched;
+  softShadowsPatched = false;
+  const src = THREE.ShaderChunk.shadowmap_pars_fragment;
+  const start = src.indexOf("#else\n\t\tfloat getShadow( sampler2D shadowMap");
+  const end = start < 0 ? -1 : src.indexOf("\n\t#endif\n\t#if NUM_POINT_LIGHT_SHADOWS > 0", start);
+  if (start < 0 || end < 0){ console.warn("soft shadows: three.js shadow chunk changed, using PCF"); return false; }
+  THREE.ShaderChunk.shadowmap_pars_fragment = src.slice(0, start) + "#else" + PCSS_GLSL + src.slice(end);
+  return (softShadowsPatched = true);
+}
+// Penumbra radius (shadow UV per unit shadow depth) for a directional light of angular diameter
+// `deg`: a receiver Δ behind its blocker sits in a penumbra of radius Δ·tan(deg/2).
+function pcssRadius(cam, deg){
+  return (cam.far - cam.near) * Math.tan(Math.max(0, deg) * Math.PI / 360) / Math.max(1e-6, cam.right - cam.left);
+}
+
+// Sky brightness (linear luminance) seen along a world direction — what the floor's environment
+// shadow is weighted by. Presets mirror buildEnvTexture's gradient; a custom image is read back
+// at low resolution in the equirect layout three uses (u = atan2(z, x), v = asin(y)).
+function skyLumFromPreset(THREE, colors){
+  const top = new THREE.Color(colors.top), hor = new THREE.Color(colors.horizon), bot = new THREE.Color(colors.bottom);
+  const tmp = new THREE.Color();
+  return (d) => {
+    tmp.copy(hor).lerp(d.y >= 0 ? top : bot, Math.min(1, Math.abs(d.y) * 1.6));
+    return 0.2126 * tmp.r + 0.7152 * tmp.g + 0.0722 * tmp.b;
+  };
+}
+async function skyLumFromImage(file){
+  const W = 128, H = 64;
+  const bmp = await createImageBitmap(file);
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const cx = cv.getContext("2d");
+  cx.drawImage(bmp, 0, 0, W, H);
+  bmp.close?.();
+  const px = cx.getImageData(0, 0, W, H).data;
+  const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) lum[i] = 0.2126 * lin(px[i * 4]) + 0.7152 * lin(px[i * 4 + 1]) + 0.0722 * lin(px[i * 4 + 2]);
+  return (d) => {
+    const u = Math.atan2(d.z, d.x) / (2 * Math.PI) + 0.5;
+    const v = Math.asin(Math.max(-1, Math.min(1, d.y))) / Math.PI + 0.5;
+    const col = Math.min(W - 1, Math.max(0, Math.floor(u * W)));
+    const row = Math.min(H - 1, Math.max(0, Math.floor((1 - v) * H)));
+    return lum[row * W + col];
+  };
+}
+
+// Floor shadow from the environment and ambient light. three.js lights meshes with them but never
+// shadows them, so the floor's share is integrated here: N directions over the upper hemisphere
+// (cosine-distributed), each weighted by the sky's radiance there, each rendered as one soft
+// shadow map onto a floor-sized texture and summed over a few frames. The result is camera
+// independent — it only restarts when the model, explode, sky or its strength changes.
+// `vis.texture` holds visibility in .r (1 = open sky): the solid floor uses it as its aoMap
+// (which scales exactly the ambient + environment part of its lighting); `overlay` draws it as a
+// darkening layer for the shadow-only floor.
+// Layers: three picks shadow casters by the *rendering* camera's layers, so each sample is two
+// renders — `castCam` (layers LAYER + CASTER_LAYER, an empty frustum so nothing is drawn) only
+// refreshes the sample light's shadow map from the casters marked by markCasters(); `cam` (LAYER
+// only) then draws the receiver plane with that map. The rig lights sit on layer 0, so neither
+// pass re-renders their shadow maps.
+function makeSkyOcclusion(THREE, renderer, scene){
+  const LAYER = 5, CASTER_LAYER = 6, N = 64, PER_FRAME = 8, RES = 512;
+  const accum = new THREE.WebGLRenderTarget(RES, RES, { type: THREE.HalfFloatType, depthBuffer: false });
+  const vis = new THREE.WebGLRenderTarget(RES, RES, { depthBuffer: false });
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
+  cam.layers.set(LAYER);
+  const castCam = new THREE.OrthographicCamera(-1, -1 + 1e-6, 1, 1 - 1e-6, 1e9, 1e9 + 1);
+  castCam.layers.set(LAYER);
+  castCam.layers.enable(CASTER_LAYER);
+  const dummy = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+  cam.up.set(0, 0, -1); // image top = world −Z, matching PlaneGeometry's uv after rotation.x = −π/2
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.layers.set(LAYER); // only the occlusion passes see it (lights are layer-filtered like meshes)
+  light.castShadow = true;
+  light.shadow.mapSize.set(1024, 1024);
+  scene.add(light, light.target);
+  const recvMat = new THREE.ShadowMaterial({
+    color: 0xffffff, premultipliedAlpha: true, transparent: true, depthTest: false, depthWrite: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
+  });
+  const recv = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), recvMat);
+  recv.rotation.x = -Math.PI / 2;
+  recv.receiveShadow = true;
+  recv.layers.set(LAYER);
+  scene.add(recv);
+  // accum.r = Σ wᵢ·occludedᵢ  →  vis.r = 1 − accum.r / Σ wᵢ (so a partial pass is already a fair estimate)
+  const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const resolveMat = new THREE.ShaderMaterial({
+    uniforms: { tAcc: { value: accum.texture }, uInv: { value: 0 } },
+    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader: "uniform sampler2D tAcc; uniform float uInv; varying vec2 vUv; void main(){ gl_FragColor = vec4(vec3(1.0 - clamp(texture2D(tAcc, vUv).r * uInv, 0.0, 1.0)), 1.0); }",
+    depthTest: false, depthWrite: false,
+  });
+  const resolveScene = new THREE.Scene();
+  resolveScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), resolveMat));
+  const overlayMat = new THREE.ShaderMaterial({
+    uniforms: { tVis: { value: vis.texture }, uAlpha: { value: 0 } },
+    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    fragmentShader: "uniform sampler2D tVis; uniform float uAlpha; varying vec2 vUv; void main(){ gl_FragColor = vec4(0.0, 0.0, 0.0, (1.0 - texture2D(tVis, vUv).r) * uAlpha); }",
+    transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  const overlay = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), overlayMat);
+  overlay.rotation.x = -Math.PI / 2;
+  overlay.visible = false;
+  scene.add(overlay);
+  // Cosine-distributed directions, visited in a strided order so every partial batch already
+  // covers the whole sky. Near-horizon directions are lifted to 6° (their shadows run off the floor).
+  const dirs = [];
+  for (let k = 0; k < N; k++){
+    const i = (k * 23) % N, u = (i + 0.5) / N, phi = i * 2.399963229728653;
+    const r = Math.sqrt(u), y = Math.max(Math.sqrt(1 - u), Math.sin(6 * Math.PI / 180));
+    dirs.push(new THREE.Vector3(r * Math.cos(phi), y, r * Math.sin(phi)).normalize());
+  }
+  // Each direction stands for a patch of sky ~sqrt(2π/N) rad wide — rendering it as a light of
+  // that size blends the discrete shadows into one smooth one.
+  const sampleDeg = Math.sqrt(2 * Math.PI / N) * 180 / Math.PI;
+  const weights = new Float32Array(N);
+  const center = new THREE.Vector3(), tmpDir = new THREE.Vector3(), prevClear = new THREE.Color();
+  let radius = 1, floorY = 0, floorSize = 1, done = N, wDone = 0, wAll = 0;
+
+  function clearVis(){
+    const prev = renderer.getRenderTarget();
+    renderer.getClearColor(prevClear);
+    const prevAlpha = renderer.getClearAlpha();
+    renderer.setRenderTarget(vis);
+    renderer.setClearColor(0xffffff, 1);
+    renderer.clear(true, false, false);
+    renderer.setRenderTarget(prev);
+    renderer.setClearColor(prevClear, prevAlpha);
+  }
+  clearVis();
+  return {
+    texture: vis.texture,
+    overlay,
+    markCasters(root){ root.traverse((c) => c.layers.enable(CASTER_LAYER)); },
+    // Model bounds (sphere) and the floor square the texture maps onto.
+    fit(c, r, fy, fsize, fx, fz){
+      center.copy(c); radius = Math.max(r, 1e-4); floorY = fy; floorSize = fsize;
+      recv.position.set(fx, fy, fz); recv.scale.set(fsize, fsize, 1);
+      overlay.position.set(fx, fy, fz); overlay.scale.set(fsize, fsize, 1);
+      const h = radius * 4 + 1;
+      cam.position.set(fx, fy + h, fz);
+      cam.lookAt(fx, fy, fz);
+      cam.left = -fsize / 2; cam.right = fsize / 2; cam.top = fsize / 2; cam.bottom = -fsize / 2;
+      cam.near = h * 0.5; cam.far = h * 1.5;
+      cam.updateProjectionMatrix();
+    },
+    // skyL(dir) = radiance weight of that direction (ambient/π + env). All ~0 → nothing to shadow.
+    restart(skyL){
+      wAll = 0;
+      for (let i = 0; i < N; i++){ weights[i] = Math.max(0, skyL(dirs[i])); wAll += weights[i]; }
+      done = 0; wDone = 0;
+      if (wAll <= 1e-6){ done = N; clearVis(); }
+      return wAll / N; // mean radiance weight → the caller's sky irradiance estimate (× π)
+    },
+    busy(){ return done < N; },
+    step(){
+      if (done >= N) return;
+      const prevTarget = renderer.getRenderTarget(), prevAuto = renderer.autoClear, prevBg = scene.background;
+      renderer.getClearColor(prevClear);
+      const prevAlpha = renderer.getClearAlpha();
+      const prevShadowAuto = renderer.shadowMap.autoUpdate;
+      scene.background = null;
+      renderer.autoClear = false;
+      if (done === 0){
+        renderer.setRenderTarget(accum);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear(true, false, false);
+      }
+      const dist = radius * 3;
+      const sc = light.shadow.camera;
+      sc.left = -radius; sc.right = radius; sc.top = radius; sc.bottom = -radius;
+      sc.near = dist - radius; sc.far = dist + radius + floorSize * 2;
+      sc.updateProjectionMatrix();
+      light.shadow.radius = softShadowsPatched ? pcssRadius(sc, sampleDeg) : 4;
+      light.shadow.bias = -0.0005;
+      light.shadow.normalBias = 0;
+      for (let n = 0; n < PER_FRAME && done < N; n++, done++){
+        const w = weights[done];
+        if (w <= 0) continue;
+        tmpDir.copy(dirs[done]);
+        light.position.copy(center).addScaledVector(tmpDir, dist);
+        light.target.position.copy(center);
+        light.updateMatrixWorld(); light.target.updateMatrixWorld();
+        recvMat.opacity = w;
+        renderer.shadowMap.autoUpdate = true;
+        renderer.setRenderTarget(dummy);
+        renderer.render(scene, castCam);
+        renderer.shadowMap.autoUpdate = false;
+        renderer.shadowMap.needsUpdate = false;
+        renderer.setRenderTarget(accum);
+        renderer.render(scene, cam);
+        wDone += w;
+      }
+      renderer.shadowMap.autoUpdate = prevShadowAuto;
+      resolveMat.uniforms.uInv.value = wDone > 0 ? 1 / wDone : 0;
+      renderer.setRenderTarget(vis);
+      renderer.render(resolveScene, quadCam);
+      renderer.setRenderTarget(prevTarget);
+      renderer.autoClear = prevAuto;
+      renderer.setClearColor(prevClear, prevAlpha);
+      scene.background = prevBg;
+    },
+    dispose(){
+      accum.dispose(); vis.dispose(); dummy.dispose(); recvMat.dispose(); resolveMat.dispose(); overlayMat.dispose();
+      recv.geometry.dispose(); overlay.geometry.dispose(); light.shadow.map?.dispose();
+    },
+  };
 }
 
 // Applies filename-heuristic companion textures (§4) to materials that loaded without a map —
@@ -3369,6 +3918,10 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
   // this placeholder both stay queued behind that parse instead of appearing first (the freeze
   // reported in feedback: the whole window hangs, then the lightbox pops in already loaded).
   el.replaceChildren();
+  // A model already parsed in the RAM cache (see loadModelCached) has nothing to download, so it
+  // gets the thumbnail backdrop without the progress plate. The backdrop itself stays: cloning,
+  // shader compilation and texture upload of a mid-size or large model still take a visible moment.
+  const cached = modelCache.has(modelCacheKey(aid));
   const loadingEl = document.createElement("div");
   loadingEl.className = "model-loading" + (elId === "light3d" ? " in-bar" : "");
   // Lightbox: the toolbar/gear stay hidden (CSS, .v3d-loading) until endLoading() — see showInLight.
@@ -3383,7 +3936,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
   // behind it so the backdrop matches what the canvas will show once the model is up.
   loadingEl.style.backgroundColor = elId === "light3d" ? state.v3d.bg : "#0a0a0b";
   if (thumbUrl) loadingEl.style.backgroundImage = `url("${thumbUrl}")`;
-  loadingEl.innerHTML = `<div class="plate"><div class="mprog-label">Loading model…</div><div class="mprog indeterminate"><i></i></div></div>`;
+  if (!cached) loadingEl.innerHTML = `<div class="plate"><div class="mprog-label">Loading model…</div><div class="mprog indeterminate"><i></i></div></div>`;
   el.appendChild(loadingEl);
   // Real download progress where the loader reports it (byte counts — our own /api/file/ always
   // sends Content-Length, so this is almost always computable) instead of a plate that just sits
@@ -3491,6 +4044,12 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         camRig = makeCameraRig(THREE, camera, controls, aid);
         camRig.setHome(size);
         v3dCam = camRig;
+        const dims = box.getSize(new THREE.Vector3());
+        const f = (x) => Number(x.toPrecision(4)).toString();
+        setSceneInfo({ id: aid, title: "Scene", rows: [
+          ["Splats", (mesh.packedSplats?.numSplats ?? mesh.numSplats ?? 0).toLocaleString("en-US")],
+          ["Bounds", `${f(dims.x)} × ${f(dims.y)} × ${f(dims.z)}`],
+        ] });
       }
       endLoading();
       return;
@@ -3499,20 +4058,23 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     // --- lighting / floor / environment rig (lightbox only — driven live by state.v3d,
     // see syncRig() below and the settings panel in renderV3DPanel()) -------------------
     let ambientLight, rigLights = [], floor = null, grid = null, floorMatSolid, floorMatShadow, envTex = null;
+    let skyOcc = null, skyLum = null, envVersion = 0; // floor shadow from ambient + environment (makeSkyOcclusion)
     let lightDrag = null; // Alt+left-drag on the canvas — rotates all lights + the env map (see below)
     if (isLightbox){
       renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      // Basic = raw depth, filtered by our PCSS getShadow (patchSoftShadows); PCF if the patch can't apply.
+      renderer.shadowMap.type = patchSoftShadows(THREE) ? THREE.BasicShadowMap : THREE.PCFShadowMap;
       ambientLight = new THREE.AmbientLight(0xffffff, state.v3d.ambient);
       scene.add(ambientLight);
       for (let i = 0; i < 3; i++){
         const l = new THREE.DirectionalLight(0xffffff, 1);
         l.castShadow = true;
-        l.shadow.mapSize.set(1024, 1024);
+        l.shadow.mapSize.set(2048, 2048);
         scene.add(l, l.target);
         rigLights.push(l);
       }
-      floorMatSolid = new THREE.MeshStandardMaterial({ color: 0x17171b, roughness: 1 });
+      // transparent: the floor fades out while explode pushes parts below it (see syncRig)
+      floorMatSolid = new THREE.MeshStandardMaterial({ color: 0x17171b, roughness: 1, transparent: true });
       floorMatShadow = new THREE.ShadowMaterial({ opacity: state.v3d.shadowStrength });
       floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMatSolid);
       floor.rotation.x = -Math.PI / 2;
@@ -3523,6 +4085,9 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       grid.visible = false;
       scene.add(grid);
       envTex = buildEnvTexture(THREE, renderer, ENV_PRESETS[state.v3d.envPreset] || ENV_PRESETS.studio);
+      skyLum = skyLumFromPreset(THREE, ENV_PRESETS[state.v3d.envPreset] || ENV_PRESETS.studio);
+      skyOcc = makeSkyOcclusion(THREE, renderer, scene);
+      floorMatSolid.aoMap = skyOcc.texture; // scales only the floor's ambient + environment light
       // The settings panel's environment picker (renderV3DPanel) calls through these — it has
       // no direct access to the renderer/scene living in this closure.
       onV3DEnvPresetChange = (name) => {
@@ -3530,6 +4095,8 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         const tex = buildEnvTexture(THREE, renderer, ENV_PRESETS[name] || ENV_PRESETS.studio);
         if (envTex) envTex.dispose();
         envTex = tex;
+        skyLum = skyLumFromPreset(THREE, ENV_PRESETS[name] || ENV_PRESETS.studio);
+        envVersion++;
       };
       onV3DEnvFile = async (file) => {
         const url = URL.createObjectURL(file);
@@ -3538,6 +4105,8 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
           if (!live || !tex) return;
           if (envTex) envTex.dispose();
           envTex = tex;
+          try { skyLum = await skyLumFromImage(file); } catch { skyLum = () => 0.5; }
+          envVersion++;
         } finally {
           URL.revokeObjectURL(url);
         }
@@ -3567,19 +4136,106 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(3,5,2); scene.add(dir);
     }
 
+    // Ctrl+right-drag drives the explode amount (right / up = further apart, 400 px = full range)
+    // instead of dollying. Bound before OrbitControls so stopImmediatePropagation() keeps it from
+    // starting its own right-button drag for the same gesture.
+    let explodeDrag = null;
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+      if (e.button !== 2 || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!explodeMap) return;
+      explodeDrag = { x: e.clientX, y: e.clientY, v0: state.v3d.explode };
+      renderer.domElement.setPointerCapture(e.pointerId);
+    });
+    renderer.domElement.addEventListener("pointermove", (e) => {
+      if (!explodeDrag) return;
+      const d = (e.clientX - explodeDrag.x) - (e.clientY - explodeDrag.y);
+      const val = Math.min(1, Math.max(0, explodeDrag.v0 + d / 400));
+      if (val === state.v3d.explode) return;
+      state.v3d.explode = val;
+      saveV3D();
+      light?.explodeSlider?.set(val);
+      flashV3DToast(`Explode ${Math.round(val * 100)}%`);
+    });
+    const endExplodeDrag = () => { explodeDrag = null; };
+    renderer.domElement.addEventListener("pointerup", endExplodeDrag);
+    renderer.domElement.addEventListener("pointercancel", endExplodeDrag);
+
     const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
     // Match the pan/zoom convention every other viewer here uses (middle-drag pan, right-drag
     // + wheel zoom) — left stays orbit/rotate since 2D viewers have no equivalent for that.
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.DOLLY };
     controls.zoomToCursor = true; // zoom toward the pointer, not the orbit target
+    // Click picking (a left click that didn't move — a drag is an orbit / pan): Ctrl+click selects
+    // the mesh under the cursor (same selection as the info panel's Meshes list, Ctrl+click it
+    // again to deselect); a click on empty space clears whatever is selected (mesh, material or
+    // texture). A plain click on the model does nothing.
+    let pickDown = null;
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+      pickDown = e.button === 0 && !e.altKey ? { x: e.clientX, y: e.clientY } : null;
+    });
+    renderer.domElement.addEventListener("pointerup", (e) => {
+      const d = pickDown;
+      pickDown = null;
+      if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+      const ins = v3dInspect;
+      if (!ins || !light || ins.aid !== light.id) return;
+      const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey; // exact modifiers (Alt is excluded above)
+      if (!ctrl && !ins.sel) return;
+      const r = renderer.domElement.getBoundingClientRect();
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+      const hit = ray.intersectObjects(ins.meshes.map((m) => m.c).filter((c) => c.visible), false)[0];
+      const i = hit ? ins.meshes.findIndex((m) => m.c === hit.object) : -1;
+      if (i < 0) setInspectSel(null);
+      else if (ctrl) setInspectSel(ins.sel && ins.sel.kind === "mesh" && ins.sel.i === i ? null : { kind: "mesh", i }, true);
+    });
 
     let obj = null, origMats = null, rigRadius = 5;
-    let explodeMap = null, explodeScale = 1;
-    let shadeApplied = { base: null, wire: null, xray: null, explode: null };
+    let explodeMap = null;
+    let shadeApplied = { base: null, wire: null, xray: null, explode: null, solid: null };
     const D2R = Math.PI / 180;
+    // Shadow frusta hug the model's bounding sphere (the old ±diagonal box wasted half the map's
+    // texels, which showed as stair steps) and are refitted when explode moves parts around.
+    const rigCenter = new THREE.Vector3(), rigDir = new THREE.Vector3(), skyDir = new THREE.Vector3();
+    let rigR = 1, rigDist = 5, floorSpan = 3, fitVersion = 0, occKey = "", eInd = 0;
+    let floorFade = 1, fadeTarget = 1, fadeRange = 1, lastSync = performance.now();
+    function fitShadows(box){
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      rigCenter.copy(sphere.center);
+      rigR = Math.max(sphere.radius, 1e-4);
+      rigDist = Math.max(rigRadius, rigR * 3);
+      rigLights.forEach((l) => {
+        const sc = l.shadow.camera;
+        sc.left = -rigR; sc.right = rigR; sc.top = rigR; sc.bottom = -rigR;
+        // far reaches past the whole floor so long, low-light shadows are still inside the map
+        sc.near = Math.max(1e-3, rigDist - rigR * 1.05); sc.far = rigDist + rigR + floorSpan * 1.5;
+        sc.updateProjectionMatrix();
+        l.shadow.bias = -0.0001;
+        l.shadow.normalBias = rigR * 2 / l.shadow.mapSize.x * 1.5;
+      });
+      skyOcc.fit(sphere.center, rigR, floor.position.y, floorSpan, floor.position.x, floor.position.z);
+      fitVersion++;
+    }
+    // Explode: parts pushed below the floor make its shadow meaningless — fade the floor (and grid,
+    // shadows) out by how deep the lowest part has sunk, over ~15% of the model's size.
+    function onExplodeMoved(){
+      obj.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(obj);
+      const below = floor.position.y - box.min.y;
+      const t = Math.min(1, Math.max(0, below / fadeRange));
+      fadeTarget = 1 - t * t * (3 - 2 * t);
+      fitShadows(box);
+    }
     function syncRig(){
       const v = state.v3d;
+      const now = performance.now();
+      floorFade += (fadeTarget - floorFade) * (1 - Math.exp(-(now - lastSync) / 120));
+      if (Math.abs(fadeTarget - floorFade) < 0.002) floorFade = fadeTarget;
+      lastSync = now;
       bgColor.set(v.bg);
+      let eDir = 0; // direct irradiance on the (upward-facing) floor, for the shadow-only mix below
       for (let i = 0; i < 3; i++){
         const l = rigLights[i], n = i + 1;
         const on = v["l" + n + "on"];
@@ -3588,18 +4244,45 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         l.intensity = v["l" + n + "i"];
         l.color.set(v["l" + n + "color"]);
         const az = (v["l" + n + "az"] + v.lightYaw) * D2R, el2 = v["l" + n + "el"] * D2R;
-        const dir = new THREE.Vector3(Math.cos(el2) * Math.sin(az), Math.sin(el2), Math.cos(el2) * Math.cos(az));
+        const dir = rigDir.set(Math.cos(el2) * Math.sin(az), Math.sin(el2), Math.cos(el2) * Math.cos(az));
         if (v.anchor === "camera") dir.applyQuaternion(camera.quaternion);
-        l.position.copy(controls.target).addScaledVector(dir, rigRadius);
-        l.target.position.copy(controls.target);
+        // A directional light only has a direction — anchoring it on the model (not the orbit
+        // target) keeps the model inside its shadow frustum however far the view is panned.
+        l.position.copy(rigCenter).addScaledVector(dir, rigDist);
+        l.target.position.copy(rigCenter);
+        const sizeDeg = v["l" + n + "size"] ?? 0;
+        l.shadow.radius = softShadowsPatched ? pcssRadius(l.shadow.camera, sizeDeg) : 1 + sizeDeg / 3;
+        eDir += l.intensity * Math.max(0, dir.y);
       }
       ambientLight.intensity = v.ambient;
-      floor.visible = v.floor;
-      grid.visible = v.grid;
+      const envOn = !!(v.env && envTex);
+      const showFloor = v.floor && floorFade > 0.003;
+      floor.visible = showFloor;
+      grid.visible = v.grid && floorFade > 0.003;
+      grid.material.opacity = floorFade;
+      floorMatSolid.opacity = floorFade;
       const wantMat = v.shadowOnly ? floorMatShadow : floorMatSolid;
       if (floor.material !== wantMat) floor.material = wantMat;
-      floorMatShadow.opacity = v.shadowStrength;
-      scene.environment = (v.env && envTex) ? envTex : null;
+      // Floor shadow from the sky (ambient + environment), restarted when anything it depends on
+      // changes. A custom env image isn't symmetric around Y, so its yaw matters too.
+      if (showFloor && obj){
+        const yaw = v.lightYaw * D2R, cy = Math.cos(yaw), sy = Math.sin(yaw);
+        const key = [envOn, envVersion, v.envStrength, v.ambient, v.envPreset === "custom" ? v.lightYaw : 0, fitVersion].join("|");
+        if (key !== occKey){
+          occKey = key;
+          const ambL = v.ambient / Math.PI;
+          // the env lookup direction is Ry(−yaw)·dir (three's envMapRotation for PMREM maps)
+          eInd = Math.PI * skyOcc.restart((d) => ambL + (envOn ? v.envStrength * skyLum(skyDir.set(d.x * cy - d.z * sy, d.y, d.x * sy + d.z * cy)) : 0));
+        }
+        skyOcc.step();
+      }
+      // Shadow-only floor: its darkness is the light that fails to reach it — direct shadows weigh
+      // by the direct lights' share, the sky shadow by the ambient + environment share.
+      const directShare = eDir / Math.max(1e-6, eDir + eInd);
+      floorMatShadow.opacity = v.shadowStrength * directShare * floorFade;
+      skyOcc.overlay.visible = showFloor && v.shadowOnly;
+      skyOcc.overlay.material.uniforms.uAlpha.value = v.shadowStrength * (1 - directShare) * floorFade;
+      scene.environment = envOn ? envTex : null;
       scene.environmentIntensity = v.envStrength;
       scene.environmentRotation.y = v.lightYaw * D2R;
       if (obj){
@@ -3607,6 +4290,19 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
           applyBaseMaterial(THREE, obj, origMats, v.shadeBase);
           shadeApplied.base = v.shadeBase;
           shadeApplied.xray = null; // materials were just swapped — force xray to reapply onto them
+          shadeApplied.solid = null;
+        }
+        // Solid material settings are live: retint the Solid materials in place when they change.
+        const solidKey = v.shadeBase === "solid" ? v.solidColor + "|" + v.solidMetal + "|" + v.solidRough : null;
+        if (solidKey && shadeApplied.solid !== solidKey){
+          obj.traverse((c) => {
+            const m = c.isMesh && c.material;
+            if (!m || !m.userData._v3dSolid) return;
+            m.color.set(v.solidColor);
+            m.metalness = v.solidMetal;
+            m.roughness = v.solidRough;
+          });
+          shadeApplied.solid = solidKey;
         }
         if (shadeApplied.xray !== v.xrayOn){
           applyXray(obj, v.xrayOn);
@@ -3617,8 +4313,9 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
           shadeApplied.wire = v.wireOn;
         }
         if (explodeMap && shadeApplied.explode !== v.explode){
-          applyExplode(explodeMap, explodeScale, v.explode);
+          applyExplode(explodeMap, v.explode);
           shadeApplied.explode = v.explode;
+          onExplodeMoved();
         }
       }
     }
@@ -3647,7 +4344,6 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       lightEl?.classList.remove("v3d-loading");
       return;
     }
-    endLoading();
     const baseQuat = obj.quaternion.clone(), basePos = obj.position.clone();
     const qTurn = new THREE.Quaternion(), xAxis = new THREE.Vector3(1, 0, 0);
     const applyTurns = (n) => {
@@ -3660,25 +4356,27 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     frameObject3d(THREE, obj, scene, camera, controls.target);
     // Floor / grid / shadow frustum all depend on the model's bounds, so a turn re-runs this.
     const fitRig = () => {
+      // The floor sits under the assembled model: measure with explode undone, then put it back.
+      if (explodeMap){ applyExplode(explodeMap, 0); obj.updateMatrixWorld(true); }
       const box = new THREE.Box3().setFromObject(obj);
       const size = box.getSize(new THREE.Vector3()).length() || 1;
+      const c = box.getCenter(new THREE.Vector3());
       rigRadius = size * 1.6;
+      floorSpan = size * 3;
+      fadeRange = size * 0.15;
       floor.geometry.dispose();
-      floor.geometry = new THREE.PlaneGeometry(size * 3, size * 3);
-      floor.position.y = box.min.y;
+      floor.geometry = new THREE.PlaneGeometry(floorSpan, floorSpan);
+      floor.position.set(c.x, box.min.y, c.z);
       scene.remove(grid);
       grid.geometry.dispose();
       grid.material.dispose();
-      grid = new THREE.GridHelper(size * 3, 20, 0x4a4a54, 0x26262c);
+      grid = new THREE.GridHelper(floorSpan, 20, 0x4a4a54, 0x26262c);
+      grid.material.transparent = true;
       grid.visible = state.v3d.grid;
-      grid.position.y = box.min.y + Math.max(0.001, size * 0.002);
+      grid.position.set(c.x, box.min.y + Math.max(0.001, size * 0.002), c.z);
       scene.add(grid);
-      rigLights.forEach((l) => {
-        l.shadow.camera.left = -size; l.shadow.camera.right = size;
-        l.shadow.camera.top = size; l.shadow.camera.bottom = -size;
-        l.shadow.camera.near = 0.1; l.shadow.camera.far = rigRadius * 3;
-        l.shadow.camera.updateProjectionMatrix();
-      });
+      if (explodeMap){ applyExplode(explodeMap, state.v3d.explode); onExplodeMoved(); }
+      else fitShadows(box);
       return { box, size };
     };
     if (isLightbox){
@@ -3698,35 +4396,31 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       v3dCam = camRig;
       onV3DRotate = () => turnTo((getModelTurns(aid) + 1) & 3);
       obj.traverse((c) => { if (c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
+      skyOcc.markCasters(obj);
       origMats = new Map();
       obj.traverse((c) => { if (c.isMesh) origMats.set(c, c.material); });
-      // Explode rig: each direct child of the parts root gets pushed outward from the root's own
-      // local center along that child's own center direction (see applyExplode above). Exporters
-      // often wrap everything in a single root node, which would leave exactly one "part" that
-      // can't move away from itself — so descend through such single-child wrappers first.
-      let partsRoot = obj;
-      while (partsRoot.children.length === 1 && !partsRoot.children[0].isMesh) partsRoot = partsRoot.children[0];
-      obj.updateMatrixWorld(true);
-      const centerLocal = partsRoot.worldToLocal(box.getCenter(new THREE.Vector3()));
-      explodeMap = new Map();
-      partsRoot.children.forEach((child) => {
-        const cb = new THREE.Box3().setFromObject(child);
-        if (cb.isEmpty()) return;
-        const cLocal = partsRoot.worldToLocal(cb.getCenter(new THREE.Vector3()));
-        const dir = cLocal.clone().sub(centerLocal);
-        if (dir.lengthSq() < 1e-8) dir.set(0, 0, 0); else dir.normalize();
-        explodeMap.set(child, { pos: child.position.clone(), dir });
-      });
-      explodeScale = size * 0.6;
+      // Explode rig (explosion graph per assembly level, see buildExplodeRig). Solved with the
+      // model assembled; turns are applied above it, so they never invalidate it.
+      explodeMap = buildExplodeRig(THREE, obj);
       // A single-mesh model has nothing to pull apart — hide the slider (and its separator) rather
       // than offer a control that does nothing.
-      const hasParts = explodeMap.size > 1;
-      $("v3dExplode").hidden = !hasParts;
-      $("v3dExplodeSep").hidden = !hasParts;
-      if (!hasParts) explodeMap = null;
-      shadeApplied = { base: null, wire: null, xray: null, explode: null }; // force the next syncRig() to (re)apply everything
+      $("v3dExplode").hidden = !explodeMap;
+      $("v3dExplodeSep").hidden = !explodeMap;
+      shadeApplied = { base: null, wire: null, xray: null, explode: null, solid: null }; // force the next syncRig() to (re)apply everything
       syncRig();
+      v3dInspect = makeModelInspector(THREE, renderer, scene, obj, origMats, aid);
+      setSceneInfo(v3dInspect.summary);
+      syncUvPane();
     }
+    // Keep the thumbnail cover up until the model has actually been drawn. The first frame with the
+    // model compiles its shaders and uploads its textures, which blocks the main thread; lifting the
+    // cover before that showed an empty grey canvas for as long as it took. The render loop's rAF is
+    // queued before ours, so it draws the model in the first of these frames, under the cover.
+    // (Not renderer.compileAsync(): it never resolved here for a large model — the live loop swaps
+    // material programs while it polls the old ones.)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (!live) return;
+    endLoading();
   } catch (err) {
     el.innerHTML = `<div class="ph">3D failed to load</div>`;
     if (el.isConnected) lightEl?.classList.remove("v3d-loading");
@@ -3766,10 +4460,8 @@ function fillStage(stage, a){
 }
 
 async function mountFontStage(stage, a){
-  // A font opened in the lightbox is *also* showing in the Inspector sidebar preview at the
-  // same time (renderInsp runs for the selected asset regardless), so this can be mid-flight
-  // in two places at once for the same asset id — an id-based lookup would find whichever
-  // one's div happens to match first. Keep a direct element reference instead.
+  // A stage can be re-mounted for another asset while a font is still loading, so keep a direct
+  // element reference (and check isConnected) rather than looking the host up by id.
   const family = "sight-font-" + a.id;
   stage.innerHTML = `<div class="font-view"><div class="font-loading">Loading font…</div></div>`;
   const host = stage.querySelector(".font-view");
@@ -4014,14 +4706,28 @@ function releaseMedia(free){
   if (free) fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true }) }).catch(() => {});
 }
 
-function attachViewer(stage, a, src){
+// opts.embedded: a picture that is not the lightbox asset itself (the 3D UV pane) — no thumbnail
+// placeholder and no claim on light.video / light.setZoom. Returns { fit, zoom } for its owner.
+function attachViewer(stage, a, src, opts = {}){
   const isVid = a.kind === "video";
-  stage.innerHTML = `<div class="view" id="view"><${isVid ? "video" : "img"} class="view-media" ${isVid ? 'autoplay playsinline preload="auto"' : `alt="" src="${src}"`} draggable="false" /><div class="view-hud" id="viewHud"></div></div>`;
+  // Images open on their thumbnail (.view-ph), already framed, and the full file stays hidden
+  // (.loading) until it is loaded and decoded — otherwise a big file paints top-down at native size
+  // before the fit kicks in. A full image already in the memory cache (a probe Image reports it
+  // complete synchronously) is drawn straight away, with no thumbnail and no fade.
+  let cached = false;
+  if (!isVid && src){
+    const probe = new Image();
+    probe.src = src;
+    cached = probe.complete && probe.naturalWidth > 0;
+  }
+  const ph = isVid || cached || opts.embedded ? "" : thumbSrc(a);
+  stage.innerHTML = `<div class="view" id="view">${ph ? `<img class="view-ph" alt="" decoding="sync" src="${ph}" draggable="false" />` : ""}<${isVid ? "video" : "img"} class="view-media${isVid || cached ? "" : " loading"}" ${isVid ? 'autoplay playsinline preload="auto"' : `alt="" ${cached ? 'decoding="sync" ' : ""}src="${src}"`} draggable="false" /><div class="view-hud" id="viewHud"></div></div>`;
   const wrap = stage.querySelector(".view");
   const el = stage.querySelector(".view-media");
+  let phEl = stage.querySelector(".view-ph");
   const hud = stage.querySelector(".view-hud");
   const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit", panD: null, zoomD: null };
-  if (light){ light.video = isVid ? el : null; light.setZoom = (n) => toScale(n); }
+  if (light && !opts.embedded){ light.video = isVid ? el : null; light.setZoom = (n) => toScale(n); }
   // Scrubbing sets currentTime far faster than a long-GOP clip can decode. Firing a seek per
   // pointer event piles them up and the picture freezes until the pointer stops, so only the latest
   // wanted time is kept and the next seek goes out once the previous one has landed ("seeked").
@@ -4071,6 +4777,11 @@ function attachViewer(stage, a, src){
     el.style.width = vs.nat.w + "px";
     el.style.height = vs.nat.h + "px";
     el.style.transform = `translate(${x}px,${y}px) scale(${vs.scale})`;
+    if (phEl){
+      phEl.style.width = el.style.width;
+      phEl.style.height = el.style.height;
+      phEl.style.transform = el.style.transform;
+    }
     // Same icon/pixel-art heuristic as thumbnails: only go crisp once we're actually magnifying
     // a small source past its native pixels, so ordinary photos keep smooth upscaling.
     if (!isVid) el.classList.toggle("pixelated", vs.scale > 1.001 && vs.nat.w > 0 && (vs.nat.w <= 768 || vs.nat.h <= 768));
@@ -4118,9 +4829,38 @@ function attachViewer(stage, a, src){
     if (nw && nh) vs.nat = { w: nw, h: nh };
     openMode();
     if (isVid) paintVBar();
+    else reveal();
+  }
+  // Fade the full image in over the thumbnail once it is decoded; the thumbnail stays fully opaque
+  // underneath and is simply removed once the fade is over. (Cross-fading both dipped to the dark
+  // backdrop mid-way, visible when flipping through images quickly.) Runs once; later loads (PSD
+  // layer swaps) only re-fit.
+  function reveal(){
+    if (!el.classList.contains("loading")) return;
+    const show = () => {
+      if (!el.isConnected || !el.classList.contains("loading")) return;
+      el.classList.add("reveal");
+      el.classList.remove("loading");
+      if (!phEl) return;
+      const old = phEl;
+      setTimeout(() => { old.remove(); if (phEl === old) phEl = null; }, 300);
+    };
+    (el.decode ? el.decode() : Promise.resolve()).then(show, show);
+  }
+  // Frame the placeholder right away. Without stored dimensions, borrow the thumbnail's aspect
+  // until the full image reports its real size.
+  if (!isVid){
+    if (vs.nat.w && vs.nat.h){ if (wrap.clientWidth) openMode(); }
+    else if (phEl) phEl.addEventListener("load", () => {
+      if (!el.classList.contains("loading") || !phEl) return;
+      vs.nat = { w: phEl.naturalWidth, h: phEl.naturalHeight };
+      toFit();
+    }, { once: true });
+    // A file that fails to load keeps its thumbnail; with no thumbnail, show the broken image.
+    el.addEventListener("error", () => { if (!phEl) el.classList.remove("loading"); });
   }
   el.addEventListener(isVid ? "loadedmetadata" : "load", onReady);
-  if ((isVid && el.readyState >= 1) || (!isVid && el.complete)) onReady();
+  if ((isVid && el.readyState >= 1) || (!isVid && el.complete && el.naturalWidth)) onReady();
   // Keep the picture framed when the viewport changes underneath it (window resize, or the
   // lightbox mask / corner-radius popover reshaping the frame). The first callback is just the
   // initial observation, so it is skipped.
@@ -4241,6 +4981,7 @@ function attachViewer(stage, a, src){
     const d = (t.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (t.zoomSpeed ?? 1);
     zoomAt(vs.scale * Math.exp(d), e.clientX - r.left, e.clientY - r.top);
   }, { passive: false });
+  return { fit: toFit, zoom: toScale };
 }
 
 function bindVBar(el, seekVideo, beginScrub, endScrub){
@@ -4292,6 +5033,8 @@ function toggleLight(a){
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
     </div>
     <div class="light-stage"><div class="light-frame"></div></div>
+    <button class="info-fab" id="infoBtn" type="button" title="File info (I)" aria-label="File info">i</button>
+    <div class="light-info" id="lightInfo" hidden></div>
     <div class="frame-pop" id="framePop" hidden>
       <div class="settings-sub">Mask</div>
       <div class="mask-grid">${MASKS.map(([id, label, ar]) => `<button type="button" class="mask-chip" data-mask="${id}" title="${label}"><i class="${id === "free" ? "free" : id === "circle" ? "circle" : ""}" style="${ar ? (ar >= 1 ? "" : "width:auto;height:22px;") + "aspect-ratio:" + (ar >= 1 ? Math.min(ar, 2.4) : ar) : ""}"></i>${label}</button>`).join("")}</div>
@@ -4301,6 +5044,8 @@ function toggleLight(a){
          that kind is open (see syncLightTools). New kinds add their own toolbar next to these. -->
     <button class="v3d-gear" id="v3dGear" data-tools="model3d" type="button" title="3D view settings (G)" hidden>⚙</button>
     <div class="v3d-shade" id="v3dShade" data-tools="model3d" hidden>
+      <button type="button" data-act="uv" class="uv-btn" title="UV editor (U) — opens on the left">UV</button>
+      <span class="v3d-sep"></span>
       <button type="button" data-base="solid" title="Solid (Shift+1)">●</button>
       <button type="button" data-base="vertex" title="Vertex Color (Shift+2)">◍</button>
       <button type="button" data-base="textured" title="Textured (Shift+3)">▦</button>
@@ -4310,10 +5055,16 @@ function toggleLight(a){
       <button type="button" data-toggle="xrayOn" title="X-Ray overlay (Shift+6)">◌</button>
       <span class="v3d-sep"></span>
       <button type="button" data-act="rotate" title="Turn model 90° — fixes Z-up / sideways models (Shift+7)">↻</button>
+      <button type="button" data-toggle="floor" title="Floor">${V3D_ICONS.floor}</button>
+      <button type="button" data-toggle="grid" title="Grid">${V3D_ICONS.grid}</button>
+      <button type="button" data-toggle="shadowOnly" title="Shadow only — invisible floor that still catches the shadow">${V3D_ICONS.shadow}</button>
+      <button type="button" data-act="anchor"></button>
       <span class="v3d-sep" id="v3dExplodeSep"></span>
-      <div class="v3d-explode" id="v3dExplode" title="Explode parts"><i></i></div>
+      <div class="v3d-explode" id="v3dExplode" title="Explode parts (Ctrl+right-drag)"><i></i></div>
     </div>
     <div class="v3d-panel" id="v3dPanel" hidden></div>
+    <button class="v3d-gear" id="psdBtn" data-tools="psd" type="button" title="Layers (D)" hidden>☰</button>
+    <div class="v3d-panel" id="psdPanel" hidden></div>
     <div class="v3d-toast" id="v3dToast"></div>
     <div class="vbar" hidden>
       <span class="vtime" data-cur>0:00</span>
@@ -4325,10 +5076,21 @@ function toggleLight(a){
   document.body.append(wrap);
   light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null };
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
+  wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
+  wrap.querySelector("#infoBtn").onclick = () => toggleLightInfo();
+  wrap.querySelector("#lightInfo").addEventListener("click", onLightInfoClick);
+  attachPanScroll(wrap.querySelector("#lightInfo"));
+  attachPanScroll(wrap.querySelector("#psdPanel"));
   wrap.querySelectorAll("#v3dShade [data-base]").forEach((b) => { b.onclick = () => setShadeBase(b.dataset.base); });
   wrap.querySelectorAll("#v3dShade [data-toggle]").forEach((b) => { b.onclick = () => toggleShadeFlag(b.dataset.toggle); });
   wrap.querySelector("#v3dShade [data-act=rotate]").onclick = () => onV3DRotate?.();
-  initThinSlider(wrap.querySelector("#v3dExplode"), {
+  wrap.querySelector("#v3dShade [data-act=anchor]").onclick = () => {
+    state.v3d.anchor = state.v3d.anchor === "camera" ? "world" : "camera";
+    saveV3D();
+    paintShadeButtons();
+  };
+  wrap.querySelector("#v3dShade [data-act=uv]").onclick = () => toggleUV();
+  light.explodeSlider = initThinSlider(wrap.querySelector("#v3dExplode"), {
     value: state.v3d.explode,
     onChange: (v) => { state.v3d.explode = v; saveV3D(); },
   });
@@ -4352,7 +5114,7 @@ function toggleLight(a){
 
 const LIGHT_HINT = "MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
 const LIGHT_HINT_VIDEO = "Click/Space play/pause · Drag scrub (Shift fine) · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const LIGHT_HINT_3D = "Drag orbit · MMB pan · RMB zoom · WASD fly · F frame all · Alt+1–9 save view · 1–9 recall · Esc";
+const LIGHT_HINT_3D = "Drag orbit · MMB pan · RMB zoom · WASD fly · F frame · Ctrl+click select · H / Ctrl+H / Alt+H hide · Ctrl+RMB drag explode · Alt+1–9 save view · 1–9 recall · Esc";
 
 // Each asset kind has its own toolbar in the lightbox (data-tools="<kind>" elements). Only the
 // one matching the open asset is shown, so a 3D model's shading bar never appears over an image
@@ -4388,15 +5150,22 @@ function showInLight(a){
   // .ply can't be told apart without sniffing its header, which boot3d() does asynchronously and
   // corrects this (and re-renders the panel) once it knows for sure.
   currentAssetIsSplat = SPLAT_EXT.has((a.ext || "").toLowerCase());
-  syncLightTools(a.kind); // gear opens the settings panel — splats get their own panel content
+  // A PSD is a "design" asset, but only PSDs have layers — they get their own toolbar key.
+  syncLightTools(a.ext === ".psd" ? "psd" : a.kind); // gear opens the settings panel — splats get their own panel content
+  $("psdPanel").hidden = true;
+  $("psdBtn").classList.remove("on");
+  if (a.ext === ".psd") loadPsdLayers(a.id);
   if (currentAssetIsSplat) $("v3dShade").hidden = true; // wireframe/x-ray/base-material toggles are mesh-only
   state.v3dPanelOpen = false; // settings panel always starts closed on a fresh 3D asset (off by default)
   $("v3dGear").classList.remove("on");
   $("v3dPanel").hidden = true;
-  $("lightHint").textContent = is3d ? LIGHT_HINT_3D : a.kind === "video" ? LIGHT_HINT_VIDEO : LIGHT_HINT;
+  $("lightHint").textContent = is3d ? LIGHT_HINT_3D : a.kind === "video" ? LIGHT_HINT_VIDEO : a.ext === ".psd" ? "D layers · " + LIGHT_HINT : LIGHT_HINT;
   light.el.classList.toggle("v3d-loading", is3d); // controls appear once boot3d() has the model up
   if (is3d){ paintShadeButtons(); renderV3DPanel(); }
+  light.sceneInfo = null;
+  renderLightInfo();
   fillStage(light.el.querySelector(".light-frame"), a);
+  syncUvPane(); // the new stage has no UV pane yet; boot3d re-adds it once the model is up
 }
 
 // A manual turn (see getModelTurns) changes how the model should look on its card too — re-render
@@ -4446,11 +5215,26 @@ function closeLight(){
 // Base shading modes (solid/vertex/textured/normal) are mutually exclusive; wireframe and
 // x-ray are independent overlays that can layer on top of any base (feedback: "wireframe and
 // transparency should be able to stack on top of any other mode").
+// Toolbar icons (stroke = currentColor, so they follow the button's muted / accent color).
+const v3dSvg = (body) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const V3D_ICONS = {
+  floor: v3dSvg(`<path d="M6 8h16l-4 12H2z" fill="currentColor" fill-opacity=".35"/>`),
+  grid: v3dSvg(`<path d="M6 8h16l-4 12H2z"/><path d="M4 14h16"/><path d="m10 8-2 12"/><path d="m16 8-2 12"/>`),
+  shadow: v3dSvg(`<circle cx="12" cy="8" r="5"/><ellipse cx="12" cy="19" rx="7" ry="2" fill="currentColor" stroke="none" opacity=".7"/>`),
+  world: v3dSvg(`<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/>`),
+  camera: v3dSvg(`<path d="M14.5 5h-5L8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>`),
+};
 function paintShadeButtons(){
   const v = state.v3d;
   const el = $("v3dShade");
   el?.querySelectorAll("[data-base]").forEach((b) => b.classList.toggle("on", b.dataset.base === v.shadeBase));
   el?.querySelectorAll("[data-toggle]").forEach((b) => b.classList.toggle("on", !!v[b.dataset.toggle]));
+  const anchor = el?.querySelector("[data-act=anchor]");
+  if (anchor){
+    const cam = v.anchor === "camera";
+    anchor.innerHTML = cam ? V3D_ICONS.camera : V3D_ICONS.world;
+    anchor.title = cam ? "Lights follow the camera (click: fixed to the world)" : "Lights fixed to the world (click: follow the camera)";
+  }
 }
 function setShadeBase(mode){
   state.v3d.shadeBase = mode;
@@ -4459,6 +5243,9 @@ function setShadeBase(mode){
 }
 function toggleShadeFlag(key){
   state.v3d[key] = !state.v3d[key];
+  // Shadow-only is a mode of the floor: turning it on shows the floor, turning the floor off ends it.
+  if (key === "shadowOnly" && state.v3d.shadowOnly) state.v3d.floor = true;
+  if (key === "floor" && !state.v3d.floor) state.v3d.shadowOnly = false;
   saveV3D();
   paintShadeButtons();
 }
@@ -4467,6 +5254,667 @@ function toggleV3DPanel(){
   state.v3dPanelOpen = !state.v3dPanelOpen;
   $("v3dGear").classList.toggle("on", state.v3dPanelOpen);
   $("v3dPanel").hidden = !state.v3dPanelOpen;
+}
+// Lightbox file info overlay (I / the "i" button, top-left of the stage) — like Blender's viewport
+// text info: general facts from the asset row, then per-type sections from /api/assets/{id}/info
+// (EXIF, codecs, font tables, PDF metadata, 3D file headers — see app/fileinfo.py), then live data
+// from the open viewer: light.sceneInfo (counts, set by boot3d) and, for meshes, v3dInspect's
+// Materials / Textures / Meshes lists — collapsible (.sec headers like the sidebar, closed by
+// default, remembered in sight.infoOpen), each list scrolls on its own (MMB via attachPanScroll).
+// Clicking an entry highlights its polygons (and redraws the UV pane if it is open).
+// Stays open across assets and sessions (sight.lightInfo); only fetched while it is visible,
+// cached per file version. A failed request is shown, not cached (e.g. a server not restarted yet).
+const lightInfoCache = new Map();
+const lightInfoErr = new Map();
+function lightInfoOn(){
+  try { return localStorage.getItem("sight.lightInfo") === "1"; } catch { return false; }
+}
+function infoSecState(){
+  try { return JSON.parse(localStorage.getItem("sight.infoOpen") || "{}") || {}; } catch { return {}; }
+}
+function toggleLightInfo(){
+  if (!light) return;
+  const on = !lightInfoOn();
+  putSetting("sight.lightInfo", on ? "1" : "0");
+  if (!on && v3dInspect?.sel){ v3dInspect.select(null); refreshUv(); }
+  renderLightInfo();
+}
+function infoRows(rows){
+  return `<dl>${rows.filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+}
+function inspectSection(ins, kind, title, open){
+  const list = kind === "mat" ? ins.materials : kind === "tex" ? ins.textures : ins.meshes;
+  if (!list.length) return "";
+  const head = `<div class="sec toggle${open ? " open" : ""}" data-sec="${kind}"><span class="sec-title">${title} (${list.length})</span><span class="chev">›</span></div>`;
+  if (!open) return head;
+  return head + `<div class="li-list" data-list="${kind}"><div class="li-grid">` + list.map((it, i) => {
+    const key = kind + ":" + i, src = ins.thumbs.get(key);
+    const on = ins.sel && ins.sel.kind === kind && ins.sel.i === i;
+    const media = kind === "mesh" ? "" : src ? `<img src="${src}" alt="">` : `<i data-thumb="${key}"></i>`;
+    const hid = kind === "mesh" && !it.c.visible;
+    return `<button type="button" class="li-item ${kind}${on ? " on" : ""}${hid ? " hid" : ""}" data-kind="${kind}" data-i="${i}" title="${esc(it.name)}">`
+      + media + `<span><b>${esc(it.name)}</b><em>${esc(it.sub)}</em></span></button>`;
+  }).join("") + `</div></div>`;
+}
+function renderLightInfo(){
+  if (!light) return;
+  const el = $("lightInfo"), on = lightInfoOn();
+  $("infoBtn").classList.toggle("on", on);
+  el.hidden = !on;
+  if (!on) return;
+  const a = assetById(light.id);
+  if (!a){ el.innerHTML = ""; return; }
+  const key = a.id + ":" + a.mtime + ":" + a.size;
+  const cached = lightInfoCache.get(key);
+  const folder = (a.path || "").replace(/[\\/][^\\/]*$/, "");
+  let html = `<h4>File</h4>` + infoRows([
+    ["Name", a.name],
+    ["Type", `${KIND[a.kind] || a.kind} · ${(a.ext || "").slice(1).toUpperCase()}`],
+    ["Size", `${bytes(a.size)} (${a.size.toLocaleString("en-US")} bytes)`],
+    // For other kinds width/height hold the thumbnail's size; video frame size comes from the server.
+    ["Dimensions", a.width && a.height && (a.kind === "image" || a.ext === ".psd") ? `${a.width} × ${a.height} · ${(a.width * a.height / 1e6).toFixed(1)} MP` : null],
+    ["Modified", fmtDate(a.mtime)],
+    ["Added", fmtDate(a.added_at)],
+    ["Folder", folder],
+  ]);
+  if (cached) html += cached.map((sec) => `<h4>${esc(sec.title)}</h4>` + infoRows(sec.rows)).join("");
+  else if (lightInfoErr.has(key)) html += `<div class="err">Details unavailable: ${esc(lightInfoErr.get(key))}</div>`;
+  else html += `<div class="wait">Reading file…</div>`;
+  const scene = light.sceneInfo;
+  if (scene && scene.id === a.id) html += `<h4>${esc(scene.title)}</h4>` + infoRows(scene.rows);
+  const ins = v3dInspect && v3dInspect.aid === a.id ? v3dInspect : null;
+  if (ins){
+    const open = infoSecState();
+    html += inspectSection(ins, "mat", "Materials", !!open.mat)
+      + inspectSection(ins, "tex", "Textures", !!open.tex)
+      + inspectSection(ins, "mesh", "Meshes", !!open.mesh);
+    if (ins.materials.length) html += `<div class="li-hint">Click an entry to highlight its polygons · U for UVs</div>`;
+  }
+  const scroll = el.scrollTop, lists = {};
+  el.querySelectorAll(".li-list").forEach((l) => { lists[l.dataset.list] = l.scrollTop; });
+  el.innerHTML = html;
+  el.scrollTop = scroll;
+  el.querySelectorAll(".li-list").forEach((l) => { attachPanScroll(l); l.scrollTop = lists[l.dataset.list] || 0; });
+  if (ins) ins.makeThumbs((k, url) => {
+    const slot = light && $("lightInfo").querySelector(`i[data-thumb="${k}"]`);
+    if (!slot) return;
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    slot.replaceWith(img);
+  });
+  if (cached || lightInfoErr.has(key) || light.infoLoading === key) return;
+  const id = a.id;
+  light.infoLoading = key;
+  api("/api/assets/" + id + "/info").then((r) => {
+    lightInfoCache.set(key, (r && r.sections) || []);
+    if (lightInfoCache.size > 200) lightInfoCache.delete(lightInfoCache.keys().next().value);
+  }).catch((err) => {
+    let msg = String(err && err.message || err);
+    if (/Not Found/.test(msg)) msg = "restart Sight to load the new server code";
+    lightInfoErr.set(key, msg.slice(0, 160));
+    setTimeout(() => lightInfoErr.delete(key), 5000); // retried on the next render after that
+  }).finally(() => {
+    if (light && light.infoLoading === key) light.infoLoading = null;
+    if (light && light.id === id) renderLightInfo();
+  });
+}
+function onLightInfoClick(e){
+  const head = e.target.closest(".sec[data-sec]");
+  if (head){
+    const st = infoSecState();
+    st[head.dataset.sec] = !st[head.dataset.sec];
+    putSetting("sight.infoOpen", JSON.stringify(st));
+    renderLightInfo();
+    return;
+  }
+  const b = e.target.closest(".li-item");
+  if (!b || !v3dInspect) return;
+  const kind = b.dataset.kind, i = Number(b.dataset.i);
+  const cur = v3dInspect.sel;
+  setInspectSel(cur && cur.kind === kind && cur.i === i ? null : { kind, i });
+}
+// One entry point for the inspector selection (info panel list clicks, Ctrl+click in the 3D view):
+// highlight, list marks, UV pane. `reveal`: open the entry's section in the info panel (if the panel
+// is showing) and scroll it into view — used when the pick came from the viewport.
+function setInspectSel(sel, reveal){
+  const ins = v3dInspect;
+  if (!ins) return;
+  const cur = ins.sel;
+  if (!sel && !cur) return;
+  ins.select(sel);
+  const el = $("lightInfo");
+  if (reveal && sel && lightInfoOn() && !infoSecState()[sel.kind]){
+    putSetting("sight.infoOpen", JSON.stringify({ ...infoSecState(), [sel.kind]: true }));
+    renderLightInfo();
+  }
+  el.querySelectorAll(".li-item").forEach((x) => {
+    x.classList.toggle("on", !!sel && sel.kind === x.dataset.kind && sel.i === Number(x.dataset.i));
+  });
+  if (reveal && sel) el.querySelector(`.li-item[data-kind="${sel.kind}"][data-i="${sel.i}"]`)?.scrollIntoView({ block: "nearest" });
+  refreshUv();
+}
+function setSceneInfo(info){
+  if (!light || light.id !== info.id) return;
+  light.sceneInfo = info;
+  renderLightInfo();
+}
+
+// Lightbox UV editor (U / the "UV" toolbar button): the stage splits into a UV pane | divider |
+// 3D view. The divider is bindSplitDrag (same as the library/board split), the pane is an
+// attachViewer image (same pan / zoom / double-click / 1–9 as images; F fits it while the cursor
+// is over it — lightPane, same hover rule as activePane). The picture is v3dInspect.renderUV():
+// the current selection's UVs (or all) over its base-color texture, redrawn on selection change.
+let uvMode = (() => { try { return localStorage.getItem("sight.uvMode") === "1"; } catch { return false; } })();
+let uvRatio = (() => { try { return Number(localStorage.getItem("sight.uvSplit")) || 0.5; } catch { return 0.5; } })();
+let uvView = null;
+function toggleUV(){
+  uvMode = !uvMode;
+  putSetting("sight.uvMode", uvMode ? "1" : "0");
+  syncUvPane();
+}
+function syncUvPane(){
+  if (!light) return;
+  light.el.querySelector("#v3dShade [data-act=uv]")?.classList.toggle("on", uvMode);
+  const frame = light.el.querySelector(".light-frame");
+  const host = frame.querySelector("#light3d");
+  const want = uvMode && !!host && !!v3dInspect && v3dInspect.aid === light.id;
+  let pane = frame.querySelector("#uvPane");
+  if (!want){
+    if (pane){
+      if (pane._url) URL.revokeObjectURL(pane._url);
+      pane.remove();
+      frame.querySelector("#uvHandle")?.remove();
+    }
+    frame.classList.remove("uv-on");
+    light.el.style.removeProperty("--uv-left");
+    uvView = null;
+    return;
+  }
+  if (!pane){
+    pane = document.createElement("div");
+    pane.className = "uv-pane";
+    pane.id = "uvPane";
+    const h = document.createElement("div");
+    h.className = "split-handle";
+    h.id = "uvHandle";
+    h.title = "Drag to resize";
+    host.before(pane, h);
+    // The info button/panel move into the 3D half so they don't cover the UVs.
+    new ResizeObserver(() => {
+      if (!light || !pane.isConnected) return;
+      light.el.style.setProperty("--uv-left", Math.round(h.getBoundingClientRect().right - light.el.getBoundingClientRect().left) + "px");
+    }).observe(pane);
+    bindSplitDrag(h, {
+      box: () => frame,
+      set: (r) => { uvRatio = r; pane.style.flex = `0 0 ${r * 100}%`; },
+      end: () => putSetting("sight.uvSplit", String(uvRatio)),
+    });
+  }
+  pane.style.flex = `0 0 ${uvRatio * 100}%`;
+  frame.classList.add("uv-on");
+  refreshUv();
+}
+let uvToken = 0;
+// Texture channel shown under the UVs (persisted); the UV set is per model (v3dInspect.uvSet).
+let uvChan = (() => { try { return localStorage.getItem("sight.uvChan") || "rgb"; } catch { return "rgb"; } })();
+const UV_CHANNELS = [["rgb", "RGB"], ["rgba", "RGBA"], ["r", "R"], ["g", "G"], ["b", "B"], ["a", "A"]];
+async function refreshUv(){
+  const pane = $("uvPane");
+  if (!pane || !v3dInspect) return;
+  const ins = v3dInspect, token = ++uvToken;
+  if (!pane.querySelector(".view")) pane.innerHTML = `<div class="uv-wait">Rendering UVs…</div>`;
+  await new Promise((r) => requestAnimationFrame(r));
+  if (token !== uvToken || v3dInspect !== ins) return;
+  let res = null;
+  try { res = await ins.renderUV(ins.sel, uvChan); } catch (err) { console.warn("UV render failed", err); }
+  if (token !== uvToken || $("uvPane") !== pane){ if (res) URL.revokeObjectURL(res.url); return; }
+  if (!res){ pane.innerHTML = `<div class="uv-wait">No UVs</div>`; uvView = null; return; }
+  if (pane._url) URL.revokeObjectURL(pane._url);
+  pane._url = res.url;
+  uvView = attachViewer(pane, { kind: "image", width: res.w, height: res.h }, res.url, { embedded: true });
+  // Bottom toolbar (same look as the 3D shading bar): UV set buttons when the shown meshes have
+  // more than one set, and the texture channel picker when there is a texture under the UVs.
+  if (res.sets < 2 && !res.hasBg) return;
+  const bar = document.createElement("div");
+  bar.className = "v3d-shade uv-bar";
+  bar.innerHTML = (res.sets > 1 ? Array.from({ length: res.sets }, (_, i) =>
+      `<button type="button" class="uv-btn${i === res.set ? " on" : ""}" data-uvset="${i}" title="UV set ${i + 1} (TEXCOORD_${i})">UV${i + 1}</button>`).join("") : "")
+    + (res.sets > 1 && res.hasBg ? `<span class="v3d-sep"></span>` : "")
+    + (res.hasBg ? `<select title="Texture channel">${UV_CHANNELS.map(([v, l]) => `<option value="${v}"${v === uvChan ? " selected" : ""}>${l}</option>`).join("")}</select>` : "");
+  bar.querySelectorAll("[data-uvset]").forEach((b) => {
+    b.onclick = () => { ins.uvSet = Number(b.dataset.uvset); refreshUv(); };
+  });
+  const chan = bar.querySelector("select");
+  if (chan) chan.onchange = () => {
+    uvChan = chan.value;
+    putSetting("sight.uvChan", uvChan);
+    chan.blur(); // a focused <select> would swallow WASD / F in the 3D view
+    refreshUv();
+  };
+  pane.append(bar);
+}
+
+// Lightbox 3D inspector (set by boot3d for meshes, cleared by dispose3d): the model's original
+// materials, textures and meshes (from origMats, so the shading mode doesn't matter), their
+// preview images, the polygon highlight and the UV picture.
+//  - Materials are counted by identity (cloneModel keeps shared materials shared); instances that
+//    still differ but carry the same name and type (FBX/OBJ loaders) are merged into one entry.
+//  - Thumbnails and the UV picture are rendered with the viewer's own renderer into a render
+//    target (the textures are already on that GPU context) and read back. Render targets come out
+//    linear without tone mapping, so sRGB is encoded here by hand (skipped for non-color textures
+//    such as normal maps, which are shown raw). Thumbnails go one per frame: a material in a new
+//    light setup compiles a new shader program.
+//  - Highlight: an overlay mesh per affected mesh, sharing its geometry, added to the *scene* (not
+//    the model — applyBaseMaterial/wireframe/x-ray traverse the model and would restyle it). It
+//    copies the source's world matrix every frame, so explode and turns carry it along; skinned
+//    meshes bind to the same skeleton. Multi-material meshes hide the other groups.
+//  - UVs: the geometry drawn with gl_Position = uv (wireframe + faint fill), over the texture on a
+//    quad. glTF puts v = 0 at the image top (flipY false); other loaders at the bottom.
+const TEX_SLOTS = {
+  map: "Base color", normalMap: "Normal", roughnessMap: "Roughness", metalnessMap: "Metalness",
+  aoMap: "AO", emissiveMap: "Emissive", alphaMap: "Alpha", bumpMap: "Bump", displacementMap: "Displacement",
+  specularMap: "Specular", specularColorMap: "Specular color", specularIntensityMap: "Specular",
+  clearcoatMap: "Clearcoat", clearcoatNormalMap: "Clearcoat normal", clearcoatRoughnessMap: "Clearcoat rough.",
+  sheenColorMap: "Sheen", sheenRoughnessMap: "Sheen rough.", transmissionMap: "Transmission",
+  thicknessMap: "Thickness", iridescenceMap: "Iridescence", anisotropyMap: "Anisotropy", lightMap: "Lightmap",
+};
+function makeModelInspector(THREE, renderer, scene, obj, origMats, aid){
+  const n = (x) => x.toLocaleString("en-US");
+  const matEntries = [], matByKey = new Map(), texIndex = new Map(), texList = [], meshList = [];
+  let verts = 0, tris = 0, points = 0, skinned = 0, morphs = 0, vcol = false, uv2 = false, hasUV = false;
+  const matEntry = (m) => {
+    const key = m.name ? m.type + "|" + m.name : m;
+    let e = matByKey.get(key);
+    if (!e){ e = { rep: m, mats: new Set(), meshes: new Set(), tris: 0 }; matByKey.set(key, e); matEntries.push(e); }
+    e.mats.add(m);
+    return e;
+  };
+  obj.traverse((c) => {
+    const g = c.geometry;
+    if (!g || !g.attributes || !g.attributes.position) return;
+    const cnt = g.attributes.position.count;
+    if (c.isPoints){ points += cnt; return; }
+    if (!c.isMesh) return;
+    verts += cnt;
+    const total = g.index ? g.index.count : cnt;
+    const ctris = Math.floor(total / 3);
+    tris += ctris;
+    if (c.isSkinnedMesh) skinned++;
+    if (g.morphAttributes && g.morphAttributes.position) morphs += g.morphAttributes.position.length;
+    if (g.attributes.color) vcol = true;
+    if (g.attributes.uv) hasUV = true;
+    if (g.attributes.uv1 || g.attributes.uv2) uv2 = true;
+    const om = origMats.get(c) || c.material;
+    const arr = (Array.isArray(om) ? om : [om]).filter(Boolean);
+    const names = new Set();
+    arr.forEach((m, gi) => {
+      const e = matEntry(m);
+      names.add(e.rep.name || "unnamed");
+      e.meshes.add(c);
+      const grp = Array.isArray(om) && g.groups.find((gr) => gr.materialIndex === gi);
+      e.tris += grp ? Math.floor(Math.min(grp.count, total - grp.start) / 3) : ctris;
+      for (const [k, v] of Object.entries(m)){
+        if (!v || !v.isTexture || k === "envMap") continue;
+        let t = texIndex.get(v);
+        if (!t){ t = { tex: v, slots: new Set(), mats: new Set() }; texIndex.set(v, t); texList.push(t); }
+        t.slots.add(TEX_SLOTS[k] || k.replace(/Map$/, ""));
+        t.mats.add(m);
+      }
+    });
+    meshList.push({ c, om, arr, name: c.name || c.parent?.name || `Mesh ${meshList.length + 1}`,
+      sub: `${n(ctris)} tris · ${[...names].join(", ")}` });
+  });
+  const materials = matEntries.map((e, i) => {
+    const texCount = texList.filter((t) => [...e.mats].some((m) => t.mats.has(m))).length;
+    return { rep: e.rep, mats: e.mats, name: e.rep.name || `Material ${i + 1}`,
+      sub: `${n(e.tris)} tris` + (e.meshes.size > 1 ? ` · ${e.meshes.size} meshes` : "") + (texCount ? ` · ${texCount} tex` : "") };
+  });
+  const textures = texList.map((t, i) => {
+    const img = t.tex.image || {};
+    const w = img.width || img.videoWidth || 0, h = img.height || img.videoHeight || 0;
+    const src = typeof img.src === "string" && !img.src.startsWith("blob:") && !img.src.startsWith("data:") ? decodeURIComponent(img.src.split(/[?#]/)[0].split("/").pop()) : "";
+    const slots = [...t.slots].join(", ");
+    return { tex: t.tex, mats: t.mats, name: t.tex.name || src || `${slots} ${i + 1}`, w, h,
+      sub: (w && h ? `${w}×${h} · ` : "") + slots };
+  });
+  const meshes = meshList;
+  let maxTex = 0;
+  for (const t of textures) maxTex = Math.max(maxTex, t.w, t.h);
+  const box = new THREE.Box3().setFromObject(obj);
+  const d = box.isEmpty() ? null : box.getSize(new THREE.Vector3());
+  const f = (x) => Number(x.toPrecision(4)).toString();
+  const summary = { id: aid, title: "Scene", rows: [
+    ["Meshes", n(meshes.length)],
+    ["Vertices", n(verts)],
+    ["Triangles", n(tris)],
+    ["Points", points ? n(points) : null],
+    ["Materials", n(materials.length)],
+    ["Textures", textures.length ? `${textures.length}` + (maxTex ? ` (largest ${maxTex}px)` : "") : "None"],
+    ["UVs", hasUV ? (uv2 ? "Yes (2 sets)" : "Yes") : "None"],
+    ["Vertex colors", vcol ? "Yes" : null],
+    ["Skinned meshes", skinned || null],
+    ["Morph targets", morphs || null],
+    ["Animations", (obj.animations || []).length || null],
+    ["Bounds", d ? `${f(d.x)} × ${f(d.y)} × ${f(d.z)}` : null],
+  ] };
+
+  // --- render-target readback (thumbnails, UV picture) ---
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++){ const c = i / 255; lut[i] = Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055)); }
+  function renderToCanvas(sc, cam, target, W, H, encode){
+    const prevRT = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
+    const prevShadow = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(sc, cam);
+    const px = new Uint8Array(W * H * 4);
+    renderer.readRenderTargetPixels(target, 0, 0, W, H, px);
+    renderer.setRenderTarget(prevRT);
+    renderer.setClearColor(prevColor, prevAlpha);
+    renderer.shadowMap.autoUpdate = prevShadow;
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const ctx = cv.getContext("2d");
+    const data = ctx.createImageData(W, H), out = data.data;
+    for (let y = 0; y < H; y++){
+      let si = (H - 1 - y) * W * 4, di = y * W * 4; // GL rows are bottom-up
+      for (let x = 0; x < W; x++, si += 4, di += 4){
+        out[di] = encode ? lut[px[si]] : px[si];
+        out[di + 1] = encode ? lut[px[si + 1]] : px[si + 1];
+        out[di + 2] = encode ? lut[px[si + 2]] : px[si + 2];
+        out[di + 3] = px[si + 3];
+      }
+    }
+    ctx.putImageData(data, 0, 0);
+    return cv;
+  }
+  const quadFor = (tex, W, H) => {
+    const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+    const ar = W / H, iar = tex.image && tex.image.width && tex.image.height ? tex.image.width / tex.image.height : ar;
+    q.scale.set(Math.min(1, iar / ar), Math.min(1, ar / iar) * (tex.flipY ? 1 : -1), 1);
+    return q;
+  };
+  const camQ = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 2);
+  camQ.position.z = 1;
+
+  // --- thumbnails ---
+  const SIZE = 72;
+  const thumbs = new Map();
+  let queue = null, disposed = false, rt = null, env = null, ballScene = null, ball = null;
+  const cam3 = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
+  cam3.position.set(0, 0, 4.1);
+  function setup(){
+    rt = new THREE.WebGLRenderTarget(SIZE, SIZE, { samples: 4 });
+    env = buildEnvTexture(THREE, renderer, ENV_PRESETS.studio);
+    ballScene = new THREE.Scene();
+    ballScene.environment = env;
+    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    key.position.set(-2, 2.5, 3);
+    ballScene.add(key, new THREE.AmbientLight(0xffffff, env ? 0.15 : 0.8));
+    ball = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24));
+    ballScene.add(ball);
+  }
+  function renderOne(kind, i){
+    if (kind === "mat"){
+      const m = materials[i].rep;
+      const use = m.vertexColors ? Object.assign(m.clone(), { vertexColors: false }) : m;
+      ball.material = use;
+      const url = renderToCanvas(ballScene, cam3, rt, SIZE, SIZE, true).toDataURL("image/png");
+      if (use !== m) use.dispose();
+      return url;
+    }
+    const t = textures[i].tex;
+    const sc = new THREE.Scene(), q = quadFor(t, SIZE, SIZE);
+    sc.add(q);
+    const url = renderToCanvas(sc, camQ, rt, SIZE, SIZE, t.colorSpace === THREE.SRGBColorSpace).toDataURL("image/png");
+    q.geometry.dispose();
+    q.material.dispose();
+    return url;
+  }
+  function makeThumbs(onEach){
+    ins.onThumb = onEach;
+    if (queue) return;
+    queue = [...materials.map((_, i) => ["mat", i]), ...textures.map((_, i) => ["tex", i])].slice(0, 200);
+    const step = () => {
+      if (disposed || !queue.length) return;
+      const [kind, i] = queue.shift();
+      try {
+        if (!rt) setup();
+        const url = renderOne(kind, i);
+        thumbs.set(kind + ":" + i, url);
+        ins.onThumb?.(kind + ":" + i, url);
+      } catch (err) { console.warn("inspector thumbnail failed", err); }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // --- selection -> affected meshes ---
+  // [{ c, mats }]: mats = the material instances whose groups count, null = the whole mesh.
+  function targets(sel){
+    if (!sel) return meshes.map((m) => ({ c: m.c, om: m.om, mats: null }));
+    if (sel.kind === "mesh"){ const m = meshes[sel.i]; return m ? [{ c: m.c, om: m.om, mats: null }] : []; }
+    const set = sel.kind === "mat" ? materials[sel.i]?.mats : textures[sel.i]?.mats;
+    if (!set) return [];
+    return meshes.filter((m) => m.arr.some((x) => set.has(x))).map((m) => ({ c: m.c, om: m.om, mats: set }));
+  }
+  // World-space bounds as the model is right now (explode, turns and hidden meshes included),
+  // null if empty. selBox: the selection's visible meshes; modelBox: every visible mesh. Either
+  // falls back to all of its meshes when they are all hidden.
+  function boxOf(list){
+    const box = new THREE.Box3();
+    for (const c of list) box.union(new THREE.Box3().setFromObject(c));
+    return box.isEmpty() ? null : box;
+  }
+  const shown = (list) => (list.some((c) => c.visible) ? list.filter((c) => c.visible) : list);
+  function selBox(){ return ins.sel ? boxOf(shown(targets(ins.sel).map((t) => t.c))) : null; }
+  function modelBox(){ return boxOf(shown(meshes.map((m) => m.c))); }
+  // Mesh visibility (H / Ctrl+H / Alt+H): "sel" hides the selected meshes, "others" hides every
+  // mesh but the selected ones (and shows those), "none" shows everything. Whole meshes only — a
+  // material selected on a multi-material mesh hides the mesh. Returns how many changed.
+  function hide(mode){
+    const sel = ins.sel ? new Set(targets(ins.sel).map((t) => t.c)) : null;
+    if (mode !== "none" && !sel) return 0;
+    let n = 0;
+    for (const m of meshes){
+      const vis = mode === "none" ? true : mode === "sel" ? m.c.visible && !sel.has(m.c) : sel.has(m.c);
+      if (m.c.visible !== vis){ m.c.visible = vis; n++; }
+    }
+    return n;
+  }
+  const pick = (om, mats, layer, hiddenMat) => Array.isArray(om) ? om.map((m) => (!mats || mats.has(m) ? layer : hiddenMat)) : layer;
+
+  // --- highlight ---
+  // Blender's selection orange: the theme accent can be near-white and vanish on light textures.
+  const accent = 0xff8a1f;
+  const hlMat = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+  const hlWire = new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: 0.18, depthWrite: false });
+  const hidden = new THREE.MeshBasicMaterial({ visible: false });
+  let overlays = [];
+  function clearHighlight(){
+    for (const h of overlays) h.removeFromParent();
+    overlays = [];
+  }
+  function select(sel){
+    ins.sel = sel;
+    clearHighlight();
+    if (!sel || disposed) return;
+    for (const { c, om, mats } of targets(sel)){
+      for (const layer of [hlMat, hlWire]){
+        const mat = pick(om, mats, layer, hidden);
+        const h = c.isSkinnedMesh ? new THREE.SkinnedMesh(c.geometry, mat) : new THREE.Mesh(c.geometry, mat);
+        if (c.isSkinnedMesh){ h.bind(c.skeleton, c.bindMatrix); h.bindMode = c.bindMode; }
+        if (c.morphTargetInfluences){ h.morphTargetInfluences = c.morphTargetInfluences; h.morphTargetDictionary = c.morphTargetDictionary; }
+        h.matrixAutoUpdate = false;
+        h.frustumCulled = false;
+        h.renderOrder = 10;
+        h.updateMatrixWorld = () => {
+          h.matrixWorld.copy(c.matrixWorld);
+          if (h.isSkinnedMesh) h.bindMatrixInverse.copy(c.bindMatrixInverse);
+        };
+        h.updateWorldMatrix = h.updateMatrixWorld;
+        scene.add(h);
+        overlays.push(h);
+      }
+    }
+  }
+
+  // --- UV picture ---
+  const uvShader = (color, alpha, wire) => new THREE.ShaderMaterial({
+    wireframe: wire, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { uFlip: { value: 1 }, uColor: { value: new THREE.Color(color) }, uAlpha: { value: alpha } },
+    vertexShader: "attribute vec2 uvSel; uniform float uFlip; void main(){ vec2 p = uvSel * 2.0 - 1.0; p.y *= uFlip; gl_Position = vec4(p, 0.0, 1.0); }",
+    fragmentShader: "uniform vec3 uColor; uniform float uAlpha; void main(){ gl_FragColor = vec4(uColor, uAlpha); }",
+  });
+  // Texture under the UVs, one channel at a time. sRGB textures arrive linear from the sampler and
+  // the readback encodes back to sRGB, so R/G/B show the stored values; alpha is not colour-managed,
+  // so it is pre-decoded here to survive that encode. RGBA composites over a checker.
+  const CHAN = { rgb: 0, rgba: 1, r: 2, g: 3, b: 4, a: 5 };
+  const bgShader = (tex, chan, srgb, W) => new THREE.ShaderMaterial({
+    depthTest: false, depthWrite: false,
+    uniforms: { map: { value: tex }, uChan: { value: CHAN[chan] ?? 0 }, uSrgb: { value: srgb ? 1 : 0 }, uCell: { value: Math.max(8, Math.round(W / 32)) } },
+    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    fragmentShader: `uniform sampler2D map; uniform int uChan; uniform float uSrgb; uniform float uCell; varying vec2 vUv;
+      float lin(float c){ return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+      void main(){
+        vec4 t = texture2D(map, vUv);
+        float a = uSrgb > 0.5 ? lin(t.a) : t.a;
+        vec2 q = floor(gl_FragCoord.xy / uCell);
+        float ck = mod(q.x + q.y, 2.0) > 0.5 ? 0.18 : 0.06;
+        vec3 c = t.rgb;
+        if (uChan == 1) c = mix(vec3(uSrgb > 0.5 ? ck : sqrt(ck)), t.rgb, t.a);
+        else if (uChan == 2) c = vec3(t.r);
+        else if (uChan == 3) c = vec3(t.g);
+        else if (uChan == 4) c = vec3(t.b);
+        else if (uChan == 5) c = vec3(a);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  // A light geometry per (mesh, UV set) that shares the mesh's buffers but exposes the chosen set as
+  // "uvSel". Cached for the viewer's lifetime and never disposed: disposing a geometry frees the GL
+  // buffers of its attributes, which the model itself still uses (the context goes with the viewer).
+  const UV_NAMES = ["uv", "uv1", "uv2", "uv3"];
+  const uvCount = (g) => { let k = 0; while (k < UV_NAMES.length && g.attributes[UV_NAMES[k]]) k++; return k; };
+  const uvGeo = new Map();
+  function uvGeometry(c, set){
+    const key = c.uuid + ":" + set;
+    let g = uvGeo.get(key);
+    if (!g){
+      const src = c.geometry;
+      g = new THREE.BufferGeometry();
+      if (src.index) g.setIndex(src.index);
+      g.setAttribute("position", src.attributes.position);
+      g.setAttribute("uvSel", src.attributes[UV_NAMES[set]]);
+      for (const gr of src.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
+      uvGeo.set(key, g);
+    }
+    return g;
+  }
+  const gltf = [".glb", ".gltf"].includes((assetById(aid)?.ext || "").toLowerCase());
+  async function renderUV(sel, chan){
+    if (disposed || !hasUV) return null;
+    const list = targets(sel).filter((t) => t.c.geometry.attributes.uv);
+    if (!list.length) return null;
+    const sets = Math.max(...list.map((t) => uvCount(t.c.geometry)));
+    const set = Math.min(ins.uvSet || 0, sets - 1);
+    // Background: the selection's base color (or the texture itself); with nothing selected, the
+    // model's base color only if it has exactly one material.
+    let bg = null;
+    if (sel?.kind === "tex") bg = textures[sel.i]?.tex;
+    else if (sel?.kind === "mat") bg = materials[sel.i]?.rep.map;
+    else if (sel?.kind === "mesh") bg = meshes[sel.i]?.arr.find((m) => m.map)?.map;
+    else if (materials.length === 1) bg = materials[0].rep.map;
+    bg = bg || null;
+    const iw = bg?.image?.width || 0, ih = bg?.image?.height || 0;
+    const big = Math.min(4096, Math.max(2048, iw, ih));
+    const W = iw && ih ? Math.round(iw >= ih ? big : big * iw / ih) : big;
+    const H = iw && ih ? Math.round(ih >= iw ? big : big * ih / iw) : big;
+    const target = new THREE.WebGLRenderTarget(W, H);
+    const sc = new THREE.Scene();
+    sc.background = null;
+    const tmp = [];
+    const srgb = !bg || bg.colorSpace === THREE.SRGBColorSpace;
+    if (bg){
+      const q = quadFor(bg, W, H);
+      q.material.dispose();
+      q.material = bgShader(bg, chan, srgb, W);
+      q.renderOrder = 0;
+      sc.add(q);
+      tmp.push(q);
+    } else {
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ color: 0x2a2a30 }));
+      sc.add(q);
+      tmp.push(q);
+    }
+    const vTop = bg ? !bg.flipY : gltf;
+    const color = sel ? accent : 0xffffff;
+    const fill = uvShader(color, sel ? 0.14 : 0.06, false), wire = uvShader(color, sel ? 0.9 : 0.55, true);
+    for (const m of [fill, wire]) m.uniforms.uFlip.value = vTop ? -1 : 1;
+    const hiddenUV = new THREE.MeshBasicMaterial({ visible: false });
+    for (const { c, om, mats } of list){
+      if (uvCount(c.geometry) <= set) continue; // this mesh has no such set
+      for (const [layer, order] of [[fill, 1], [wire, 2]]){
+        const me = new THREE.Mesh(uvGeometry(c, set), pick(om, mats, layer, hiddenUV));
+        me.frustumCulled = false;
+        me.renderOrder = order;
+        sc.add(me);
+      }
+    }
+    const cv = renderToCanvas(sc, camQ, target, W, H, srgb);
+    target.dispose();
+    fill.dispose(); wire.dispose(); hiddenUV.dispose();
+    for (const q of tmp){ q.geometry.dispose(); q.material.dispose(); }
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    if (!blob || disposed) return null;
+    return { url: URL.createObjectURL(blob), w: W, h: H, sets, set, hasBg: !!bg };
+  }
+
+  function dispose(){
+    disposed = true;
+    clearHighlight();
+    hlMat.dispose(); hlWire.dispose(); hidden.dispose();
+    rt?.dispose(); env?.dispose();
+    ball?.geometry.dispose();
+  }
+  const ins = { aid, summary, materials, textures, meshes, thumbs, sel: null, uvSet: 0, onThumb: null, makeThumbs, select, selBox, modelBox, hide, renderUV, dispose };
+  return ins;
+}
+
+// Lightbox PSD layers panel — the button (D) shows the layer list; clicking a layer swaps the
+// lightbox picture for that layer's render, "Composite" goes back to the flattened image.
+// attachViewer() re-fits on the image's load event, so a layer of a different size frames itself.
+function togglePsdPanel(){
+  const btn = $("psdBtn"), panel = $("psdPanel");
+  if (!btn || btn.hidden) return;
+  panel.hidden = !panel.hidden;
+  btn.classList.toggle("on", !panel.hidden);
+}
+async function loadPsdLayers(id){
+  const panel = $("psdPanel");
+  if (!panel) return;
+  panel.innerHTML = `<div class="v3d-help">Loading layers…</div>`;
+  let layers = [];
+  try { layers = await api("/api/psd/" + id + "/layers"); } catch { layers = []; }
+  if (!light || light.id !== id) return; // moved on to another asset meanwhile
+  if (!layers.length){ panel.innerHTML = `<div class="v3d-help">No layers</div>`; return; }
+  panel.innerHTML = `<h3>Layers</h3>
+    <button type="button" class="layer on" data-i=""><span>Composite</span></button>` +
+    layers.map(l => l.kind === "group"
+      ? `<div class="layer group"><span>▾ ${esc(l.name)}</span></div>`
+      : `<button type="button" class="layer" data-i="${l.index}"><span>${esc(l.name)}</span><em class="badge">${l.width}×${l.height}</em></button>`
+    ).join("");
+  panel.querySelectorAll("button.layer").forEach((b) => {
+    b.onclick = () => {
+      panel.querySelectorAll(".layer").forEach(x => x.classList.remove("on"));
+      b.classList.add("on");
+      const img = light && light.id === id ? light.el.querySelector(".light-frame img.view-media") : null;
+      if (img) img.src = b.dataset.i === "" ? previewSrc(assetById(id) || { id, ext: ".psd" }) : `/api/psd/${id}/layer/${b.dataset.i}`;
+    };
+  });
 }
 function v3dSliderRow(label, key, min, max, step, unit){
   return `<div class="opt"><span>${esc(label)}</span><div class="bslider" data-slider="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-unit="${unit || ""}"></div></div>`;
@@ -4483,14 +5931,16 @@ function v3dLightRows(n){
     ${v3dSliderRow("Intensity", "l" + n + "i", 0, 4, 0.05, "")}
     ${v3dSliderRow("Azimuth", "l" + n + "az", -180, 180, 1, "°")}
     ${v3dSliderRow("Elevation", "l" + n + "el", -90, 90, 1, "°")}
+    ${v3dSliderRow("Size (softness)", "l" + n + "size", 0, 45, 0.5, "°")}
   `;
 }
 // Shared by the mesh and splat panels — both viewers get the same WASD / saved-view camera.
 function v3dCameraRows(){
   return `
     <h3>Camera</h3>
+    ${v3dSliderRow("Field of view", "camFov", 10, 120, 1, "°")}
     ${v3dSliderRow("Move speed (WASD)", "camSpeed", 0.1, 4, 0.1, "×")}
-    <div class="v3d-help">WASD fly · F frame all<br>Alt+1–9 save view · 1–9 recall</div>
+    <div class="v3d-help">WASD fly · F frame selection / all<br>Ctrl+click select mesh · Ctrl+right-drag explode<br>H hide selected · Ctrl+H hide others · Alt+H show all<br>Alt+1–9 save view · 1–9 recall</div>
   `;
 }
 function renderV3DPanel(){
@@ -4521,22 +5971,17 @@ function renderV3DPanel(){
     <h3>View</h3>
     <label class="opt">Backdrop <input type="color" data-v3d-color="bg" value="${v.bg}"></label>
     ${v3dCameraRows()}
+    <h3>Solid shading</h3>
+    <label class="opt">Color <input type="color" data-v3d-color="solidColor" value="${v.solidColor}"></label>
+    ${v3dSliderRow("Metallic", "solidMetal", 0, 1, 0.01, "")}
+    ${v3dSliderRow("Roughness", "solidRough", 0, 1, 0.01, "")}
     <h3>Lights</h3>
     ${v3dLightRows(1)}
     ${v3dLightRows(2)}
     ${v3dLightRows(3)}
     ${v3dSliderRow("Ambient", "ambient", 0, 2, 0.05, "")}
     ${v3dSliderRow("Rotate all (Alt+drag)", "lightYaw", -180, 180, 1, "°")}
-    <label class="opt">Anchor
-      <select id="v3dAnchor">
-        <option value="world" ${v.anchor === "world" ? "selected" : ""}>World</option>
-        <option value="camera" ${v.anchor === "camera" ? "selected" : ""}>Camera</option>
-      </select>
-    </label>
     <h3>Floor</h3>
-    <div class="opt"><span>Floor</span><input type="checkbox" id="v3dFloor" ${v.floor ? "checked" : ""}></div>
-    <div class="opt"><span>Grid</span><input type="checkbox" id="v3dGrid" ${v.grid ? "checked" : ""}></div>
-    <div class="opt"><span>Shadow only (invisible floor)</span><input type="checkbox" id="v3dShadowOnly" ${v.shadowOnly ? "checked" : ""}></div>
     ${v3dSliderRow("Shadow strength", "shadowStrength", 0, 1, 0.05, "")}
     <h3>Environment</h3>
     <div class="opt"><span>Environment light</span><input type="checkbox" id="v3dEnv" ${v.env ? "checked" : ""}></div>
@@ -4556,11 +6001,7 @@ function renderV3DPanel(){
   el.querySelectorAll("[data-v3d-color]").forEach((inp) => {
     inp.oninput = () => { state.v3d[inp.dataset.v3dColor] = inp.value; saveV3D(); };
   });
-  $("v3dFloor").onchange = () => { v.floor = $("v3dFloor").checked; saveV3D(); };
-  $("v3dGrid").onchange = () => { v.grid = $("v3dGrid").checked; saveV3D(); };
-  $("v3dShadowOnly").onchange = () => { v.shadowOnly = $("v3dShadowOnly").checked; saveV3D(); };
   $("v3dEnv").onchange = () => { v.env = $("v3dEnv").checked; saveV3D(); };
-  $("v3dAnchor").onchange = () => { v.anchor = $("v3dAnchor").value; saveV3D(); };
   $("v3dEnvPreset").onchange = () => {
     v.envPreset = $("v3dEnvPreset").value;
     $("v3dEnvFileRow").hidden = v.envPreset !== "custom";
@@ -4586,24 +6027,204 @@ function renderV3DPanel(){
 //  - Nothing closes while a mouse button is held: dragging a slider or colour handle inside a popup
 //    can wander far outside it.
 //  - Entries whose element has been removed from the page are dropped automatically.
+//  - Nesting: a popup opened from a control inside another popup (the color picker from the icon
+//    picker) keeps its parent open while the cursor is near it, and closes itself once its anchor
+//    is no longer on screen (the parent closed).
 const AUTO_CLOSE_MARGIN = 25;
 const autoCloseEntries = [];
+let autoClosePaused = false;  // set while the screen eyedropper is picking, when the cursor is expected far away
 function registerAutoClose(el, close, anchor){
-  if (!autoCloseEntries.some((r) => r.el === el)) autoCloseEntries.push({ el, close, anchor: anchor || null, armed: false });
+  let entry = autoCloseEntries.find((r) => r.el === el);
+  if (!entry) autoCloseEntries.push(entry = { el, close, anchor: anchor || null, armed: false });
+  return entry;
 }
 const nearRect = (r, x, y, m) => x >= r.left - m && x <= r.right + m && y >= r.top - m && y <= r.bottom + m;
+const autoCloseVisible = (r) => r.el.isConnected && !r.el.hidden && r.el.getClientRects().length > 0;
+const nearAutoClose = (r, x, y) => nearRect(r.el.getBoundingClientRect(), x, y, AUTO_CLOSE_MARGIN)
+  || (r.anchor && r.anchor.isConnected && nearRect(r.anchor.getBoundingClientRect(), x, y, 0));
 document.addEventListener("pointermove", (e) => {
-  if (e.buttons) return;
+  if (e.buttons || autoClosePaused) return;
+  const x = e.clientX, y = e.clientY;
   for (let i = autoCloseEntries.length - 1; i >= 0; i--){
     const r = autoCloseEntries[i];
     if (!r.el.isConnected){ autoCloseEntries.splice(i, 1); continue; }
-    if (r.el.hidden || !r.el.getClientRects().length){ r.armed = false; continue; }
-    const near = nearRect(r.el.getBoundingClientRect(), e.clientX, e.clientY, AUTO_CLOSE_MARGIN)
-      || (r.anchor && r.anchor.isConnected && nearRect(r.anchor.getBoundingClientRect(), e.clientX, e.clientY, 0));
+    if (!autoCloseVisible(r)){ r.armed = false; continue; }
+    if (r.anchor && !r.anchor.getClientRects().length){ r.armed = false; r.close(); continue; }
+    const near = nearAutoClose(r, x, y) || autoCloseEntries.some((o) => o !== r && o.anchor
+      && r.el.contains(o.anchor) && autoCloseVisible(o) && nearAutoClose(o, x, y));
     if (near) r.armed = true;
     else if (r.armed){ r.armed = false; r.close(); }
   }
 }, { passive: true });
+
+// ---- Color picker ---------------------------------------------------------------------------------
+// Every <input type="color"> in the app opens this in-page picker instead of the browser's native
+// popup: the native one lives outside the page, so it can't obey the auto-close rule above and
+// stayed open after the cursor left it. The input stays the source of truth — the picker writes
+// its value and fires "input" while it changes and one "change" when the picker closes (like the
+// native dialog), so existing oninput/onchange handlers work unchanged.
+const colorPop = $("colorPop");
+let cpInput = null, cpStart = "", cpH = 0, cpS = 0, cpV = 0;
+const cpEntry = registerAutoClose(colorPop, () => closeColorPop());
+function hsvToHex(h, s, v){
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return "#" + [f(5), f(3), f(1)].map((c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("");
+}
+function hexToHsv(hex){
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  let h = 0;
+  if (d) h = 60 * (mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4);
+  return [h, mx ? d / mx : 0, mx];
+}
+function cpRender(){
+  const hex = hsvToHex(cpH, cpS, cpV);
+  colorPop.querySelector(".cp-sv").style.backgroundColor = `hsl(${cpH} 100% 50%)`;
+  colorPop.querySelector(".cp-sv-dot").style.cssText = `left:${cpS * 100}%;top:${(1 - cpV) * 100}%;background:${hex}`;
+  colorPop.querySelector(".cp-hue-dot").style.left = (cpH / 360 * 100) + "%";
+  colorPop.querySelector(".cp-swatch").style.background = hex;
+  const hexInp = colorPop.querySelector(".cp-hex");
+  if (document.activeElement !== hexInp) hexInp.value = hex;
+}
+function cpApply(hex){
+  if (!cpInput || cpInput.value === hex) return;
+  cpInput.value = hex;
+  cpInput.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function openColorPicker(inp){
+  cpInput = inp;
+  cpStart = inp.value;
+  [cpH, cpS, cpV] = hexToHsv(/^#[0-9a-f]{6}$/i.test(inp.value) ? inp.value : "#000000");
+  cpEntry.anchor = inp;
+  cpEntry.armed = false;
+  colorPop.hidden = false;
+  cpRender();
+  // Beside the swatch (the swatch counts as "near", so the rule arms as soon as the cursor moves).
+  const a = inp.getBoundingClientRect(), w = colorPop.offsetWidth, h = colorPop.offsetHeight;
+  let left = a.right + 6;
+  if (left + w > window.innerWidth - 8) left = Math.max(8, a.left - w - 6);
+  colorPop.style.left = left + "px";
+  colorPop.style.top = Math.max(8, Math.min(a.top, window.innerHeight - h - 8)) + "px";
+}
+function closeColorPop(){
+  if (colorPop.hidden) return;
+  colorPop.hidden = true;
+  const inp = cpInput;
+  cpInput = null;
+  cpEntry.anchor = null;
+  if (inp && inp.value !== cpStart) inp.dispatchEvent(new Event("change", { bubbles: true }));
+}
+colorPop.innerHTML = `
+  <div class="cp-sv"><div class="cp-sv-dot"></div></div>
+  <div class="cp-hue"><div class="cp-hue-dot"></div></div>
+  <div class="cp-row">
+    <span class="cp-swatch"></span>
+    <input class="cp-hex" maxlength="7" spellcheck="false">
+    ${window.EyeDropper ? `<button type="button" class="btn ghost cp-eye" title="Pick a color from the screen"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg></button>` : ""}
+  </div>`;
+function cpDrag(el, onPos){
+  const at = (e) => { const r = el.getBoundingClientRect(); onPos(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))); cpRender(); cpApply(hsvToHex(cpH, cpS, cpV)); };
+  el.addEventListener("pointerdown", (e) => { if (e.button) return; e.preventDefault(); el.setPointerCapture(e.pointerId); at(e); });
+  el.addEventListener("pointermove", (e) => { if (el.hasPointerCapture(e.pointerId)) at(e); });
+}
+cpDrag(colorPop.querySelector(".cp-sv"), (x, y) => { cpS = x; cpV = 1 - y; });
+cpDrag(colorPop.querySelector(".cp-hue"), (x) => { cpH = x * 360; });
+colorPop.querySelector(".cp-hex").addEventListener("input", (e) => {
+  let v = e.target.value.trim();
+  if (!v.startsWith("#")) v = "#" + v;
+  if (!/^#[0-9a-f]{6}$/i.test(v)) return;
+  [cpH, cpS, cpV] = hexToHsv(v.toLowerCase());
+  cpRender();
+  cpApply(v.toLowerCase());
+});
+colorPop.querySelector(".cp-hex").addEventListener("keydown", (e) => {
+  if (hotkey(e, "Enter")){ e.preventDefault(); closeColorPop(); }
+});
+colorPop.querySelector(".cp-eye")?.addEventListener("click", async () => {
+  autoClosePaused = true;
+  try {
+    const { sRGBHex } = await new EyeDropper().open();
+    [cpH, cpS, cpV] = hexToHsv(sRGBHex.toLowerCase());
+    cpRender();
+    cpApply(sRGBHex.toLowerCase());
+  } catch {} finally { autoClosePaused = false; }
+});
+// Capture phase: runs before the input's own activation, so the native popup never opens.
+document.addEventListener("click", (e) => {
+  const inp = e.target.closest?.('input[type="color"]');
+  if (!inp) return;
+  e.preventDefault();
+  if (cpInput === inp) closeColorPop();
+  else { closeColorPop(); openColorPicker(inp); }
+}, true);
+document.addEventListener("pointerdown", (e) => {
+  if (!colorPop.hidden && !colorPop.contains(e.target) && e.target !== cpInput) closeColorPop();
+}, true);
+
+// ---- Select dropdowns --------------------------------------------------------------------------------
+// Every <select> opens this in-page list instead of the browser's native one: the native list is an
+// OS popup that opens below the control even when that runs past the bottom of the window (the UV
+// channel picker sits at the window's bottom edge). This one always stays inside the window — below
+// the control when it fits, above it otherwise, scrolling when neither side has room. The <select>
+// stays the source of truth: picking sets its value and fires "input" + "change", so existing
+// handlers work unchanged. Keyboard use of a focused <select> (arrows) is left native.
+const selPop = $("selPop");
+let spSelect = null;
+const spEntry = registerAutoClose(selPop, () => closeSelectPop());
+function closeSelectPop(){
+  if (selPop.hidden) return;
+  selPop.hidden = true;
+  spEntry.anchor = null;
+  const sel = spSelect;
+  spSelect = null;
+  sel?.blur(); // a focused <select> would swallow single-key shortcuts (WASD / F in the 3D view)
+}
+function openSelectPop(sel){
+  spSelect = sel;
+  spEntry.anchor = sel;
+  spEntry.armed = false;
+  selPop.innerHTML = [...sel.options].map((o, i) =>
+    `<button type="button" data-i="${i}"${o.selected ? ' class="on"' : ""}${o.disabled ? " disabled" : ""}>${esc(o.textContent)}</button>`).join("");
+  selPop.style.maxHeight = "";
+  selPop.style.minWidth = "";
+  selPop.hidden = false;
+  const a = sel.getBoundingClientRect(), M = 8, GAP = 4;
+  selPop.style.minWidth = a.width + "px";
+  const below = window.innerHeight - a.bottom - GAP - M, above = a.top - GAP - M;
+  const h = selPop.offsetHeight, w = selPop.offsetWidth;
+  let top;
+  if (h <= below) top = a.bottom + GAP;
+  else if (h <= above) top = a.top - GAP - h;
+  else if (below >= above){ top = a.bottom + GAP; selPop.style.maxHeight = below + "px"; }
+  else { top = M; selPop.style.maxHeight = above + "px"; }
+  selPop.style.top = top + "px";
+  selPop.style.left = Math.max(M, Math.min(a.left, window.innerWidth - w - M)) + "px";
+  selPop.querySelector("button.on")?.scrollIntoView({ block: "nearest" });
+}
+selPop.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-i]");
+  if (!b || !spSelect) return;
+  const sel = spSelect, i = Number(b.dataset.i);
+  closeSelectPop();
+  if (sel.selectedIndex === i) return;
+  sel.selectedIndex = i;
+  sel.dispatchEvent(new Event("input", { bubbles: true }));
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+});
+// Capture phase + preventDefault on mousedown: that is what opens the native list.
+document.addEventListener("mousedown", (e) => {
+  const sel = e.target.closest?.("select");
+  if (!sel || sel.multiple || sel.size > 1 || sel.disabled || e.button !== 0) return;
+  e.preventDefault();
+  if (spSelect === sel){ closeSelectPop(); return; }
+  closeSelectPop();
+  openSelectPop(sel);
+}, true);
+document.addEventListener("pointerdown", (e) => {
+  if (!selPop.hidden && !selPop.contains(e.target) && e.target !== spSelect) closeSelectPop();
+}, true);
+window.addEventListener("resize", closeSelectPop);
+document.addEventListener("scroll", (e) => { if (!selPop.contains(e.target)) closeSelectPop(); }, true);
 
 function hideCtx(){
   const m = $("ctx");
@@ -4620,7 +6241,8 @@ function showCtx(x, y, id){
   const cols = state.meta.collections || [];
   menu.innerHTML = `
     <button type="button" data-act="open">Open</button>
-    <button type="button" data-act="reveal">Locate</button>
+    <button type="button" data-act="reveal">Reveal in File System</button>
+    <button type="button" data-act="find">Find in Folder</button>
     <button type="button" data-act="native">Open Natively</button>
     <button type="button" data-act="refreshthumbs">⟳ Refresh thumbnail${ids.length > 1 ? "s (" + ids.length + ")" : ""}</button>
     <div class="sep"></div>
@@ -4650,7 +6272,10 @@ function showCtx(x, y, id){
       if (a) toggleLight(a);
     } else if (act === "reveal"){
       hideCtx();
-      api(`/api/assets/${id}/reveal`, { method: "POST" }).catch(() => {});
+      revealAssets(ids);
+    } else if (act === "find"){
+      hideCtx();
+      findInFolder(ids);
     } else if (act === "native"){
       hideCtx();
       api(`/api/assets/${id}/open`, { method: "POST" }).catch(() => {});
@@ -4679,6 +6304,138 @@ function showCtx(x, y, id){
       refreshThumbs();
     }
   };
+}
+
+// Right-click on items selected on a board (canvas.js calls this for a right-click that did not
+// turn into a zoom drag). Find in Folder comes first: it is the reason this menu exists.
+function showCanvasCtx(x, y){
+  const ids = canvasCtl?.selectedAssetIds() || [];
+  const menu = $("ctx");
+  if (!ids.length){ menu.hidden = true; return; }
+  menu.className = "ctx";
+  menu.innerHTML = `
+    <button type="button" data-act="find">Find in Folder${ids.length > 1 ? " (" + ids.length + ")" : ""}</button>
+    <button type="button" data-act="reveal">Reveal in File System</button>
+    ${ids.length === 1 ? `<button type="button" data-act="native">Open Natively</button>` : ""}
+  `;
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  menu.onclick = (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    hideCtx();
+    const act = btn.dataset.act;
+    if (act === "find") findInFolder(ids);
+    else if (act === "reveal") revealAssets(ids);
+    else if (act === "native") api(`/api/assets/${ids[0]}/open`, { method: "POST" }).catch(() => {});
+  };
+}
+
+// Selected assets of whichever pane the palette/shortcut is aimed at: the board or the grid.
+function activeSelectionAssetIds(){
+  return canvasPaneActive() ? (canvasCtl?.selectedAssetIds() || []) : state.selectedIds.slice();
+}
+
+// One file-manager window per folder, each with all of that folder's selected files selected.
+async function revealAssets(ids){
+  if (!ids.length) return;
+  try {
+    const r = await api("/api/assets/reveal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
+    if (!r.windows) alert("The folder of " + (ids.length > 1 ? "these files" : "this file") + " no longer exists.");
+  } catch {}
+}
+
+const pathParts = (p) => p.replace(/[\\/]+$/, "").split(/[\\/]/);
+const pathSep = (p) => (p.match(/[\\/]/) || ["/"])[0];
+const parentDir = (p) => { const parts = pathParts(p); parts.pop(); return parts.join(pathSep(p)); };
+// Deepest folder containing every path in `dirs` ("" if they share nothing, e.g. two drives).
+function commonDir(dirs){
+  let parts = pathParts(dirs[0]);
+  for (const d of dirs.slice(1)){
+    const q = pathParts(d);
+    let i = 0;
+    while (i < parts.length && i < q.length && parts[i] === q[i]) i++;
+    parts = parts.slice(0, i);
+  }
+  return parts.join(pathSep(dirs[0]));
+}
+
+// Opens the source's folder tree in the sidebar down to `dir` so its row shows (highlighted).
+// Returns the tree's own spelling of `dir` — the row's "on" check compares it to state.filter.folder.
+async function expandTreeTo(src, dir){
+  const want = pathParts(dir);
+  let cur = src.path;
+  state.sourceTree.expandedSources.add(src.id);
+  for (let depth = pathParts(src.path).length; depth < want.length; depth++){
+    await loadFolderTree(src.id, cur);
+    const next = (state.sourceTree.dirsCache.get(src.id + "|" + cur) || []).find((d) => pathParts(d.path)[depth] === want[depth]);
+    if (!next) return dir;
+    if (depth < want.length - 1) state.sourceTree.expandedPaths.add(src.id + "|" + next.path);
+    cur = next.path;
+  }
+  return cur;
+}
+
+// Waits until the grid has loaded every wanted item (pull() pages in 400 at a time) or the list ended.
+async function waitForItems(want, ms = 10000){
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms){
+    const have = state.items.reduce((n, a) => n + (want.has(a.id) ? 1 : 0), 0);
+    if (have === want.size) return;
+    if (!state.pulling && !wantReset && state.total != null && state.items.length >= state.total) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+function scrollGridToIndex(i){
+  const L = layout();
+  let top, h;
+  if (L.mode === "masonry"){
+    const p = computeMasonry(L).positions[i];
+    if (!p) return;
+    top = p.y; h = p.h;
+  } else {
+    top = Math.floor(i / L.cols) * L.rowH; h = L.rowH;
+  }
+  grid.scrollTop = Math.max(0, L.pad + top + h / 2 - grid.clientHeight / 2);
+  scheduleRender();
+}
+
+// Jumps the library grid to where the given assets live and selects them. They can come from
+// different folders, depths and sources (a board mixes anything), so the view narrows to the
+// deepest folder holding all of them — the folder filter is recursive: one folder -> that folder;
+// several under one source -> their common ancestor (the source row if that is the source root);
+// several sources -> All. Search and type filters are cleared so nothing hides the files.
+async function findInFolder(assetIds){
+  const recs = (await Promise.all(assetIds.map((id) => api("/api/assets/" + id).catch(() => null)))).filter(Boolean);
+  const found = recs.filter((a) => a.status !== "excluded");
+  if (!found.length){
+    alert(recs.length ? "These files are in folders excluded from the library." : "These files are no longer in the library.");
+    return;
+  }
+  let patch = {};
+  const sids = [...new Set(found.map((a) => a.source_id))];
+  const src = sids.length === 1 ? (state.meta.sources || []).find((s) => s.id === sids[0]) : null;
+  if (src){
+    const dir = commonDir(found.map((a) => parentDir(a.path)));
+    if (pathParts(dir).length <= pathParts(src.path).length) patch = { source: src.id };
+    else patch = { folder: await expandTreeTo(src, dir) };
+  }
+  $("q").value = "";
+  state.filter.q = "";
+  if (state.view === "canvas" && !state.canvasSplit) toggleCanvasSplit();
+  applyFilter(patch);
+  nav.querySelector(".src-folder.on, .src-row.on")?.scrollIntoView({ block: "nearest" });
+  const want = new Set(found.map((a) => a.id));
+  await waitForItems(want);
+  const hits = state.items.filter((a) => want.has(a.id)).map((a) => a.id);
+  if (!hits.length) return;
+  selectSet(hits, hits[0]);
+  scrollGridToIndex(state.items.findIndex((a) => a.id === hits[0]));
 }
 
 function showSourceCtx(x, y, sid){
@@ -4958,8 +6715,30 @@ async function purgeMissing(scoped){
   if (notes.length) alert(notes.join("\n"));
 }
 
+// Settings → Scanning → Ignore. The list lives in the library DB (the scanner needs it before any
+// page is open), so it comes with /api/state; Apply hides matches and rescans every source.
+async function applyScanIgnore(){
+  const ta = $("scanIgnore"), msg = $("scanIgnoreMsg");
+  if (!ta) return;
+  msg.textContent = "Applying…";
+  try {
+    const r = await api("/api/scan/ignore", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: ta.value }) });
+    const parts = [];
+    if (r.hidden) parts.push(`${r.hidden} hidden`);
+    if (r.restored) parts.push(`${r.restored} restored`);
+    msg.textContent = (parts.join(", ") || "Saved") + " · rescanning";
+    delete ta.dataset.dirty;
+    await refreshMeta();
+    resetList();
+  } catch (err) {
+    msg.textContent = /404|405|Not Found|Method Not Allowed/.test(String(err)) ? "Restart Sight to load the new server code" : "Failed: " + String(err.message || err).slice(0, 120);
+  }
+}
+
 async function refreshMeta(){
   state.meta = await api("/api/state");
+  const ign = $("scanIgnore");
+  if (ign && document.activeElement !== ign && !ign.dataset.dirty) ign.value = state.meta.scanIgnore || "";
   renderBuildTag(); // version + build stamp come with the state; the first call at boot runs before it is loaded
   renderNav();
   renderStatus();
@@ -5081,11 +6860,11 @@ function applyThumb(id, hasThumb, animated, v, width, height){
   }
   const el = cardPool.get(id);
   if (el) fillThumb(el, a || { id, has_thumb: hasThumb ? 1 : 0, thumb_v: v, kind: "image" }, true);
-  // A 3D model's inspector preview is its thumbnail — refresh it in place when a new one lands.
-  const m3d = hasThumb && a && a.kind === "model3d" ? insp.querySelector(`[data-m3d="${id}"]`) : null;
-  if (m3d){
-    m3d.innerHTML = `<img src="${thumbSrc(a)}" alt="" />`;
-    watchPixelation(m3d.firstElementChild);
+  // The inspector preview is the thumbnail — refresh it in place when a new one lands.
+  const slot = hasThumb && a ? insp.querySelector(`[data-thumb="${id}"]`) : null;
+  if (slot){
+    slot.innerHTML = `<img src="${thumbSrc(a)}" alt="" />`;
+    watchPixelation(slot.firstElementChild);
   }
   if (resized){ masonryCache = null; scheduleRender(); }
 }
@@ -5120,6 +6899,10 @@ function paletteActions(){
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
     ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
+    ...((sel) => sel.length ? [
+      { label: "Reveal in File System", hint: String(sel.length), run: () => revealAssets(sel) },
+      { label: "Find in Folder", hint: String(sel.length), run: () => findInFolder(sel) },
+    ] : [])(activeSelectionAssetIds()),
     ...(((state.meta.counts || {}).missing) ? [{ label: "Remove missing files from library", hint: String(state.meta.counts.missing), run: () => purgeMissing(false) }] : []),
     { label: "Reset all settings to defaults", run: resetAllSettings },
     // Only listed in developer mode (Sight-dev.bat / --dev); end users never see it.
@@ -5410,6 +7193,7 @@ function initThinSlider(container, { min = 0, max = 1, value = 0, onChange }){
   container.addEventListener("pointerup", end);
   container.addEventListener("pointercancel", end);
   container.addEventListener("contextmenu", (e) => { e.preventDefault(); setValue(min, true); });
+  return { set: (v) => setValue(v, false) };
 }
 
 function bindSliders(root, store, defaults, onSet){
@@ -5491,6 +7275,11 @@ function renderOptions(){
       <div class="settings-sub">View</div>
       <label class="opt">Sidebar icons <input type="checkbox" data-layout-opt="showIcons" ${state.showIcons ? "checked" : ""}></label>
 
+      <div class="settings-sub">Scanning</div>
+      <label class="field" title="Files and folders the library skips, one pattern per line:&#10;*.meta, Thumbs.db — a file or folder name anywhere (* ? [..] globs)&#10;Library/ — folders only (trailing slash)&#10;Library/PackageCache — that run of folders anywhere&#10;# comment. Case-insensitive, relative to each source folder.">Ignore (one pattern per line)
+        <textarea id="scanIgnore" spellcheck="false" placeholder="*.meta&#10;Library/&#10;BurstCache/&#10;Thumbs.db">${esc(state.meta?.scanIgnore || "")}</textarea></label>
+      <div class="theme-actions"><span class="ign-msg" id="scanIgnoreMsg"></span><button class="btn ghost" id="scanIgnoreApply" type="button" title="Save the list, hide matching files and rescan every source">Apply</button></div>
+
       <div class="settings-sub">Video</div>
       ${sliderRow("RAM cache", "videoCache", 32, 2048, 32, " MB")}
 
@@ -5557,6 +7346,8 @@ function renderOptions(){
   $("waveModeSel").onchange = () => { state.theme.waveMode = $("waveModeSel").value; saveTheme(); };
   $("zoomAxisSel").onchange = () => { state.theme.zoomAxis = $("zoomAxisSel").value; saveTheme(); };
   $("thReset").onclick = resetAllSettings;
+  $("scanIgnoreApply").onclick = applyScanIgnore;
+  $("scanIgnore").oninput = (e) => { e.target.dataset.dirty = "1"; };
   if (IS_DEV){
     $("thSaveDefault").onclick = async () => {
       if (!(await saveAppDefaults())) return;
@@ -5667,7 +7458,8 @@ function attachPanScroll(el){
   if (!el) return;
   let drag = null;
   el.addEventListener("pointerdown", (e) => {
-    if (e.button !== 1) return;
+    if (e.button !== 1 || e._panScroll) return; // a nested scroller (list inside a panel) already took it
+    e._panScroll = true;
     e.preventDefault();
     drag = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     el.classList.add("panning");
@@ -5688,7 +7480,7 @@ attachPanScroll($("paletteList"));
 attachPanScroll($("fbList"));
 document.addEventListener("pointerdown", (e) => {
   const m = $("ctx");
-  if (m && !m.hidden && !m.contains(e.target)) hideCtx();
+  if (m && !m.hidden && !m.contains(e.target) && !$("colorPop").contains(e.target)) hideCtx();
 }, true);
 
 // In-app folder browser — replaces the native OS folder-picker dialog (feedback #1): the
@@ -5795,7 +7587,13 @@ const setCtrlDown = (on) => document.documentElement.classList.toggle("ctrl-down
 window.addEventListener("keydown", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlDown(true); });
 window.addEventListener("keyup", (e) => { if (e.key === "Control" || e.key === "Meta") setCtrlDown(false); });
 window.addEventListener("blur", () => setCtrlDown(false));
-window.addEventListener("pointermove", (e) => { lastPtr = { x: e.clientX, y: e.clientY }; setCtrlDown(e.ctrlKey || e.metaKey); }, { passive: true });
+window.addEventListener("pointermove", (e) => {
+  lastPtr = { x: e.clientX, y: e.clientY };
+  setCtrlDown(e.ctrlKey || e.metaKey);
+  // Moving onto a thumbnail / board item takes focus off the search field, so Space previews the
+  // hovered result instead of typing a space into the query.
+  if (document.activeElement === $("q") && e.target.closest?.(".card[data-id], .citem[data-asset-id]")) $("q").blur();
+}, { passive: true });
 document.documentElement.addEventListener("pointerleave", () => { lastPtr = null; });
 function assetUnderPointer(){
   if (!lastPtr) return null;
@@ -5823,6 +7621,8 @@ document.addEventListener("keydown", (e) => {
   if (hotkey(e, "Ctrl+KeyK")){ e.preventDefault(); togglePalette(); return; }
   if (paletteOpen && hotkey(e, "Escape")){ e.preventDefault(); closePalette(); return; }
   if (paletteOpen) return;
+  if (!colorPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeColorPop(); return; }
+  if (!selPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeSelectPop(); return; }
   if (!$("fbOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); fbClose(); return; }
   if (!$("fbOverlay").hidden) return;
   if (hotkey(e, "Backspace") && !typing && hoveredSliderReset){ e.preventDefault(); hoveredSliderReset(); return; }
@@ -5898,13 +7698,37 @@ document.addEventListener("keydown", (e) => {
     const zoomDigit = /^Digit([1-9])$/.exec(e.code);
     if (zoomDigit){ e.preventDefault(); light.setZoom(Number(zoomDigit[1])); return; }
   }
+  // Mesh visibility: H hides the selection, Ctrl+H hides everything else, Alt+H shows all.
+  if (in3d && !typing3d && v3dInspect && v3dInspect.aid === light.id && (hotkey(e, "KeyH") || hotkey(e, "Ctrl+KeyH") || hotkey(e, "Alt+KeyH"))){
+    e.preventDefault();
+    const ins = v3dInspect, mode = hotkey(e, "KeyH") ? "sel" : hotkey(e, "Ctrl+KeyH") ? "others" : "none";
+    if (mode !== "none" && !ins.sel){ flashV3DToast("Nothing selected — Ctrl+click a mesh first"); return; }
+    const n = ins.hide(mode);
+    if (mode === "sel") setInspectSel(null);
+    flashV3DToast(mode === "none" ? (n ? `${n} hidden mesh${n > 1 ? "es" : ""} shown` : "Nothing hidden")
+      : mode === "sel" ? "Hidden" : "Hid the rest");
+    renderLightInfo();
+    return;
+  }
   if (in3d && !typing3d && !e.ctrlKey && !e.metaKey){
     const digit = /^Digit([1-9])$/.exec(e.code);
     if (v3dCam){
       if (CAM_MOVE_KEYS.has(e.code) && !e.altKey){ e.preventDefault(); camKeys.add(e.code); return; }
-      if (e.code === "KeyF" && !e.altKey && !e.shiftKey){ e.preventDefault(); v3dCam.frame(); return; }
+      if (e.code === "KeyF" && !e.altKey && !e.shiftKey){
+        e.preventDefault();
+        // Meshes: fit the selection (Ctrl+click / info panel) or else the whole model, measured as it
+        // is now (explode, hidden meshes), keeping the camera's viewing direction — F only moves
+        // and zooms, never turns the view. Splats have no inspector and go back to the opening view.
+        const ins = v3dInspect && v3dInspect.aid === light.id ? v3dInspect : null;
+        const box = ins ? (ins.sel ? ins.selBox() : ins.modelBox()) : null;
+        if (uvView && lightPane === "uv") uvView.fit();
+        else if (box) v3dCam.frameBox(box, ins.sel ? "Frame selection" : "Frame all");
+        else v3dCam.frame();
+        return;
+      }
       if (digit && !e.shiftKey){
         e.preventDefault();
+        if (uvView && lightPane === "uv" && !e.altKey){ uvView.zoom(Number(digit[1])); return; }
         if (e.altKey) v3dCam.save(Number(digit[1])); else v3dCam.recall(Number(digit[1]));
         return;
       }
@@ -5918,9 +7742,14 @@ document.addEventListener("keydown", (e) => {
         if (n === 7){ e.preventDefault(); onV3DRotate?.(); return; }
       }
       if (e.code === "KeyG"){ e.preventDefault(); toggleV3DPanel(); return; }
+      if (hotkey(e, "KeyU") && !currentAssetIsSplat){ e.preventDefault(); toggleUV(); return; }
     }
   }
-  if (hotkey(e, "KeyD") && !typing && !in3d) toggleDetails();
+  if (light && hotkey(e, "KeyI") && !typing3d){ e.preventDefault(); toggleLightInfo(); return; }
+  // D in the lightbox of a PSD opens its layers panel; everywhere else it toggles Details.
+  if (hotkey(e, "KeyD") && !typing && !in3d){
+    if (light && !$("psdBtn").hidden) togglePsdPanel(); else toggleDetails();
+  }
 });
 // Held-key tracking for the WASD camera — released keys are dropped regardless of what else is
 // going on, and losing window focus drops everything (a keyup would never arrive, leaving the

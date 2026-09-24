@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import heapq
 import json
 import os
@@ -13,6 +14,8 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+
+from .fileinfo import file_info, obj_is_binary
 
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff",
@@ -49,9 +52,9 @@ KIND_LABEL = {
     "design": "Design",
 }
 
-# Bump when how models get rendered/thumbnailed changes enough that existing FBX/USDZ
-# thumbnails are wrong (see Library._drop_stale_model_thumbs).
-MODEL_THUMB_VERSION = 2
+# Bump when how models get rendered/thumbnailed changes enough that existing model thumbnails
+# are wrong (see Library._drop_stale_model_thumbs). 3: studio env + single key light (all models).
+MODEL_THUMB_VERSION = 3
 
 PRI_VISIBLE = 0
 PRI_PREFETCH = 1
@@ -88,6 +91,53 @@ def normpath(p: object) -> str:
     """Case/separator-normalized form of a filesystem path, for cross-platform prefix and
     equality checks (excluded-subfolder matching, source-boundary checks) without hitting disk."""
     return os.path.normcase(os.path.normpath(str(p)))
+
+
+class IgnoreRules:
+    """The user's scan ignore list (Settings → Scanning), one pattern per line, gitignore-like:
+    `*.meta` / `Thumbs.db` match a file or folder name anywhere; a trailing `/` (`Library/`)
+    matches folders only; a pattern with a `/` inside (`Library/PackageCache`) matches that run of
+    names anywhere in the tree. `*`, `?` and `[..]` globs, case-insensitive; `#` starts a comment.
+    Paths are taken relative to the source root, so the root's own name never matches."""
+
+    def __init__(self, text: str = "") -> None:
+        self.text = text or ""
+        self.rules: list[tuple[list[str], bool]] = []
+        for line in self.text.splitlines():
+            line = line.strip().replace("\\", "/")
+            if not line or line.startswith("#"):
+                continue
+            dir_only = line.endswith("/")
+            parts = [x.lower() for x in line.strip("/").split("/") if x]
+            if parts:
+                self.rules.append((parts, dir_only))
+
+    def leaf(self, parts: list[str], is_dir: bool) -> bool:
+        """Does a rule match the last name in `parts` (a relative path split into names)?"""
+        low = [x.lower() for x in parts]
+        for pat, dir_only in self.rules:
+            if dir_only and not is_dir:
+                continue
+            n = len(pat)
+            if n <= len(low) and all(fnmatch.fnmatchcase(low[-n + i], pat[i]) for i in range(n)):
+                return True
+        return False
+
+    def path(self, parts: list[str]) -> bool:
+        """Is a file hidden by a rule on it or on any folder above it?"""
+        if not self.rules:
+            return False
+        return any(self.leaf(parts[: i + 1], i < len(parts) - 1) for i in range(len(parts)))
+
+
+def rel_parts(root: str | Path, p: str | Path) -> list[str] | None:
+    try:
+        rel = os.path.relpath(str(p), str(root))
+    except ValueError:  # another drive
+        return None
+    if rel.startswith(".."):
+        return None
+    return [x for x in re.split(r"[\\/]+", rel) if x and x != "."]
 
 
 ANIMATABLE_EXT = {".gif", ".webp", ".png"}
@@ -576,6 +626,8 @@ class Library:
         self.conn.execute("PRAGMA busy_timeout=4000")
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self._migrate()
+        row = self.conn.execute("SELECT value FROM meta WHERE key='scan_ignore'").fetchone()
+        self.ignore = IgnoreRules(row["value"] if row else "")
         self.bus = Bus()
         self.ffmpeg = find_ffmpeg()
         self._scan_lock = threading.Lock()
@@ -589,6 +641,7 @@ class Library:
         self._seq = 0
         self._inflight: set[str] = set()
         self._have_thumb: set[str] = set()
+        self._info_cache: dict[str, tuple[tuple, list[dict]]] = {}
         self._wake = threading.Condition(self._heap_lock)
         try:
             import pillow_heif
@@ -620,12 +673,20 @@ class Library:
                 return
         except OSError:
             pass
+        try:
+            old_model_ver = marker.read_text(encoding="utf-8").strip().split(".")[0]
+        except OSError:
+            old_model_ver = ""
         for p in (self.thumbs / "usdz").glob("*.glb"):
             p.unlink(missing_ok=True)
-        for r in self.query("SELECT id FROM assets WHERE ext IN ('.fbx', '.usdz')"):
+        # A MODEL_THUMB_VERSION bump means the client-side render itself changed, so every model
+        # re-renders; a converter-only bump only affects FBX/USDZ.
+        where = ("kind = 'model3d'" if old_model_ver != str(MODEL_THUMB_VERSION)
+                 else "ext IN ('.fbx', '.usdz')")
+        for r in self.query(f"SELECT id FROM assets WHERE {where}"):
             for e in (".jpg", ".png"):
                 (self.thumbs / f"{r['id']}{e}").unlink(missing_ok=True)
-        self.execute("UPDATE assets SET has_thumb=0 WHERE ext IN ('.fbx', '.usdz')")
+        self.execute(f"UPDATE assets SET has_thumb=0 WHERE {where}")
         try:
             marker.write_text(stamp, encoding="utf-8")
         except OSError:
@@ -768,6 +829,10 @@ class Library:
               icon TEXT,
               color TEXT
             );
+            CREATE TABLE IF NOT EXISTS meta (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            );
             """
         )
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(assets)")}
@@ -883,6 +948,52 @@ class Library:
         rows = self.query("SELECT path FROM sources WHERE id=?", (sid,))
         return rows[0]["path"] if rows else None
 
+    def hidden(self, root: str, fp: str) -> bool:
+        """A file the scanner leaves out even though its extension is supported: matched by the
+        ignore list, or an .obj that is compiler output rather than a mesh."""
+        parts = rel_parts(root, fp)
+        if parts and self.ignore.path(parts):
+            return True
+        return fp.lower().endswith(".obj") and obj_is_binary(Path(fp))
+
+    def set_ignore(self, text: str) -> dict:
+        """Replace the scan ignore list. Indexed files it now matches flip to status='excluded'
+        (tags/ratings survive, like an excluded folder); ones it no longer matches come back,
+        unless they sit in an excluded folder. Then every source is rescanned for files that were
+        never indexed because of the old list."""
+        text = (text or "").replace("\r\n", "\n")
+        self.ignore = IgnoreRules(text)
+        roots = {r["id"]: (r["path"], self.excluded_set(r["id"])) for r in self.query("SELECT id, path FROM sources")}
+        hide: list[tuple[str]] = []
+        show: list[tuple[str]] = []
+        for r in self.query("SELECT id, source_id, path, status FROM assets"):
+            src = roots.get(r["source_id"])
+            if not src:
+                continue
+            root, exc = src
+            parts = rel_parts(root, r["path"])
+            ignored = bool(parts) and self.ignore.path(parts)
+            if r["status"] == "excluded":
+                p_n = normpath(r["path"])
+                in_exc = any(p_n == e or p_n.startswith(e + os.sep) for e in exc)
+                if not ignored and not in_exc and not self.hidden(root, r["path"]):
+                    show.append((r["id"],))
+            elif ignored:
+                hide.append((r["id"],))
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('scan_ignore', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (text,),
+            )
+            self.conn.executemany("UPDATE assets SET status='excluded' WHERE id=?", hide)
+            self.conn.executemany("UPDATE assets SET status='ready' WHERE id=?", show)
+            self.conn.commit()
+        for sid in roots:
+            threading.Thread(target=self.scan_source, args=(sid,), daemon=True).start()
+        self.bus.publish({"type": "source", "id": ""})
+        return {"text": text, "hidden": len(hide), "restored": len(show)}
+
     def excluded_set(self, sid: str) -> set[str]:
         rows = self.query("SELECT excluded FROM sources WHERE id=?", (sid,))
         if not rows:
@@ -911,6 +1022,7 @@ class Library:
         # Excluding a folder excludes its whole subtree, so re-including it must not revive assets
         # under a subfolder that is still excluded in its own right.
         still_excluded = [normpath(x) for x in cur] if not excluded else []
+        src_root = self.source_root(sid) or ""
         with self.lock:
             prefix = target_n + os.sep
             rows2 = self.conn.execute("SELECT id, path FROM assets WHERE source_id=?", (sid,)).fetchall()
@@ -921,6 +1033,8 @@ class Library:
                     continue
                 if any(p_n == e or p_n.startswith(e + os.sep) for e in still_excluded):
                     continue
+                if not excluded and self.hidden(src_root, r["path"]):
+                    continue  # still left out by the ignore list
                 match_ids.append(r["id"])
             if match_ids:
                 new_status = "excluded" if excluded else "ready"
@@ -1172,7 +1286,9 @@ class Library:
             for r in self.query("SELECT id, path, mtime, size, status FROM assets WHERE source_id=?", (sid,))
             if r["status"] != "excluded"
         }
+        ignore = self.ignore
         seen: set[str] = set()
+        hide: list[tuple[str]] = []  # indexed files the ignore list / COFF check now leaves out
         inserts: list[tuple] = []
         now = int(time.time() * 1000)
 
@@ -1198,10 +1314,12 @@ class Library:
             for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
                 if self._stop.is_set():
                     break
+                base = rel_parts(root, dirpath) or []
                 dirnames[:] = [
                     d for d in dirnames
                     if d not in SKIP_DIRS and not d.startswith(".")
                     and normpath(Path(dirpath) / d) not in excluded_n
+                    and not ignore.leaf(base + [d], True)
                 ]
                 for name in filenames:
                     if name.startswith("."):
@@ -1211,6 +1329,10 @@ class Library:
                         continue
                     fp = str(Path(dirpath) / name)
                     seen.add(fp)
+                    if ignore.leaf(base + [name], False) or (name.lower().endswith(".obj") and obj_is_binary(Path(fp))):
+                        if fp in existing:
+                            hide.append((existing[fp][2],))
+                        continue
                     try:
                         st = os.stat(fp)
                     except OSError:
@@ -1244,6 +1366,9 @@ class Library:
                     if len(inserts) >= BATCH:
                         flush()
             flush()
+            if hide:
+                self.executemany("UPDATE assets SET status='excluded' WHERE id=?", hide)
+                self.bus.publish({"type": "batch", "n": 0, "scanned": self.scanned, "source": sid})
             gone = set(existing) - seen
             if gone:
                 with self.lock:
@@ -1548,13 +1673,47 @@ class Library:
             return None
 
     def psd_composite(self, aid: str) -> Path | None:
+        """Full-resolution flattened render for the lightbox, cached as thumbs/psd/<id>_full.png
+        (the `<id>_*.png` cleanup globs cover it) and re-rendered when the PSD is newer. Falls back
+        to the card thumbnail only if the full render fails."""
+        a = self.get_asset(aid)
+        if not a or a.get("ext") != ".psd":
+            return None
+        path = Path(a["path"])
+        dest = self.thumbs / "psd" / f"{aid}_full.png"
+        try:
+            if dest.exists() and dest.stat().st_mtime >= path.stat().st_mtime:
+                return dest
+        except OSError:
+            pass
+        im = None
+        try:
+            from psd_tools import PSDImage
+
+            im = PSDImage.open(path).composite()
+        except Exception:
+            im = None
+        if im is None:
+            try:
+                from PIL import Image
+
+                with Image.open(path) as src:
+                    im = src.copy()
+            except Exception:
+                im = None
+        if im is not None:
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if im.mode not in ("RGB", "RGBA"):
+                    im = im.convert("RGBA")
+                im.save(dest, "PNG", compress_level=1)
+                return dest
+            except Exception:
+                pass
         p = self.thumb_path(aid)
         if p:
             return p
-        a = self.get_asset(aid)
-        if not a:
-            return None
-        wh = self._thumb_psd(Path(a["path"]), self.thumbs / f"{aid}.jpg")
+        wh = self._thumb_psd(path, self.thumbs / f"{aid}.jpg")
         p = self.thumb_path(aid)
         if p and wh:
             self.execute(
@@ -1740,6 +1899,29 @@ class Library:
         except Exception:
             return None
 
+    def file_info(self, aid: str) -> list[dict] | None:
+        """Per-type details for the lightbox info overlay (see app/fileinfo.py). Cached per file
+        version, since some readers (ffmpeg, PSD, OBJ line counts) take a moment."""
+        a = self.get_asset(aid)
+        if not a:
+            return None
+        path = Path(a["path"])
+        try:
+            st = path.stat()
+        except OSError:
+            return []
+        key = (aid, st.st_mtime, st.st_size)
+        hit = self._info_cache.get(aid)
+        if hit and hit[0] == key:
+            return hit[1]
+        if not self.ffmpeg and a["kind"] in ("video", "audio"):
+            self.ffmpeg = find_ffmpeg()
+        info = file_info(path, a["kind"], a["ext"], self.ffmpeg)
+        if len(self._info_cache) > 256:
+            self._info_cache.clear()
+        self._info_cache[aid] = (key, info)
+        return info
+
     def companions(self, aid: str) -> list[dict]:
         """Filename-heuristic model<->texture pairing for models that reference external
         textures (no material-file parsing here, same fallback AssetsBoss itself uses)."""
@@ -1922,8 +2104,7 @@ class Library:
                     lib._touch_one(sid, event.src_path, kind)
 
             def on_deleted(self, event):  # type: ignore[no-untyped-def]
-                lib.execute("UPDATE assets SET status='missing' WHERE path=?", (event.src_path,))
-                lib.bus.publish({"type": "batch", "n": 0})
+                lib._mark_gone(event.src_path)
 
             def on_moved(self, event):  # type: ignore[no-untyped-def]
                 kind = kind_of(event.dest_path)
@@ -1939,7 +2120,8 @@ class Library:
                         if new_id != old_id:
                             lib._migrate_asset(old_id, new_id)
                         return
-                lib.execute("UPDATE assets SET status='missing' WHERE path=?", (event.src_path,))
+                if not event.is_directory:
+                    lib._mark_gone(event.src_path)
 
             def on_modified(self, event):  # type: ignore[no-untyped-def]
                 if event.is_directory:
@@ -1954,12 +2136,31 @@ class Library:
         obs.start()
         self._watchers[sid] = obs
 
+    def _mark_gone(self, fp: str) -> None:
+        """Flags `fp` and everything indexed under it as missing. A folder sent to the Recycle
+        Bin or moved out of the watched tree arrives from watchdog as ONE deleted event for the
+        folder itself (with is_directory=False on Windows — the path no longer exists to stat),
+        not one per file inside, so matching the exact path alone left its contents 'ready'
+        forever. Excluded rows are left alone, same as scan_source does."""
+        prefix = fp.rstrip("\\/") + os.sep
+        cur = self.execute(
+            "UPDATE assets SET status='missing' WHERE status NOT IN ('missing','excluded') "
+            "AND (path=? OR substr(path, 1, ?)=?)",
+            (fp, len(prefix), prefix),
+        )
+        if cur.rowcount:
+            self.bus.publish({"type": "batch", "n": 0})
+
     def _touch_one(self, sid: str, fp: str, kind: str) -> None:
         excluded_n = self.excluded_set(sid)
         if excluded_n:
             n = normpath(fp)
             if any(n == e or n.startswith(e + os.sep) for e in excluded_n):
                 return
+        root = self.source_root(sid)
+        if root and self.hidden(root, fp):
+            self.execute("UPDATE assets SET status='excluded' WHERE path=? AND status!='excluded'", (fp,))
+            return
         try:
             st = os.stat(fp)
         except OSError:

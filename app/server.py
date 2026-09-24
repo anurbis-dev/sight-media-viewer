@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import queue
@@ -133,15 +134,70 @@ def fs_list_dir(path: Path) -> list[dict]:
 
 
 def reveal_path(path: str) -> None:
+    reveal_paths([path])
+
+
+def _win_select_in_folder(folder: str, files: list[str]) -> bool:
+    """Opens one Explorer window on `folder` with every one of `files` selected. `explorer /select,`
+    only takes a single file, so this goes through the shell API instead. An Explorer window already
+    showing that folder is reused. False if the call failed, so the caller can fall back."""
+    import ctypes
+    from ctypes import wintypes
+
+    shell32, ole32 = ctypes.windll.shell32, ctypes.windll.ole32
+    shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+    shell32.ILCreateFromPathW.argtypes = [wintypes.LPCWSTR]
+    shell32.ILFree.argtypes = [ctypes.c_void_p]
+    shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), wintypes.DWORD]
+    ole32.CoInitializeEx(None, 2)  # COINIT_APARTMENTTHREADED; S_FALSE if this worker thread already has COM
+    pidls = []
+    try:
+        folder_pidl = shell32.ILCreateFromPathW(folder)
+        if not folder_pidl:
+            return False
+        pidls.append(folder_pidl)
+        items = [p for p in (shell32.ILCreateFromPathW(f) for f in files) if p]
+        pidls.extend(items)
+        arr = (ctypes.c_void_p * len(items))(*items)
+        return shell32.SHOpenFolderAndSelectItems(folder_pidl, len(items), arr, 0) == 0
+    except OSError:
+        return False
+    finally:
+        for p in pidls:
+            shell32.ILFree(p)
+
+
+def reveal_paths(paths: list[str]) -> int:
+    """Shows files in the OS file manager: one window per parent folder, with all of that folder's
+    files selected. Files that no longer exist are skipped (their folder still opens if it exists).
+    Returns the number of windows opened."""
     import subprocess
     import sys
 
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", "-R", path])
-    elif sys.platform == "win32":
-        subprocess.Popen(["explorer", "/select,", path])
-    else:
-        subprocess.Popen(["xdg-open", str(Path(path).parent)])
+    groups: dict[str, list[str]] = {}
+    for p in paths:
+        parent = os.path.dirname(p)
+        files = groups.setdefault(parent, [])
+        if os.path.exists(p) and p not in files:
+            files.append(p)
+    opened = 0
+    for folder, files in groups.items():
+        if not os.path.isdir(folder):
+            continue
+        opened += 1
+        if sys.platform == "win32":
+            if files and _win_select_in_folder(folder, files):
+                continue
+            subprocess.Popen(["explorer", "/select,", files[0]] if files else ["explorer", folder])
+        elif sys.platform == "darwin":
+            if not files:
+                subprocess.Popen(["open", folder])
+                continue
+            refs = ", ".join('POSIX file "%s"' % f.replace("\\", "\\\\").replace('"', '\\"') for f in files)
+            subprocess.Popen(["osascript", "-e", f'tell application "Finder" to reveal {{{refs}}}', "-e", 'tell application "Finder" to activate'])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+    return opened
 
 
 def open_path(path: str) -> None:
@@ -311,6 +367,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             "tags": lib.tags(),
             "collections": lib.collections(),
             "boards": lib.boards(),
+            "scanIgnore": lib.ignore.text,
             "buildMs": BUILD_TIME_MS,
             "version": APP_VERSION,
         }
@@ -376,6 +433,13 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if not a:
             raise HTTPException(404)
         return a
+
+    @app.get("/api/assets/{aid}/info")
+    def info(aid: str) -> dict:
+        sections = lib.file_info(aid)
+        if sections is None:
+            raise HTTPException(404)
+        return {"sections": sections}
 
     @app.patch("/api/assets/{aid}")
     async def patch(aid: str, request: Request) -> dict:
@@ -809,6 +873,13 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             raise HTTPException(400, "path required")
         return lib.add_source(path)
 
+    @app.put("/api/scan/ignore")
+    async def scan_ignore(request: Request) -> dict:
+        text = (await json_body(request)).get("text")
+        if not isinstance(text, str) or len(text) > 20000:
+            raise HTTPException(400, "text required")
+        return lib.set_ignore(text)
+
     @app.delete("/api/sources/{sid}")
     def drop_source(sid: str) -> dict:
         lib.remove_source(sid)
@@ -884,6 +955,14 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             raise HTTPException(404)
         reveal_path(a["path"])
         return {"ok": True}
+
+    @app.post("/api/assets/reveal")
+    async def reveal_many(request: Request) -> dict:
+        ids = (await json_body(request)).get("ids") or []
+        paths = [a["path"] for a in (lib.get_asset(str(i)) for i in ids) if a]
+        if not paths:
+            raise HTTPException(404)
+        return {"ok": True, "windows": await asyncio.to_thread(reveal_paths, paths)}
 
     @app.post("/api/assets/{aid}/copy")
     async def copy(aid: str, request: Request) -> dict:

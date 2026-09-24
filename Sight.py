@@ -436,6 +436,9 @@ def main() -> None:
                             "--disable-features=CalculateNativeWinOcclusion",
                             "--disable-backgrounding-occluded-windows",
                             "--disable-renderer-backgrounding",
+                            # A minimized window is "hidden" to Chromium, which would otherwise
+                            # throttle the heartbeat timer to once a minute and let the watchdog quit.
+                            "--disable-background-timer-throttling",
                         ]
                     try:
                         # Sight gets its own browser profile, hence its own browser process. With the
@@ -481,10 +484,20 @@ def main() -> None:
             STARTUP_GRACE = 30.0
             app.state.last_heartbeat = time.time() + (STARTUP_GRACE - HEARTBEAT_TIMEOUT)
 
+            # A tick that took far longer than its 1 s sleep means the machine was suspended (sleep /
+            # hibernate): every thread was frozen, so the stale heartbeat says nothing about the tab.
+            # Without this the watchdog woke first after resume and quit under a perfectly live window.
+            RESUME_GAP = 5.0
+
             def _watch_tab() -> None:
+                last_tick = time.time()
                 while not server.should_exit:
                     time.sleep(1)
-                    if time.time() - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
+                    now = time.time()
+                    if now - last_tick > RESUME_GAP:
+                        app.state.last_heartbeat = now + (STARTUP_GRACE - HEARTBEAT_TIMEOUT)
+                    last_tick = now
+                    if now - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
                         server.should_exit = True
                         return
 

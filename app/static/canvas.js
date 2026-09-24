@@ -73,7 +73,11 @@ function injectStyles(){
 .cframe { position: absolute; left: 0; top: 0; pointer-events: none; transform-origin: 50% 50%; }
 .cframe.group { outline: 1px dashed var(--card-active-color); }
 .cframe .chandle, .cframe .crot { position: absolute; box-sizing: border-box; width: 12px; height: 12px; border-radius: 50%; background: var(--card-active-color); border: 1.5px solid var(--bg); pointer-events: auto; }
+/* One resize handle, shown on the frame corner nearest the cursor (frame's data-corner, see updateHandleCorner). */
 .cframe .chandle { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.cframe[data-corner="tl"] .chandle { left: -6px; top: -6px; right: auto; bottom: auto; }
+.cframe[data-corner="tr"] .chandle { right: -6px; top: -6px; bottom: auto; }
+.cframe[data-corner="bl"] .chandle { left: -6px; bottom: -6px; right: auto; }
 .cframe .crot { left: 50%; top: -22px; margin-left: -6px; cursor: grab; }
 /* Crop grips (Alt held over an item): screen-space like the transform frame, so they stay the same size at any zoom. */
 .ccrop { position: absolute; left: 0; top: 0; pointer-events: none; transform-origin: 50% 50%; outline: 1px solid var(--card-active-color); }
@@ -107,8 +111,18 @@ async function getAsset(aid){
 function thumbUrl(a){
   return "/api/thumb/" + a.id + (a.thumb_v ? "?v=" + a.thumb_v : "");
 }
+// Full-resolution source an item may swap to when zoomed in: only raster formats the browser decodes
+// itself, plus PSD through its flattened composite. SVG is left out on purpose (no reliable intrinsic
+// size, which cropBasis and the pixelation switch depend on); TIFF/HEIC/JXL stay on the thumbnail.
+const FULL_RES_EXT = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif"]);
+function fullResUrl(a){
+  if (!a) return "";
+  if (a.ext === ".psd") return `/api/psd/${a.id}/preview`;
+  if (a.kind === "image" && FULL_RES_EXT.has(a.ext)) return `/api/file/${a.id}`;
+  return "";
+}
 
-export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled }){
+export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled, onContextMenu }){
   injectStyles();
   const zoomSettings = getZoomSettings || (() => ({ zoomAxis: "y", zoomSpeed: 1, zoomInvert: false }));
 
@@ -140,6 +154,65 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   function syncAllPixelation(){
     for (const item of items.values()) syncItemPixelation(item);
   }
+
+  // ---- adaptive resolution: thumbnail by default, the original once the thumbnail is too small ------
+  // Items start on the library thumbnail, which keeps big boards cheap. Once a visible item needs clearly
+  // more pixels than its thumbnail has, the original is decoded off-screen and swapped in; zooming back out
+  // swaps the thumbnail back so a board doesn't keep hundreds of full-size bitmaps alive. Hysteresis
+  // (UPGRADE_AT / DOWNGRADE_AT) keeps it from flipping back and forth around the threshold.
+  const UPGRADE_AT = 1.25, DOWNGRADE_AT = 0.8, MAX_FULL_LOADS = 3;
+  let resTimer = 0, fullLoads = 0;
+  function scheduleResCheck(){
+    clearTimeout(resTimer);
+    resTimer = setTimeout(syncResolution, 180); // settle after a zoom/pan/resize burst
+  }
+  // On-screen width, in device pixels, of the whole source image as the item draws it (cover-fit, or the
+  // oversized image behind a crop window).
+  function shownImageWidth(item, img){
+    const R = img.naturalWidth / img.naturalHeight;
+    const W = item.crop_w != null ? item.w / item.crop_w : Math.max(item.w, item.h * R);
+    return W * zoom * (window.devicePixelRatio || 1);
+  }
+  function syncResolution(){
+    if (!isOpen) return;
+    const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
+    const want = [];
+    for (const item of items.values()){
+      const img = dom.get(item.id)?.querySelector(".citem-thumb img");
+      if (!img || !img.dataset.full || !img.naturalWidth || !img.dataset.thumbW) continue;
+      const need = shownImageWidth(item, img), thumbW = +img.dataset.thumbW;
+      if (img.dataset.res === "full"){
+        if (need < thumbW * DOWNGRADE_AT){ img.dataset.res = "thumb"; img.src = img.dataset.thumb; }
+        continue;
+      }
+      if (img.dataset.res !== "thumb" || need < thumbW * UPGRADE_AT) continue;
+      const fullW = +img.dataset.fullW;
+      if (fullW && fullW <= thumbW * 1.05) continue; // the thumbnail already is the original's size
+      const r = Math.hypot(item.w, item.h) / 2 * zoom;
+      const cx = vx + (item.x + item.w / 2) * zoom, cy = vy + (item.y + item.h / 2) * zoom;
+      if (cx + r < 0 || cx - r > vw || cy + r < 0 || cy - r > vh) continue; // off-screen: not now
+      want.push({ img, d: Math.hypot(cx - vw / 2, cy - vh / 2) });
+    }
+    want.sort((a, b) => a.d - b.d); // nearest the middle of the view first
+    for (const { img } of want){
+      if (fullLoads >= MAX_FULL_LOADS) break;
+      loadFull(img);
+    }
+  }
+  function loadFull(img){
+    img.dataset.res = "loading";
+    fullLoads++;
+    const pre = new Image();
+    pre.src = img.dataset.full;
+    pre.decode().then(() => {
+      // Swap only if nothing else happened to this <img> meanwhile; a zoom-out that lands after this is
+      // handled by the next syncResolution.
+      if (img.isConnected && img.dataset.res === "loading"){ img.dataset.res = "full"; img.src = pre.src; }
+    }, () => {
+      img.dataset.res = "failed"; // stays on the thumbnail for the rest of the session
+    }).finally(() => { fullLoads--; scheduleResCheck(); });
+  }
+  window.addEventListener("resize", scheduleResCheck);
   // Snap grid, in world units. The background dots are drawn on the same lattice (and follow pan and
   // zoom), so what Ctrl-snap lands on is what the dots show; the step doubles when zoomed far out
   // so the dots never get denser than ~12px on screen.
@@ -157,6 +230,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     viewportEl.style.backgroundPosition = `${vx}px ${vy}px`;
     syncAllPixelation();
     updateFrame();
+    scheduleResCheck();
   }
   function screenToWorld(clientX, clientY){
     const r = viewportEl.getBoundingClientRect();
@@ -198,7 +272,17 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       if (a && a.has_thumb){
         thumb.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
         const img = thumb.querySelector("img");
-        img.addEventListener("load", () => { markSmallSrc(img); syncItemPixelation(items.get(item.id) || item); }, { once: true });
+        img.dataset.thumb = thumbUrl(a);
+        img.dataset.full = fullResUrl(a);
+        img.dataset.fullW = a.width || "";
+        img.dataset.res = "thumb";
+        // Not once: it fires again on every thumbnail <-> original swap (see syncResolution).
+        img.addEventListener("load", () => {
+          if (img.dataset.res === "thumb") img.dataset.thumbW = img.naturalWidth;
+          markSmallSrc(img);
+          syncItemPixelation(items.get(item.id) || item);
+          scheduleResCheck();
+        });
         applyCropFlip(items.get(item.id) || item);
       } else {
         thumb.innerHTML = `<div class="citem-ph">${esc(a ? a.name : "?")}</div>`;
@@ -219,6 +303,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     applyCropFlip(item);
     syncItemPixelation(item);
     scheduleFrame();
+    scheduleResCheck();
   }
 
   // Crop is stored as a normalized rectangle of the source image (crop_x/y/w/h, null = uncropped):
@@ -355,6 +440,27 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     frameEl.style.transform = `translate(${vx + cx * zoom - sw / 2}px, ${vy + cy * zoom - sh / 2}px) rotate(${rot}deg)`;
     frameEl.classList.toggle("group", list.length > 1);
     frameEl.hidden = false;
+    frameGeom = { cx, cy, w, h, rot };
+    updateHandleCorner();
+  }
+  // The resize handle sits on the frame corner in the cursor's quadrant (in the frame's own, possibly
+  // rotated, axes) and stays put while a drag is under way. The cursor follows the rotated diagonal.
+  let frameGeom = null, handleCorner = "br";
+  const CORNER_SIGNS = { tl: [-1, -1], tr: [1, -1], bl: [-1, 1], br: [1, 1] };
+  const RESIZE_CURSORS = ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"];
+  function updateHandleCorner(){
+    if (!frameGeom) return;
+    const g = frameGeom;
+    if (!drag && lastPtr){
+      const p = screenToWorld(lastPtr.x, lastPtr.y), rad = g.rot * Math.PI / 180;
+      const dx = p.x - g.cx, dy = p.y - g.cy;
+      const lx = dx * Math.cos(rad) + dy * Math.sin(rad), ly = -dx * Math.sin(rad) + dy * Math.cos(rad);
+      handleCorner = (ly < 0 ? "t" : "b") + (lx < 0 ? "l" : "r");
+    }
+    frameEl.dataset.corner = handleCorner;
+    const [sx, sy] = CORNER_SIGNS[handleCorner];
+    const ang = ((Math.atan2(sy * g.h, sx * g.w) * 180 / Math.PI + g.rot) % 180 + 180) % 180;
+    frameEl.querySelector(".chandle").style.cursor = RESIZE_CURSORS[Math.round(ang / 45) % 4];
   }
 
   function addItemLocal(item){
@@ -500,7 +606,13 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     el_setPointerCapture(e);
   }
   // The frame's handles act on the whole selection: one item resizes/rotates by itself, several are
-  // scaled (uniformly, from the frame's top-left) or rotated (about its centre) together.
+  // scaled (uniformly, from the frame's opposite corner) or rotated (about its centre) together.
+  // Resizing pins the corner opposite the grabbed one (handleCorner).
+  function resizeAnchor(it, sx, sy){ // world position of the item's corner at (-sx, -sy), rotation included
+    const rad = (it.rotation || 0) * Math.PI / 180, c = Math.cos(rad), sn = Math.sin(rad);
+    const ax = -sx * it.w / 2, ay = -sy * it.h / 2;
+    return { x: it.x + it.w / 2 + ax * c - ay * sn, y: it.y + it.h / 2 + ax * sn + ay * c };
+  }
   function startResize(e){
     if (e.button !== 0) return;
     const list = [...selection].map((id) => items.get(id)).filter(Boolean);
@@ -508,6 +620,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     e.stopPropagation();
     const before = list.map((it) => ({ ...it }));
     const startWorld = screenToWorld(e.clientX, e.clientY);
+    const [sx, sy] = CORNER_SIGNS[handleCorner];
     if (list.length === 1){
       const item = list[0];
       const a = assetResolved.get(item.asset_id);
@@ -517,10 +630,10 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
         const b = cropBasis(item);
         cropInfo = { tw: b.tw, th: b.th, padW: item.w - b.tw, padH: item.h - b.th };
       }
-      drag = { kind: "resize", id: item.id, ids: [item.id], ratio, startWorld, startW: item.w, startH: item.h, moved: false, before, cropInfo };
+      drag = { kind: "resize", id: item.id, ids: [item.id], ratio, sx, sy, anchor: resizeAnchor(item, sx, sy), startWorld, startW: item.w, startH: item.h, moved: false, before, cropInfo };
     } else {
       const u = unionOf(list);
-      drag = { kind: "gresize", ids: list.map((it) => it.id), l: u.l, t: u.t, w: u.r - u.l, h: u.b - u.t, starts: before, moved: false, before };
+      drag = { kind: "gresize", ids: list.map((it) => it.id), sx, sy, ax: sx > 0 ? u.l : u.r, ay: sy > 0 ? u.t : u.b, w: u.r - u.l, h: u.b - u.t, starts: before, moved: false, before };
     }
     el_setPointerCapture(e);
   }
@@ -565,6 +678,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     d.cropInfo = null;
     d.startW = it.w; d.startH = it.h;
     d.startWorld = pointerWorld;
+    d.anchor = resizeAnchor(it, d.sx, d.sy);
     layoutItemEl(it);
   }
 
@@ -593,11 +707,14 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
         if (drag.cropInfo && e.shiftKey){ // Shift while resizing: drop the crop, showing the whole image again
           uncropForResize(it, drag, w);
         }
-        let nw = drag.startW + (w.x - drag.startWorld.x), nh = drag.startH + (w.y - drag.startWorld.y);
-        if (e.ctrlKey || e.metaKey){ // snap the bottom-right corner to the grid
+        const { sx, sy, anchor } = drag;
+        const rad = (it.rotation || 0) * Math.PI / 180, c = Math.cos(rad), sn = Math.sin(rad);
+        const dxw = w.x - drag.startWorld.x, dyw = w.y - drag.startWorld.y;
+        let nw = drag.startW + sx * (dxw * c + dyw * sn), nh = drag.startH + sy * (-dxw * sn + dyw * c);
+        if (e.ctrlKey || e.metaKey){ // snap the dragged corner to the grid
           const step = gridStep();
-          nw = snapTo(it.x + nw, step) - it.x;
-          nh = snapTo(it.y + nh, step) - it.y;
+          nw = sx * (snapTo(anchor.x + sx * nw, step) - anchor.x);
+          nh = sy * (snapTo(anchor.y + sy * nh, step) - anchor.y);
         }
         if (drag.cropInfo){
           // A cropped picture keeps its proportions: the thumb area scales uniformly, the card padding stays fixed.
@@ -617,8 +734,12 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
           nw = Math.max(MIN_ITEM, nw);
           nh = Math.max(MIN_ITEM, nh);
         }
+        // Keep the opposite corner pinned: the new centre is half the new diagonal away from it.
+        const hx = sx * nw / 2, hy = sy * nh / 2;
         it.w = nw;
         it.h = nh;
+        it.x = anchor.x + hx * c - hy * sn - nw / 2;
+        it.y = anchor.y + hx * sn + hy * c - nh / 2;
         layoutItemEl(it);
       } else if (drag.kind === "rotate"){
         const w = screenToWorld(e.clientX, e.clientY);
@@ -656,10 +777,10 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       } else if (drag.kind === "gresize"){
         const w = screenToWorld(e.clientX, e.clientY);
         const minScale = Math.max(...drag.starts.map((st) => MIN_ITEM / Math.min(st.w, st.h)));
-        const scale = Math.max(minScale, (w.x - drag.l) / drag.w, (w.y - drag.t) / drag.h);
+        const scale = Math.max(minScale, drag.sx * (w.x - drag.ax) / drag.w, drag.sy * (w.y - drag.ay) / drag.h);
         for (const st of drag.starts){
           const it = items.get(st.id);
-          const cx = drag.l + (st.x + st.w / 2 - drag.l) * scale, cy = drag.t + (st.y + st.h / 2 - drag.t) * scale;
+          const cx = drag.ax + (st.x + st.w / 2 - drag.ax) * scale, cy = drag.ay + (st.y + st.h / 2 - drag.ay) * scale;
           it.w = st.w * scale; it.h = st.h * scale;
           it.x = cx - it.w / 2; it.y = cy - it.h / 2;
           layoutItemEl(it);
@@ -705,6 +826,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       return;
     }
     if (drag && drag.kind === "zoomdrag"){
+      if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+      drag.moved = true;
       // Right-drag zoom: same formula, and the same theme axis/speed/invert knobs, as the
       // lightbox's image zoom (bindStageDrag in index.html) — one zoom control everywhere.
       const zs = zoomSettings();
@@ -713,8 +836,16 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       zoomAt(drag.mx, drag.my, drag.scale * Math.exp(d));
     }
   }
-  function onPointerUp(){
+  function onPointerUp(e){
     if (!drag) return;
+    if (drag.kind === "zoomdrag" && !drag.moved && onContextMenu){
+      // Same rule as the library grid: right-clicking an item outside the selection selects just it.
+      const hit = drag.itemId && items.has(drag.itemId) ? drag.itemId : null;
+      if (hit && !selection.has(hit)) setSelection([hit]);
+      drag = null;
+      if (hit) onContextMenu(e.clientX, e.clientY);
+      return;
+    }
     if (drag.ids && drag.moved){
       const after = drag.ids.map((id) => ({ ...items.get(id) }));
       pushUndo({ type: "move", before: drag.before, after });
@@ -741,7 +872,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     if (e.button === 2){
       e.preventDefault();
       const r = viewportEl.getBoundingClientRect();
-      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom };
+      // A right-click that never turns into a zoom drag opens the item menu (see onPointerUp).
+      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, moved: false, itemId: e.target.closest?.(".citem")?.dataset.id || null };
       el_setPointerCapture(e);
       return;
     }
@@ -775,12 +907,13 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     lastPtr = { x: e.clientX, y: e.clientY };
     if (altDown !== e.altKey){ altDown = e.altKey; updateCrop(); }
     onPointerMove(e);
+    if (!drag && !frameEl.hidden) updateHandleCorner();
     if (altDown) refreshCropTarget();
   });
-  window.addEventListener("pointerup", () => {
+  window.addEventListener("pointerup", (e) => {
     if (!isOpen) return;
     if (drag && drag.kind === "pan") viewportEl.style.cursor = "default";
-    onPointerUp();
+    onPointerUp(e);
   });
   viewportEl.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -1167,6 +1300,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   // Asset record for an item's asset_id once loaded (null before) — lets index.html's Space
   // preview open the lightbox for whatever item is under the cursor, same as for a library card.
   function assetOf(aid){ return assetResolved.get(aid) || null; }
+  // Library assets behind the selected items, deduplicated (one asset can be placed several times).
+  function selectedAssetIds(){ return [...new Set(selectedItems().map((it) => it.asset_id))]; }
 
-  return { open, close, selectAll, assetOf };
+  return { open, close, selectAll, assetOf, selectedAssetIds };
 }
