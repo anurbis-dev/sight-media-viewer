@@ -58,8 +58,8 @@ docs/                    RECENT.md (changelog, newest first), archive/, this fil
   hiding/squeezing the grid for the board split never changes the zoom.
 - `.grid` has `overflow-anchor: none`. Any scroller whose content is virtualised needs it: Chromium's
   scroll anchoring otherwise shifts `scrollTop` when the code swaps the nodes above the view.
-- Grid thumbnails use `decoding="sync"`: cards are built off-screen in the overscan, and an async
-  image is decoded only once it scrolls into view, which painted it empty for a frame.
+- Grid thumbnails use `decoding="async"` on purpose: a scroll can bring dozens of new thumbnails at
+  once, and their decoding must not hold up the frame.
 
 ## Backend conventions
 

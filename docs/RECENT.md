@@ -14,12 +14,17 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.15.6 — 2026-11-10 — Grid thumbnails decode asynchronously again
+- **What:** Reverts 0.15.4's `decoding="sync"` on grid thumbnails back to the original `async`. Nothing changes visibly.
+- **Where:** `index.html` `fillThumb`; `docs/ARCHITECTURE.md`.
+- **Notes:** `sync` was added against the scroll blink, but that blink was scroll anchoring (0.15.5), and `sync` made no measurable difference in the off-screen Edge runs. `async` was the deliberate original choice: a fast scroll or the first screen brings dozens of new thumbnails at once, and `sync` makes the frame wait until all of them are decoded (the decode itself still runs off the main thread), while `async` shows the frame and fills the images in. The lightbox keeps `sync` for an already-cached picture: that is a single image, swapped in place, where an empty frame is worse than a short wait.
+
 ## 0.15.5 — 2026-11-10 — Grid: no more blinking while dragging slowly (scroll anchoring)
 - **What:** The library grid no longer blinks while it is scrolled slowly. At certain positions it flipped between two rows on every frame, and kept doing so after the scrolling stopped.
 - **Where:** `index.html` CSS: `.grid { overflow-anchor: none; }`.
 - **Notes:**
   - Root cause: Chromium's scroll anchoring. `renderGrid()` moves `.slice` (`top = startRow * rowH`) and replaces the cards above the view. Anchoring "corrected" `scrollTop` by one row to keep its anchor card in place. At the corrected position `startRow` changed back, the slice moved back, and the two flipped every frame. Seen in the owner's own window (two PrintWindow states alternating, content shifted by exactly one row). Reproduced in an off-screen Edge: scrolling 3 px per frame, `scrollTop` flipped 837 ↔ 1043 on its own (row 196 px + gap). With the fix, no flips in 400 steps.
-  - Not related to the 0.15.2 speed-ups. The grid code had it before. 0.15.4's `decoding="sync"` stays: it is correct, but it was not this bug.
+  - Not related to the 0.15.2 speed-ups. The grid code had it before. 0.15.4's `decoding="sync"` was not this bug (reverted in 0.15.6).
   - Removed from `docs/PLAN.md`: the blink item. The "rows unpainted during very fast scrolling" seen in screencasts was most likely the same flip.
 
 ## 0.15.4 — 2026-11-10 — Splash closes with the window; thumbnails decode in sync; PLAN.md
@@ -142,12 +147,3 @@ Add new entries directly below this line.
   - A pick is a left click that moved ≤ 4 px (a drag is an orbit / Ctrl-drag pan). Alt is excluded (Alt-drag rotates the lights). Only meshes in `v3dInspect.meshes` are raycast, so highlight overlays, floor and gizmos never get picked. A plain click on the model deliberately does nothing.
   - A viewport pick opens the Meshes section of the info panel (if the panel is shown) and scrolls the entry into view; with the panel hidden the highlight still shows.
   - `#selPop` follows the `#colorPop` pattern: the `<select>` stays the source of truth (value set, then `input` + `change` fired), so no existing handler changed. Keyboard use of a focused select is left native. `multiple` / `size > 1` selects are not intercepted. The popup closes on outside pointerdown, Escape, resize, page scroll, and via `registerAutoClose`.
-
-## 0.8.0 — 2026-09-24 — Scan ignore list; compiled .obj files skipped; 3D textured mode no longer freezes on multi-material meshes
-- **What:** Settings → Scanning → Ignore: one pattern per line (`*.meta`, `Library/`, `BurstCache/`, `Library/PackageCache`, `# comment`), *Apply* hides matching files and folders in every source and rescans. `.obj` files that are compiler output (MSVC/COFF — Unity BurstCache, VS `obj/`) are no longer indexed as 3D models; ones indexed earlier disappear on the next scan. Fix: the 3D lightbox froze (render loop threw every frame) in Textured mode on FBX files with a multi-material mesh.
-- **Where:** `library.py`: `IgnoreRules`, `rel_parts`, `Library.ignore` (loaded in `__init__` from the new `meta` table, key `scan_ignore`), `hidden()`, `set_ignore()`, `scan_source` (dir pruning + `hide` list), `set_excluded` (re-including a folder does not revive ignored files), `_touch_one` (watcher). `fileinfo.py`: `obj_is_binary` (shared by scanner and info overlay). `server.py`: `PUT /api/scan/ignore`, `/api/state` → `scanIgnore`. `index.html`: Settings "Scanning" block (`#scanIgnore`, `applyScanIgnore`, `refreshMeta` fills the textarea unless it has unsaved edits), `applyXray` / new `xrayMaterial`.
-- **Notes:**
-  - Ignored files reuse `status='excluded'` (same as an excluded folder), so tags/ratings/notes survive and every query that already skips excluded rows works unchanged. Consequence: revival must check both — `set_ignore` revives an excluded row only if it is in no excluded folder and not `hidden()`; `set_excluded` skips `hidden()` rows when re-including. Anything new that flips rows back to 'ready' must do the same.
-  - Patterns are relative to the source root (the root folder's own name never matches) and case-insensitive; no `!` negation. The list is global, not per source. It lives in the library DB, not settings.json, because the scanner needs it at startup before any page is open.
-  - Freeze cause: `c.material` is an array for multi-material meshes; Textured mode restores that array from `origMats`, and `applyXray` (run after every base-mode switch to reapply x-ray) read `m.userData` of the array. Other shading modes replace the array with one material, so only Textured broke. Anything else that walks `c.material` must handle arrays.
-  - Tested: API round trip on an isolated `SIGHT_HOME` (ignore, clear → restored, a pre-existing 'ready' COFF row hidden by rescan, watcher skips new ignored/COFF files), Settings UI with Playwright, and the reported Unity crate FBX: solid → x-ray → textured → x-ray with no page errors.
