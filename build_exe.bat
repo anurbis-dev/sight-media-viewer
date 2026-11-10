@@ -2,12 +2,13 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 title Sight - build app folder
+rem On CI (GitHub Actions sets CI=true) the "press any key" pauses are skipped.
 
 where uv >nul 2>&1
 if not %errorlevel%==0 (
   echo This build script needs uv ^(https://astral.sh/uv^).
   echo Install it, then run this file again.
-  pause
+  if not defined CI pause
   exit /b 1
 )
 
@@ -59,11 +60,11 @@ echo Sight - build : done. dist\Sight\Sight.exe is ready.
 echo Sight - build : copy the whole dist\Sight folder anywhere and double-click Sight.exe in it
 echo Sight - build : - no Python install needed, ffmpeg is bundled in, no console window opens,
 echo Sight - build : and closing the Sight browser tab stops the app.
-pause
+if not defined CI pause
 exit /b 0
 
 :fail
 echo.
 echo Sight - build failed. See the messages above.
-pause
+if not defined CI pause
 exit /b 1

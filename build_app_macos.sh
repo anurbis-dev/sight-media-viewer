@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sight — build a standalone macOS app (dist/Sight.app), no Python install needed to run it.
 # Run this ON a Mac: PyInstaller can't cross-compile, so it won't produce a working build
-# from Windows or Linux.
+# from Windows or Linux. On Linux the same script builds the Linux app (dist/Sight/Sight).
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
@@ -46,7 +46,12 @@ echo "Sight - build: compiling Sight.app (this can take a minute)"
   --specpath .buildenv
 
 echo
-echo "Sight - build: done. dist/Sight.app is ready - copy it anywhere (e.g. /Applications)"
-echo "Sight - build: and double-click it. It isn't signed/notarized by Apple, so Gatekeeper"
-echo "Sight - build: will block the first launch - right-click Sight.app, choose Open, then"
-echo "Sight - build: confirm once; after that it opens normally."
+if [ "$(uname)" = "Darwin" ]; then
+  echo "Sight - build: done. dist/Sight.app is ready - copy it anywhere (e.g. /Applications)"
+  echo "Sight - build: and double-click it. It isn't signed/notarized by Apple, so Gatekeeper"
+  echo "Sight - build: will block the first launch - right-click Sight.app, choose Open, then"
+  echo "Sight - build: confirm once; after that it opens normally."
+else
+  # Same PyInstaller --onedir build elsewhere (Linux): a plain folder, no .app bundle.
+  echo "Sight - build: done. dist/Sight/Sight is ready - copy the whole dist/Sight folder anywhere."
+fi

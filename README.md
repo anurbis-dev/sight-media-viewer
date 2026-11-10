@@ -41,10 +41,25 @@ PyInstaller doesn't cross-compile.
 - **macOS**: run `build_app_macos.sh` on a Mac → `dist/Sight.app`. It's unsigned, so the
   first launch needs right-click → Open once (Gatekeeper otherwise refuses it).
 
+- **Linux**: `build_app_macos.sh` works there too → `dist/Sight/Sight` (opens its window in an
+  installed Chrome / Chromium / Edge / Brave / Vivaldi).
+
 Both scripts cache their build environment in `.buildenv/` (safe to delete any time) and
 produce a folder-style app rather than a single file — a single-file build has to
 re-extract itself on every launch, which is noticeably slower to start. Closing the app's
 window stops it automatically; there's no console/terminal window to close.
+
+### Release builds on GitHub (all platforms at once)
+
+`.github/workflows/release.yml` builds Windows x64, macOS Apple Silicon, macOS Intel and Linux x64
+on GitHub's runners with the same two scripts, starts each packaged app headless as a smoke test
+(it must answer `/api/state` with the right version), and zips it.
+
+- **Publish a release:** bump `APP_VERSION` in `app/version.py`, commit, then
+  `git tag v0.16.1 && git push origin v0.16.1`. The tag has to match `APP_VERSION`, else the run
+  fails. The four archives are attached to a new GitHub Release with generated notes.
+- **Just build:** Actions tab → *Release builds* → *Run workflow* (artifacts only, kept 14 days).
+  A push that changes the workflow or the build scripts runs it too.
 
 ## User manual
 

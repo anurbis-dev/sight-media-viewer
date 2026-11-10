@@ -1,0 +1,154 @@
+# Release builds for every platform. PyInstaller can't cross-compile, so each OS builds on its own
+# runner with the same scripts a developer runs locally (build_exe.bat / build_app_macos.sh).
+#
+#   git tag v0.16.0 && git push origin v0.16.0   -> builds, smoke-tests, publishes a GitHub Release
+#   Actions tab -> "Release builds" -> Run        -> builds + smoke-tests, artifacts only (no release)
+#   a push that changes this file or the build scripts -> same as a manual run (checks the pipeline)
+#
+# The tag must match APP_VERSION in app/version.py (v0.16.0 <-> "0.16.0"), otherwise the run fails.
+name: Release builds
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    # Branch pushes only build when the build pipeline itself changed; tags and manual runs always do.
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.f.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: f
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* || "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base="${{ github.event.before }}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base="HEAD~1"; fi
+          if git diff --name-only "$base" HEAD | grep -qE '^(\.github/workflows/release\.yml|build_exe\.bat|build_app_macos\.sh|Sight\.py)$'; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: windows-x64 }
+          - { os: macos-15, name: macos-arm64 }
+          - { os: macos-15-intel, name: macos-x64 }
+          - { os: ubuntu-22.04, name: linux-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Version
+        id: v
+        shell: bash
+        run: |
+          ver=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app/version.py)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$ver" ]]; then
+            echo "::error::Tag ${GITHUB_REF#refs/tags/} does not match APP_VERSION $ver (app/version.py)"; exit 1
+          fi
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: call build_exe.bat
+
+      - name: Build (macOS / Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        # build_app_macos.sh is plain PyInstaller --onedir: on Linux it yields dist/Sight/ instead of
+        # dist/Sight.app (the closing hint about Gatekeeper is macOS-only).
+        run: bash build_app_macos.sh
+
+      # Start the packaged app headless, wait for the API, check it reports this version, stop it.
+      - name: Smoke test
+        shell: bash
+        env:
+          SIGHT_HOME: ${{ runner.temp }}/sight-home
+        run: |
+          case "$RUNNER_OS" in
+            Windows) bin="dist/Sight/Sight.exe" ;;
+            macOS)   bin="dist/Sight.app/Contents/MacOS/Sight" ;;
+            *)       bin="dist/Sight/Sight" ;;
+          esac
+          "$bin" --no-browser --port 8799 > "$RUNNER_TEMP/sight.log" 2>&1 &
+          pid=$!
+          ok=""
+          for i in $(seq 1 90); do
+            if out=$(curl -sf http://127.0.0.1:8799/api/state); then ok=1; break; fi
+            sleep 2
+          done
+          kill $pid 2>/dev/null || true
+          [[ "$RUNNER_OS" == Windows ]] && taskkill //F //IM Sight.exe >/dev/null 2>&1 || true
+          cat "$RUNNER_TEMP/sight.log" || true
+          [[ -n "$ok" ]] || { echo "::error::Packaged app did not answer on /api/state"; exit 1; }
+          echo "$out" | grep -q "\"version\":\"${{ steps.v.outputs.version }}\"" \
+            || { echo "::error::Packaged app reports another version"; exit 1; }
+          echo "Smoke test passed"
+
+      - name: Package
+        id: pkg
+        shell: bash
+        run: |
+          base="Sight-${{ steps.v.outputs.version }}-${{ matrix.name }}"
+          mkdir -p out
+          case "$RUNNER_OS" in
+            Windows) (cd dist && 7z a -tzip -mx=7 "../out/$base.zip" Sight > /dev/null); f="out/$base.zip" ;;
+            macOS)   ditto -c -k --sequesterRsrc --keepParent dist/Sight.app "out/$base.zip"; f="out/$base.zip" ;;
+            *)       tar -C dist -czf "out/$base.tar.gz" Sight; f="out/$base.tar.gz" ;;
+          esac
+          ls -la out
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sight-${{ matrix.name }}
+          path: ${{ steps.pkg.outputs.file }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          body: |
+            Unzip and run — no Python needed.
+            - **Windows:** `Sight.exe` in the unzipped `Sight` folder.
+            - **macOS:** not signed / notarized — the first time, right-click `Sight.app` → Open → Open.
+              `arm64` = Apple Silicon, `x64` = Intel.
+            - **Linux:** `./Sight/Sight` (needs Chrome, Chromium, Edge, Brave or Vivaldi for the app window).

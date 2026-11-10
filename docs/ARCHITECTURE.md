@@ -18,6 +18,9 @@ app/static/annotate.js   lightbox annotations + review notes panel — ES module
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file
+build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
+build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script gives dist/Sight/Sight
+.github/workflows/release.yml  CI: all four platform builds + headless smoke test; tag v<APP_VERSION> publishes a Release
 ```
 
 `SIGHT_HOME` defaults to `~/.sight` (library.db, settings.json, thumbnails, review_shots/, private venv).
