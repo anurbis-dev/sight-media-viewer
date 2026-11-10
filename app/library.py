@@ -17,6 +17,10 @@ from pathlib import Path
 
 from .fileinfo import file_info, obj_is_binary
 
+# The app runs windowless (pythonw), so every console child such as ffmpeg would get a console
+# window of its own that flashes on screen. This flag suppresses it; it is 0 off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff",
     ".avif", ".heic", ".heif", ".svg", ".jxl", ".ico",
@@ -1583,7 +1587,7 @@ class Library:
             "-frames:v", "1", "-vf", f"scale={THUMB_SIZE}:-2", "-q:v", "5", str(tmp),
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=20)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=20, creationflags=_NO_WINDOW)
             if tmp.exists():
                 tmp.replace(dest)
                 from PIL import Image
@@ -1846,7 +1850,7 @@ class Library:
             "-i", str(path), "-ac", "1", "-ar", str(sr), "-f", "s16le", "-",
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=60, check=True)
+            proc = subprocess.run(cmd, capture_output=True, timeout=60, check=True, creationflags=_NO_WINDOW)
         except Exception:
             return None
         raw = proc.stdout

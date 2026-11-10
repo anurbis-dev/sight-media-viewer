@@ -61,6 +61,8 @@ def pick_folder() -> str:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-STA", "-Command", ps],
             capture_output=True, text=True,
+            # Hide PowerShell's own console; the folder dialog it opens still shows.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return r.stdout.strip()
     for cmd in (
@@ -211,7 +213,10 @@ def open_path(path: str) -> None:
         try:
             os.startfile(path)  # type: ignore[attr-defined]
         except OSError:
-            subprocess.Popen(["cmd", "/c", "start", "", path], shell=False)
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", path], shell=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
         return
     subprocess.Popen(["xdg-open", path])
 
