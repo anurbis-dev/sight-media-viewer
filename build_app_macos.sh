@@ -30,7 +30,10 @@ uv pip install --python "$PY" \
   "pymupdf>=1.24" \
   "pyinstaller>=6.10" \
   "pyinstaller-hooks-contrib>=2024.9" \
-  "usd-core"
+  "usd-core" \
+  --only-binary pymupdf
+# --only-binary: never compile PyMuPDF from source (slow, and it fails). Newer PyMuPDF releases ship
+# no Intel-Mac wheel, so there uv falls back to the newest version that still has one.
 
 echo "Sight - build: compiling Sight.app (this can take a minute)"
 ".buildenv/bin/pyinstaller" Sight.py \

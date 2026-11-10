@@ -33,6 +33,7 @@ uv pip install --python "%PY%" ^
   "pyinstaller>=6.10" ^
   "pyinstaller-hooks-contrib>=2024.9" ^
   "usd-core" ^
+  --only-binary pymupdf ^
   --quiet
 if errorlevel 1 goto :fail
 
