@@ -15,7 +15,7 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 Add new entries directly below this line.
 
 ## 0.16.1 — 2026-11-10 — Release builds for all platforms on GitHub Actions
-- **What:** a tag `v<APP_VERSION>` builds Windows x64, macOS arm64, macOS x64 and Linux x64 on GitHub, smoke-tests each packaged app and publishes them as a GitHub Release. Manual runs (Actions → Release builds) and pushes that touch the build pipeline build without releasing.
+- **What:** a tag `v<APP_VERSION>` — or a manual run (Actions → Release builds) with *Publish a GitHub Release* ticked, which creates that tag itself — builds Windows x64, macOS arm64, macOS x64 and Linux x64 on GitHub, smoke-tests each packaged app and publishes them as a GitHub Release. Manual runs (Actions → Release builds) and pushes that touch the build pipeline build without releasing.
 - **Where:** new `.github/workflows/release.yml`; `build_exe.bat` (`if not defined CI pause`); `build_app_macos.sh` (Linux-aware closing message); README "Release builds on GitHub".
 - **Notes:**
   - CI calls the same build scripts as a developer, so PyInstaller options live in one place per OS. If you add `--add-data` / `--collect-all` to one script, check whether the other needs it.

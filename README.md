@@ -55,10 +55,12 @@ window stops it automatically; there's no console/terminal window to close.
 on GitHub's runners with the same two scripts, starts each packaged app headless as a smoke test
 (it must answer `/api/state` with the right version), and zips it.
 
-- **Publish a release:** bump `APP_VERSION` in `app/version.py`, commit, then
-  `git tag v0.16.1 && git push origin v0.16.1`. The tag has to match `APP_VERSION`, else the run
-  fails. The four archives are attached to a new GitHub Release with generated notes.
-- **Just build:** Actions tab → *Release builds* → *Run workflow* (artifacts only, kept 14 days).
+- **Publish a release:** bump `APP_VERSION` in `app/version.py` and push, then on GitHub:
+  Actions → *Release builds* → *Run workflow* → tick *Publish a GitHub Release* → Run. The tag
+  `v<APP_VERSION>` and the Release (four archives, generated notes) are created on that commit.
+  Pushing a tag yourself works too (`git tag v0.16.1 && git push origin v0.16.1`); the tag has
+  to match `APP_VERSION`, else the run fails.
+- **Just build:** the same *Run workflow* without the tick (artifacts only, kept 14 days).
   A push that changes the workflow or the build scripts runs it too.
 
 ## User manual

@@ -3,6 +3,7 @@
 #
 #   git tag v0.16.0 && git push origin v0.16.0   -> builds, smoke-tests, publishes a GitHub Release
 #   Actions tab -> "Release builds" -> Run        -> builds + smoke-tests, artifacts only (no release)
+#     ... with "Publish a GitHub Release" ticked   -> also creates tag v<APP_VERSION> + the Release
 #   a push that changes this file or the build scripts -> same as a manual run (checks the pipeline)
 #
 # The tag must match APP_VERSION in app/version.py (v0.16.0 <-> "0.16.0"), otherwise the run fails.
@@ -13,6 +14,11 @@ on:
     tags: ["v*"]
     branches: ["**"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a GitHub Release (creates tag v<APP_VERSION> on this commit)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -133,17 +139,29 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      # Tag run: the tag itself. Manual run: v<APP_VERSION>, created on the commit that was built.
+      - name: Tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tag="${GITHUB_REF#refs/tags/}"
+          else tag="v$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app/version.py)"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Sight ${{ steps.tag.outputs.tag }}
           files: out/*
           generate_release_notes: true
           body: |
