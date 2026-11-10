@@ -282,8 +282,50 @@ def start_splash() -> subprocess.Popen | None:
         return None
 
 
-def _find_browser_window(pid: int, user32) -> int | None:
-    """The given process's real top-level browser window, or None if it doesn't have one (yet).
+def _process_tree(root: int) -> set[int]:
+    """`root` and every process descended from it that is still running (Windows only).
+
+    Needed because the Popen'd msedge.exe is usually not the browser: it starts the real browser
+    process and exits within a second (exit code 0), so the window and the processes to close
+    belong to its child. A child keeps its parent's pid after the parent has exited."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return {root}
+    children: dict[int, list[int]] = {}
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            children.setdefault(entry.th32ParentProcessID, []).append(entry.th32ProcessID)
+            ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snap)
+    tree, todo = {root}, [root]
+    while todo:
+        for kid in children.get(todo.pop(), ()):
+            if kid not in tree:
+                tree.add(kid)
+                todo.append(kid)
+    return tree
+
+
+def _find_browser_window(pids: set[int], user32) -> int | None:
+    """The real top-level browser window of any of `pids`, or None if there isn't one (yet).
     Matches on window class, not just "owned by this pid": a Chromium process briefly owns several
     other top-level windows during startup too (IME, drag-and-drop, power-broadcast helpers —
     Chrome_WidgetWin_0 and others), and Chrome_WidgetWin_1 is the real one."""
@@ -296,7 +338,7 @@ def _find_browser_window(pid: int, user32) -> int | None:
     def _cb(hwnd: int, _lparam: int) -> bool:
         owner_pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner_pid))
-        if owner_pid.value != pid:
+        if owner_pid.value not in pids:
             return True
         cls = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, cls, 64)
@@ -352,7 +394,7 @@ def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, 
     hwnd = None
     deadline = time.time() + 3.0
     while hwnd is None and time.time() < deadline:
-        hwnd = _find_browser_window(proc.pid, user32)
+        hwnd = _find_browser_window(_process_tree(proc.pid), user32)
         if hwnd is None:
             time.sleep(0.02)
     if hwnd is None:
@@ -362,29 +404,22 @@ def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, 
     user32.SetForegroundWindow(hwnd)
 
 
-def close_browser(proc: subprocess.Popen, profile: Path) -> None:
+def close_browser(proc: subprocess.Popen) -> None:
     """Closes the browser main() opened, when the start failed after the launch. On Windows the
-    Popen'd msedge.exe hands the launch to a new process and exits at once (seen with Edge: exit
-    code 0 within a second), so the Popen handle is not the browser. That browser is found by its
-    own --user-data-dir instead, which only Sight uses."""
+    Popen handle is usually only a launcher that has already exited (see _process_tree()), so the
+    processes it started are closed too. The launcher goes first, so it cannot start the browser
+    after the snapshot of its children was taken."""
     if proc.poll() is None:
         proc.terminate()
-    if sys.platform != "win32":
-        return
-    script = (
-        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
-        "$_.CommandLine.Contains($env:SIGHT_BROWSER_PROFILE) } | "
-        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-    )
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", script],
-            env=dict(os.environ, SIGHT_BROWSER_PROFILE=str(profile)),
-            capture_output=True, timeout=20,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        for pid in _process_tree(proc.pid) - {proc.pid}:
+            handle = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+            if handle:
+                kernel32.TerminateProcess(handle, 1)
+                kernel32.CloseHandle(handle)
 
 
 def _wait_for_ping(ready_port: int, timeout: float) -> None:
@@ -601,7 +636,7 @@ def main() -> None:
                 launched["failed"] = True
                 browser_proc = launched.get("browser")
                 if isinstance(browser_proc, subprocess.Popen):
-                    close_browser(browser_proc, data_dir() / "browser")
+                    close_browser(browser_proc)
         # Normally _open()'s own finally has already closed the splash — this only catches
         # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
         # it doesn't sit on screen for its full timeout.
