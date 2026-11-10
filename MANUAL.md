@@ -44,6 +44,48 @@
   It stays open while you flip through files and is remembered next time.
 - **PSD layers** — in the lightbox of a PSD press `D` (or the ☰ button bottom-right) for the layer
   list; click a layer to view it alone, "Composite" to return to the full image.
+- **Annotations & review** — in the lightbox of an image, PSD, video or 3D model press `A`
+  (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
+  appears at the top with a second row that always shows the settings of the current tool — or of
+  the selected drawings, which stay editable: every drawing is a vector object you can select, move,
+  scale, rotate, restyle and delete at any time.
+  - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
+    `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
+    eraser end erases too) · `L` line · `W` arrow · `R` rectangle · `O` ellipse · `T` text ·
+    `N` numbered pin. `[` / `]` make the brush / width smaller / larger.
+  - Shapes: stroke on/off, width, dash (solid / dashed / dotted), fill on/off, fill colour and
+    opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
+    (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the
+    middle handle of a selected line to bend it. Text: font, size, colour, bold / italic / underline,
+    alignment, background box (colour, opacity), outline; double-click a text to edit it again
+    (`Ctrl+Enter` or Esc finishes).
+  - While drawing: `Shift` snaps lines, arrows and straight brush strokes to 15° steps (0/45/90…),
+    makes rectangles square and ellipses round; `Alt` draws from the centre. Select tool: click /
+    Shift+click / drag a box to select, drag to move (Shift locks the axis), Alt+drag duplicates,
+    corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps), arrows
+    nudge (Shift ×10). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
+    `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
+  - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
+    takes the drawings currently on screen that aren't attached to a note yet, the reviewer name
+    (field at the top), and the date. `S` adds a screenshot of what you see, `Shift+S` one of an area
+    you drag out; they go into the note you are writing. Click a note to jump to it (its drawings
+    are highlighted), double-click its text to edit, ✓ resolves it, the bin deletes it with its
+    drawings. Alt+click a screenshot in a note removes it.
+  - **Video** — drawings and notes belong to the frame they were made on, and show as markers on the
+    timeline (red = note, green = resolved, yellow = drawing). Click a marker to go there. `,` / `.`
+    step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
+    annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
+    whole clip; the onion button shows drawings within ±1 s faded.
+  - **3D** — a drawing belongs to the camera view it was made in, and a note also saves the shading,
+    lights, explode and field of view. Orbiting away hides the drawings; the numbered *Views* chips
+    at the top of the panel, or a click on the note, bring the camera and settings back. While
+    annotating, left-drag on empty space with the select tool orbits.
+  - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots,
+    saved to Downloads and shown in the file manager), *Review file (.sightreview)* — one file with
+    all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
+    (drag it onto the window, the same Export menu → Import, or the palette "Import review file")
+    gets the review on the same media file, found by path, else by name and size. *Copy notes as
+    text* puts a numbered list with timecodes on the clipboard.
 - **Missing files** — files that were moved or deleted stay in the library as "Missing" (sidebar),
   and show up right away (no need to switch views/sources to see it — the grid updates live).
   To clear them out: hover the Missing row and click 🧹 (whole library), run "Remove missing files

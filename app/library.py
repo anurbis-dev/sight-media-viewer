@@ -2670,7 +2670,20 @@ class Library:
         scope = str(body.get("scope") or "").strip()
         if scope not in ("asset", "board"):
             raise ValueError("scope must be 'asset' or 'board'")
-        aid = asset_id(f"anno:{time.time_ns()}:{scope}")
+        # The client may supply its own id (16 hex chars): the annotation editor needs stable ids
+        # for undo/redo (a deleted row is revived under the same id) and for note <-> drawing links.
+        want = str(body.get("id") or "").lower()
+        if re.fullmatch(r"[0-9a-f]{16}", want):
+            if self.query("SELECT id FROM annotations WHERE id=?", (want,)):
+                now = int(time.time() * 1000)
+                self.execute(
+                    "UPDATE annotations SET deleted_at=NULL, updated_at=?, revision=revision+1 WHERE id=?",
+                    (now, want),
+                )
+                return self.update_annotation(want, body) or {}
+            aid = want
+        else:
+            aid = asset_id(f"anno:{time.time_ns()}:{scope}")
         now = int(time.time() * 1000)
         self.execute(
             "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, target_board_item_id, "
@@ -2731,6 +2744,53 @@ class Library:
     def delete_annotation(self, aid: str) -> None:
         now = int(time.time() * 1000)
         self.execute("UPDATE annotations SET deleted_at=?, updated_at=? WHERE id=?", (now, now, aid))
+
+    def match_review_asset(self, meta: dict) -> dict | None:
+        """Finds the library asset a .sightreview package was made on: the same id (same path on
+        this machine), else the same file name and size, else the same name and kind."""
+        aid = str(meta.get("id") or "")
+        if aid:
+            a = self.get_asset(aid)
+            if a and a.get("status") == "ready":
+                return a
+        name = str(meta.get("name") or "").lower()
+        if not name:
+            return None
+        rows = self.query(
+            "SELECT id, size, kind FROM assets WHERE lower(name)=? AND status='ready' ORDER BY added_at DESC",
+            (name,),
+        )
+        size = meta.get("size")
+        for r in rows:
+            if size is not None and int(r["size"]) == int(size):
+                return self.get_asset(r["id"])
+        for r in rows:
+            if r["kind"] == meta.get("kind"):
+                return self.get_asset(r["id"])
+        return None
+
+    def import_annotations(self, target: str, rows: list[dict], id_map: dict[str, str]) -> int:
+        """Inserts annotation rows from a review package onto asset `target` under fresh ids.
+        `id_map` (old -> new) is filled in so references between rows (a drawing's data.note) and
+        shot ids can be rewritten by the caller before/after; data.note is remapped here."""
+        for r in rows:
+            if r.get("id"):
+                id_map.setdefault(str(r["id"]), asset_id(f"anno:{time.time_ns()}:{r['id']}"))
+        n = 0
+        for r in rows:
+            data = r.get("data") if isinstance(r.get("data"), dict) else {}
+            if data.get("note") in id_map:
+                data["note"] = id_map[data["note"]]
+            if "shots" in data:
+                data["shots"] = [id_map.get(str(x), str(x)) for x in data.get("shots") or []]
+            body = {k: r.get(k) for k in ("kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_index", "color", "locked")}
+            body.update({"scope": "asset", "target_asset_id": target, "data": data,
+                         "id": id_map.get(str(r.get("id") or ""), "")})
+            body["rotation"] = body.get("rotation") or 0
+            body["z_index"] = body.get("z_index") or 0
+            self.add_annotation(body)
+            n += 1
+        return n
 
     def strip_tag(self, name: str) -> int:
         want = name.strip().lower()

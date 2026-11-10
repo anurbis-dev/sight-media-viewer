@@ -301,6 +301,9 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-hint { font-size: 11px; color: var(--subtle); }
 .light-stage { flex: 1; min-height: 0; overflow: hidden; display: grid; place-items: center; background: var(--bg); container-type: size; box-sizing: border-box; }
 .light-stage .view3d { width: 100%; height: 100%; }
+/* The renderer sizes its canvas in px; in flow it would hold the frame's grid track at the old width
+   when the frame narrows (window resize, the review panel opening) and the view got cut off. */
+.light-frame > .view3d > canvas { position: absolute; left: 0; top: 0; }
 /* Everything the lightbox shows lives in .light-frame. With a mask/corner radius set (.framed) the
    frame becomes a clipped window inset from the edges; a mask with a fixed aspect (.masked, --frame-ar
    = width/height) additionally fits it to that ratio inside the stage (cq units = the stage's content box). */
@@ -591,6 +594,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 </script>
 <script type="module">
 import { createCanvasView } from "/static/canvas.js";
+import { createAnnotator } from "/static/annotate.js";
 import { hotkey } from "/static/keys.js";
 const KIND = { image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
@@ -830,6 +834,31 @@ let visTimer = 0, pullTimer = 0, renderRAF = 0;
 const seenThumb = new Set();
 const cardPool = new Map();
 let light = null;
+// Lightbox annotations / review notes (annotate.js). One instance; the lightbox mounts it on open,
+// points it at each asset (setAsset) and at the viewer that shows it (bind2d / bind3d).
+const annot = createAnnotator({
+  api: (path, opts) => api(path, opts),
+  putSetting: (k, v) => putSetting(k, v),
+  registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+  toast: (text) => flashV3DToast(text),
+  appVersion: () => state.meta?.version || "",
+  getV3D: () => ({ ...state.v3d }),
+  // A 3D note restores the shading / lights / explode it was written with — live, not saved, so
+  // the user's own viewer settings come back with the next change they make themselves.
+  setV3D: (v) => {
+    Object.assign(state.v3d, v);
+    paintShadeButtons();
+    renderV3DPanel();
+    light?.explodeSlider?.set(state.v3d.explode);
+  },
+  openAsset: async (id) => {
+    let a = assetById(id) || canvasCtl?.assetOf?.(id);
+    if (!a){ try { a = await api(`/api/assets/${id}`); } catch { a = null; } }
+    if (!a) return;
+    if (light) showInLight(a); else toggleLight(a);
+  },
+  onModeChange: () => syncLightHint(),
+});
 let skipClick = false;
 let navClickTrack = { key: null, at: 0 };
 let panDrag = null, tileDrag = null, marquee = null, boxEl = null;
@@ -3300,6 +3329,19 @@ function makeCameraRig(THREE, camera, controls, aid, turns){
       camera.position.add(fwd);
       controls.target.add(fwd);
     },
+    // Annotations: the camera as plain data, and back (damping is cut so the restored view holds).
+    getView(){
+      return { p: camera.position.toArray(), t: controls.target.toArray(), fov: camera.fov, turns: turns ? turns.get() : 0 };
+    },
+    setView(v){
+      if (turns && (v.turns || 0) !== turns.get()) turns.set(v.turns || 0);
+      if (v.fov && Number(state.v3d.camFov) !== v.fov){ state.v3d.camFov = v.fov; camera.fov = v.fov; camera.updateProjectionMatrix(); }
+      const damp = controls.enableDamping;
+      controls.enableDamping = false;
+      controls.update();
+      view(new THREE.Vector3().fromArray(v.p), new THREE.Vector3().fromArray(v.t));
+      controls.enableDamping = damp;
+    },
     save(slot){
       const t = turns ? turns.get() : 0;
       setModelCam(aid, slot, { p: camera.position.toArray(), t: controls.target.toArray(), turns: t });
@@ -4044,6 +4086,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         camRig = makeCameraRig(THREE, camera, controls, aid);
         camRig.setHome(size);
         v3dCam = camRig;
+        bindAnnot3d(el, aid, camRig, controls, () => { renderer.render(scene, camera); return renderer.domElement; });
         const dims = box.getSize(new THREE.Vector3());
         const f = (x) => Number(x.toPrecision(4)).toString();
         setSceneInfo({ id: aid, title: "Scene", rows: [
@@ -4394,6 +4437,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       camRig = makeCameraRig(THREE, camera, controls, aid, { get: () => getModelTurns(aid), set: turnTo });
       camRig.setHome(size);
       v3dCam = camRig;
+      bindAnnot3d(el, aid, camRig, controls, () => { renderer.render(scene, camera); return renderer.domElement; });
       onV3DRotate = () => turnTo((getModelTurns(aid) + 1) & 3);
       obj.traverse((c) => { if (c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
       skyOcc.markCasters(obj);
@@ -4426,6 +4470,18 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     if (el.isConnected) lightEl?.classList.remove("v3d-loading");
     console.warn(err);
   }
+}
+
+// The lightbox 3D viewer hands its camera and a synchronous frame grab to the annotator.
+function bindAnnot3d(host, aid, rig, controls, capture){
+  const damp = controls.enableDamping;
+  annot.bind3d({
+    aid, host, capture,
+    getCam: () => rig.getView(),
+    setCam: (v) => rig.setView(v),
+    // While annotating, orbit damping is off: the camera must stop exactly where the drawing was made.
+    annotating: (on) => { controls.enableDamping = on ? false : damp; },
+  });
 }
 
 function previewSrc(a){
@@ -4770,6 +4826,10 @@ function attachViewer(stage, a, src, opts = {}){
     if (!vs.nat.w || !w) return 1;
     return Math.min(w / vs.nat.w, h / vs.nat.h);
   }
+  function geom(){
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    return { x0: (w - vs.nat.w * vs.scale) / 2 + vs.pan.x, y0: (h - vs.nat.h * vs.scale) / 2 + vs.pan.y, s: vs.scale, w: vs.nat.w, h: vs.nat.h };
+  }
   function apply(){
     const w = wrap.clientWidth, h = wrap.clientHeight;
     const x = (w - vs.nat.w * vs.scale) / 2 + vs.pan.x;
@@ -4787,6 +4847,7 @@ function attachViewer(stage, a, src, opts = {}){
     if (!isVid) el.classList.toggle("pixelated", vs.scale > 1.001 && vs.nat.w > 0 && (vs.nat.w <= 768 || vs.nat.h <= 768));
     const f = fitS();
     hud.textContent = Math.abs(vs.scale - f) < 0.012 ? "Frame" : Math.abs(vs.scale - 1) < 0.012 ? "100%" : Math.round(vs.scale * 100) + "%";
+    if (!opts.embedded) annot.viewChanged();
   }
   // Zoom toward a screen point (mx,my, relative to `wrap`) instead of the viewport center —
   // keeps whatever content is under the cursor/anchor fixed in place as scale changes.
@@ -4974,6 +5035,9 @@ function attachViewer(stage, a, src, opts = {}){
   wrap.addEventListener("pointercancel", end);
   wrap.addEventListener("contextmenu", (e) => e.preventDefault());
   wrap.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
+  // Annotations draw over this picture (its listeners go in first, in the capture phase, so a
+  // drawing gesture never reaches the pan / scrub / play handlers above).
+  if (light && !opts.embedded) annot.bind2d({ wrap, media: el, isVid, geom });
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const t = state.theme;
@@ -5029,6 +5093,7 @@ function toggleLight(a){
     <div class="light-bar">
       <span class="t"></span>
       <span class="light-hint" id="lightHint"></span>
+      <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Annotate &amp; review (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg><span class="an-badge" hidden></span></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
     </div>
@@ -5075,6 +5140,8 @@ function toggleLight(a){
   wrap.querySelector("#lightClose").onclick = () => closeLight();
   document.body.append(wrap);
   light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null };
+  annot.mount(wrap);
+  wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
   wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
   wrap.querySelector("#infoBtn").onclick = () => toggleLightInfo();
@@ -5112,9 +5179,18 @@ function toggleLight(a){
   requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("on")));
 }
 
-const LIGHT_HINT = "MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const LIGHT_HINT_VIDEO = "Click/Space play/pause · Drag scrub (Shift fine) · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const LIGHT_HINT_3D = "Drag orbit · MMB pan · RMB zoom · WASD fly · F frame · Ctrl+click select · H / Ctrl+H / Alt+H hide · Ctrl+RMB drag explode · Alt+1–9 save view · 1–9 recall · Esc";
+const LIGHT_HINT = "A annotate · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
+const LIGHT_HINT_VIDEO = "A annotate · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
+const ANNOT_HINT = "B brush · P pencil · M marker · E eraser · L line · W arrow · R rect · O ellipse · T text · N pin · V select · S / Shift+S screenshot · C notes · A exit";
+function syncLightHint(){
+  const el = $("lightHint");
+  if (!el || !light) return;
+  const a = light.asset;
+  if (annot.isOn()){ el.textContent = ANNOT_HINT; return; }
+  if (!a) return;
+  el.textContent = a.kind === "model3d" ? LIGHT_HINT_3D : a.kind === "video" ? LIGHT_HINT_VIDEO : a.ext === ".psd" ? "D layers · " + LIGHT_HINT : LIGHT_HINT;
+}
+const LIGHT_HINT_3D = "Shift+A annotate · Drag orbit · MMB pan · RMB zoom · WASD fly · F frame · Ctrl+click select · H / Ctrl+H / Alt+H hide · Ctrl+RMB drag explode · Alt+1–9 save view · 1–9 recall · Esc";
 
 // Each asset kind has its own toolbar in the lightbox (data-tools="<kind>" elements). Only the
 // one matching the open asset is shown, so a 3D model's shading bar never appears over an image
@@ -5159,11 +5235,13 @@ function showInLight(a){
   state.v3dPanelOpen = false; // settings panel always starts closed on a fresh 3D asset (off by default)
   $("v3dGear").classList.remove("on");
   $("v3dPanel").hidden = true;
-  $("lightHint").textContent = is3d ? LIGHT_HINT_3D : a.kind === "video" ? LIGHT_HINT_VIDEO : a.ext === ".psd" ? "D layers · " + LIGHT_HINT : LIGHT_HINT;
+  light.asset = a;
+  syncLightHint();
   light.el.classList.toggle("v3d-loading", is3d); // controls appear once boot3d() has the model up
   if (is3d){ paintShadeButtons(); renderV3DPanel(); }
   light.sceneInfo = null;
   renderLightInfo();
+  annot.setAsset(a); // before fillStage: the viewer it mounts binds itself to this asset
   fillStage(light.el.querySelector(".light-frame"), a);
   syncUvPane(); // the new stage has no UV pane yet; boot3d re-adds it once the model is up
 }
@@ -5189,6 +5267,7 @@ function closeLight(){
   // the flash on closing a 3D preview. The render loop stops now (the last frame stays put), and the
   // context is released — like the inspector viewer's reboot — only once the fade has finished.
   const releaseGL = dispose3d("light3d", true);
+  annot.unmount();
   const el = light.el;
   const vid = light.video;
   light = null;
@@ -6896,6 +6975,7 @@ function paletteActions(){
       await refreshMeta();
       openBoard(b.id);
     } },
+    { label: "Import review file (.sightreview)…", run: () => pickReviewFile() },
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
     ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
@@ -6944,6 +7024,24 @@ async function saveAppDefaults(){
   renderOptions(); // the sliders' per-slider "reset" targets were bound to the old defaults
   return true;
 }
+// A .sightreview package (annotate.js / app/review.py) opens on the same media in this library.
+function pickReviewFile(){
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = ".sightreview,application/json";
+  inp.onchange = () => { if (inp.files?.[0]) annot.importFile(inp.files[0]); };
+  inp.click();
+}
+window.addEventListener("dragover", (e) => {
+  if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+  const files = [...(e.dataTransfer?.files || [])];
+  if (!files.length) return;
+  e.preventDefault(); // never let the browser navigate to a dropped file
+  const f = files.find((x) => /\.sightreview$/i.test(x.name));
+  if (f) annot.importFile(f);
+});
 function paletteKinds(){
   const items = [{ label: "All files", run: () => applyFilter({}) }];
   for (const k of Object.keys(KIND)) items.push({ label: KIND[k], run: () => applyFilter({ kind: k }) });
@@ -7625,6 +7723,14 @@ document.addEventListener("keydown", (e) => {
   if (!selPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeSelectPop(); return; }
   if (!$("fbOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); fbClose(); return; }
   if (!$("fbOverlay").hidden) return;
+  // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles
+  // the mode; in a 3D view A flies the camera, so there it is Shift+A.
+  if (light && annot.onKey(e)) return;
+  if (light && !typing && !e.repeat && (hotkey(e, "Shift+KeyA") || (hotkey(e, "KeyA") && $("v3dGear").hidden))){
+    e.preventDefault();
+    annot.toggle();
+    return;
+  }
   if (hotkey(e, "Backspace") && !typing && hoveredSliderReset){ e.preventDefault(); hoveredSliderReset(); return; }
   // "/" may need Shift on some layouts, so it is matched by the character, not through hotkey().
   if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing){ e.preventDefault(); $("q").focus(); return; }

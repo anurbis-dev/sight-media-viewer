@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
+from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
 from .version import APP_VERSION
 
@@ -815,6 +816,75 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         body = await json_body(request)
         lib.batch_update_annotations(body.get("items") or [])
         return {"ok": True}
+
+    # ---- Review sessions (annotations + notes on one asset; see app/review.py) ----------------
+
+    @app.post("/api/review/shots")
+    async def add_review_shot(request: Request) -> dict:
+        data = await request.body()
+        if not data or len(data) > 64 * 1048576:
+            raise HTTPException(400, "image body required")
+        sid = await asyncio.to_thread(review.save_shot, lib.root, data)
+        return {"id": sid, "url": f"/api/review/shots/{sid}"}
+
+    @app.get("/api/review/shots/{sid}")
+    def review_shot(sid: str) -> FileResponse:
+        p = review.shot_path(lib.root, sid)
+        if not p:
+            raise HTTPException(404)
+        return FileResponse(p, headers={"Cache-Control": "max-age=31536000, immutable"})
+
+    def _review_out(path: Path, reveal: bool) -> dict:
+        if reveal:
+            try:
+                reveal_paths([str(path)])
+            except OSError:  # no file manager (headless box): the path is still reported
+                pass
+        return {"ok": True, "path": str(path), "name": path.name}
+
+    @app.post("/api/review/export/pdf")
+    async def export_review_pdf(request: Request) -> dict:
+        body = await json_body(request)
+        a = lib.get_asset(str(body.get("asset_id") or ""))
+        stem = review.safe_name(f"{Path(a['name']).stem if a else 'Sight'} review")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".pdf")
+        try:
+            pages = await asyncio.to_thread(review.build_pdf, body, lib.root, out)
+        except Exception as e:  # PyMuPDF / Pillow errors: report, don't 500 with a traceback
+            raise HTTPException(500, f"PDF export failed: {e}")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "pages": pages}
+
+    @app.post("/api/review/export/package")
+    async def export_review_package(request: Request) -> dict:
+        body = await json_body(request)
+        a = lib.get_asset(str(body.get("asset_id") or ""))
+        if not a:
+            raise HTTPException(404)
+        rows = lib.annotations_for_asset(a["id"])
+        pkg = review.build_package(a, rows, lib.root, str(body.get("author") or ""), APP_VERSION)
+        stem = review.safe_name(f"{Path(a['name']).stem} review")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".sightreview")
+        out.write_text(json.dumps(pkg, ensure_ascii=False), encoding="utf-8")
+        return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+
+    @app.post("/api/review/import")
+    async def import_review(request: Request) -> dict:
+        try:
+            pkg = review.parse_package(await request.body())
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        meta = pkg["asset"]
+        a = lib.match_review_asset(meta)
+        if not a:
+            return JSONResponse({"ok": False, "missing": meta.get("name") or "", "asset": meta}, status_code=404)
+        id_map: dict[str, str] = {}
+        for old, url in (pkg.get("shots") or {}).items():
+            data = review.decode_data_url(url)
+            if data:
+                id_map[str(old)] = await asyncio.to_thread(review.save_shot, lib.root, data)
+        n = lib.import_annotations(a["id"], [r for r in pkg["annotations"] if isinstance(r, dict)], id_map)
+        return {"ok": True, "asset_id": a["id"], "added": n, "author": pkg.get("author") or ""}
 
     @app.get("/api/events")
     def events():

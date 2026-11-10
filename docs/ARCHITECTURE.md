@@ -9,16 +9,18 @@ Sight.py                 launcher (venv bootstrap, window, port); --dev / SIGHT_
 app/server.py            FastAPI app; routes are closures inside build_app(lib, settings, dev)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
+app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .sightreview package
 app/settings.py          settings.json store (UI prefs) + defaults
 app/version.py           APP_VERSION (single source; exposed in /api/state as "version")
 app/static/index.html    the whole UI: one inline <script type="module"> (no build step)
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
+app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file
 ```
 
-`SIGHT_HOME` defaults to `~/.sight` (library.db, settings.json, thumbnails, private venv).
+`SIGHT_HOME` defaults to `~/.sight` (library.db, settings.json, thumbnails, review_shots/, private venv).
 
 ## Frontend conventions
 
@@ -133,6 +135,56 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
   Alt+X / Alt+V mirror, Ctrl+Z / Ctrl+Shift+Z undo/redo. Align = "gravity" (items stop against each
   other, padding 10) and Normalize separates overlaps, so results never overlap; Stack overlaps on
   purpose.
-- Not built yet (planned): annotations UI (drawing/stickers/text/shapes, universal: canvas + single
-  asset in the lightbox), groups UI, frames/connectors, opacity/desaturate UI, export, real
-  multi-user/sync (groundwork only: revision/updated_at/deleted_at columns, single mutation path).
+- Not built yet (planned): annotations on boards (the lightbox has them, see below), groups UI,
+  frames/connectors, opacity/desaturate UI, export, real multi-user/sync (groundwork only:
+  revision/updated_at/deleted_at columns, single mutation path).
+
+## Annotations / review (lightbox)
+
+**Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
+`shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
+rect|ellipse|line|arrow, `text`, `pin`, `note` (the review comment: `text, author, created, status
+open|done, shots: [shot ids]`). A drawing points at its note with `data.note`. Ids are 16 hex chars
+made by the client; `POST /api/annotations` with an existing id revives the (tombstoned) row — undo
+of a delete relies on that. The x/y/w/h columns hold the drawing's bounding box only for queries;
+the geometry is in `data`.
+
+**Coordinates** — "doc" units: image/video pixels (the viewer's `geom()` = `{x0, y0, s, w, h}` from
+`attachViewer`); 3D: screen space of the 3D host, 1000 units high, origin at the centre (the
+perspective camera keeps its vertical fov, so this holds across resizes). Sizes in tool styles are
+screen px and are converted on creation (`LEN_KEYS`), so a 4 px brush looks 4 px at any zoom.
+
+**Context** — `data.ctx`: video `{t, hold}` (visible from t for max(hold, one frame); hold −1 =
+whole clip), 3D `{vk, cam:{p,t,fov,turns}}` (+ `v3d`, a copy of `state.v3d`, on notes). A 3D
+drawing shows only while the live camera matches its view within 0.4 % of the camera distance
+(`camMatch`); orbit damping is switched off while annotating so the camera stops exactly. Images:
+no context, always visible.
+
+**Rendering** — every object becomes primitives (`primsOf`) that both the SVG overlay (`primSvg`) and
+the canvas compositor (`primCanvas`, screenshots and PDF frames) draw, so they match. The overlay is
+two SVGs in the viewer's surface (`.view` wrap or `#light3d`): `an-doc` (viewBox = the visible doc
+rect) and `an-ui` (screen px: selection, handles, marquee, brush cursor, region). Brush/pencil are
+filled outlines from per-point radii (pressure, or a taper for mouse strokes); the highlighter is a
+stroked path.
+
+**Input** — capture-phase listeners on the surface take left-button / pen gestures before the
+viewer's own pan/scrub/play/orbit handlers (`stopImmediatePropagation`); middle/right and, in 3D,
+select-tool drags on empty space pass through. `pointerType === "pen"` strokes store pressure;
+`buttons & 32` (pen eraser end) erases. Keys: `annot.onKey(e)` runs first in the document keydown
+handler while the lightbox is open (A / Shift+A toggle is in index.html: plain A in 3D flies the
+camera).
+
+**Host hooks** — `createAnnotator(host)` gets `api, putSetting, registerAutoClose, toast, getV3D,
+setV3D, openAsset, onModeChange`. The lightbox calls `mount` / `unmount`, `setAsset(a)` (before
+`fillStage`), `attachViewer` calls `bind2d({wrap, media, isVid, geom})` + `viewChanged()` from
+`apply()`, `boot3d` calls `bindAnnot3d` → `bind3d({aid, host, getCam, setCam, capture,
+annotating})`; `capture()` renders and returns the WebGL canvas in the same task (no
+preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for this.
+
+**Review API** — `POST /api/review/shots` (raw PNG/JPEG body → `{id, url}`), `GET
+/api/review/shots/{id}`, `POST /api/review/export/pdf` (client sends notes + JPEG data URLs; server
+lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK), `POST
+/api/review/export/package` (server builds the `.sightreview` JSON from the rows + shots),
+`POST /api/review/import` (raw file body; asset matched by id, else name+size, else name+kind;
+rows and shots get fresh ids, `data.note` / `data.shots` remapped; 404 `{missing}` if no match).
+Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
