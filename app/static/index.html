@@ -1287,7 +1287,10 @@ function fillThumb(el, a, first, pos){
     if (!existing){
       const img = document.createElement("img");
       img.alt = "";
-      img.decoding = "async";
+      // sync, not async: cards are built in the overscan, off-screen, and Chromium decodes an async
+      // image only once it scrolls into view, so it showed one or more empty frames there (the
+      // thumbnails "blinked" while scrolling). A 360 px thumbnail decodes in about a millisecond.
+      img.decoding = "sync";
       img.src = thumbUrl(a);
       img.addEventListener("load", () => { markSmallSrc(img); syncPixelation(img, host); });
       if (first) { img.className = "fade"; img.onload = () => img.classList.add("on"); }

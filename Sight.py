@@ -274,7 +274,10 @@ def start_splash() -> subprocess.Popen | None:
         return subprocess.Popen(
             [
                 "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-                "-File", str(script), "-MaxWaitSeconds", "45",
+                # ShowAfterMs: a launch that brings its window up within about 1.7 s (PowerShell
+                # itself takes ~0.7 s to start) never shows the splash at all, instead of flashing
+                # it for a fraction of a second over the window that is just appearing.
+                "-File", str(script), "-MaxWaitSeconds", "45", "-ShowAfterMs", "1000",
             ],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -367,7 +370,9 @@ def _offscreen_point() -> tuple[int, int]:
     return -32000, -32000
 
 
-def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, timeout: float = 30.0) -> None:
+def reveal_when_ready(
+    proc: subprocess.Popen, ready_port: int, maximized: bool, on_ready=None, timeout: float = 30.0,
+) -> None:
     """`proc`'s window was launched off-screen (see _open() below) rather than hidden. Hiding was
     the first thing tried here, and it doesn't work: Windows fully suspends a Chromium window's
     rendering while it's hidden — confirmed by testing, requestAnimationFrame simply stops firing,
@@ -386,11 +391,16 @@ def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, 
     but ShowWindow(SW_MAXIMIZE) takes no coordinates, so it isn't exposed to that problem.
 
     Bounded by `timeout`: if the page never pings (crash, stuck load), whatever's there is brought
-    to the front anyway once it elapses rather than sitting off-screen forever."""
+    to the front anyway once it elapses rather than sitting off-screen forever.
+
+    `on_ready` runs the moment the page pings (it closes the splash): the window is on screen from
+    then on, so nothing that follows here (finding the window, maximizing) may keep the splash up."""
     import ctypes
 
     user32 = ctypes.windll.user32
     _wait_for_ping(ready_port, timeout=timeout)
+    if on_ready:
+        on_ready()
     hwnd = None
     deadline = time.time() + 3.0
     while hwnd is None and time.time() < deadline:
@@ -499,6 +509,10 @@ def main() -> None:
             while time.time() < deadline and not getattr(launched.get("server"), "started", False):
                 time.sleep(0.02)
 
+        def _close_splash() -> None:
+            if splash_proc and splash_proc.poll() is None:
+                splash_proc.terminate()
+
         def _open() -> None:
             # Whichever branch below actually opens the window, the splash always gets closed right
             # after — a single guaranteed spot, so it can never linger on screen because some branch
@@ -555,7 +569,7 @@ def main() -> None:
                             ])
                             launched["browser"] = proc
                         if sys.platform == "win32" and ready_port:
-                            reveal_when_ready(proc, ready_port, maximized)
+                            reveal_when_ready(proc, ready_port, maximized, on_ready=_close_splash)
                         return
                     except OSError:
                         pass
@@ -570,8 +584,7 @@ def main() -> None:
                         pass
                 webbrowser.open(url)
             finally:
-                if splash_proc and splash_proc.poll() is None:
-                    splash_proc.terminate()
+                _close_splash()
 
         if not args.no_browser:
             threading.Thread(target=_open, daemon=True).start()

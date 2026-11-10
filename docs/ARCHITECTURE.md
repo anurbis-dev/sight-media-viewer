@@ -56,6 +56,8 @@ docs/                    RECENT.md (changelog, newest first), archive/, this fil
 - `cloneModel` clones each distinct material once — meshes that shared a material keep sharing it.
 - Library grid tile rescaling on window resize is driven by `#mainBody` width (not the grid's), so
   hiding/squeezing the grid for the board split never changes the zoom.
+- Grid thumbnails use `decoding="sync"`: cards are built off-screen in the overscan, and an async
+  image is decoded only once it scrolls into view, which painted it empty for a frame.
 
 ## Backend conventions
 
