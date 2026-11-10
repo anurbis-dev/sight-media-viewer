@@ -29,9 +29,9 @@ from pathlib import Path
 
 import numpy as np
 
-# Bump when the output changes in a way that makes previously cached .glb files (and the
-# thumbnails rendered from them) wrong — Library wipes both on a mismatch.
-CONVERTER_VERSION = 2
+# When the output changes in a way that makes previously cached .glb files (and the thumbnails
+# rendered from them) wrong, bump USDZ_CONVERTER_VERSION in library.py; Library wipes both on a
+# mismatch. It lives there so the startup check does not import this module (and numpy).
 
 _GLTF_FLOAT = 5126
 _GLTF_UINT = 5125

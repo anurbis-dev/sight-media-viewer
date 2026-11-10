@@ -19,6 +19,11 @@ from pathlib import Path
 
 Rows = list[list[str]]
 
+# The app runs windowless (pythonw / PyInstaller --windowed), so Windows gives every console child
+# such as ffmpeg, powershell or cmd a console window of its own that flashes on screen. Pass this as
+# `creationflags` on every such subprocess call; it is 0 off Windows. Shared by library and server.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def _sec(title: str, rows: Rows) -> dict | None:
     rows = [[k, str(v)] for k, v in rows if v not in (None, "", [])]
@@ -201,7 +206,7 @@ def _ffprobe_text(ffmpeg: str, path: Path) -> str:
     r = subprocess.run(
         [ffmpeg, "-hide_banner", "-i", str(path)],
         capture_output=True, timeout=20,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        creationflags=NO_WINDOW,
     )
     return r.stderr.decode("utf-8", "replace")
 
@@ -321,7 +326,7 @@ def _count_frames(ffmpeg: str, path: Path) -> int | None:
         r = subprocess.run(
             [ffmpeg, "-hide_banner", "-i", str(path), "-map", "0:v:0", "-c", "copy", "-f", "null", "-"],
             capture_output=True, timeout=15,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=NO_WINDOW,
         )
         found = re.findall(r"frame=\s*(\d+)", r.stderr.decode("utf-8", "replace"))
         return int(found[-1]) if found else None

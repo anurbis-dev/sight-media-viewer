@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from .fileinfo import NO_WINDOW
 from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from .settings import SettingsStore, load_defaults, save_defaults
 from .version import APP_VERSION
@@ -56,13 +57,17 @@ def pick_folder() -> str:
             "Add-Type -AssemblyName System.Windows.Forms; "
             "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
             "$f.Description = 'Add folder to Sight'; "
-            "if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"
+            # A console-less PowerShell started by a background process has no window of its own
+            # and no foreground rights, so an ownerless dialog can open behind the Sight window.
+            # A hidden top-most form as the owner keeps the dialog on top.
+            "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false}; "
+            "if ($f.ShowDialog($o) -eq 'OK') { $f.SelectedPath }; $o.Dispose()"
         )
         r = subprocess.run(
             ["powershell", "-NoProfile", "-STA", "-Command", ps],
             capture_output=True, text=True,
             # Hide PowerShell's own console; the folder dialog it opens still shows.
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=NO_WINDOW,
         )
         return r.stdout.strip()
     for cmd in (
@@ -215,7 +220,7 @@ def open_path(path: str) -> None:
         except OSError:
             subprocess.Popen(
                 ["cmd", "/c", "start", "", path], shell=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=NO_WINDOW,
             )
         return
     subprocess.Popen(["xdg-open", path])
@@ -367,7 +372,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             "pending": lib.pending_thumbs(),
             "scanning": lib.scanning > 0,
             "scanned": lib.scanned,
-            "ffmpeg": bool(lib.ffmpeg or find_ffmpeg()),
+            "ffmpeg": bool(lib.ffmpeg_exe()),
             "kinds": KIND_LABEL,
             "tags": lib.tags(),
             "collections": lib.collections(),
@@ -426,11 +431,13 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         folder: str = "",
         sort: str = "",
         order: str = "asc",
-    ) -> dict:
+    ) -> JSONResponse:
         lim = max(1, min(limit, 800))
         items = lib.list_assets(q, kind, source, tag, bool(missing), collection, offset, lim, folder, sort, order)
         total = lib.count_filtered(q, kind, source, tag, bool(missing), collection, folder) if offset == 0 else None
-        return {"items": items, "offset": offset, "total": total}
+        # JSONResponse directly: the rows are plain JSON types already, and FastAPI's
+        # jsonable_encoder walk of a 400-item page cost ~12 ms more than the dump itself.
+        return JSONResponse({"items": items, "offset": offset, "total": total})
 
     @app.get("/api/assets/{aid}")
     def one(aid: str) -> dict:
