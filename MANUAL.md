@@ -112,7 +112,9 @@
     above it — a state can be sent alone or with the reply, and is logged in the thread like in
     Sight. A field left empty closes when you tap anywhere else. A new note starts from the blue
     *+* in the bottom bar (one at a time; it can carry pictures too). Unsent entries have × to take
-    them back. Everything
+    them back. Tap a picture to view it full screen: swipe left / right (or ← / →) for the next
+    or previous one — the picture and the note frames form one row, a note's attachments (its own
+    and its replies') another — and swipe up / down, tap or Esc to close. Everything
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that

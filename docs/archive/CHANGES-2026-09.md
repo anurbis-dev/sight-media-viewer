@@ -2,6 +2,19 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.15.0 — 2026-09-24 — Reveal in File System (multi-select) and Find in Folder
+- **What:** "Locate" is now "Reveal in File System" and works on the whole selection: one Explorer/Finder window per folder, with all of that folder's selected files selected. The new "Find in Folder" command jumps the library grid to where the selected files live and selects them there. Both commands are in the grid menu, in the new board right-click menu and in the palette. The inspector button now reads "Reveal".
+- **Where:**
+  - `server.py`: `reveal_paths()` + `_win_select_in_folder()` (ctypes → `SHOpenFolderAndSelectItems`), new `POST /api/assets/reveal {ids}` → `{windows}`. The old per-asset `/api/assets/{aid}/reveal` goes through the same code.
+  - `canvas.js`: `onContextMenu` option; a right-button press that never moves 4px (`zoomdrag.moved`) opens it instead of zooming; `selectedAssetIds()` in the returned API.
+  - `index.html`: `showCanvasCtx`, `revealAssets`, `findInFolder`, `expandTreeTo`, `commonDir`/`parentDir`/`pathParts`, `waitForItems`, `scrollGridToIndex`, `activeSelectionAssetIds`.
+- **Notes:**
+  - `explorer /select,` only takes ONE file, which is why the old Locate selected just the first. `SHOpenFolderAndSelectItems` reuses an Explorer window already open on that folder. It needs COM in the calling thread (`CoInitializeEx`, the endpoint runs `reveal_paths` in `asyncio.to_thread`). If it fails, the code falls back to `explorer /select,` on the first file. On macOS the Finder `reveal {list}` is used; on Linux only the folder opens (no portable way to select). Files missing on disk are skipped; their folder still opens if it exists.
+  - Find in Folder view choice: one source → `commonDir` of the parent folders. It becomes the folder filter, which is recursive, or the source filter if it is the source root. Several sources → All. Search (`#q`) and the kind filter are cleared so nothing hides the files. `expandTreeTo` returns the tree's own spelling of the folder, because the row's "on" check compares it to `state.filter.folder` exactly.
+  - The grid pages in 400 at a time, so `waitForItems` polls until every target is loaded (10 s cap) before selecting and scrolling. If the board is shown full-width, the split is switched on so the grid can be seen.
+  - Excluded files can't be shown and get an alert. Missing files still appear, because the folder views include them.
+  - Checked with Playwright on an isolated `SIGHT_HOME`: one folder, one folder with two files, two subfolders, source root, two sources, right-drag still zooms, and no JS errors. Multi-file Explorer selection was checked through `Shell.Application` `SelectedItems()`.
+
 ## 0.14.1 — 2026-09-24 — Library: deleting a folder marks the files inside it missing
 - **What:** Files inside a folder that is sent to the Recycle Bin, or moved out of a watched source, now turn "missing" right away. Before, they stayed "ready" until the next rescan or restart. It looked like a text-file bug only because the reported case was a folder holding only `.log`/`.ini` files (Unreal crash folders).
 - **Where:** `library.py`: new `Library._mark_gone(fp)`, used by the watchdog handler's `on_deleted` and by the `on_moved` fallback (files only).

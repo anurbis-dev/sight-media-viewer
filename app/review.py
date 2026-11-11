@@ -426,8 +426,10 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .foot div { max-width: 980px; margin: 0 auto; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; }
 .foot span { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .foot .btn { white-space: nowrap; }
-.zoom { position: fixed; inset: 0; background: rgb(0 0 0 / .88); display: grid; place-items: center; cursor: zoom-out; z-index: 10; }
-.zoom img { max-width: 96vw; max-height: 96vh; }
+.zoom { position: fixed; inset: 0; background: rgb(0 0 0 / .88); display: grid; place-items: center; cursor: zoom-out; z-index: 10; touch-action: none; overscroll-behavior: contain; user-select: none; -webkit-user-select: none; }
+.zoom img { max-width: 96vw; max-height: 96vh; -webkit-user-drag: none; pointer-events: none; will-change: transform; }
+.zoom .zn { position: absolute; left: 0; right: 0; bottom: calc(14px + env(safe-area-inset-bottom)); text-align: center; color: #fff; opacity: .8; font-size: 13px; pointer-events: none; }
+body.zoomed { overflow: hidden; }
 .gate { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
 .sheet { width: 100%; max-width: 360px; background: var(--card); border-radius: 16px; padding: 18px; box-shadow: 0 20px 60px rgb(0 0 0 / .35); }
 .sheet h2 { font-size: 17px; margin: 0 0 4px; }
@@ -494,17 +496,64 @@ input:focus, textarea:focus { border-color: var(--accent); }
     for (var i = L.length - 1; i >= 0; i--) if (L[i].event) return L[i].event;
     return origStatus(id);
   }
-  function zoom(src){
-    var z = el("div", "zoom"); var i = el("img"); i.src = src; z.appendChild(i);
-    z.onclick = function(){ z.remove(); };
+  // Full-screen picture viewer over a gallery: a horizontal swipe (or arrow key) goes to the
+  // neighbour in the same gallery, a vertical swipe, a tap or Esc closes. The overlay takes every
+  // touch itself (touch-action: none, body scroll locked), so dragging never scrolls the page.
+  // Galleries: the cover + every shown note frame; a note's own attachments + its replies'.
+  var frameGal = [], noteGal = null;
+  function zoom(gal, at){
+    var z = el("div", "zoom"), i = el("img"), cnt = el("div", "zn"), idx = at;
+    z.appendChild(i); z.appendChild(cnt);
+    function show(){ i.src = gal[idx]; cnt.textContent = gal.length > 1 ? (idx + 1) + " / " + gal.length : ""; }
+    function close(){ z.remove(); document.body.classList.remove("zoomed"); document.removeEventListener("keydown", onKey, true); }
+    function go(d, fromX){
+      var j = idx + d;
+      if (j < 0 || j >= gal.length){ i.style.transition = "transform .2s"; i.style.transform = ""; return; }
+      idx = j; show();
+      i.style.transition = "none"; i.style.transform = "translateX(" + (fromX || d * 40) + "px)";
+      void i.offsetWidth;
+      i.style.transition = "transform .2s"; i.style.transform = "";
+    }
+    function onKey(e){
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key === "Escape"){ close(); }
+      else if (e.key === "ArrowRight"){ go(1); }
+      else if (e.key === "ArrowLeft"){ go(-1); }
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    }
+    var p0 = null, tap = false;
+    z.onclick = function(){ if (tap) close(); tap = false; };
+    z.addEventListener("pointerdown", function(e){ p0 = { x: e.clientX, y: e.clientY, id: e.pointerId }; i.style.transition = "none"; try { z.setPointerCapture(e.pointerId); } catch (_){} });
+    z.addEventListener("pointermove", function(e){
+      if (!p0 || e.pointerId !== p0.id) return;
+      var dx = e.clientX - p0.x, dy = e.clientY - p0.y;
+      i.style.transform = Math.abs(dx) > Math.abs(dy) ? "translateX(" + dx + "px)" : "translateY(" + dy + "px)";
+      z.style.background = Math.abs(dy) > Math.abs(dx) ? "rgb(0 0 0 / " + Math.max(.3, .88 - Math.abs(dy) / 600) + ")" : "";
+    });
+    function end(e){
+      if (!p0 || e.pointerId !== p0.id) return;
+      var dx = e.clientX - p0.x, dy = e.clientY - p0.y; p0 = null;
+      z.style.background = "";
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8){ tap = true; return; }
+      if (Math.abs(dy) > Math.abs(dx)){ if (Math.abs(dy) > 60) close(); else { i.style.transition = "transform .2s"; i.style.transform = ""; } return; }
+      if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1, dx < 0 ? window.innerWidth / 3 : -window.innerWidth / 3);
+      else { i.style.transition = "transform .2s"; i.style.transform = ""; }
+    }
+    z.addEventListener("pointerup", end);
+    z.addEventListener("pointercancel", function(e){ if (p0 && e.pointerId === p0.id){ p0 = null; z.style.background = ""; i.style.transition = "transform .2s"; i.style.transform = ""; } });
+    z.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
+    document.addEventListener("keydown", onKey, true);
+    show();
+    document.body.classList.add("zoomed");
     document.body.appendChild(z);
   }
   function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
   function thumbs(list){
     var srcs = (list || []).map(shotSrc).filter(Boolean);
     if (!srcs.length) return null;
-    var sh = el("div", "shots");
-    srcs.forEach(function(s){ var i = el("img"); i.src = s; i.alt = ""; i.onclick = function(){ zoom(s); }; sh.appendChild(i); });
+    var sh = el("div", "shots"), gal = noteGal || srcs.slice();
+    srcs.forEach(function(s){ var k = gal === srcs ? -1 : gal.push(s) - 1, i = el("img"); i.src = s; i.alt = ""; i.onclick = function(){ zoom(gal, k < 0 ? srcs.indexOf(s) : k); }; sh.appendChild(i); });
     return sh;
   }
   // Pictures are scaled down to 1600 px JPEG so the reply file and the page's storage stay small.
@@ -600,6 +649,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   function noteCard(n, local){
     var id = n.id, st = local ? "open" : statusOf(id);
     var c = el("div", "note " + st);
+    noteGal = [];
     var h = el("div", "nh");
     h.appendChild(el("span", "num", local ? "+" : String(n.num)));
     if (n.ctx) h.appendChild(el("span", "ctx", n.ctx));
@@ -607,7 +657,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
     h.appendChild(el("span", "state " + st, local ? "New · not sent yet" : STATES[st] || "Open"));
     c.appendChild(h);
     if (n.text) c.appendChild(el("div", "text", n.text));
-    if (n.frame){ var f = el("img", "frame"); f.src = n.frame; f.alt = ""; f.onclick = function(){ zoom(n.frame); }; c.appendChild(f); }
+    if (n.frame){ var f = el("img", "frame"), fk = frameGal.push(n.frame) - 1; f.src = n.frame; f.alt = ""; f.onclick = function(){ zoom(frameGal, fk); }; c.appendChild(f); }
     if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
     var sh = thumbs(n.shots); if (sh) c.appendChild(sh);
     var mineL = E.replies[id] || [];
@@ -653,7 +703,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
     var app = document.getElementById("app");
     var keepY = window.scrollY;
     app.textContent = "";
-    if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(R.cover); }; app.appendChild(cv); }
+    if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cv); }
     var list = el("div", ""); list.id = "list"; app.appendChild(list);
     if (newOpen){
       var comp = el("div", "compose"), h3 = el("h3"), x = el("button", "", "×");
@@ -689,13 +739,14 @@ input:focus, textarea:focus { border-color: var(--accent); }
   function renderList(){
     var list = document.getElementById("list");
     list.textContent = "";
+    frameGal = R.cover ? [R.cover] : [];
     var ql = query.trim().toLowerCase();
     allNotes().filter(function(n){
       if (filter !== "all" && stateOfShown(n) !== filter) return false;
       if (!ql) return true;
       var hay = [n.text, n.author, n.ctx].concat((n.replies || []).map(function(r){ return r.text || ""; }), (E.replies[n.id] || []).map(function(r){ return r.text || ""; })).join(" ").toLowerCase();
       return hay.indexOf(ql) >= 0;
-    }).forEach(function(n){ list.appendChild(noteCard(n, !!n.local)); });
+    }).forEach(function(n){ list.appendChild(noteCard(n, !!n.local)); noteGal = null; });
     if (!list.childNodes.length) list.appendChild(el("p", "empty", "No notes here."));
   }
   function paintSeg(){

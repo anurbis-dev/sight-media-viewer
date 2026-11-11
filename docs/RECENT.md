@@ -14,6 +14,14 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.19.3 — 2026-11-11 — HTML page: picture viewer swipes between pictures; no scrolling through it
+- **What:** on the reviewer page, dragging on an enlarged picture no longer scrolls the page behind it. A horizontal swipe (← / → on desktop) goes to the next / previous picture, a vertical swipe, a tap or Esc closes; a counter shows *2 / 5*. Galleries: the cover plus every shown note frame; and per note its attachments together with its replies' pictures — never across notes.
+- **Where:** `app/review.py` HTML template — `zoom(gal, at)`, `frameGal` (rebuilt in `renderList`, cover at 0), `noteGal` (set in `noteCard`, filled by `thumbs`, reset after each card), `.zoom` CSS (`touch-action: none`, `body.zoomed { overflow: hidden }`).
+- **Notes:**
+  - The overlay takes pointer events and cancels `touchmove` (non-passive) — that is what stops the page scroll on iOS; `overflow: hidden` on body alone does not.
+  - A tap closes on `click`, not on `pointerup`, so the click does not land on the page under the overlay (the document click handler that closes empty fields ignores `.zoom` targets).
+  - The frame gallery follows the current filter / search (only shown notes). Pages exported before 0.19.3 keep their old viewer.
+
 ## 0.19.2 — 2026-11-11 — Merge the lost 0.15.1–0.15.6 fixes (no console windows; grid blink)
 - **What:** Console windows no longer flash on Windows while video/audio thumbnails and waveforms are built, and the library grid no longer blinks / jumps by a row while scrolling or zooming. Both had been fixed in 0.15.1 and 0.15.5, but those commits lived on the side branch `claude/review-and-startup-speed` and never reached master: 0.16.0 (annotations) was branched from 0.15.0, so every build since then shipped without them. This also brings in the rest of that branch: faster startup (0.15.2), maximize/focus on launch (0.15.3), splash closing with the window (0.15.4), `docs/PLAN.md`.
 - **Where:** merge of `claude/review-and-startup-speed` (0.15.1–0.15.6 entries below). Conflicts: `server.py` `/api/assets` keeps 0.17's `review` filter and returns 0.15.2's `JSONResponse`; `version.py`; this file.
@@ -146,16 +154,3 @@ Add new entries directly below this line.
   - The app runs windowless (`pythonw` / PyInstaller `--windowed`), so Windows gives every console child process a new console window. Any new `subprocess` call that runs a console program (ffmpeg, powershell, cmd) must pass `creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)`. The flag is 0 off Windows. `fileinfo.py` already did this, which is why the info panel never flashed.
   - `CREATE_NO_WINDOW` hides only the console. The folder dialog PowerShell opens still shows.
   - Left alone on purpose: `explorer` (a GUI program, no console) and the user-started `winget install` in `offer_ffmpeg_install` (behind `POST /api/install-ffmpeg`).
-
-## 0.15.0 — 2026-09-24 — Reveal in File System (multi-select) and Find in Folder
-- **What:** "Locate" is now "Reveal in File System" and works on the whole selection: one Explorer/Finder window per folder, with all of that folder's selected files selected. The new "Find in Folder" command jumps the library grid to where the selected files live and selects them there. Both commands are in the grid menu, in the new board right-click menu and in the palette. The inspector button now reads "Reveal".
-- **Where:**
-  - `server.py`: `reveal_paths()` + `_win_select_in_folder()` (ctypes → `SHOpenFolderAndSelectItems`), new `POST /api/assets/reveal {ids}` → `{windows}`. The old per-asset `/api/assets/{aid}/reveal` goes through the same code.
-  - `canvas.js`: `onContextMenu` option; a right-button press that never moves 4px (`zoomdrag.moved`) opens it instead of zooming; `selectedAssetIds()` in the returned API.
-  - `index.html`: `showCanvasCtx`, `revealAssets`, `findInFolder`, `expandTreeTo`, `commonDir`/`parentDir`/`pathParts`, `waitForItems`, `scrollGridToIndex`, `activeSelectionAssetIds`.
-- **Notes:**
-  - `explorer /select,` only takes ONE file, which is why the old Locate selected just the first. `SHOpenFolderAndSelectItems` reuses an Explorer window already open on that folder. It needs COM in the calling thread (`CoInitializeEx`, the endpoint runs `reveal_paths` in `asyncio.to_thread`). If it fails, the code falls back to `explorer /select,` on the first file. On macOS the Finder `reveal {list}` is used; on Linux only the folder opens (no portable way to select). Files missing on disk are skipped; their folder still opens if it exists.
-  - Find in Folder view choice: one source → `commonDir` of the parent folders. It becomes the folder filter, which is recursive, or the source filter if it is the source root. Several sources → All. Search (`#q`) and the kind filter are cleared so nothing hides the files. `expandTreeTo` returns the tree's own spelling of the folder, because the row's "on" check compares it to `state.filter.folder` exactly.
-  - The grid pages in 400 at a time, so `waitForItems` polls until every target is loaded (10 s cap) before selecting and scrolling. If the board is shown full-width, the split is switched on so the grid can be seen.
-  - Excluded files can't be shown and get an alert. Missing files still appear, because the folder views include them.
-  - Checked with Playwright on an isolated `SIGHT_HOME`: one folder, one folder with two files, two subfolders, source root, two sources, right-drag still zooms, and no JS errors. Multi-file Explorer selection was checked through `Shell.Application` `SelectedItems()`.
