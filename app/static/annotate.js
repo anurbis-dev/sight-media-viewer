@@ -620,6 +620,9 @@ export function createAnnotator(host){
     // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
     const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
     S.status = st?.data?.state || "";
+    // Rows from 0.17.0 have no history: their current state is the one entry.
+    S.statusHist = Array.isArray(st?.data?.history) ? st.data.history
+      : st?.data?.state ? [{ state: st.data.state, author: st.data.author || "", at: st.data.at || st.updated_at }] : [];
     for (const r of rows){
       if (r.kind === "status") continue;
       const it = { id: r.id, kind: r.kind, sub: r.shape_kind || null, z: r.z_index || 0, data: r.data || {} };
@@ -715,7 +718,8 @@ export function createAnnotator(host){
     S.status = state;
     paintStatus();
     try {
-      await host.api(`/api/assets/${a.id}/review-status`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, author: reviewer() }) });
+      const res = await host.api(`/api/assets/${a.id}/review-status`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, author: reviewer() }) });
+      if (S.asset?.id === a.id && Array.isArray(res?.history)){ S.statusHist = res.history; paintStatus(); }
       host.onReviewChanged?.(a.id);
     } catch (e){
       console.warn(e);
@@ -723,8 +727,21 @@ export function createAnnotator(host){
       toast("Could not save the review state");
     }
   }
+  const STATE_LABEL = { review: "Needs review", changes: "Changes requested", approved: "Approved" };
+  const histLine = (h) => `${STATE_LABEL[h.state] || "Cleared"}${h.author ? " by " + h.author : ""} · ${fmtDate(h.at)}`;
+  // The review state's history ({state, author, at} per change, see Library.set_review_status):
+  // the latest change under the switch, the whole list on click.
   function paintStatus(){
     S.ui?.querySelectorAll("[data-rs]").forEach((b) => b.classList.toggle("on", b.dataset.rs === S.status));
+    const el = S.ui?.querySelector(".an-rsh");
+    if (!el) return;
+    const h = S.statusHist || [];
+    el.hidden = !h.length;
+    if (!h.length) return;
+    const list = S.histOpen ? [...h].reverse() : [h[h.length - 1]];
+    el.innerHTML = list.map((x) => `<div>${esc(histLine(x))}</div>`).join("")
+      + (h.length > 1 ? `<button type="button" class="an-rsh-more">${S.histOpen ? "Less" : `History (${h.length})`}</button>` : "");
+    el.querySelector(".an-rsh-more")?.addEventListener("click", () => { S.histOpen = !S.histOpen; paintStatus(); });
   }
   function validItem(it){
     const d = it.data, t = typeOf(it);
@@ -1815,6 +1832,7 @@ export function createAnnotator(host){
         <button type="button" data-rs="review" title="Waiting for review">Needs review</button>
         <button type="button" data-rs="changes" title="Changes requested">Changes</button>
         <button type="button" data-rs="approved" title="Approved">Approved</button></div></div>
+      <div class="an-rsh" hidden></div>
       <div class="an-vers" hidden></div>
       <div class="an-views"></div>
       <div class="an-list"></div>
@@ -1926,10 +1944,16 @@ export function createAnnotator(host){
     paintStatus();
   }
   const liveReplies = (n) => (n.data.replies || []).filter((r) => !r.deleted);
+  // Resolving / reopening also leaves an entry in the note's thread (`{id, event: "done"|"open",
+  // author, created}`), so the history shows who changed the state and when. These entries merge
+  // like replies (by id) and are never edited or deleted.
+  const statusEvent = (state) => ({ id: uid(), event: state, author: reviewer(), created: Date.now() });
+  const eventLabel = (r) => (r.event === "done" ? "Resolved" : "Reopened");
   function repliesHtml(n){
     const list = liveReplies(n);
     if (!list.length) return "";
-    return `<div class="an-replies">${list.map((r) => `<div class="an-rep" data-rid="${esc(r.id)}">
+    return `<div class="an-replies">${list.map((r) => r.event ? `<div class="an-rep an-rev ${r.event === "done" ? "done" : ""}" data-rid="${esc(r.id)}">
+      <span>${r.event === "done" ? "✓" : "↺"} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
       <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span><button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
       <div class="an-rt" title="Double-click to edit">${esc(r.text || "")}</div></div>`).join("")}</div>`;
   }
@@ -2014,7 +2038,12 @@ export function createAnnotator(host){
     if (t.classList.contains("an-rep")) return;
     if (t.dataset.done){
       const id = t.dataset.done;
-      commit([id], () => { const d = S.items.get(id).data; d.status = d.status === "done" ? "open" : "done"; d.status_at = Date.now(); });
+      commit([id], () => {
+        const d = S.items.get(id).data;
+        d.status = d.status === "done" ? "open" : "done";
+        d.status_at = Date.now();
+        d.replies = [...(d.replies || []), statusEvent(d.status)];
+      });
       return;
     }
     if (t.dataset.del){
@@ -2375,7 +2404,7 @@ export function createAnnotator(host){
           }
         }
         out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, frameCaption: cap, shots: d.shots || [],
-          replies: liveReplies(n).map((r) => ({ author: r.author || "", date: fmtDate(r.created), text: r.text || "" })) });
+          replies: liveReplies(n).map((r) => ({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "" })) });
       }
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
@@ -2385,7 +2414,7 @@ export function createAnnotator(host){
     }
     const g = geom(), nw = g?.nw || a.width, nh = g?.nh || a.height;
     const dims = nw && nh ? `${nw} × ${nh}` : "";
-    const stateLabel = { review: "Needs review", changes: "Changes requested", approved: "Approved" }[S.status] || "";
+    const stateLabel = STATE_LABEL[S.status] || "";
     return {
       asset_id: a.id,
       title: `Review — ${a.name}`,
@@ -2439,7 +2468,10 @@ export function createAnnotator(host){
       lines.push(`${i + 1}.${c ? " [" + c + "]" : ""} ${d.text || "(no text)"}${d.status === "done" ? "  ✓ resolved" : ""}`);
       const by = [d.author, fmtDate(d.created)].filter(Boolean).join(", ");
       if (by) lines.push("   — " + by);
-      for (const r of liveReplies(n)) lines.push(`   ↳ ${r.author ? r.author + ": " : ""}${r.text || ""}`);
+      for (const r of liveReplies(n)){
+        lines.push(r.event ? `   ${r.event === "done" ? "✓" : "↺"} ${eventLabel(r)}${r.author ? " by " + r.author : ""}, ${fmtDate(r.created)}`
+          : `   ↳ ${r.author ? r.author + ": " : ""}${r.text || ""}`);
+      }
     });
     try { await navigator.clipboard.writeText(lines.join("\n")); toast(`Copied ${notes.length} note${notes.length === 1 ? "" : "s"}`); }
     catch { toast("Clipboard not available"); }
@@ -2601,7 +2633,7 @@ export function createAnnotator(host){
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.focusNote = S.pinFocus = null;
-    S.status = ""; S.versions = []; S.prevOpen = null;
+    S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
     notesSig = "";
     S.fps = 25; S.fpsKnown = false;
     S.lastSig = "";
@@ -2755,6 +2787,8 @@ function injectStyles(){
 .an-rs { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; color: var(--subtle); font-size: 11px; }
 .an-rs .an-seg { flex: 1; display: flex; }
 .an-rs .an-seg button { flex: 1; padding: 0 4px; white-space: nowrap; }
+.an-rsh { padding: 4px 14px 0 50px; color: var(--subtle); font-size: 10px; line-height: 1.5; }
+.an-rsh-more { border: 0; background: none; color: var(--accent, #4c9aff); font: inherit; padding: 0; cursor: pointer; }
 .an-rs [data-rs=review].on { color: #ff9f0a; } .an-rs [data-rs=changes].on { color: #ff453a; } .an-rs [data-rs=approved].on { color: #34c759; }
 .an-vers { padding: 6px 14px 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--subtle); }
 .an-vers[hidden] { display: none; }
@@ -2793,6 +2827,8 @@ function injectStyles(){
 .an-rh span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-rh .an-ib { visibility: hidden; height: 16px; min-width: 16px; }
 .an-rep:hover .an-rh .an-ib { visibility: visible; }
+.an-rev { color: var(--subtle); font-size: 10px; }
+.an-rev.done { color: var(--ok, #2f9d5b); }
 .an-rt { white-space: pre-wrap; word-break: break-word; line-height: 1.4; user-select: text; }
 .an-redit { margin-top: 6px; min-height: 30px; }
 .an-compose { border-top: 1px solid var(--border); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }

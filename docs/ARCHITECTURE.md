@@ -149,10 +149,13 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
 rect|ellipse|line|arrow, `text`, `pin`, `note` (the review comment: `text, author, created, status
-open|done, shots: [shot ids], replies: [{id, text, author, created, edited?, deleted?}], from?: {id,
-asset, name}` when copied from a previous version), and `status` — the asset's review state
-(`data.state` review|changes|approved; the newest row wins, `Library.set_review_status` keeps one row
-per asset; it is not an editable item in annotate.js). A drawing points at its note with `data.note`. Ids are 16 hex chars
+open|done, status_at, edited_at, shots: [shot ids], replies: [{id, text, author, created, edited?,
+deleted?} | {id, event: "done"|"open", author, created}], from?: {id, asset, name}` when copied from a
+previous version — `event` entries log resolve / reopen in the thread and are never edited), and
+`status` — the asset's review state (`data.state` review|changes|approved|null, `data.history`
+[{state, author, at}] with state "" = cleared; the newest row wins, `Library.set_review_status`
+keeps one row per asset, appends to the history and on clear keeps the row with state null; it is
+not an editable item in annotate.js). A drawing points at its note with `data.note`. Ids are 16 hex chars
 made by the client; `POST /api/annotations` with an existing id revives the (tombstoned) row — undo
 of a delete relies on that. The x/y/w/h columns hold the drawing's bounding box only for queries;
 the geometry is in `data`.
@@ -202,7 +205,7 @@ stamp** wins (`_content_at`: a note's `data.edited_at`, else `data.created`; a d
 `updated_at`), a local delete beats an incoming row not edited after it, package `deleted`
 tombstones delete rows not edited since, a note's replies are always unioned by id
 (`merge_replies`; deleted replies stay as tombstones) and its open/done state goes by
-`data.status_at`. So a reply or a resolve never makes a stale copy of a note's text win, and never
+`data.status_at`; a status row's `history` is unioned (`merge_history`). So a reply or a resolve never makes a stale copy of a note's text win, and never
 revives a deleted note. annotate.js sets `edited_at` on text / screenshot edits and `status_at`
 on resolve. The import route matches the asset by package id, then the asset already holding most
 of the package's row ids (`asset_holding_annotations`), then name+size / kind. Shots keep their ids

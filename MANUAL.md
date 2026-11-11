@@ -71,9 +71,12 @@
     you drag out; they go into the note you are writing. Click a note to jump to it (its drawings
     are highlighted), double-click its text to edit, ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
-    **reply** (Enter sends); double-click a reply to edit it, × deletes it.
+    **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
+    a note adds a line to its thread (*✓ Resolved by Anna · date*), so the history shows who did it
+    and when; these lines cannot be edited or deleted.
   - **Review state** — the *State* row at the top of the panel marks the file *Needs review*,
-    *Changes* or *Approved*. The grid shows it as a pill on the card together with the number of open
+    *Changes* or *Approved*. Under it: who set the state last and when; *History* lists every
+    change. The grid shows it as a pill on the card together with the number of open
     notes, and the sidebar (under Types) gets *Open notes / Needs review / Changes requested /
     Approved* rows that filter the library.
   - **Versions** — files in the same folder whose names differ only in a version token
@@ -99,9 +102,10 @@
     their replies / new notes / resolved states, and what was deleted on one side is deleted on the
     other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
     in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
-    note, screenshot and reply. The reviewer types a name, replies, resolves or adds notes (kept in
-    that browser until sent) and clicks *Download reply (.srev)*; importing that file brings it all
-    in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
+    note, screenshot and reply. The title stays pinned at the top while scrolling; tap it (or the
+    arrow) for the file details and the review-state history. The reviewer types a name, replies,
+    resolves or adds notes (kept in that browser until sent; a resolve is logged in the thread like
+    in Sight) and taps *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
   file (see *Versions* above). Also the palette and the review panel's *Compare* button.

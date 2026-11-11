@@ -2833,21 +2833,35 @@ class Library:
 
     def set_review_status(self, aid: str, state: str, author: str = "") -> dict:
         """Sets (or with an empty state clears) an asset's review state. Updates the newest status
-        row in place so one row keeps travelling between machines instead of piling up."""
+        row in place so one row keeps travelling between machines instead of piling up. Every change
+        is appended to `data.history` ([{state, author, at}], state "" = cleared), so who changed the
+        state and when survives; clearing keeps the row with state null (reads as no state)."""
         if state and state not in REVIEW_STATES:
             raise ValueError("unknown review state")
         cur = self.query(
-            "SELECT id FROM annotations WHERE scope='asset' AND kind='status' AND target_asset_id=? "
+            "SELECT id, data FROM annotations WHERE scope='asset' AND kind='status' AND target_asset_id=? "
             "AND deleted_at IS NULL ORDER BY updated_at DESC",
             (aid,),
         )
-        # A merge can leave several live status rows (one set on each machine); clearing or
-        # setting the state retires all but the one kept, so an older state can't resurface.
-        for r in cur[0 if not state else 1:]:
+        if not cur and not state:
+            return {"state": "", "history": []}
+        history: list = []
+        for r in cur:
+            try:
+                d = json.loads(r["data"] or "{}") or {}
+                # Rows from 0.17.0 carry no history yet: their current state is its first entry.
+                past = d.get("history") or ([{"state": d.get("state"), "author": d.get("author") or "", "at": d.get("at")}]
+                                            if d.get("state") else [])
+                history = self.merge_history(history, past)
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                pass
+        # A merge can leave several live status rows (one set on each machine); setting the state
+        # retires all but the one kept, so an older state can't resurface.
+        for r in cur[1:]:
             self.delete_annotation(r["id"])
-        if not state:
-            return {"state": ""}
-        data = {"state": state, "author": author, "at": int(time.time() * 1000)}
+        now = int(time.time() * 1000)
+        history.append({"state": state, "author": author, "at": now})
+        data = {"state": state or None, "author": author, "at": now, "history": history}
         if cur:
             self.update_annotation(cur[0]["id"], {"data": data})
         else:
@@ -2902,6 +2916,15 @@ class Library:
             if k not in out or stamp(x) > stamp(out[k]):
                 out[k] = x
         return sorted(out.values(), key=lambda x: Library._stamp(x.get("created")))
+
+    @staticmethod
+    def merge_history(a: list | None, b: list | None) -> list[dict]:
+        """Union of two review-state histories ([{state, author, at}]), oldest first."""
+        out: dict[tuple, dict] = {}
+        for x in [*(a or []), *(b or [])]:
+            if isinstance(x, dict):
+                out.setdefault((Library._stamp(x.get("at")), str(x.get("state") or ""), str(x.get("author") or "")), x)
+        return sorted(out.values(), key=lambda x: Library._stamp(x.get("at")))  # stable: ties keep their order
 
     @staticmethod
     def _stamp(v: object) -> int:
@@ -3017,6 +3040,8 @@ class Library:
                             merged["status"], merged["status_at"] = data.get("status"), b_at
                         elif a_at > b_at:
                             merged["status"], merged["status_at"] = have.get("status"), a_at
+                    elif kind == "status" and (have.get("history") or data.get("history")):
+                        merged["history"] = self.merge_history(have.get("history"), data.get("history"))
                     if not newer and merged == have:
                         stats["unchanged"] += 1
                         continue
