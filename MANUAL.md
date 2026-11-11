@@ -110,7 +110,9 @@
     arrow) for the file details and the review-state history. *Reply* opens a message field (paper
     clip attaches pictures, the paper plane sends) with *Mark as In progress / Resolved / Reopen*
     above it — a state can be sent alone or with the reply, and is logged in the thread like in
-    Sight. New notes can carry pictures too. Unsent entries have × to take them back. Everything
+    Sight. A field left empty closes when you tap anywhere else. A new note starts from the blue
+    *+* in the bottom bar (one at a time; it can carry pictures too). Unsent entries have × to take
+    them back. Everything
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that

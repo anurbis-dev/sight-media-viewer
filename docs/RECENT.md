@@ -14,6 +14,14 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.19.1 — 2026-11-11 — HTML page: empty fields close on an outside tap; new note behind a + button
+- **What:** on the reviewer page an empty reply field (no text, picture or *Mark as* state) closes when you tap anywhere else (Esc on desktop). The new-note form is no longer always at the end of the feed: the blue *+* in the bottom bar opens it (one at a time — + again just jumps to it; × discards it; empty + outside tap hides it).
+- **Where:** `app/review.py` HTML template — `newOpen` / `opening`, `closeEmpty` on a document `click` listener, `isEmpty`, `focusLater`, `#add` in `.foot`, `.compose h3` close button, composer `data-key`.
+- **Notes:**
+  - The outside-tap check runs on `click` (bubbling), after the tap's own handler, so a field that very tap opened is skipped via `opening`. It is not done on `pointerdown`: re-rendering there shifts the layout under the finger and the click lands elsewhere.
+  - A field with any content stays open on an outside tap — only empty means cancel. Taps on the name dialog or the zoomed picture are ignored.
+  - Focus is applied in `requestAnimationFrame` by looking the textarea up by key, because closing another empty field in the same click re-renders the page a second time.
+
 ## 0.19.0 — 2026-11-11 — Notes can be *In progress*; reply pictures; HTML page: name gate, pinned filters, chat-style field
 - **What:** a note is open, *in progress* (someone took it) or resolved — a clock button in Sight, orange number / timeline marker, logged in the thread like resolve. Replies can carry pictures. The HTML page asks the reviewer's name before anything else; the sender (*From …*), *You: … ✎* and the *All / Open / In progress / Resolved* filters with count badges are pinned with the title; search hides behind an icon. *Reply* opens one full-width field (paper clip = attach, paper plane in the bottom-right corner = send) with *Mark as In progress / Resolved / Reopen* chips — the state goes with the reply or alone. New notes take pictures too; unsent entries have × to take them back.
 - **Where:** `app/review.py` (HTML template rewritten: `composer()`, `readImage`, gate `#gate`, `paintSeg`, `statusOf` from the last local event, `E.att`; `build_package` packs reply shots; PDF reply pictures + `EVENT_LABEL` + in-progress tag); `app/library.py` (`import_annotations` remaps `replies[].shots`); `app/static/annotate.js` (`ICON.prog`, `data-prog` toggle, `EVENT` / `eventIcon`, `.prog` styles, `img[data-rshot]` in replies, report / copy text carry reply shots and the state).
@@ -149,11 +157,3 @@ Add new entries directly below this line.
   - Ctrl+wheel must stay bound before `new OrbitControls` and call `stopImmediatePropagation()`, or the wheel also zooms; `preventDefault()` stops the browser's Ctrl+wheel page zoom. On a single-mesh model (no explode) Ctrl+wheel does nothing (it is still swallowed, no zoom).
   - Floor, Grid and Shadow-only reuse the `data-toggle` mechanism of the wireframe / x-ray buttons (`toggleShadeFlag` + `paintShadeButtons`). Shadow-only is a mode of the floor: turning it on turns the floor on; turning the floor off clears it.
   - `frameBox` keeps the current viewing direction and fits the selection's bounding sphere; it does not change `home`, so F with nothing selected still returns to the opening framing.
-
-## 0.9.0 — 2026-09-24 — Ctrl+click picks a mesh in the 3D view; dropdowns stay inside the window
-- **What:** In the 3D lightbox, Ctrl+click on the model selects the mesh under the cursor (orange highlight, marked in the info panel's Meshes list, UV pane follows); Ctrl+click it again deselects; a click on empty space clears any selection (mesh, material or texture). Every `<select>` in the app now opens an in-page list that stays inside the window (flips above the control near the bottom edge) — the UV texture-channel picker used to open its native list below the window.
-- **Where:** `index.html`: boot3d pick handlers on `renderer.domElement` (after OrbitControls setup), new `setInspectSel(sel, reveal)` (shared with `onLightInfoClick`), "Select dropdowns" block (`#selPop`, `openSelectPop`, `closeSelectPop`, capture-phase `mousedown`), Escape in the main keydown handler, `.sel-pop` CSS.
-- **Notes:**
-  - A pick is a left click that moved ≤ 4 px (a drag is an orbit / Ctrl-drag pan). Alt is excluded (Alt-drag rotates the lights). Only meshes in `v3dInspect.meshes` are raycast, so highlight overlays, floor and gizmos never get picked. A plain click on the model deliberately does nothing.
-  - A viewport pick opens the Meshes section of the info panel (if the panel is shown) and scrolls the entry into view; with the panel hidden the highlight still shows.
-  - `#selPop` follows the `#colorPop` pattern: the `<select>` stays the source of truth (value set, then `input` + `change` fired), so no existing handler changed. Keyboard use of a focused select is left native. `multiple` / `size > 1` selects are not intercepted. The popup closes on outside pointerdown, Escape, resize, page scroll, and via `registerAutoClose`.

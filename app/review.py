@@ -417,7 +417,11 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .send[disabled] { background: var(--chip); color: var(--muted); cursor: default; }
 .compose { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px 12px; margin: 16px 0; }
 .compose .cmp { margin: 0; }
-.compose h3 { font-size: 13px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+.compose h3 { display: flex; align-items: center; font-size: 13px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+.compose h3 span { flex: 1; }
+.compose h3 button { width: 26px; height: 26px; border: 0; border-radius: 13px; background: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 0; }
+.add { flex: none; width: 36px; height: 36px; border-radius: 18px; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.add.on { background: var(--chip); color: var(--accent); }
 .foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
 .foot div { max-width: 980px; margin: 0 auto; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; }
 .foot span { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -443,7 +447,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <input class="q" id="q" type="search" placeholder="Search notes" hidden>
 </div></header>
 <main id="app"></main>
-<div class="foot"><div><span id="status"></span><button class="btn" id="reset" type="button">Discard</button><button class="btn primary" id="dl" type="button">Download reply</button></div></div>
+<div class="foot"><div><button class="add" id="add" type="button" title="New note" aria-label="New note"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><span id="status"></span><button class="btn" id="reset" type="button">Discard</button><button class="btn primary" id="dl" type="button">Download reply</button></div></div>
 <div class="gate" id="gate" hidden><form class="sheet" id="gform"><h2>Who is reviewing?</h2><p>Your name goes on every reply, picture and status change you make on this page.</p><input id="gname" autocomplete="name" placeholder="Your name" maxlength="80" required><div class="acts"><button class="btn" id="gcancel" type="button">Cancel</button><button class="btn primary" type="submit">Continue</button></div></form></div>
 <script id="data" type="application/json">%%DATA%%</script>
 <script>
@@ -464,6 +468,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   E.att = E.att || {};
   var filter = "all", query = "", searchOn = false;
   var drafts = {}, openReply = {};  // unsent text / pictures / state per field (survive re-render)
+  var newOpen = false, opening = null;  // the new-note form (one at a time); a field opened by this click
   var who = "";
   try { who = localStorage.getItem("sight-review:name") || ""; } catch (e) {}
   var STATES = { open: "Open", progress: "In progress", done: "Resolved" };
@@ -522,7 +527,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
   // opts: {key, placeholder, status (current state, or null for a new note), onSend(text, shots, state)}.
   function composer(opts){
     var dr = drafts[opts.key] = drafts[opts.key] || { text: "", shots: [], state: "" };
-    var box = el("div", "cmp");
+    var box = el("div", "cmp"); box.dataset.key = opts.key;
     var send = el("button", "send"); send.type = "button"; send.title = "Send"; send.setAttribute("aria-label", "Send");
     send.appendChild(svg('<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor"/>', 17));
     function can(){ return !!(dr.text.trim() || dr.shots.length || dr.state); }
@@ -551,7 +556,10 @@ input:focus, textarea:focus { border-color: var(--accent); }
     var ta = el("textarea"); ta.rows = 1; ta.placeholder = opts.placeholder; ta.value = dr.text;
     function grow(){ ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; }
     ta.oninput = function(){ dr.text = ta.value; grow(); paint(); };
-    ta.addEventListener("keydown", function(e){ if (!coarse && e.key === "Enter" && !e.shiftKey && !e.isComposing){ e.preventDefault(); send.onclick(); } });
+    ta.addEventListener("keydown", function(e){
+      if (!coarse && e.key === "Enter" && !e.shiftKey && !e.isComposing){ e.preventDefault(); send.onclick(); }
+      else if (e.key === "Escape" && !can()) closeEmpty(null);
+    });
     var file = el("input"); file.type = "file"; file.accept = "image/*"; file.multiple = true; file.hidden = true;
     file.onchange = function(){
       var fs = Array.prototype.slice.call(file.files || []); file.value = "";
@@ -572,7 +580,6 @@ input:focus, textarea:focus { border-color: var(--accent); }
     f.appendChild(atts); f.appendChild(ta); f.appendChild(clip); f.appendChild(send); f.appendChild(file);
     box.appendChild(f);
     paintAtts(); paint();
-    box.focusField = function(){ ta.focus(); };
     requestAnimationFrame(grow);
     return box;
   }
@@ -633,11 +640,11 @@ input:focus, textarea:focus { border-color: var(--accent); }
         save(); render();
       } });
       c.appendChild(cmp);
-      if (openReply[id] === "focus"){ openReply[id] = true; requestAnimationFrame(cmp.focusField); }
+      if (openReply[id] === "focus") focusLater(id, function(){ openReply[id] = true; });
     } else {
       var acts = el("div", "acts");
       var rbtn = el("button", "btn", "Reply");
-      rbtn.onclick = function(){ openReply[id] = "focus"; render(); };
+      rbtn.onclick = function(){ opening = id; openReply[id] = "focus"; render(); };
       acts.appendChild(rbtn); c.appendChild(acts);
     }
     return c;
@@ -648,17 +655,32 @@ input:focus, textarea:focus { border-color: var(--accent); }
     app.textContent = "";
     if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(R.cover); }; app.appendChild(cv); }
     var list = el("div", ""); list.id = "list"; app.appendChild(list);
-    var comp = el("div", "compose");
-    comp.appendChild(el("h3", "", "New note"));
-    comp.appendChild(composer({ key: "+new", placeholder: "Add a new note…", status: null, onSend: function(text, shots){
-      E.notes.push({ id: uid(), text: text, author: who, created: Date.now(), shots: shots });
-      save(); render();
-    } }));
-    app.appendChild(comp);
+    if (newOpen){
+      var comp = el("div", "compose"), h3 = el("h3"), x = el("button", "", "×");
+      h3.appendChild(el("span", "", "New note")); x.type = "button"; x.title = "Discard this note";
+      x.onclick = function(){ newOpen = false; delete drafts["+new"]; render(); };
+      h3.appendChild(x); comp.appendChild(h3);
+      var nc = composer({ key: "+new", placeholder: "Add a new note…", status: null, onSend: function(text, shots){
+        E.notes.push({ id: uid(), text: text, author: who, created: Date.now(), shots: shots });
+        newOpen = false; save(); render();
+      } });
+      comp.appendChild(nc); app.appendChild(comp);
+      if (newOpen === "focus") focusLater("+new", function(){ newOpen = true; });
+    }
+    document.getElementById("add").classList.toggle("on", !!newOpen);
     app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight."));
     renderList();
     paintFoot(); paintSeg();
     window.scrollTo(0, keepY);
+  }
+  // Focus a field once the current click is over: closing an empty field re-renders the page
+  // again, so look the field up when it is time, not when it was built.
+  function focusLater(key, done){
+    requestAnimationFrame(function(){
+      var ta = document.querySelector('.cmp[data-key="' + key + '"] textarea');
+      if (ta){ ta.scrollIntoView({ block: "center" }); ta.focus(); }
+      done();
+    });
   }
   function stateOfShown(n){ return n.local ? "open" : statusOf(n.id); }
   function allNotes(){
@@ -777,7 +799,27 @@ input:focus, textarea:focus { border-color: var(--accent); }
   header();
   paintMe();
   document.getElementById("dl").onclick = download;
-  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, pictures, status changes and new notes on this page?")){ E = { replies: {}, notes: [], att: {} }; drafts = {}; openReply = {}; save(); render(); } };
+  // The new-note form shows only after the + in the bottom bar (one at a time; + again jumps to it).
+  document.getElementById("add").onclick = function(){ opening = "+new"; newOpen = "focus"; render(); };
+  // An empty field (no text, picture or state) is a cancel: a tap anywhere else closes it. Runs
+  // after the tap's own handler, so a field that tap just opened (`opening`) stays.
+  function isEmpty(k){ var d = drafts[k]; return !d || !(d.text.trim() || d.shots.length || d.state); }
+  function closeEmpty(target){
+    var changed = false;
+    function inside(k){ var b = document.querySelector('.cmp[data-key="' + k + '"]'); var w = b && (b.closest(".compose") || b); return !!(target && w && w.contains(target)); }
+    Object.keys(openReply).forEach(function(k){
+      if (k === opening || inside(k) || !isEmpty(k)) return;
+      delete openReply[k]; delete drafts[k]; changed = true;
+    });
+    if (newOpen && opening !== "+new" && !inside("+new") && isEmpty("+new")){ newOpen = false; delete drafts["+new"]; changed = true; }
+    opening = null;
+    if (changed) render();
+  }
+  document.addEventListener("click", function(e){
+    if (!document.getElementById("gate").hidden || e.target.closest(".zoom")){ opening = null; return; }
+    closeEmpty(e.target);
+  });
+  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, pictures, status changes and new notes on this page?")){ E = { replies: {}, notes: [], att: {} }; drafts = {}; openReply = {}; newOpen = false; save(); render(); } };
   render();
   if (!who) askName();
 })();
