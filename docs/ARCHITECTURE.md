@@ -202,6 +202,25 @@ the HTML page, the mobile app and the owner's tracker). A drawing made on a repl
 global; `review.build_html` inlines it verbatim into the HTML page (`core_js()` refuses a source
 containing a closing script tag or an HTML comment opener). `tests/test_merge_parity.py` runs the
 Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every row.
+`ctxVisible(c, at)` is the one visibility rule for a context on a frame (`{t, fps}` video, `{vk}`
+3D, null = picture); annotate.js `visibleNow` goes through it. `drawingRow(it, at)` makes a
+FORMAT.md row (bbox columns from `boundsOf`) from an editor item.
+
+**HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)`) — the report
+comes from `gatherReport(true)`: **clean** pictures (no drawings burned in) — `cover` (images /
+PSD, ≤2000 px) + `coverSize`, per note `frame` (video frame ≤1600 px, or the 3D view capture) +
+`size`, reply `id`s, and `media: {kind: image|video|model3d, w, h, fps}`; picture notes get no
+frame of their own (the page shows the cover with the note's drawings). The PDF uses
+`gatherReport(false)` and still burns drawings in. The page draws the package's drawing rows with
+review-core as an SVG overlay (`.ov`, `viewBox` in doc units: `0 0 w h` for pictures / video —
+frames are the whole media scaled; `-500·a -500 1000·a 1000` for 3D, a = frame aspect). Frames
+(`frameOf(key)`): `"cover"` = every drawing; a note id = picture notes: the cover filtered by
+`data.note`; video / 3D: everything `ctxVisible` at the note's `ctx`. Its drawing canvas
+(`drawSheet`) edits items in the same doc units; drafts keep `{frame, items}`; sending turns them
+into rows in `E.rows` (localStorage) with `data.note`, `data.reply` (a reply) and the frame's ctx
+(`drawCtx`: video `{t, hold}` of the note, 3D `{vk, cam}`); a new note drawn on a frame takes that
+note's whole ctx. *Download reply* merges `E.rows` like any other row (`RC.mergeRows`). Drawing on
+an attachment is flattened into a new JPEG attachment (`drawFlat`): attachments have no doc space.
 
 **Rendering** — every object becomes primitives (`primsOf`) that both the SVG overlay (`primSvg`) and
 the canvas compositor (`primCanvas`, screenshots and PDF frames) draw, so they match. The overlay is
@@ -228,8 +247,8 @@ preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for 
 /api/review/shots/{id}`, `POST /api/review/export/pdf` (client sends notes + JPEG data URLs; server
 lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK), `POST
 /api/review/export/package` (server builds the `.srev` JSON from the rows + shots; legacy `.sightreview` files still import),
-`POST /api/review/export/html` (same payload as the PDF; the page embeds the report and the
-package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
+`POST /api/review/export/html` (the page's report: clean pictures + `coverSize` / `media`, see
+"HTML reviewer page"; the page embeds the report and the package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
 else name+size, else name+kind; 404 `{missing}` if no match). Import **merges**
 (`Library.import_annotations`, one transaction, rolled back on a malformed row): rows keep their
 ids (an id that already belongs to another asset gets a stable derived one), the later **content

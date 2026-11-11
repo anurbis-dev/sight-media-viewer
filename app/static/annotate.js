@@ -492,17 +492,13 @@ export function createAnnotator(host){
   }
   function visibleNow(it){
     if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) return false;
-    const c = it.data.ctx;
-    if (!c) return true;
-    if (S.kind === "video"){
-      const v = video();
-      if (!v || c.t == null) return true;
-      if (c.hold === -1) return true;
-      const cur = v.currentTime, fd = frameDur();
-      return cur >= c.t - fd * 0.5 - 1e-3 && cur < c.t + Math.max(c.hold || 0, fd) - fd * 0.5 + 1e-3;
-    }
-    if (S.kind === "model3d") return !!c.vk && c.vk === S.curVk;
-    return true;
+    return RC.ctxVisible(it.data.ctx, frameNow());
+  }
+  // The frame on screen, as review-core's ctxVisible takes it.
+  function frameNow(){
+    if (S.kind === "video"){ const v = video(); return v ? { t: v.currentTime, fps: S.fps } : null; }
+    if (S.kind === "model3d") return { vk: S.curVk || null };
+    return null;
   }
   function ghostNow(it){
     if (!S.onion || S.kind !== "video") return false;
@@ -2024,28 +2020,37 @@ export function createAnnotator(host){
     });
   }
   // Renders what a report needs: the cover (picture with every drawing) and per note its frame /
-  // view with the drawings burned in. `everyFrame`: also a frame for a picture's only note (the
-  // HTML report shows frames per note; the PDF would just repeat the cover).
-  async function gatherReport(everyFrame){
+  // view with the drawings burned in (PDF). `forPage` (the HTML reviewer page): the pictures are
+  // clean — the page draws the drawings itself from the package rows with review-core (and lets the
+  // reviewer draw on them), so it gets the cover / frames without drawings, their pixel sizes and
+  // `media` (how pictures map to doc units); picture notes get no frame of their own (the page
+  // shows the cover with the note's drawings).
+  async function gatherReport(forPage){
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
     const v = video();
-    const keep = { t: v?.currentTime, cam: curCam(), v3d: host.getV3D?.(), vk: S.curVk, hidden: S.hidden, hiddenReplies: S.hiddenReplies };
+    const keep = { t: v?.currentTime, playing: !!v && !v.paused, cam: curCam(), v3d: host.getV3D?.(), vk: S.curVk, hidden: S.hidden, hiddenReplies: S.hiddenReplies };
     S.hidden = false; S.hiddenReplies = new Set();
-    let cover = null;
+    // A playing clip runs on after each seek: the frame would land late and miss its drawings.
+    if (keep.playing) v.pause();
+    let cover = null, coverSize = null;
     try {
-      if (S.b2 && !S.b2.isVid) cover = toJpeg(composeNative((it) => !replyGone(it)));
+      const pick = (f) => forPage ? () => false : f;
+      let cv = S.b2 && !S.b2.isVid ? composeNative(pick((it) => !replyGone(it))) : null;
+      cover = toJpeg(cv);
+      if (cv) coverSize = [cv.width, cv.height];
       for (const [i, n] of notes.entries()){
         const d = n.data, c = d.ctx || null;
         let frame = null, cap = "";
+        cv = null;
         const own = (it) => it.data.note === n.id && !replyGone(it);
         if (S.b2 && !S.b2.isVid){
           // One note on a picture: its frame would just repeat the cover.
-          if ((everyFrame || notes.length > 1) && [...S.items.values()].some(own)) frame = toJpeg(composeNative(own, 1600));
+          if (!forPage && notes.length > 1 && [...S.items.values()].some(own)) cv = composeNative(own, 1600);
         } else if (v && c?.t != null){
           await seekTo(v, c.t);
-          frame = toJpeg(composeNative((it) => visibleNow(it), 1600));
+          cv = composeNative(pick((it) => visibleNow(it)), 1600);
           cap = "Frame " + Math.round(c.t * S.fps) + " · " + fmtTime(c.t, S.fps);
         } else if (S.b3 && c?.vk){
           const view = S.views.get(c.vk);
@@ -2054,14 +2059,16 @@ export function createAnnotator(host){
             S.b3.setCam(view.cam);
             S.curVk = c.vk;
             await nextFrame(); await nextFrame(); await nextFrame();
-            frame = toJpeg(composeNative((it) => it.data.ctx?.vk === c.vk && !replyGone(it)));
+            cv = composeNative(pick((it) => it.data.ctx?.vk === c.vk && !replyGone(it)));
           }
         }
-        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, frameCaption: cap, shots: d.shots || [],
-          replies: liveReplies(n).map((r) => ({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
+        frame = toJpeg(cv);
+        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size: cv ? [cv.width, cv.height] : null, frameCaption: cap, shots: d.shots || [],
+          replies: liveReplies(n).map((r) => ({ id: r.id, author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
       }
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
+      if (keep.playing) v.play().catch(() => {});
       if (S.b3 && keep.cam){ if (keep.v3d) host.setV3D?.(keep.v3d); S.b3.setCam(keep.cam); }
       S.hidden = keep.hidden; S.hiddenReplies = keep.hiddenReplies;
       paintVisibility();
@@ -2074,7 +2081,9 @@ export function createAnnotator(host){
       title: `Review — ${a.name}`,
       subtitle: a.path || "",
       meta: [["Type", (a.ext || "").replace(".", "").toUpperCase()], ["Size", dims], ["Duration", a.duration ? fmtTime(a.duration, S.fps) : ""], ["State", stateLabel], ["Reviewer", reviewer()], ["Notes", String(notes.length)], ["Open", String(notes.filter((n) => n.data.status !== "done").length)], ["In progress", String(notes.filter((n) => n.data.status === "progress").length || "")], ["Exported", fmtDate(Date.now())]],
-      cover, notes: out, footer: `Sight ${host.appVersion?.() || ""}`.trim(), reveal: true, author: reviewer(),
+      cover, coverSize, notes: out,
+      media: { kind: S.b3 ? "model3d" : S.b2?.isVid ? "video" : S.b2 ? "image" : null, w: nw || null, h: nh || null, fps: S.fps },
+      footer: `Sight ${host.appVersion?.() || ""}`.trim(), reveal: true, author: reviewer(),
     };
   }
   async function exportPdf(){

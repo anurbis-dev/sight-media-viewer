@@ -877,7 +877,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         rows = lib.annotations_for_asset(a["id"])
         pkg = review.build_package(a, rows, lib.root, str(body.get("author") or ""), APP_VERSION,
                                    lib.annotation_tombstones(a["id"]))
-        report = {k: body.get(k) for k in ("title", "subtitle", "meta", "cover", "notes")}
+        report = {k: body.get(k) for k in ("title", "subtitle", "meta", "cover", "coverSize", "notes", "media")}
         page = await asyncio.to_thread(review.build_html, report, pkg)
         stem = review.safe_name(f"{Path(a['name']).stem} review")
         out = review.unique_path(review.export_dir(lib.root), stem, ".html")

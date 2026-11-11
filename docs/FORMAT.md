@@ -156,6 +156,10 @@ The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `pri
   and the model's quarter-turn count. A drawing shows only while the live camera matches its view
   (within 0.4 % of the camera distance). A note's ctx also carries `v3d` — the viewer settings
   (shading, lights, explode, fov) it was written with, restored when the note is opened.
+- A drawing made later on a note's frame (a reply's drawing on the HTML page / in the app) takes
+  that note's place: video `{t, hold}` copied from the note, 3D `{vk, cam}` of the note's view; a
+  new note drawn on another note's frame copies that note's whole `ctx`. The rule for whether a
+  context shows on a frame is `ctxVisible` in `review-core.js`.
 
 ### `status` — the file's review state
 

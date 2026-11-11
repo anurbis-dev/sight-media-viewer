@@ -46,7 +46,7 @@ separate plan: `docs/PLAN-viewer.md`.
 - Keep a test that runs the Python and the JS merge on the same fixtures and compares the results
   (the scratchpad `t_merge.py` from the 0.17–0.19 sessions is the starting point).
 
-### 2. Drawing on the HTML page
+### 2. Drawing on the HTML page — done in 0.21.0 (see RECENT)
 - Export **clean frames** (no burned-in drawings) + the drawings as vectors; the page renders them
   with the core, can show / hide them (own vs others).
 - Full-screen drawing canvas from a note frame / the cover / an attachment: brush with pressure,

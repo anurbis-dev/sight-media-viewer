@@ -459,6 +459,49 @@ body.zoomed { overflow: hidden; }
 .sheet .acts { justify-content: flex-end; margin: 0; }
 .empty { color: var(--muted); padding: 20px 0; }
 .gen { font-size: 11px; color: var(--muted); text-align: center; margin-top: 30px; }
+/* Pictures with drawings: the vector overlay (review-core) sits on the clean picture. */
+.fw { position: relative; display: block; width: fit-content; max-width: 100%; margin: 8px 0 2px; cursor: zoom-in; }
+.fw > img { display: block; max-width: 100%; }
+.fw .frame { margin: 0; }
+.fw.cover-w { width: 100%; margin: 0 0 4px; }
+.fw.sm { display: inline-block; margin: 6px 0 0; }
+.fw.sm > img { height: 80px; width: auto; border-radius: 6px; border: 1px solid var(--line); }
+.ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.field .atts .fw { margin: 0; }
+.field .atts .fw > img { height: 56px; width: auto; border-radius: 8px; border: 1px solid var(--line); }
+.field .atts .fw::after { content: "\270E"; position: absolute; left: 4px; bottom: 2px; color: #fff; font-size: 12px; text-shadow: 0 0 3px #000; }
+.field textarea.d { padding-left: 74px; }
+.pen { position: absolute; bottom: 4px; left: 37px; width: 32px; height: 32px; border-radius: 16px; border: 0; display: grid; place-items: center; cursor: pointer; padding: 0; background: none; color: var(--muted); }
+.pen.on { color: var(--accent); }
+.vwrap { position: relative; flex: none; }
+.vmenu { position: absolute; right: 0; top: 40px; z-index: 6; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; box-shadow: 0 8px 30px rgb(0 0 0 / .2); white-space: nowrap; font-size: 13px; }
+.vmenu label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+.zoom .zw { position: relative; will-change: transform; pointer-events: none; }
+.zoom .zw img { display: block; }
+.zoom .zd { position: absolute; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 1; background: rgb(255 255 255 / .14); border-color: rgb(255 255 255 / .3); color: #fff; padding: 7px 14px; }
+/* Full-screen drawing canvas */
+.draw { position: fixed; inset: 0; z-index: 30; background: #0d0d10; color: #fff; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.dtop, .dbar { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: #1c1c20; }
+.dtop { padding-top: calc(6px + env(safe-area-inset-top)); }
+.dtop .sp { flex: 1; }
+.dtop .btn { background: none; color: #fff; border-color: rgb(255 255 255 / .25); }
+.dtop .btn.primary { background: #0a84ff; border-color: #0a84ff; }
+.dbar { flex-direction: column; gap: 6px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+.dbar > div { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+.dview { flex: 1; position: relative; overflow: hidden; touch-action: none; cursor: crosshair; }
+.dbox { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.dbox img, .dbox svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.dbox img { -webkit-user-drag: none; }
+.tb { width: 40px; height: 40px; border-radius: 10px; border: 0; background: none; color: #d8d8dc; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.tb.on { background: #0a84ff; color: #fff; }
+.tb[disabled] { opacity: .3; cursor: default; }
+.swc { width: 30px; height: 30px; margin: 3px 4px; border-radius: 15px; border: 2px solid rgb(255 255 255 / .3); cursor: pointer; padding: 0; }
+.swc.on { border-color: #fff; box-shadow: 0 0 0 2px #0a84ff; }
+.pick { position: fixed; inset: 0; z-index: 25; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
+.pick .sheet { max-width: 560px; max-height: 85vh; overflow: auto; }
+.pick .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.pick .grid button { border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 4px; cursor: pointer; color: var(--fg); font: inherit; font-size: 12px; text-align: left; }
+.pick .grid img { width: 100%; border-radius: 7px; display: block; margin-bottom: 3px; }
 </style>
 </head>
 <body>
@@ -466,7 +509,7 @@ body.zoomed { overflow: hidden; }
 <button class="hd" id="hd" type="button" aria-expanded="false" aria-controls="details" title="File and review details"><h1 id="ttl"></h1><span class="chev" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
 <div class="details" id="details" hidden></div>
 <div class="people"><span class="from" id="from"></span><button class="me" id="me" type="button" title="Change your name">You: <b id="myname"></b> ✎</button></div>
-<div class="frow"><div class="seg" id="seg"></div><button class="ib" id="sbtn" type="button" title="Search notes" aria-label="Search notes"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg></button></div>
+<div class="frow"><div class="seg" id="seg"></div><div class="vwrap" id="vwrap" hidden><button class="ib" id="vbtn" type="button" title="Show / hide drawings" aria-label="Show or hide drawings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button><div class="vmenu" id="vmenu" hidden><label><input type="checkbox" id="vmine"> My drawings</label><label><input type="checkbox" id="voth"> Others' drawings</label></div></div><button class="ib" id="sbtn" type="button" title="Search notes" aria-label="Search notes"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg></button></div>
 <input class="q" id="q" type="search" placeholder="Search notes" hidden>
 </div></header>
 <main id="app"></main>
@@ -485,16 +528,18 @@ body.zoomed { overflow: hidden; }
   var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at;
   var rows = {};
   PKG.annotations.forEach(function(r){ rows[r.id] = r; });
-  // Local edits, kept in localStorage until downloaded: {replies: {noteId: [entry]}, notes: [row],
-  // att: {shotId: dataURL}}. An entry is a reply ({id, text, author, created, shots?}) or a state
-  // change ({id, event: "progress"|"done"|"open", author, created}) — the shapes Sight writes, so
-  // the thread keeps who did what and when. A note's state here is its last local change, else
-  // the exported one.
-  var E = { replies: {}, notes: [], att: {} };
+  // Local edits, kept in localStorage until downloaded: {replies: {noteId: [entry]}, notes: [note],
+  // att: {shotId: dataURL}, rows: [drawing row]}. An entry is a reply ({id, text, author, created,
+  // shots?}) or a state change ({id, event: "progress"|"done"|"open", author, created}) — the shapes
+  // Sight writes, so the thread keeps who did what and when. A note's state here is its last local
+  // change, else the exported one. A new note is {id, text, author, created, shots, frame?, ctx?}
+  // (frame: the picture its drawing was made on, ctx: that picture's place in the media). `rows`
+  // are the drawings made on this page, as FORMAT.md rows (data.note, data.reply on a reply, ctx).
+  var E = { replies: {}, notes: [], att: {}, rows: [] };
   try { var saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.replies) E = saved; } catch (e) {}
-  E.att = E.att || {};
+  E.att = E.att || {}; E.rows = E.rows || [];
   var filter = "all", query = "", searchOn = false;
-  var drafts = {}, openReply = {};  // unsent text / pictures / state per field (survive re-render)
+  var drafts = {}, openReply = {};  // unsent text / pictures / state / drawing per field (survive re-render)
   var newOpen = false, opening = null;  // the new-note form (one at a time); a field opened by this click
   var who = "";
   try { who = localStorage.getItem("sight-review:name") || ""; } catch (e) {}
@@ -507,9 +552,11 @@ body.zoomed { overflow: hidden; }
     paintFoot(); paintSeg();
   }
   var uid = RC.uid;
+  var SVGNS = "http://www.w3.org/2000/svg";
   function el(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
-  function svg(path, w){ var s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("width", w || 18); s.setAttribute("height", w || 18); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = path; return s; }
+  function svg(path, w){ var s = document.createElementNS(SVGNS, "svg"); s.setAttribute("width", w || 18); s.setAttribute("height", w || 18); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = path; return s; }
   function fmt(ms){ try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } }
+  function clone(v){ return JSON.parse(JSON.stringify(v)); }
   function changes(){
     var n = E.notes.length;
     Object.keys(E.replies).forEach(function(k){ n += E.replies[k].length; });
@@ -521,23 +568,127 @@ body.zoomed { overflow: hidden; }
     for (var i = L.length - 1; i >= 0; i--) if (L[i].event) return L[i].event;
     return origStatus(id);
   }
+
+  // ---- drawings ------------------------------------------------------------------------------
+  // The pictures come clean (Sight's gatherReport(forPage)); the drawings are the package rows,
+  // drawn here with review-core as an SVG overlay in doc units (FORMAT.md): pictures and video
+  // frames are the whole media scaled, so doc = picture px × media width / picture width; a 3D view
+  // is the viewer's screen, 1000 units high, centred.
+  var M = R.media || {};
+  var VEC = M.kind === "model3d" || ((M.kind === "image" || M.kind === "video") && M.w > 0 && M.h > 0);
+  var noteById = {}, numById = {};
+  (R.notes || []).forEach(function(n){ noteById[n.id] = n; numById[n.id] = n.num; });
+  function numOf(it){ return numById[it.data && it.data.note] || ""; }
+  var show = { mine: true, others: true };
+  try { var sv0 = JSON.parse(localStorage.getItem("sight-review:show")); if (sv0) show = { mine: sv0.mine !== false, others: sv0.others !== false }; } catch (e) {}
+  function replyOf(r){
+    var nd = rows[r.data.note] && rows[r.data.note].data;
+    return nd && r.data.reply ? (nd.replies || []).find(function(x){ return x && x.id === r.data.reply; }) || null : null;
+  }
+  // Exported drawings; those of a deleted reply are gone with it (as in Sight).
+  var exported = PKG.annotations.filter(function(r){
+    if (r.kind === "note" || r.kind === "status" || !r.data || !RC.validItem(r)) return false;
+    var rp = replyOf(r);
+    return !(rp && rp.deleted);
+  });
+  function sameName(a, b){ return !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase(); }
+  // "Mine": drawn on this page, or made with a reply / note written under this reviewer's name.
+  function mineExported(r){
+    var rp = replyOf(r), nd = rows[r.data.note] && rows[r.data.note].data;
+    return sameName(rp ? rp.author : nd ? nd.author : "", who);
+  }
+  // A picture drawings are shown and made on: {key, src, size: [w, h] px, at (review-core
+  // ctxVisible frame), ctx (the frame's place in the media), note / reply (only that note's /
+  // reply's drawings), local (a new note's picture)}. Keys: "cover" = the picture (images / PSD),
+  // with every drawing; a note id = that note's frame — the cover with the note's drawings
+  // (pictures), or the video frame / 3D view with everything visible there.
+  function frameOf(key){
+    if (!VEC) return null;
+    if (key === "cover") return M.kind === "image" && R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null } : null;
+    var n = noteById[key], c = (rows[key] && rows[key].data && rows[key].data.ctx) || null;
+    if (!n) return null;
+    if (M.kind === "image") return R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null, note: key } : null;
+    if (!n.frame || !c) return null;
+    if (M.kind === "video" && c.t != null) return { key: key, src: n.frame, size: n.size, at: { t: c.t, fps: M.fps || 25 }, ctx: c };
+    if (M.kind === "model3d" && c.vk) return { key: key, src: n.frame, size: n.size, at: { vk: c.vk }, ctx: c };
+    return null;
+  }
+  function vbOf(f){
+    if (f.vb) return f.vb;
+    if (M.kind === "model3d"){ var a = f.size && f.size[1] ? f.size[0] / f.size[1] : 16 / 9; return [-500 * a, -500, 1000 * a, 1000]; }
+    return [0, 0, M.w, M.h];
+  }
+  // Everything that belongs on a picture, and what of it is shown (the Mine / Others switches;
+  // a reply's own drawing is always shown on its thumbnail).
+  function drawingsOf(f){
+    return exported.concat(E.rows).filter(function(r){
+      return f.reply ? r.data.reply === f.reply : f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at);
+    });
+  }
+  function shownOn(f){
+    var loc = {};
+    E.rows.forEach(function(r){ loc[r.id] = 1; });
+    return drawingsOf(f).filter(function(r){ return f.reply || ((loc[r.id] || mineExported(r)) ? show.mine : show.others); });
+  }
+  function overlay(f, list){
+    var s = document.createElementNS(SVGNS, "svg");
+    s.setAttribute("class", "ov"); s.setAttribute("viewBox", vbOf(f).join(" ")); s.setAttribute("preserveAspectRatio", "none");
+    s.innerHTML = RC.svgMarkup(list, numOf);
+    return s;
+  }
+  // The picture with its drawings on top. cls: "cover-w" (the cover), "sm" (thumbnail), else a frame.
+  function pic(f, list, cls){
+    var w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img", cls === "cover-w" ? "cover" : cls ? "" : "frame");
+    i.src = f.src; i.alt = ""; w.appendChild(i);
+    if (list.length) w.appendChild(overlay(f, list));
+    return w;
+  }
+  // What a drawing made on frame f gets as data.ctx (the note's own ctx carries more, e.g. v3d).
+  function drawCtx(c){
+    if (!c) return null;
+    if (c.t != null) return { t: c.t, hold: c.hold || 0 };
+    if (c.vk) return { vk: c.vk, cam: c.cam };
+    return null;
+  }
+  // A draft's drawing ({frame, items}) as rows of note `nid` (and reply `rid`), above everything.
+  function drawRows(draw, nid, rid){
+    var f = frameOf(draw.frame), ctx = drawCtx(f && f.ctx), now = Date.now();
+    var z = 1 + Math.max.apply(null, [0].concat(PKG.annotations.concat(E.rows).map(function(r){ return r.z_index || 0; })));
+    return draw.items.map(function(it, i){
+      var d = Object.assign({}, it.data, { note: nid, ctx: ctx ? clone(ctx) : null });
+      if (rid) d.reply = rid;
+      return RC.drawingRow({ id: uid(), kind: it.kind, shape_kind: it.shape_kind, z: z + i, data: d }, now);
+    });
+  }
+
   // Full-screen picture viewer over a gallery: a horizontal swipe (or arrow key) goes to the
   // neighbour in the same gallery, a vertical swipe, a tap or Esc closes. The overlay takes every
   // touch itself (touch-action: none, body scroll locked), so dragging never scrolls the page.
   // Galleries: the cover + every shown note frame; a note's own attachments + its replies'.
+  // Entries: {f: frame} (drawn with its drawings) or {src, note}. Drawing is a separate mode: the
+  // Draw button, never a gesture here.
   var frameGal = [], noteGal = null;
   function zoom(gal, at){
-    var z = el("div", "zoom"), i = el("img"), cnt = el("div", "zn"), idx = at;
-    z.appendChild(i); z.appendChild(cnt);
-    function show(){ i.src = gal[idx]; cnt.textContent = gal.length > 1 ? (idx + 1) + " / " + gal.length : ""; }
+    var z = el("div", "zoom"), w = el("div", "zw"), i = el("img"), cnt = el("div", "zn"), idx = at, ov = null;
+    var db = el("button", "btn zd", "✎ Draw"); db.type = "button"; db.title = "Draw on this picture";
+    w.appendChild(i); z.appendChild(w); z.appendChild(cnt); z.appendChild(db);
+    function showAt(){
+      var g = gal[idx];
+      i.src = g.f ? g.f.src : g.src;
+      if (ov){ ov.remove(); ov = null; }
+      if (g.f){ var list = shownOn(g.f); if (list.length){ ov = overlay(g.f, list); w.appendChild(ov); } }
+      cnt.textContent = gal.length > 1 ? (idx + 1) + " / " + gal.length : "";
+      db.hidden = !drawTarget(g);
+    }
     function close(){ z.remove(); document.body.classList.remove("zoomed"); document.removeEventListener("keydown", onKey, true); }
+    db.onclick = function(e){ e.stopPropagation(); var t = drawTarget(gal[idx]); close(); if (t) t(); };
     function go(d, fromX){
       var j = idx + d;
-      if (j < 0 || j >= gal.length){ i.style.transition = "transform .2s"; i.style.transform = ""; return; }
-      idx = j; show();
-      i.style.transition = "none"; i.style.transform = "translateX(" + (fromX || d * 40) + "px)";
-      void i.offsetWidth;
-      i.style.transition = "transform .2s"; i.style.transform = "";
+      if (j < 0 || j >= gal.length){ w.style.transition = "transform .2s"; w.style.transform = ""; return; }
+      idx = j; showAt();
+      w.style.transition = "none"; w.style.transform = "translateX(" + (fromX || d * 40) + "px)";
+      void w.offsetWidth;
+      w.style.transition = "transform .2s"; w.style.transform = "";
     }
     function onKey(e){
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -549,11 +700,14 @@ body.zoomed { overflow: hidden; }
     }
     var p0 = null, tap = false;
     z.onclick = function(){ if (tap) close(); tap = false; };
-    z.addEventListener("pointerdown", function(e){ p0 = { x: e.clientX, y: e.clientY, id: e.pointerId }; i.style.transition = "none"; try { z.setPointerCapture(e.pointerId); } catch (_){} });
+    z.addEventListener("pointerdown", function(e){
+      if (e.target.closest(".zd")) return;  // the Draw button gets its own click
+      p0 = { x: e.clientX, y: e.clientY, id: e.pointerId }; w.style.transition = "none"; try { z.setPointerCapture(e.pointerId); } catch (_){}
+    });
     z.addEventListener("pointermove", function(e){
       if (!p0 || e.pointerId !== p0.id) return;
       var dx = e.clientX - p0.x, dy = e.clientY - p0.y;
-      i.style.transform = Math.abs(dx) > Math.abs(dy) ? "translateX(" + dx + "px)" : "translateY(" + dy + "px)";
+      w.style.transform = Math.abs(dx) > Math.abs(dy) ? "translateX(" + dx + "px)" : "translateY(" + dy + "px)";
       z.style.background = Math.abs(dy) > Math.abs(dx) ? "rgb(0 0 0 / " + Math.max(.3, .88 - Math.abs(dy) / 600) + ")" : "";
     });
     function end(e){
@@ -561,24 +715,347 @@ body.zoomed { overflow: hidden; }
       var dx = e.clientX - p0.x, dy = e.clientY - p0.y; p0 = null;
       z.style.background = "";
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8){ tap = true; return; }
-      if (Math.abs(dy) > Math.abs(dx)){ if (Math.abs(dy) > 60) close(); else { i.style.transition = "transform .2s"; i.style.transform = ""; } return; }
+      if (Math.abs(dy) > Math.abs(dx)){ if (Math.abs(dy) > 60) close(); else { w.style.transition = "transform .2s"; w.style.transform = ""; } return; }
       if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1, dx < 0 ? window.innerWidth / 3 : -window.innerWidth / 3);
-      else { i.style.transition = "transform .2s"; i.style.transform = ""; }
+      else { w.style.transition = "transform .2s"; w.style.transform = ""; }
     }
     z.addEventListener("pointerup", end);
-    z.addEventListener("pointercancel", function(e){ if (p0 && e.pointerId === p0.id){ p0 = null; z.style.background = ""; i.style.transition = "transform .2s"; i.style.transform = ""; } });
+    z.addEventListener("pointercancel", function(e){ if (p0 && e.pointerId === p0.id){ p0 = null; z.style.background = ""; w.style.transition = "transform .2s"; w.style.transform = ""; } });
     z.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
     document.addEventListener("keydown", onKey, true);
-    show();
+    showAt();
     document.body.classList.add("zoomed");
     document.body.appendChild(z);
   }
+  // What the viewer's Draw button does for a gallery entry: the cover → a new note drawn on it; a
+  // note's frame (or a reply's drawing on it) → a reply to that note with a drawing; an attached
+  // picture → a reply carrying a copy of the picture drawn over (a flat picture: attachments are
+  // not the media, so a vector drawing on them has no place in the format). Null = no button.
+  function drawTarget(g){
+    if (g.f){
+      if (g.f.local) return null;
+      if (g.f.key === "cover") return function(){ startNew("cover"); };
+      if (noteById[g.f.key]) return function(){ startReply(g.f.key); };
+      return null;
+    }
+    if (g.src && g.note && noteById[g.note]) return function(){ replyFlat(g.note, g.src); };
+    return null;
+  }
+  function newDraft(){ return { text: "", shots: [], state: "", draw: null }; }
+  function startReply(id){ openReply[id] = true; drafts[id] = drafts[id] || newDraft(); render(); editDraw(id, id); }
+  function startNew(fkey){ newOpen = true; drafts["+new"] = drafts["+new"] || newDraft(); render(); editDraw("+new", fkey); }
+  function replyFlat(id, src){
+    openReply[id] = true; var dr = drafts[id] = drafts[id] || newDraft(); render();
+    drawFlat(src, function(out){ dr.shots.push({ id: uid(), src: out }); render(); });
+  }
+  // Frames a draft can draw on: a reply — its note's frame; a new note — the cover (pictures) or
+  // any note's frame (video / 3D: the new note then sits on that frame / view).
+  function drawFrames(dkey){
+    if (!VEC) return [];
+    if (dkey !== "+new") return frameOf(dkey) ? [dkey] : [];
+    if (M.kind === "image") return frameOf("cover") ? ["cover"] : [];
+    return (R.notes || []).filter(function(n){ return frameOf(n.id); }).map(function(n){ return n.id; });
+  }
+  function pickFrame(keys, done){
+    if (keys.length === 1){ done(keys[0]); return; }
+    var p = el("div", "pick"), sh = el("div", "sheet"), g = el("div", "grid");
+    sh.appendChild(el("h2", "", "Draw on which frame?"));
+    sh.appendChild(el("p", "", "The new note goes on the frame you draw on."));
+    keys.forEach(function(k){
+      var n = noteById[k], f = frameOf(k), b = el("button"); b.type = "button";
+      var im = el("img"); im.src = f.src; im.alt = ""; b.appendChild(im);
+      b.appendChild(document.createTextNode("#" + n.num + (n.ctx ? " · " + n.ctx : "")));
+      b.onclick = function(){ p.remove(); done(k); };
+      g.appendChild(b);
+    });
+    sh.appendChild(g);
+    var a = el("div", "acts"), c = el("button", "btn", "Cancel"); c.type = "button"; c.onclick = function(){ p.remove(); };
+    a.appendChild(c); sh.appendChild(a); p.appendChild(sh);
+    p.onclick = function(e){ if (e.target === p) p.remove(); };
+    document.body.appendChild(p);
+  }
+  // Opens the canvas for draft `dkey` on frame `fkey`; Done puts the drawing into the draft.
+  function editDraw(dkey, fkey){
+    var dr = drafts[dkey], f = frameOf(fkey);
+    if (!dr || !f) return;
+    if (dr.draw && dr.draw.frame !== fkey && !confirm("This note already has a drawing on another frame. Replace it?")) return;
+    drawSheet({ src: f.src, vb: vbOf(f), base: shownOn(f), items: dr.draw && dr.draw.frame === fkey ? dr.draw.items : [], onDone: function(items){
+      dr.draw = items.length ? { frame: fkey, items: items } : null;
+      if (dkey === "+new") newOpen = true; else openReply[dkey] = true;
+      render();
+    } });
+  }
+  // Draws over a picture that is not the media (an attachment) and gives back a flat copy.
+  function drawFlat(src, done){
+    var im = new Image();
+    im.onload = function(){
+      var w = im.naturalWidth, h = im.naturalHeight;
+      if (!w || !h) return;
+      drawSheet({ src: src, vb: [0, 0, w, h], base: [], items: [], onDone: function(items){
+        if (!items.length) return;
+        var k = Math.min(1, 1600 / Math.max(w, h)), c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+        var g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
+        g.setTransform(k, 0, 0, k, 0, 0); RC.drawCanvas(g, items, numOf);
+        done(c.toDataURL("image/jpeg", 0.85));
+      } });
+    };
+    im.src = src;
+  }
+
+  // ---- drawing canvas ------------------------------------------------------------------------
+  // Full screen: brush (pen pressure), highlighter, arrow, rectangle, ellipse, eraser (whole
+  // objects drawn here), five colours, undo / redo. Two fingers pinch-zoom / pan; once a pen has
+  // touched it, the pen draws and one finger pans too. Mouse: left draws, wheel zooms, middle /
+  // right drags. Items are FORMAT.md drawings in the doc units of `vb`; sizes are screen pixels at
+  // the moment of drawing, turned into doc units by the zoom.
+  function ico(p){ return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + p + "</svg>"; }
+  var TOOLS = [
+    ["brush", "Brush", '<path d="M19.5 3.5a2.1 2.1 0 0 1 3 3L13 16l-3-3z"/><path d="M10 13c-3 0-4.5 2-4.5 4.2 0 1.4-1 2.3-2.5 2.8 5 1.2 9.5-.2 9.5-4.3z"/>'],
+    ["marker", "Highlighter", '<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>'],
+    ["arrow", "Arrow", '<path d="M5 19 19 5"/><path d="M10 5h9v9"/>'],
+    ["rect", "Rectangle", '<rect x="4" y="6" width="16" height="12" rx="2"/>'],
+    ["ellipse", "Ellipse", '<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>'],
+    ["eraser", "Eraser", '<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>'],
+  ];
+  var COLORS = ["#ff3b30", "#ffd60a", "#34c759", "#0a84ff", "#ffffff"];
+  var SIZE = { brush: 6, marker: 24, shape: 4, eraser: 14 };
+  var pen = { tool: "brush", color: COLORS[0] };
+  try {
+    var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
+    if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = ps.tool;
+    if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
+  } catch (e) {}
+  function savePen(){ try { localStorage.setItem("sight-review:pen", JSON.stringify(pen)); } catch (e) {} }
+  var penSeen = false;  // a stylus has been used: it draws, fingers only pan / zoom
+  // o: {src, vb: [x, y, w, h] doc box the picture covers, base: rows drawn underneath (not
+  // editable), items: editable drawings, onDone(items)}.
+  function drawSheet(o){
+    var vb = o.vb, items = (o.items || []).map(clone), undo = [], redo = [], cur = null;
+    var zc = items.reduce(function(m, it){ return Math.max(m, it.z || 0); }, 0);
+    var root = el("div", "draw"), top = el("div", "dtop"), view = el("div", "dview"), box = el("div", "dbox"), bar = el("div", "dbar");
+    var img = el("img"); img.src = o.src; img.alt = ""; img.draggable = false;
+    var sv = document.createElementNS(SVGNS, "svg"); sv.setAttribute("viewBox", vb.join(" ")); sv.setAttribute("preserveAspectRatio", "none");
+    var gBase = document.createElementNS(SVGNS, "g"), gMine = document.createElementNS(SVGNS, "g");
+    gBase.innerHTML = RC.svgMarkup(o.base || [], numOf);
+    sv.appendChild(gBase); sv.appendChild(gMine);
+    box.appendChild(img); box.appendChild(sv); view.appendChild(box);
+    function tbtn(title, html, fn){ var b = el("button", "tb"); b.type = "button"; b.title = title; b.setAttribute("aria-label", title); b.innerHTML = html; b.onclick = fn; return b; }
+    var cancel = el("button", "btn", "Cancel"); cancel.type = "button";
+    cancel.onclick = function(){ if (undo.length && !confirm("Discard this drawing?")) return; close(); };
+    var ub = tbtn("Undo", ico('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), doUndo);
+    var rb = tbtn("Redo", ico('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'), doRedo);
+    var fitB = tbtn("Fit to screen", ico('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'), function(){ fit(); });
+    var done = el("button", "btn primary", "Done"); done.type = "button";
+    done.onclick = function(){ if (stroke) finish(); close(); o.onDone(items); };
+    [cancel, ub, rb, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
+    var tools = el("div"), cols = el("div");
+    TOOLS.forEach(function(t){ var b = tbtn(t[1], ico(t[2]), function(){ pen.tool = t[0]; savePen(); paintBar(); }); b.dataset.t = t[0]; tools.appendChild(b); });
+    COLORS.forEach(function(c){
+      var b = el("button", "swc"); b.type = "button"; b.title = "Colour"; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
+      b.onclick = function(){ pen.color = c; if (pen.tool === "eraser") pen.tool = "brush"; savePen(); paintBar(); };
+      cols.appendChild(b);
+    });
+    bar.appendChild(tools); bar.appendChild(cols);
+    root.appendChild(top); root.appendChild(view); root.appendChild(bar);
+    function paintBar(){
+      tools.querySelectorAll(".tb").forEach(function(b){ b.classList.toggle("on", b.dataset.t === pen.tool); });
+      cols.querySelectorAll(".swc").forEach(function(b){ b.classList.toggle("on", b.dataset.c === pen.color && pen.tool !== "eraser"); });
+      view.style.cursor = pen.tool === "eraser" ? "cell" : "crosshair";
+    }
+    function paint(){
+      gMine.innerHTML = RC.svgMarkup(cur ? items.concat([cur]) : items, numOf);
+      ub.disabled = !undo.length; rb.disabled = !redo.length;
+    }
+    function doUndo(){ if (stroke || !undo.length) return; redo.push(items); items = undo.pop(); paint(); }
+    function doRedo(){ if (stroke || !redo.length) return; undo.push(items); items = redo.pop(); paint(); }
+
+    // View: the picture fitted into the free area, then zoomed / panned (V, in screen px).
+    var V = { z: 1, x: 0, y: 0 };
+    function fit(){
+      var r = view.getBoundingClientRect(), a = vb[2] / vb[3], pad = 10;
+      var w = Math.max(1, r.width - pad * 2), h = Math.max(1, r.height - pad * 2);
+      if (w / h > a) w = h * a; else h = w / a;
+      box.style.width = w + "px"; box.style.height = h + "px";
+      V = { z: 1, x: (r.width - w) / 2, y: (r.height - h) / 2 };
+      apply(false);
+    }
+    function apply(moved){ box.style.transform = "translate(" + V.x + "px," + V.y + "px) scale(" + V.z + ")"; fitB.hidden = !moved; }
+    function onResize(){ if (!stroke && !gest) fit(); }
+    function vpos(e){ var r = view.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+    function toDoc(e, r){ return [vb[0] + (e.clientX - r.left) / r.width * vb[2], vb[1] + (e.clientY - r.top) / r.height * vb[3]]; }
+
+    // Pointers: one draws (`stroke`), the navigating ones (fingers / middle / right mouse) pan and
+    // pinch (`gest`, re-based whenever a finger comes or goes).
+    var pts = new Map(), stroke = null, gest = null;
+    function gestStart(){
+      var ids = [];
+      pts.forEach(function(p, id){ if (p.nav) ids.push(id); });
+      if (!ids.length){ gest = null; return; }
+      var a = pts.get(ids[0]), b = ids.length > 1 ? pts.get(ids[1]) : null;
+      gest = { ids: ids.slice(0, 2), v: { z: V.z, x: V.x, y: V.y }, m: b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : [a.x, a.y], d: b ? RC.hyp(a.x - b.x, a.y - b.y) : 0 };
+    }
+    function gestMove(){
+      var a = pts.get(gest.ids[0]), b = gest.ids.length > 1 ? pts.get(gest.ids[1]) : null;
+      if (!a) return;
+      var m = b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : [a.x, a.y];
+      var z = b && gest.d > 0 ? RC.clamp(gest.v.z * RC.hyp(a.x - b.x, a.y - b.y) / gest.d, 0.5, 16) : gest.v.z;
+      var lx = (gest.m[0] - gest.v.x) / gest.v.z, ly = (gest.m[1] - gest.v.y) / gest.v.z;
+      V = { z: z, x: m[0] - lx * z, y: m[1] - ly * z };
+      apply(true);
+    }
+    view.addEventListener("pointerdown", function(e){
+      e.preventDefault();
+      if (e.pointerType === "pen") penSeen = true;
+      var p = vpos(e);
+      var drawer = e.pointerType === "pen" || (e.pointerType === "mouse" && e.button === 0) || (e.pointerType === "touch" && !penSeen);
+      try { view.setPointerCapture(e.pointerId); } catch (_){}
+      if (drawer && !stroke && !gest){ pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e); return; }
+      // A pen wins over a resting palm / finger: their stroke is dropped, their pan stops.
+      if (e.pointerType === "pen"){
+        if (stroke && stroke.type === "pen") return;
+        if (stroke){ var pp = pts.get(stroke.id); abort(); if (pp) pp.nav = true; }
+        gest = null;
+        pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e);
+        return;
+      }
+      // A second finger while one draws: that was the start of a pinch, not a stroke.
+      if (stroke && stroke.type === "touch"){ var sp = pts.get(stroke.id); abort(); if (sp) sp.nav = true; }
+      if (stroke) return;  // the pen is drawing; fingers wait
+      pts.set(e.pointerId, { x: p[0], y: p[1], nav: true });
+      gestStart();
+    });
+    view.addEventListener("pointermove", function(e){
+      var q = pts.get(e.pointerId);
+      if (!q) return;
+      var p = vpos(e); q.x = p[0]; q.y = p[1];
+      if (stroke && stroke.id === e.pointerId){ e.preventDefault(); extend(e); return; }
+      if (gest && gest.ids.indexOf(e.pointerId) >= 0) gestMove();
+    });
+    // A cancelled pointer (e.g. a palm the system rejects) drops its stroke instead of keeping it.
+    function up(e){
+      if (!pts.has(e.pointerId)) return;
+      pts.delete(e.pointerId);
+      if (stroke && stroke.id === e.pointerId){
+        if (e.type === "pointercancel") abort(); else finish();
+        gestStart();  // fingers still down (after a pen stroke) pan from here
+        return;
+      }
+      if (gest && gest.ids.indexOf(e.pointerId) >= 0) gestStart();
+    }
+    view.addEventListener("pointerup", up);
+    view.addEventListener("pointercancel", up);
+    view.addEventListener("wheel", function(e){
+      e.preventDefault();
+      var p = vpos(e), z = RC.clamp(V.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), 0.5, 16);
+      var lx = (p[0] - V.x) / V.z, ly = (p[1] - V.y) / V.z;
+      V = { z: z, x: p[0] - lx * z, y: p[1] - ly * z };
+      apply(true);
+    }, { passive: false });
+    view.addEventListener("contextmenu", function(e){ e.preventDefault(); });
+    root.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
+
+    function begin(e){
+      var r = box.getBoundingClientRect(), p = toDoc(e, r), k = vb[2] / r.width, t = pen.tool, c = pen.color, isPen = e.pointerType === "pen";
+      stroke = { id: e.pointerId, type: e.pointerType, t: t, k: k, x: p[0], y: p[1], sm: p.slice(), last: null };
+      if (t === "eraser"){ stroke.before = items; eraseAt(p); return; }
+      var d;
+      if (t === "brush" || t === "marker"){
+        var pr = isPen ? RC.clamp(e.pressure || 0.5, 0, 1) : 0.5;
+        d = { color: c, size: RC.r2(SIZE[t] * k), opacity: t === "marker" ? 0.4 : 1, pressure: true, pen: isPen, pts: [RC.r2(p[0]), RC.r2(p[1]), RC.r2(pr)] };
+        cur = { kind: "stroke", shape_kind: t, z: ++zc, data: d };
+      } else if (t === "arrow"){
+        d = { color: c, width: RC.r2(SIZE.shape * k), opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
+        cur = { kind: "shape", shape_kind: "arrow", z: ++zc, data: d };
+      } else {
+        d = { color: c, strokeOn: true, width: RC.r2(SIZE.shape * k), dash: "solid", fillOn: false, fill: c, fillOpacity: 0.2, radius: 0, opacity: 1, x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
+        cur = { kind: "shape", shape_kind: t, z: ++zc, data: d };
+      }
+      d.created = Date.now();
+      paint();
+    }
+    function extend(e){
+      var S0 = stroke, r = box.getBoundingClientRect();
+      if (S0.t === "eraser"){ eraseAt(toDoc(e, r)); return; }
+      if (!cur) return;
+      var d = cur.data;
+      if (S0.t === "brush" || S0.t === "marker"){
+        var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+        if (!evs.length) evs = [e];
+        evs.forEach(function(ce){
+          var q = toDoc(ce, r), a = 1 - 0.5 * 0.82;  // smoothing as Sight's brush default
+          S0.sm = [S0.sm[0] + (q[0] - S0.sm[0]) * a, S0.sm[1] + (q[1] - S0.sm[1]) * a];
+          var n = d.pts.length;
+          if (RC.hyp(S0.sm[0] - d.pts[n - 3], S0.sm[1] - d.pts[n - 2]) < 0.75 * S0.k) return;
+          d.pts.push(RC.r2(S0.sm[0]), RC.r2(S0.sm[1]), RC.r2(d.pen ? RC.clamp(ce.pressure || 0, 0, 1) : 0.5));
+        });
+        var l = toDoc(e, r);
+        S0.last = [l[0], l[1], d.pen ? RC.clamp(e.pressure || 0, 0, 1) : 0.5];
+      } else {
+        var p = toDoc(e, r);
+        if (S0.t === "arrow") d.pts = [S0.x, S0.y, p[0], p[1]];
+        else { d.x = S0.x; d.y = S0.y; d.w = p[0] - S0.x; d.h = p[1] - S0.y; }
+      }
+      paint();
+    }
+    function finish(){
+      var S0 = stroke, it = cur;
+      stroke = null; cur = null;
+      if (S0.t === "eraser"){ if (S0.before !== items){ undo.push(S0.before); redo.length = 0; } paint(); return; }
+      if (!it){ paint(); return; }
+      var d = it.data, t = S0.t, k = S0.k;
+      if (t === "brush" || t === "marker"){
+        var n = d.pts.length;
+        if (S0.last && RC.hyp(S0.last[0] - d.pts[n - 3], S0.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(RC.r2(S0.last[0]), RC.r2(S0.last[1]), RC.r2(S0.last[2]));
+      } else if (t === "arrow"){
+        if (RC.hyp(d.pts[2] - d.pts[0], d.pts[3] - d.pts[1]) / k < 3){ paint(); return; }
+        d.pts = d.pts.map(RC.r2);
+      } else {
+        if (Math.abs(d.w) / k < 3 && Math.abs(d.h) / k < 3){ paint(); return; }
+        if (d.w < 0){ d.x += d.w; d.w = -d.w; }
+        if (d.h < 0){ d.y += d.h; d.h = -d.h; }
+        ["x", "y", "w", "h"].forEach(function(key){ d[key] = RC.r2(d[key]); });
+      }
+      undo.push(items); redo.length = 0;
+      items = items.concat([it]);
+      paint();
+    }
+    function abort(){
+      if (stroke && stroke.t === "eraser") items = stroke.before;
+      stroke = null; cur = null; paint();
+    }
+    // Removes the objects drawn here that the eraser touches (others' drawings stay).
+    function eraseAt(p){
+      var tol = SIZE.eraser * stroke.k;
+      var left = items.filter(function(it){ return !RC.hitTest(it, p[0], p[1], tol); });
+      if (left.length !== items.length){ items = left; paint(); }
+    }
+    function onKey(e){
+      var mod = e.ctrlKey || e.metaKey;
+      if (e.key === "Escape" && !mod && !e.altKey && !e.shiftKey) cancel.onclick();
+      else if (mod && !e.altKey && (e.key === "z" || e.key === "Z")){ if (e.shiftKey) doRedo(); else doUndo(); }
+      else if (mod && !e.altKey && !e.shiftKey && e.key === "y") doRedo();
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    }
+    function close(){
+      root.remove(); document.body.classList.remove("zoomed");
+      document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", onResize);
+    }
+    document.body.appendChild(root); document.body.classList.add("zoomed");
+    document.addEventListener("keydown", onKey, true); window.addEventListener("resize", onResize);
+    paintBar(); paint(); fit();
+  }
+
   function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
-  function thumbs(list){
-    var srcs = (list || []).map(shotSrc).filter(Boolean);
-    if (!srcs.length) return null;
-    var sh = el("div", "shots"), gal = noteGal || srcs.slice();
-    srcs.forEach(function(s){ var k = gal === srcs ? -1 : gal.push(s) - 1, i = el("img"); i.src = s; i.alt = ""; i.onclick = function(){ zoom(gal, k < 0 ? srcs.indexOf(s) : k); }; sh.appendChild(i); });
+  function thumbs(list, nid){
+    var sids = (list || []).filter(shotSrc);
+    if (!sids.length) return null;
+    var sh = el("div", "shots"), gal = noteGal || [];
+    sids.forEach(function(s){
+      var src = shotSrc(s), k = gal.push({ src: src, note: nid }) - 1, i = el("img");
+      i.src = src; i.alt = ""; i.onclick = function(){ zoom(gal, k); }; sh.appendChild(i);
+    });
     return sh;
   }
   // Pictures are scaled down to 1600 px JPEG so the reply file and the page's storage stay small.
@@ -597,14 +1074,15 @@ body.zoomed { overflow: hidden; }
     });
   }
   var coarse = window.matchMedia && matchMedia("(pointer: coarse)").matches;
-  // One message field: text, pictures and (for a note) a state to set with it.
-  // opts: {key, placeholder, status (current state, or null for a new note), onSend(text, shots, state)}.
+  // One message field: text, pictures, a drawing and (for a note) a state to set with it.
+  // opts: {key, placeholder, status (current state, or null for a new note), onSend(text, shots, state, draw)}.
   function composer(opts){
-    var dr = drafts[opts.key] = drafts[opts.key] || { text: "", shots: [], state: "" };
+    var dr = drafts[opts.key] = drafts[opts.key] || newDraft();
+    var frames = drawFrames(opts.key);
     var box = el("div", "cmp"); box.dataset.key = opts.key;
     var send = el("button", "send"); send.type = "button"; send.title = "Send"; send.setAttribute("aria-label", "Send");
     send.appendChild(svg('<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor"/>', 17));
-    function can(){ return !!(dr.text.trim() || dr.shots.length || dr.state); }
+    function can(){ return !!(dr.text.trim() || dr.shots.length || dr.state || dr.draw); }
     function paint(){ send.disabled = !can(); }
     if (opts.status){
       var o = el("div", "opts"); o.appendChild(el("span", "", "Mark as"));
@@ -619,11 +1097,20 @@ body.zoomed { overflow: hidden; }
     var f = el("div", "field");
     var atts = el("div", "atts");
     function paintAtts(){
-      atts.textContent = ""; atts.hidden = !dr.shots.length;
+      atts.textContent = ""; atts.hidden = !dr.shots.length && !dr.draw;
+      var fr = dr.draw && frameOf(dr.draw.frame);
+      if (fr){
+        var s0 = el("span"), th = pic(fr, dr.draw.items, "");
+        th.title = "Edit the drawing"; th.onclick = function(){ editDraw(opts.key, dr.draw.frame); };
+        var x0 = el("button", "", "×"); x0.type = "button"; x0.title = "Remove the drawing";
+        x0.onclick = function(e){ e.stopPropagation(); dr.draw = null; paintAtts(); paint(); paintPen(); };
+        s0.appendChild(th); s0.appendChild(x0); atts.appendChild(s0);
+      }
       dr.shots.forEach(function(a, i){
-        var s = el("span"), im = el("img"); im.src = a.src; im.alt = ""; s.appendChild(im);
+        var s = el("span"), im = el("img"); im.src = a.src; im.alt = ""; im.title = "Draw on this picture"; s.appendChild(im);
+        im.onclick = function(){ drawFlat(a.src, function(out){ a.src = out; a.id = uid(); render(); }); };
         var x = el("button", "", "×"); x.type = "button"; x.title = "Remove picture";
-        x.onclick = function(){ dr.shots.splice(i, 1); paintAtts(); paint(); };
+        x.onclick = function(e){ e.stopPropagation(); dr.shots.splice(i, 1); paintAtts(); paint(); };
         s.appendChild(x); atts.appendChild(s);
       });
     }
@@ -645,19 +1132,28 @@ body.zoomed { overflow: hidden; }
     var clip = el("button", "clip"); clip.type = "button"; clip.title = "Attach pictures"; clip.setAttribute("aria-label", "Attach pictures");
     clip.appendChild(svg('<path d="m20.5 11.5-8.3 8.3a5.2 5.2 0 0 1-7.4-7.4l8.6-8.6a3.5 3.5 0 0 1 4.9 4.9l-8.6 8.6a1.7 1.7 0 0 1-2.5-2.5l7.9-7.9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>', 19));
     clip.onclick = function(){ file.click(); };
+    var penB = null;
+    function paintPen(){ if (penB) penB.classList.toggle("on", !!dr.draw); }
+    if (frames.length){
+      penB = el("button", "pen"); penB.type = "button"; penB.title = "Draw"; penB.setAttribute("aria-label", "Draw");
+      penB.appendChild(svg('<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 20h6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>', 19));
+      penB.onclick = function(){ if (dr.draw) editDraw(opts.key, dr.draw.frame); else pickFrame(frames, function(k){ editDraw(opts.key, k); }); };
+      ta.classList.add("d");
+      paintPen();
+    }
     send.onclick = function(){
       if (!can()) return;
       dr.shots.forEach(function(a){ E.att[a.id] = a.src; });
       delete drafts[opts.key];  // before onSend: it re-renders, which would bring the draft back
-      opts.onSend(dr.text.trim(), dr.shots.map(function(a){ return a.id; }), dr.state);
+      opts.onSend(dr.text.trim(), dr.shots.map(function(a){ return a.id; }), dr.state, dr.draw);
     };
-    f.appendChild(atts); f.appendChild(ta); f.appendChild(clip); f.appendChild(send); f.appendChild(file);
+    f.appendChild(atts); f.appendChild(ta); f.appendChild(clip); if (penB) f.appendChild(penB); f.appendChild(send); f.appendChild(file);
     box.appendChild(f);
     paintAtts(); paint();
     requestAnimationFrame(grow);
     return box;
   }
-  function entry(r){
+  function entry(r, nid){
     var mine = r.mine;
     if (r.event){
       var ev = EV[r.event] || EV.open;
@@ -668,7 +1164,17 @@ body.zoomed { overflow: hidden; }
     var d2 = el("div", "rep" + (mine ? " mine" : ""));
     d2.appendChild(el("div", "rh", [r.author, r.date].filter(Boolean).join(" · ")));
     if (r.text) d2.appendChild(el("div", "rt", r.text));
-    var sh = thumbs(r.shots); if (sh) d2.appendChild(sh);
+    // The reply's drawing, on its note's frame.
+    var f = r.id && frameOf(nid);
+    if (f){
+      var rf = Object.assign({}, f, { reply: r.id }), list = drawingsOf(rf);
+      if (list.length){
+        var gal = noteGal || [], k = gal.push({ f: rf }) - 1, th = pic(rf, list, "sm");
+        th.onclick = function(){ zoom(gal, k); };
+        d2.appendChild(th);
+      }
+    }
+    var sh = thumbs(r.shots, nid); if (sh) d2.appendChild(sh);
     return d2;
   }
   function noteCard(n, local){
@@ -682,18 +1188,33 @@ body.zoomed { overflow: hidden; }
     h.appendChild(el("span", "state " + st, local ? "New · not sent yet" : STATES[st] || "Open"));
     c.appendChild(h);
     if (n.text) c.appendChild(el("div", "text", n.text));
-    if (n.frame){ var f = el("img", "frame"), fk = frameGal.push(n.frame) - 1; f.src = n.frame; f.alt = ""; f.onclick = function(){ zoom(frameGal, fk); }; c.appendChild(f); }
+    // The note's picture: its video frame / 3D view, or (pictures) the cover when the note has
+    // drawings; a new note shows the picture its drawing was made on.
+    var f = null;
+    if (local){ var lf = n.fkey && frameOf(n.fkey); if (lf) f = Object.assign({}, lf, { note: id, reply: null, local: true }); }
+    else f = frameOf(id);
+    if (f && (M.kind !== "image" || drawingsOf(f).length)){
+      var fk = frameGal.push({ f: f }) - 1, pw = pic(f, shownOn(f));
+      pw.onclick = function(){ zoom(frameGal, fk); };
+      c.appendChild(pw);
+    } else if (!VEC && n.frame && !local){
+      var fi = el("img", "frame"), fk2 = frameGal.push({ src: n.frame }) - 1; fi.src = n.frame; fi.alt = ""; fi.onclick = function(){ zoom(frameGal, fk2); }; c.appendChild(fi);
+    }
     if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
-    var sh = thumbs(n.shots); if (sh) c.appendChild(sh);
+    var sh = thumbs(n.shots, id); if (sh) c.appendChild(sh);
     var mineL = E.replies[id] || [];
     var reps = (n.replies || []).concat(mineL.map(function(r){ return { id: r.id, author: r.author, date: fmt(r.created), text: r.text, event: r.event, shots: r.shots, mine: true }; }));
     if (reps.length){
       var rb = el("div", "replies");
       reps.forEach(function(r){
-        var d = entry(r);
+        var d = entry(r, id);
         if (r.mine){
           var x = el("button", "x", "×"); x.type = "button"; x.title = "Remove (not sent yet)";
-          x.onclick = function(){ E.replies[id] = mineL.filter(function(y){ return y.id !== r.id; }); if (!E.replies[id].length) delete E.replies[id]; save(); render(); };
+          x.onclick = function(){
+            E.replies[id] = mineL.filter(function(y){ return y.id !== r.id; }); if (!E.replies[id].length) delete E.replies[id];
+            E.rows = E.rows.filter(function(y){ return y.data.reply !== r.id; });
+            save(); render();
+          };
           d.appendChild(x);
         }
         rb.appendChild(d);
@@ -702,14 +1223,21 @@ body.zoomed { overflow: hidden; }
     }
     if (local){
       var del = el("button", "btn", "Remove");
-      del.onclick = function(){ E.notes = E.notes.filter(function(x){ return x.id !== id; }); save(); render(); };
+      del.onclick = function(){
+        E.notes = E.notes.filter(function(x){ return x.id !== id; });
+        E.rows = E.rows.filter(function(y){ return y.data.note !== id; });
+        save(); render();
+      };
       var a0 = el("div", "acts"); a0.appendChild(del); c.appendChild(a0);
       return c;
     }
     if (openReply[id]){
-      var cmp = composer({ key: id, placeholder: "Reply", status: st, onSend: function(text, shots, state){
+      var cmp = composer({ key: id, placeholder: "Reply", status: st, onSend: function(text, shots, state, draw){
         var L = E.replies[id] = E.replies[id] || [], now = Date.now();
-        if (text || shots.length){ var r = { id: uid(), text: text, author: who, created: now }; if (shots.length) r.shots = shots; L.push(r); }
+        if (text || shots.length || draw){
+          var r = { id: uid(), text: text, author: who, created: now }; if (shots.length) r.shots = shots; L.push(r);
+          if (draw) E.rows = E.rows.concat(drawRows(draw, id, r.id));
+        }
         if (state) L.push({ id: uid(), event: state, author: who, created: now + 1 });
         delete openReply[id];
         save(); render();
@@ -728,15 +1256,23 @@ body.zoomed { overflow: hidden; }
     var app = document.getElementById("app");
     var keepY = window.scrollY;
     app.textContent = "";
-    if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cv); }
+    var cf = frameOf("cover");
+    if (cf){ var cw = pic(cf, shownOn(cf), "cover-w"); cw.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cw); }
+    else if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cv); }
     var list = el("div", ""); list.id = "list"; app.appendChild(list);
     if (newOpen){
       var comp = el("div", "compose"), h3 = el("h3"), x = el("button", "", "×");
       h3.appendChild(el("span", "", "New note")); x.type = "button"; x.title = "Discard this note";
       x.onclick = function(){ newOpen = false; delete drafts["+new"]; render(); };
       h3.appendChild(x); comp.appendChild(h3);
-      var nc = composer({ key: "+new", placeholder: "Add a new note…", status: null, onSend: function(text, shots){
-        E.notes.push({ id: uid(), text: text, author: who, created: Date.now(), shots: shots });
+      var nc = composer({ key: "+new", placeholder: "Add a new note…", status: null, onSend: function(text, shots, state, draw){
+        var nn = { id: uid(), text: text, author: who, created: Date.now(), shots: shots };
+        if (draw){
+          var f = frameOf(draw.frame);
+          nn.frame = draw.frame; nn.ctx = f && f.ctx ? clone(f.ctx) : null;
+          E.rows = E.rows.concat(drawRows(draw, nn.id, null));
+        }
+        E.notes.push(nn);
         newOpen = false; save(); render();
       } });
       comp.appendChild(nc); app.appendChild(comp);
@@ -745,7 +1281,7 @@ body.zoomed { overflow: hidden; }
     document.getElementById("add").classList.toggle("on", !!newOpen);
     app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight."));
     renderList();
-    paintFoot(); paintSeg();
+    paintFoot(); paintSeg(); paintShow();
     window.scrollTo(0, keepY);
   }
   // Focus a field once the current click is over: closing an empty field re-renders the page
@@ -759,12 +1295,13 @@ body.zoomed { overflow: hidden; }
   }
   function stateOfShown(n){ return n.local ? "open" : statusOf(n.id); }
   function allNotes(){
-    return (R.notes || []).concat(E.notes.map(function(n){ return { id: n.id, text: n.text, author: n.author, date: fmt(n.created), shots: n.shots, local: true }; }));
+    return (R.notes || []).concat(E.notes.map(function(n){ return { id: n.id, text: n.text, author: n.author, date: fmt(n.created), shots: n.shots, fkey: n.frame, ctx: n.frame && noteById[n.frame] ? noteById[n.frame].ctx : "", local: true }; }));
   }
   function renderList(){
     var list = document.getElementById("list");
     list.textContent = "";
-    frameGal = R.cover ? [R.cover] : [];
+    var cf = frameOf("cover");
+    frameGal = cf ? [{ f: cf }] : R.cover ? [{ src: R.cover }] : [];
     var ql = query.trim().toLowerCase();
     allNotes().filter(function(n){
       if (filter !== "all" && stateOfShown(n) !== filter) return false;
@@ -785,6 +1322,18 @@ body.zoomed { overflow: hidden; }
       seg.appendChild(b);
     });
   }
+  // Mine / Others drawing switches (the pencil next to search; highlighted while any is off).
+  var vwrap = document.getElementById("vwrap"), vmenu = document.getElementById("vmenu");
+  function paintShow(){
+    vwrap.hidden = !VEC || !(exported.length || E.rows.length);
+    document.getElementById("vmine").checked = show.mine;
+    document.getElementById("voth").checked = show.others;
+    document.getElementById("vbtn").classList.toggle("on", !(show.mine && show.others));
+  }
+  function setShow(k, v){ show[k] = v; try { localStorage.setItem("sight-review:show", JSON.stringify(show)); } catch (e) {} render(); }
+  document.getElementById("vbtn").onclick = function(){ vmenu.hidden = !vmenu.hidden; };
+  document.getElementById("vmine").onchange = function(){ setShow("mine", this.checked); };
+  document.getElementById("voth").onchange = function(){ setShow("others", this.checked); };
   function paintFoot(){
     var n = changes();
     document.getElementById("status").textContent = n ? n + " change" + (n > 1 ? "s" : "") : "No changes yet";
@@ -793,9 +1342,9 @@ body.zoomed { overflow: hidden; }
   }
   // The reply file is the exported package with this page's edits merged in by the shared rules
   // (review-core.js mergeRows = Library.import_annotations): local replies / state changes are
-  // unioned into their notes, the state goes by status_at, new notes are added. The note's own
-  // content stamp (edited_at / created) is untouched, so answering never makes this copy of the
-  // note's text win over edits made in Sight since.
+  // unioned into their notes, the state goes by status_at, new notes and drawings are added. The
+  // note's own content stamp (edited_at / created) is untouched, so answering never makes this
+  // copy of the note's text win over edits made in Sight since.
   function download(){
     var now = Date.now(), used = {};
     var out = JSON.parse(JSON.stringify(PKG));
@@ -816,8 +1365,9 @@ body.zoomed { overflow: hidden; }
     E.notes.forEach(function(n){
       keep(n.shots);
       mine.push({ id: n.id, kind: "note", shape_kind: null, x: null, y: null, w: null, h: null, rotation: 0, z_index: 0, color: null,
-        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: n.shots || [] }, locked: 0, created_at: n.created, updated_at: n.created });
+        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: n.ctx || null, shots: n.shots || [] }, locked: 0, created_at: n.created, updated_at: n.created });
     });
+    mine = mine.concat(E.rows);
     var keys = ["id", "kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_index", "color", "data", "locked", "created_at", "updated_at"];
     // An exported note keeps its exported updated_at: Sight before 0.17 merged notes by it, and a
     // reply must not make this copy of the text win (or revive a note deleted) there.
@@ -877,6 +1427,7 @@ body.zoomed { overflow: hidden; }
     if (!v) return;
     who = v; try { localStorage.setItem("sight-review:name", who); } catch (x) {}
     document.getElementById("gate").hidden = true; paintMe();
+    render();  // "mine" drawings follow the name
   };
   document.getElementById("gcancel").onclick = function(){ if (who) document.getElementById("gate").hidden = true; };
   document.getElementById("me").onclick = askName;
@@ -891,9 +1442,9 @@ body.zoomed { overflow: hidden; }
   document.getElementById("dl").onclick = download;
   // The new-note form shows only after the + in the bottom bar (one at a time; + again jumps to it).
   document.getElementById("add").onclick = function(){ opening = "+new"; newOpen = "focus"; render(); };
-  // An empty field (no text, picture or state) is a cancel: a tap anywhere else closes it. Runs
-  // after the tap's own handler, so a field that tap just opened (`opening`) stays.
-  function isEmpty(k){ var d = drafts[k]; return !d || !(d.text.trim() || d.shots.length || d.state); }
+  // An empty field (no text, picture, drawing or state) is a cancel: a tap anywhere else closes
+  // it. Runs after the tap's own handler, so a field that tap just opened (`opening`) stays.
+  function isEmpty(k){ var d = drafts[k]; return !d || !(d.text.trim() || d.shots.length || d.state || d.draw); }
   function closeEmpty(target){
     var changed = false;
     function inside(k){ var b = document.querySelector('.cmp[data-key="' + k + '"]'); var w = b && (b.closest(".compose") || b); return !!(target && w && w.contains(target)); }
@@ -906,10 +1457,11 @@ body.zoomed { overflow: hidden; }
     if (changed) render();
   }
   document.addEventListener("click", function(e){
-    if (!document.getElementById("gate").hidden || e.target.closest(".zoom")){ opening = null; return; }
+    if (!e.target.closest("#vwrap")) vmenu.hidden = true;
+    if (!document.getElementById("gate").hidden || e.target.closest(".zoom, .draw, .pick")){ opening = null; return; }
     closeEmpty(e.target);
   });
-  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, pictures, status changes and new notes on this page?")){ E = { replies: {}, notes: [], att: {} }; drafts = {}; openReply = {}; newOpen = false; save(); render(); } };
+  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, pictures, drawings, status changes and new notes on this page?")){ E = { replies: {}, notes: [], att: {}, rows: [] }; drafts = {}; openReply = {}; newOpen = false; save(); render(); } };
   render();
   if (!who) askName();
 })();

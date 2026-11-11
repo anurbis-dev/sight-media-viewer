@@ -454,6 +454,32 @@ var SightReviewCore = (function(){
     return false;
   }
 
+  // Whether a drawing with context `c` (data.ctx) shows on a frame `at`: {t, fps} = the video frame
+  // at t seconds, {vk} = the 3D view vk (null vk: no saved view), null = a picture / no frame
+  // context (always shown). Video: from t for max(hold, one frame), hold -1 = the whole clip.
+  function ctxVisible(c, at){
+    if (!c || !at) return true;
+    if (at.t != null){
+      if (c.t == null || c.hold === -1) return true;
+      var fd = 1 / (at.fps || 25);
+      return at.t >= c.t - fd * 0.5 - 1e-3 && at.t < c.t + Math.max(c.hold || 0, fd) - fd * 0.5 + 1e-3;
+    }
+    if (Object.prototype.hasOwnProperty.call(at, "vk")) return !!c.vk && c.vk === at.vk;  // {vk: undefined} = no view
+    return true;
+  }
+
+  // A drawing as a review row (FORMAT.md "Rows"): `it` = {id, kind, sub | shape_kind, z | z_index,
+  // data}; the bounding box columns come from its geometry. `at` = created / updated stamp.
+  function drawingRow(it, at){
+    var b = boundsOf(it), t = at != null ? at : Date.now();
+    return {
+      id: it.id, kind: it.kind, shape_kind: it.sub || it.shape_kind || null,
+      x: r2(b[0]), y: r2(b[1]), w: r2(b[2] - b[0]), h: r2(b[3] - b[1]),
+      rotation: 0, z_index: zOf(it) | 0, color: it.data.color || null, locked: 0,
+      data: it.data, created_at: t, updated_at: t,
+    };
+  }
+
   // ---- merge ---------------------------------------------------------------------------------
   // Port of Library.import_annotations and friends (app/library.py). The Python side is the
   // reference; every rule here mirrors a line there. Values are coerced the way Python does
@@ -630,6 +656,7 @@ var SightReviewCore = (function(){
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
+    ctxVisible: ctxVisible, drawingRow: drawingRow,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };
 })();

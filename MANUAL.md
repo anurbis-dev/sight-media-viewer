@@ -116,7 +116,17 @@
     *+* in the bottom bar (one at a time; it can carry pictures too). Unsent entries have × to take
     them back. Tap a picture to view it full screen: swipe left / right (or ← / →) for the next
     or previous one — the picture and the note frames form one row, a note's attachments (its own
-    and its replies') another — and swipe up / down, tap or Esc to close. Everything
+    and its replies') another — and swipe up / down, tap or Esc to close. **Drawing**: the pencil
+    in a message field (or *✎ Draw* in the full-screen viewer) opens a full-screen canvas over the
+    note's frame (a new note: over the picture, or — video / 3D — over a note frame you pick; the
+    new note then sits on that frame): brush (pen pressure), highlighter, arrow, rectangle, ellipse,
+    eraser, five colours, undo / redo (Ctrl+Z / Ctrl+Shift+Z), *Done* / *Cancel*. Two fingers
+    zoom and pan; once you have drawn with a pen (Apple Pencil, stylus) the pen draws and a finger
+    pans; with a mouse the wheel zooms and the middle / right button pans. The drawing goes with
+    the reply as vectors and shows in Sight on that frame / view under the reply's eye toggle. Tap
+    an attached picture in the field (or *✎ Draw* on an attachment in the viewer) to draw over a
+    copy of it instead — that one is sent as a flat picture. The pencil next to the search shows
+    or hides *My drawings* / *Others' drawings* on the page. Everything
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
