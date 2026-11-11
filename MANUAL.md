@@ -70,7 +70,17 @@
     (field at the top), and the date. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (its drawings
     are highlighted), double-click its text to edit, ✓ resolves it, the bin deletes it with its
-    drawings. Alt+click a screenshot in a note removes it.
+    drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
+    **reply** (Enter sends); double-click a reply to edit it, × deletes it.
+  - **Review state** — the *State* row at the top of the panel marks the file *Needs review*,
+    *Changes* or *Approved*. The grid shows it as a pill on the card together with the number of open
+    notes, and the sidebar (under Types) gets *Open notes / Needs review / Changes requested /
+    Approved* rows that filter the library.
+  - **Versions** — files in the same folder whose names differ only in a version token
+    (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
+    first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them
+    and *Compare*. When the previous version still has open notes, *Copy here* brings them over
+    with their drawings (scaled if the size changed; the note says where it came from).
   - **Video** — drawings and notes belong to the frame they were made on, and show as markers on the
     timeline (red = note, green = resolved, yellow = drawing). Click a marker to go there. `,` / `.`
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
@@ -84,8 +94,33 @@
     saved to Downloads and shown in the file manager), *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
     (drag it onto the window, the same Export menu → Import, or the palette "Import review file")
-    gets the review on the same media file, found by path, else by name and size. *Copy notes as
-    text* puts a numbered list with timecodes on the clipboard.
+    gets the review on the same media file, found by path, else by name and size. Importing
+    **merges**: the same file twice changes nothing, a file that went to someone and came back adds
+    their replies / new notes / resolved states, and what was deleted on one side is deleted on the
+    other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
+    in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
+    note, screenshot and reply. The reviewer types a name, replies, resolves or adds notes (kept in
+    that browser until sent) and clicks *Download reply (.srev)*; importing that file brings it all
+    in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
+- **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
+  those; with one selected or under the cursor (or in the lightbox), compares the versions of that
+  file (see *Versions* above). Also the palette and the review panel's *Compare* button.
+  - Layouts (`1`–`4`): **Swipe** — all layers stacked in one view and cut by split lines, one
+    region per layer; drag anywhere to move the nearest split (Alt+drag pans), `V` switches between
+    side-by-side and top / bottom splits. **Tile**, **Row** (horizontal strip), **Column** (vertical
+    strip) — one cell per layer.
+  - Blend: **Over** shows the layers as they are; **Difference** (`D`) draws each layer as the
+    difference to the reference layer (★, `R` makes the selected layer the reference) — identical
+    pixels turn black, so any change stands out. Works in every layout.
+  - Layers bar at the bottom: click selects (`↑` / `↓`), ☆ reference, ◉ show / hide (`H`), drag a
+    chip to reorder, ⤢ opens the file in the viewer, × removes, *+ Add* brings in another version.
+  - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
+    `Home`, `L` loop). Each clip has a **first-frame offset** (− / + on its chip, click the number to
+    type it, or `[` / `]` for the selected clip, `Shift` ×10): where its first frame sits on the
+    timeline, to line up clips that start or run differently. The coloured bars on the timeline show
+    each clip's span; 🔈 picks whose sound plays.
+  - Wheel zooms around the cursor, right / middle drag pans (left drag in the tile layouts),
+    double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
 - **Missing files** — files that were moved or deleted stay in the library as "Missing" (sidebar),
   and show up right away (no need to switch views/sources to see it — the grid updates live).
   To clear them out: hover the Missing row and click 🧹 (whole library), run "Remove missing files

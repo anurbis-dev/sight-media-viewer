@@ -183,6 +183,11 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .card.miss { opacity: .5; }
 /* Ctrl held = box-select mode (same arrow cursor as on a canvas board); see the ctrl-down toggle in the key handlers. */
 html.ctrl-down .card { cursor: default; }
+.card .rv { position: absolute; left: 8px; top: 8px; z-index: 3; max-width: calc(100% - 16px); padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 15px; color: #fff; background: rgb(208 52 44 / .92); box-shadow: 0 1px 4px rgb(0 0 0 / .4); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .rv[hidden] { display: none; }
+.card .rv.review { background: rgb(255 159 10 / .95); color: #1d1300; }
+.card .rv.changes { background: rgb(208 52 44 / .95); }
+.card .rv.approved { background: rgb(47 157 91 / .95); }
 .card.compact { flex-direction: row; align-items: center; height: 36px; border-radius: 6px; padding: calc(var(--card-pad) / 2); gap: 8px; background: var(--card-bg); }
 .thumb { position: relative; aspect-ratio: 1; width: 100%; background: var(--card-bg); overflow: hidden; border-radius: var(--thumb-radius); }
 .card.compact .thumb { width: 28px; height: 28px; aspect-ratio: auto; border-radius: 4px; flex: none; }
@@ -595,6 +600,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 <script type="module">
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
+import { createCompare, comparable, flash } from "/static/compare.js";
 import { hotkey } from "/static/keys.js";
 const KIND = { image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
@@ -803,7 +809,7 @@ const state = {
   selected: null,
   selectedIds: [],
   anchor: null,
-  filter: { q:"", kind:"", source:"", tag:"", missing:false, collection:"", folder:"" },
+  filter: { q:"", kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"" },
   sort: loadSort(),
   meta: { sources:[], counts:{}, pending:0, scanning:false, ffmpeg:true, scanned:0, tags:[], collections:[] },
   tile: clampTile(Number(localStorage.getItem(TILE_KEY)) || RUNTIME_DEFAULT_TILE),
@@ -858,7 +864,44 @@ const annot = createAnnotator({
     if (light) showInLight(a); else toggleLight(a);
   },
   onModeChange: () => syncLightHint(),
+  openCompare: (ids, focus) => openCompare(ids, focus),
+  // A note added / resolved or the review state changed: the grid pill and the sidebar counts.
+  onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
 });
+// Version compare (compare.js) — K in the grid (2+ selected files, or the versions of the one
+// under the cursor / selected) and in the lightbox (versions of the open file).
+const cmp = createCompare({
+  api: (path, opts) => api(path, opts),
+  putSetting: (k, v) => putSetting(k, v),
+  assetById: (id) => assetById(id),
+  versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
+  openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
+});
+function openCompare(ids, focus){
+  for (const m of [light?.video, light?.audio]) { try { m?.pause(); } catch {} }
+  return cmp.open(ids, focus);
+}
+async function compareFromContext(){
+  let ids = null, focus = null;
+  if (light) focus = light.id;
+  else {
+    const sel = selectedAssets().filter(comparable);
+    if (sel.length >= 2){
+      sel.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      ids = sel.map((a) => a.id);
+      focus = ids[0];
+    } else focus = (sel[0] || assetUnderPointer())?.id || null;
+  }
+  if (!ids){
+    const a = focus && (assetById(focus) || (light && light.id === focus ? light.asset : null));
+    if (!a || !comparable(a)){ flash("Compare: select 2 or more images / videos, or open one that has versions"); return; }
+    let list = [];
+    try { list = ((await api(`/api/assets/${focus}/versions`)).items || []).filter(comparable); } catch {}
+    if (list.length < 2){ flash(`No other versions of ${a.name} in its folder — select the files to compare and press K`); return; }
+    ids = list.map((x) => x.id);
+  }
+  openCompare(ids, focus);
+}
 let skipClick = false;
 let navClickTrack = { key: null, at: 0 };
 let panDrag = null, tileDrag = null, marquee = null, boxEl = null;
@@ -1350,7 +1393,7 @@ function ensureCard(a, i, L, pos){
     el = document.createElement("button");
     el.type = "button";
     el.dataset.id = a.id;
-    el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div>`;
+    el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div><div class="rv" hidden></div>`;
     el.draggable = false;
     el.addEventListener("pointerdown", (ev) => {
       el.draggable = ev.button === 0 && !ev.ctrlKey && !ev.metaKey;
@@ -1412,6 +1455,13 @@ function ensureCard(a, i, L, pos){
   s.hidden = !o.size;
   el.querySelector(".j").textContent = pack ? [k, c, r, s].filter((x) => !x.hidden && x.textContent).map((x) => x.textContent).join(" · ") : "";
   el.querySelector(".meta").hidden = !showMeta;
+  // Review state / open notes from the lightbox review panel.
+  const rv = el.querySelector(".rv");
+  const rvText = [a.review ? REVIEW_LABEL[a.review] || "" : "", a.open_notes ? `${a.open_notes} open` : ""].filter(Boolean).join(" · ");
+  rv.hidden = !rvText;
+  rv.textContent = rvText;
+  rv.className = "rv" + (a.review ? " " + a.review : "");
+  rv.title = a.open_notes ? `${a.open_notes} open review note${a.open_notes > 1 ? "s" : ""}` : "";
   fillThumb(el, a, false, pos);
   return el;
 }
@@ -1898,7 +1948,7 @@ function navDblClick(key, threshold = 400){
 }
 
 function applyFilter(patch){
-  state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", ...patch };
+  state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", ...patch };
   renderNav();
   resetList();
 }
@@ -2081,7 +2131,7 @@ function renderTypes(set){
   bindSectionDrag(wrap, "types");
   nav.append(wrap);
   if (state.navCollapse.types) return;
-  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.folder, () => set({})));
+  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.folder && !f.review, () => set({})));
   for (const k of Object.keys(KIND)){
     wrap.append(row(KIND[k], c[k] || 0, f.kind === k, () => set({ kind: k })));
   }
@@ -2091,7 +2141,15 @@ function renderTypes(set){
   missRow.innerHTML = `<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
   missRow.onclick = (e) => { if (e.target.closest("button")) purgeMissing(false); else set({ missing: true }); };
   wrap.append(missRow);
+  // Review rows (lightbox review panel / annotate.js): only the ones with something in them, so a
+  // library nobody reviews keeps a short list. The active one stays even when it empties.
+  for (const [k, label] of REVIEW_ROWS){
+    const n = c["review_" + k] || 0;
+    if (n || f.review === k) wrap.append(row(label, n, f.review === k, () => set({ review: k })));
+  }
 }
+const REVIEW_ROWS = [["open", "Open notes"], ["review", "Needs review"], ["changes", "Changes requested"], ["approved", "Approved"]];
+const REVIEW_LABEL = { review: "Needs review", changes: "Changes", approved: "Approved" };
 
 // Swaps the main content area between the library grid and a canvas board — the first alternate
 // main view this app has ever had, so this stays a plain visibility toggle rather than a router
@@ -6731,7 +6789,7 @@ function lightStepRow(dir, e){
 }
 
 function isFilterEmpty(f){
-  return !f.q && !f.kind && !f.source && !f.tag && !f.collection && !f.folder;
+  return !f.q && !f.kind && !f.source && !f.tag && !f.collection && !f.folder && !f.review;
 }
 
 function filterParams(f){
@@ -6742,6 +6800,7 @@ function filterParams(f){
   if (f.tag) p.set("tag", f.tag);
   if (f.collection) p.set("collection", f.collection);
   if (f.folder) p.set("folder", f.folder);
+  if (f.review) p.set("review", f.review);
   return p;
 }
 
@@ -6834,6 +6893,7 @@ function params(){
   if (f.missing) p.set("missing", "1");
   if (f.collection) p.set("collection", f.collection);
   if (f.folder) p.set("folder", f.folder);
+  if (f.review) p.set("review", f.review);
   if (state.sort.key){ p.set("sort", state.sort.key); p.set("order", state.sort.dir); }
   return p;
 }
@@ -6976,6 +7036,7 @@ function paletteActions(){
       openBoard(b.id);
     } },
     { label: "Import review file (.srev)…", run: () => pickReviewFile() },
+    { label: "Compare versions / selected files", hint: "K", run: () => compareFromContext() },
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
     ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
@@ -7723,6 +7784,8 @@ document.addEventListener("keydown", (e) => {
   if (!selPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeSelectPop(); return; }
   if (!$("fbOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); fbClose(); return; }
   if (!$("fbOverlay").hidden) return;
+  if (cmp.isOpen()){ if (cmp.onKey(e)) return; }
+  if (hotkey(e, "KeyK") && !typing && !e.repeat){ e.preventDefault(); compareFromContext(); return; }
   // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles
   // the mode; in a 3D view A flies the camera, so there it is Shift+A.
   if (light && annot.onKey(e)) return;

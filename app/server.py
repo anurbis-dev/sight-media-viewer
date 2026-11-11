@@ -422,10 +422,11 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         folder: str = "",
         sort: str = "",
         order: str = "asc",
+        review: str = "",
     ) -> dict:
         lim = max(1, min(limit, 800))
-        items = lib.list_assets(q, kind, source, tag, bool(missing), collection, offset, lim, folder, sort, order)
-        total = lib.count_filtered(q, kind, source, tag, bool(missing), collection, folder) if offset == 0 else None
+        items = lib.list_assets(q, kind, source, tag, bool(missing), collection, offset, lim, folder, sort, order, review)
+        total = lib.count_filtered(q, kind, source, tag, bool(missing), collection, folder, review) if offset == 0 else None
         return {"items": items, "offset": offset, "total": total}
 
     @app.get("/api/assets/{aid}")
@@ -855,6 +856,22 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
         return {**res, "pages": pages}
 
+    @app.post("/api/review/export/html")
+    async def export_review_html(request: Request) -> dict:
+        body = await json_body(request)
+        a = lib.get_asset(str(body.get("asset_id") or ""))
+        if not a:
+            raise HTTPException(404)
+        rows = lib.annotations_for_asset(a["id"])
+        pkg = review.build_package(a, rows, lib.root, str(body.get("author") or ""), APP_VERSION,
+                                   lib.annotation_tombstones(a["id"]))
+        report = {k: body.get(k) for k in ("title", "subtitle", "meta", "cover", "notes")}
+        page = await asyncio.to_thread(review.build_html, report, pkg)
+        stem = review.safe_name(f"{Path(a['name']).stem} review")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".html")
+        out.write_text(page, encoding="utf-8")
+        return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+
     @app.post("/api/review/export/package")
     async def export_review_package(request: Request) -> dict:
         body = await json_body(request)
@@ -862,11 +879,28 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if not a:
             raise HTTPException(404)
         rows = lib.annotations_for_asset(a["id"])
-        pkg = review.build_package(a, rows, lib.root, str(body.get("author") or ""), APP_VERSION)
+        pkg = review.build_package(a, rows, lib.root, str(body.get("author") or ""), APP_VERSION,
+                                   lib.annotation_tombstones(a["id"]))
         stem = review.safe_name(f"{Path(a['name']).stem} review")
         out = review.unique_path(review.export_dir(lib.root), stem, review.PACKAGE_EXT)
         out.write_text(json.dumps(pkg, ensure_ascii=False), encoding="utf-8")
         return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+
+    @app.get("/api/assets/{aid}/versions")
+    def asset_versions(aid: str) -> dict:
+        return {"items": lib.asset_versions(aid)}
+
+    @app.put("/api/assets/{aid}/review-status")
+    async def put_review_status(aid: str, request: Request) -> dict:
+        body = await json_body(request)
+        if not lib.get_asset(aid):
+            raise HTTPException(404)
+        try:
+            res = lib.set_review_status(aid, str(body.get("state") or ""), str(body.get("author") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        lib.bus.publish({"type": "batch", "n": 0})
+        return res
 
     @app.post("/api/review/import")
     async def import_review(request: Request) -> dict:
@@ -878,13 +912,14 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         a = lib.match_review_asset(meta)
         if not a:
             return JSONResponse({"ok": False, "missing": meta.get("name") or "", "asset": meta}, status_code=404)
-        id_map: dict[str, str] = {}
-        for old, url in (pkg.get("shots") or {}).items():
+        for sid, url in (pkg.get("shots") or {}).items():
             data = review.decode_data_url(url)
             if data:
-                id_map[str(old)] = await asyncio.to_thread(review.save_shot, lib.root, data)
-        n = lib.import_annotations(a["id"], [r for r in pkg["annotations"] if isinstance(r, dict)], id_map)
-        return {"ok": True, "asset_id": a["id"], "added": n, "author": pkg.get("author") or ""}
+                await asyncio.to_thread(review.put_shot, lib.root, str(sid), data)
+        rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+        deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
+        stats = await asyncio.to_thread(lib.import_annotations, a["id"], rows, deleted)
+        return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or ""}
 
     @app.get("/api/events")
     def events():

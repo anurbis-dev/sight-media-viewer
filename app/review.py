@@ -44,6 +44,17 @@ def save_shot(root: Path, data: bytes) -> str:
     return sid
 
 
+def put_shot(root: Path, sid: str, data: bytes) -> str:
+    """Stores an imported screenshot under its original id (ids are random 64-bit, so the same id
+    is the same picture): importing a package again does not copy its screenshots again."""
+    if not SHOT_ID.match(sid or ""):
+        return save_shot(root, data)
+    if shot_path(root, sid) is None:
+        ext = ".jpg" if data[:3] == b"\xff\xd8\xff" else ".png"
+        (shots_dir(root) / f"{sid}{ext}").write_bytes(data)
+    return sid
+
+
 def shot_path(root: Path, sid: str) -> Path | None:
     if not SHOT_ID.match(sid or ""):
         return None
@@ -100,6 +111,7 @@ h1 { font-size: 17pt; margin: 0 0 2pt 0; }
 .who { color: #6e6e73; }
 .text { font-size: 10.5pt; margin: 2pt 0 4pt 0; }
 .status { color: #34a853; font-weight: bold; }
+.reply { font-size: 9.5pt; margin: 0 0 4pt 10pt; padding: 0 0 0 6pt; border-left: 1.5pt solid #c7c7cc; }
 img { display: block; margin: 4pt 0 2pt 0; }
 .cap { color: #8e8e93; font-size: 7.5pt; margin: 0 0 4pt 0; }
 """
@@ -118,8 +130,8 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
 
 def build_pdf(payload: dict, root: Path, out: Path) -> int:
     """payload: {title, subtitle, meta: [[label, value]], cover, notes: [{num, ctx, author, date,
-    text, status, frame, shots: [id], frameCaption}]} — images are data URLs (cover/frame) or shot
-    ids. Returns the page count."""
+    text, status, frame, shots: [id], frameCaption, replies: [{author, date, text}]}]} — images
+    are data URLs (cover/frame) or shot ids. Returns the page count."""
     import pymupdf
     from PIL import Image
 
@@ -172,6 +184,9 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
         parts.append(f'<div class="note{" done" if done else ""}"><p class="head">{" &#160; ".join(head)}</p>')
         if n.get("text"):
             parts.append(f'<p class="text">{esc(n["text"])}</p>')
+        for r in n.get("replies") or []:
+            who = " &#183; ".join(esc(x) for x in (r.get("author"), r.get("date")) if x)
+            parts.append(f'<p class="reply"><span class="who">{who}</span><br/>{esc(r.get("text"))}</p>')
         frame = put_image(decode_data_url(n.get("frame") or ""))
         if frame:
             parts.append(_img_tag(*frame, max_h=300))
@@ -223,7 +238,8 @@ _ROW_KEYS = ("id", "kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_inde
              "locked", "created_at", "updated_at")
 
 
-def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_version: str) -> dict:
+def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_version: str,
+                  deleted: list[dict] | None = None) -> dict:
     shots: dict[str, str] = {}
     for r in rows:
         for sid in (r.get("data") or {}).get("shots") or []:
@@ -239,6 +255,9 @@ def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_ve
         "author": author,
         "asset": {k: asset.get(k) for k in ("id", "name", "path", "ext", "kind", "size", "mtime", "width", "height", "duration")},
         "annotations": [{k: r.get(k) for k in _ROW_KEYS} for r in rows],
+        # Rows deleted since: merging the package deletes them on the other side too (unless
+        # they were edited there after the delete). Older Sight versions ignore this key.
+        "deleted": list(deleted or []),
         "shots": shots,
     }
 
@@ -255,3 +274,264 @@ def parse_package(raw: bytes) -> dict:
     if not isinstance(pkg.get("annotations"), list) or not isinstance(pkg.get("asset"), dict):
         raise ValueError("Review file is incomplete")
     return pkg
+
+
+# ---- HTML page for reviewers without Sight ------------------------------------------------------
+
+def build_html(report: dict, pkg: dict) -> str:
+    """One self-contained page: the report (cover, per-note frames, notes, replies, screenshots)
+    plus the .srev package it came from. The reviewer can reply, resolve / reopen and add notes in
+    the browser (kept in localStorage), then download an updated .srev that merges back in Sight
+    (see Library.import_annotations). Everything is inline — no network access needed."""
+    # "<" only occurs inside JSON strings, so \u003c is the same data and nothing in it can close
+    # the <script> block or open a comment there.
+    data = json.dumps({"report": report, "package": pkg}, ensure_ascii=False).replace("<", "\\u003c")
+    title = html.escape(str(report.get("title") or "Review"))
+    return _HTML_TEMPLATE.replace("%%TITLE%%", title).replace("%%DATA%%", data)
+
+
+_HTML_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%%TITLE%%</title>
+<style>
+:root { --bg: #f5f5f7; --card: #fff; --fg: #1d1d1f; --muted: #6e6e73; --line: #d9d9de; --accent: #0a84ff; --red: #d0342c; --green: #2f9d5b; --chip: #ececf0; }
+@media (prefers-color-scheme: dark) { :root { --bg: #141416; --card: #1f1f23; --fg: #f2f2f0; --muted: #9a9aa2; --line: #34343a; --accent: #4c9aff; --chip: #2a2a30; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 24px 16px 120px; }
+h1 { font-size: 22px; margin: 0 0 2px; word-break: break-word; }
+.sub { color: var(--muted); font-size: 12px; word-break: break-all; margin: 0 0 10px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.meta span { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.meta b { font-weight: 600; color: var(--muted); margin-right: 4px; }
+.cover { width: 100%; border-radius: 10px; display: block; cursor: zoom-in; background: #000; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0 10px; }
+.seg { display: inline-flex; background: var(--chip); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: none; color: var(--muted); padding: 4px 12px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+.seg button.on { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+input, textarea { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; outline: none; }
+input:focus, textarea:focus { border-color: var(--accent); }
+.who { width: 180px; }
+.q { flex: 1; min-width: 140px; }
+.note { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+.note.done { opacity: .7; }
+.note.done .text { text-decoration: line-through; text-decoration-color: var(--muted); }
+.nh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.num { min-width: 22px; height: 22px; border-radius: 11px; background: var(--red); color: #fff; display: inline-grid; place-items: center; font-weight: 700; font-size: 11px; padding: 0 6px; }
+.done .num { background: var(--green); }
+.ctx { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+.state { margin-left: auto; }
+.text { white-space: pre-wrap; word-break: break-word; margin: 6px 0; font-size: 15px; }
+.frame { max-width: 100%; border-radius: 8px; display: block; margin: 8px 0 2px; cursor: zoom-in; }
+.cap { font-size: 11px; color: var(--muted); }
+.shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.shots img { height: 80px; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; }
+.replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }
+.rep { margin: 6px 0; }
+.rep .rh { font-size: 11px; color: var(--muted); }
+.rep .rt { white-space: pre-wrap; word-break: break-word; }
+.rep.mine .rh::after { content: " · not sent yet"; color: var(--accent); }
+.acts { display: flex; gap: 6px; margin-top: 10px; }
+.btn { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn[disabled] { opacity: .45; cursor: default; }
+.rbox { display: flex; gap: 6px; margin-top: 8px; }
+.rbox textarea { flex: 1; min-height: 38px; resize: vertical; }
+.compose { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 12px 14px; margin: 16px 0; }
+.compose textarea { width: 100%; min-height: 60px; resize: vertical; }
+.compose .acts { justify-content: flex-end; }
+.foot { position: fixed; left: 0; right: 0; bottom: 0; background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
+.foot div { max-width: 980px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 10px; }
+.foot span { flex: 1; color: var(--muted); font-size: 13px; }
+.zoom { position: fixed; inset: 0; background: rgb(0 0 0 / .88); display: grid; place-items: center; cursor: zoom-out; z-index: 10; }
+.zoom img { max-width: 96vw; max-height: 96vh; }
+.empty { color: var(--muted); padding: 20px 0; }
+.gen { font-size: 11px; color: var(--muted); text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div class="foot"><div><span id="status"></span><button class="btn" id="reset" type="button">Discard my changes</button><button class="btn primary" id="dl" type="button">Download reply (.srev)</button></div></div>
+<script id="data" type="application/json">%%DATA%%</script>
+<script>
+(function(){
+  "use strict";
+  var D = JSON.parse(document.getElementById("data").textContent);
+  var R = D.report, PKG = D.package;
+  var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at;
+  var rows = {};
+  PKG.annotations.forEach(function(r){ rows[r.id] = r; });
+  // Local edits: {replies: {noteId: [reply]}, status: {noteId: "open"|"done"}, notes: [row]}
+  var E = { replies: {}, status: {}, notes: [] };
+  try { var saved = JSON.parse(localStorage.getItem(KEY)); if (saved) E = saved; } catch (e) {}
+  var filter = "all", query = "";
+  var who = localStorage.getItem("sight-review:name") || "";
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(E)); } catch (e) {} paintFoot(); }
+  function uid(){ var a = new Uint8Array(8); crypto.getRandomValues(a); return Array.prototype.map.call(a, function(b){ return ("0" + b.toString(16)).slice(-2); }).join(""); }
+  function el(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function fmt(ms){ try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } }
+  function changes(){
+    var n = E.notes.length;
+    Object.keys(E.replies).forEach(function(k){ n += E.replies[k].length; });
+    Object.keys(E.status).forEach(function(k){ if (rows[k] && (rows[k].data.status || "open") !== E.status[k]) n++; });
+    return n;
+  }
+  function statusOf(id){ return E.status[id] || (rows[id] && rows[id].data.status) || "open"; }
+  function zoom(src){
+    var z = el("div", "zoom"); var i = el("img"); i.src = src; z.appendChild(i);
+    z.onclick = function(){ z.remove(); };
+    document.body.appendChild(z);
+  }
+  function shotSrc(sid){ return (PKG.shots || {})[sid] || ""; }
+  function noteCard(n, local){
+    var id = n.id, st = local ? "open" : statusOf(id);
+    var c = el("div", "note" + (st === "done" ? " done" : ""));
+    var h = el("div", "nh");
+    h.appendChild(el("span", "num", local ? "+" : String(n.num)));
+    if (n.ctx) h.appendChild(el("span", "ctx", n.ctx));
+    h.appendChild(el("span", "", [n.author, n.date].filter(Boolean).join(" · ")));
+    if (!local) h.appendChild(el("span", "state", st === "done" ? "Resolved" : "Open"));
+    else h.appendChild(el("span", "state", "New · not sent yet"));
+    c.appendChild(h);
+    if (n.text) c.appendChild(el("div", "text", n.text));
+    if (n.frame){ var f = el("img", "frame"); f.src = n.frame; f.alt = ""; f.onclick = function(){ zoom(n.frame); }; c.appendChild(f); }
+    if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
+    var shots = (n.shots || []).map(shotSrc).filter(Boolean);
+    if (shots.length){
+      var sh = el("div", "shots");
+      shots.forEach(function(s){ var i = el("img"); i.src = s; i.alt = ""; i.onclick = function(){ zoom(s); }; sh.appendChild(i); });
+      c.appendChild(sh);
+    }
+    var reps = (n.replies || []).concat((E.replies[id] || []).map(function(r){ return { author: r.author, date: fmt(r.created), text: r.text, mine: true }; }));
+    if (reps.length){
+      var rb = el("div", "replies");
+      reps.forEach(function(r){
+        var d = el("div", "rep" + (r.mine ? " mine" : ""));
+        d.appendChild(el("div", "rh", [r.author, r.date].filter(Boolean).join(" · ")));
+        d.appendChild(el("div", "rt", r.text));
+        rb.appendChild(d);
+      });
+      c.appendChild(rb);
+    }
+    if (local){
+      var del = el("button", "btn", "Remove");
+      del.onclick = function(){ E.notes = E.notes.filter(function(x){ return x.id !== id; }); save(); render(); };
+      var a0 = el("div", "acts"); a0.appendChild(del); c.appendChild(a0);
+      return c;
+    }
+    var acts = el("div", "acts");
+    var rbtn = el("button", "btn", "Reply");
+    var sbtn = el("button", "btn", st === "done" ? "Reopen" : "Resolve");
+    sbtn.onclick = function(){ E.status[id] = st === "done" ? "open" : "done"; save(); render(); };
+    rbtn.onclick = function(){
+      if (c.querySelector(".rbox")) return;
+      var box = el("div", "rbox"), ta = el("textarea"); ta.placeholder = "Your reply";
+      var send = el("button", "btn primary", "Add");
+      send.onclick = function(){
+        var t = ta.value.trim(); if (!t) return;
+        (E.replies[id] = E.replies[id] || []).push({ id: uid(), text: t, author: who, created: Date.now() });
+        save(); render();
+      };
+      ta.addEventListener("keydown", function(e){ if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send.onclick(); } });
+      box.appendChild(ta); box.appendChild(send); c.appendChild(box); ta.focus();
+    };
+    acts.appendChild(rbtn); acts.appendChild(sbtn); c.appendChild(acts);
+    return c;
+  }
+  function render(){
+    var app = document.getElementById("app");
+    var keepY = window.scrollY;
+    app.textContent = "";
+    app.appendChild(el("h1", "", R.title || "Review"));
+    if (R.subtitle) app.appendChild(el("p", "sub", R.subtitle));
+    var meta = el("div", "meta");
+    (R.meta || []).forEach(function(m){ if (m[1] === "" || m[1] == null) return; var s = el("span"); s.appendChild(el("b", "", m[0])); s.appendChild(document.createTextNode(m[1])); meta.appendChild(s); });
+    app.appendChild(meta);
+    if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(R.cover); }; app.appendChild(cv); }
+    var bar = el("div", "bar");
+    var seg = el("div", "seg");
+    [["all", "All"], ["open", "Open"], ["done", "Resolved"]].forEach(function(f){
+      var b = el("button", filter === f[0] ? "on" : "", f[1]);
+      b.onclick = function(){ filter = f[0]; render(); };
+      seg.appendChild(b);
+    });
+    bar.appendChild(seg);
+    var q = el("input", "q"); q.placeholder = "Search notes"; q.value = query;
+    q.oninput = function(){ query = q.value; renderList(); };
+    bar.appendChild(q);
+    var w = el("input", "who"); w.placeholder = "Your name"; w.value = who;
+    w.onchange = function(){ who = w.value.trim(); try { localStorage.setItem("sight-review:name", who); } catch (e) {} };
+    bar.appendChild(w);
+    app.appendChild(bar);
+    var list = el("div", ""); list.id = "list"; app.appendChild(list);
+    var comp = el("div", "compose");
+    var ta = el("textarea"); ta.placeholder = "Add a new note…";
+    var add = el("button", "btn primary", "Add note");
+    add.onclick = function(){
+      var t = ta.value.trim(); if (!t) return;
+      E.notes.push({ id: uid(), text: t, author: who, created: Date.now() });
+      save(); render();
+    };
+    var ca = el("div", "acts"); ca.appendChild(add);
+    comp.appendChild(ta); comp.appendChild(ca);
+    app.appendChild(comp);
+    app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight."));
+    renderList();
+    paintFoot();
+    window.scrollTo(0, keepY);
+  }
+  function renderList(){
+    var list = document.getElementById("list");
+    list.textContent = "";
+    var ql = query.toLowerCase();
+    var shown = (R.notes || []).filter(function(n){
+      var st = statusOf(n.id);
+      if (filter !== "all" && st !== filter) return false;
+      if (!ql) return true;
+      var hay = [n.text, n.author, n.ctx].concat((n.replies || []).map(function(r){ return r.text; })).join(" ").toLowerCase();
+      return hay.indexOf(ql) >= 0;
+    });
+    shown.forEach(function(n){ list.appendChild(noteCard(n, false)); });
+    if (filter !== "done") E.notes.forEach(function(n){ list.appendChild(noteCard({ id: n.id, text: n.text, author: n.author, date: fmt(n.created) }, true)); });
+    if (!list.childNodes.length) list.appendChild(el("p", "empty", "No notes here."));
+  }
+  function paintFoot(){
+    var n = changes();
+    document.getElementById("status").textContent = n ? n + " change" + (n > 1 ? "s" : "") + " — download the reply file and send it back" : "Reply, resolve or add notes — then download the reply file.";
+    document.getElementById("dl").disabled = !n;
+    document.getElementById("reset").hidden = !n;
+  }
+  function download(){
+    var now = Date.now();
+    var out = JSON.parse(JSON.stringify(PKG));
+    out.author = who; out.exported_at = now; out.app = (PKG.app || "Sight") + " (web reply)";
+    out.annotations.forEach(function(r){
+      if (r.kind !== "note") return;
+      var changed = false;
+      if (E.replies[r.id] && E.replies[r.id].length){ r.data.replies = (r.data.replies || []).concat(E.replies[r.id]); changed = true; }
+      if (E.status[r.id] && E.status[r.id] !== (r.data.status || "open")){ r.data.status = E.status[r.id]; changed = true; }
+      if (changed) r.updated_at = now;
+    });
+    E.notes.forEach(function(n){
+      out.annotations.push({ id: n.id, kind: "note", shape_kind: null, x: null, y: null, w: null, h: null, rotation: 0, z_index: 0, color: null,
+        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: [] }, locked: 0, created_at: n.created, updated_at: now });
+    });
+    var name = ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "") + ".srev";
+    var blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name.replace(/[\\/:*?"<>|]+/g, "_");
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  }
+  document.getElementById("dl").onclick = download;
+  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, status changes and new notes on this page?")){ E = { replies: {}, status: {}, notes: [] }; save(); render(); } };
+  render();
+})();
+</script>
+</body>
+</html>
+"""

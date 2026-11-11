@@ -44,6 +44,7 @@ const ICON = {
   close: ico(`<path d="M6 6l12 12M18 6 6 18"/>`),
   check: ico(`<path d="m5 12.5 4.5 4.5L19 7.5"/>`),
   trash: ico(`<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>`),
+  reply: ico(`<path d="M10 8 5 12.5l5 4.5"/><path d="M5 12.5h9a5 5 0 0 1 5 5V19"/>`),
   view: ico(`<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/>`),
 };
 
@@ -540,6 +541,7 @@ export function createAnnotator(host){
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
+    status: "", versions: [], prevOpen: null,
   };
 
   function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
@@ -615,7 +617,11 @@ export function createAnnotator(host){
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
     S.items.clear(); S.saved.clear();
+    // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
+    const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
+    S.status = st?.data?.state || "";
     for (const r of rows){
+      if (r.kind === "status") continue;
       const it = { id: r.id, kind: r.kind, sub: r.shape_kind || null, z: r.z_index || 0, data: r.data || {} };
       if (!validItem(it)) continue;
       S.items.set(it.id, it);
@@ -626,6 +632,99 @@ export function createAnnotator(host){
     renderPanel();
     renderMarks();
     paintBadge();
+    loadVersions(a);
+  }
+  // ---- versions / review state ------------------------------------------------------------------
+  async function loadVersions(a){
+    S.versions = []; S.prevOpen = null;
+    if (S.kind === "model3d"){ renderVersions(); return; }
+    let list = [];
+    try { list = (await host.api(`/api/assets/${a.id}/versions`)).items || []; } catch {}
+    if (S.asset?.id !== a.id) return;
+    S.versions = list;
+    const i = list.findIndex((x) => x.id === a.id);
+    const prev = i > 0 ? list[i - 1] : null;
+    if (prev){
+      try {
+        const rows = await host.api(`/api/annotations?asset_id=${encodeURIComponent(prev.id)}`);
+        if (S.asset?.id !== a.id) return;
+        S.prevOpen = { asset: prev, rows };
+      } catch {}
+    }
+    renderVersions();
+  }
+  // Open notes of the previous version that have not been brought over yet.
+  function carryCandidates(){
+    const p = S.prevOpen;
+    if (!p) return [];
+    const have = new Set([...S.items.values()].map((it) => it.data.from?.id).filter(Boolean));
+    return p.rows.filter((r) => r.kind === "note" && r.data?.status !== "done" && !have.has(r.id));
+  }
+  function renderVersions(){
+    const el = S.ui?.querySelector(".an-vers");
+    if (!el) return;
+    const list = S.versions, i = list.findIndex((x) => x.id === S.asset?.id);
+    if (list.length < 2 || i < 0){ el.hidden = true; el.innerHTML = ""; return; }
+    const cand = carryCandidates();
+    el.hidden = false;
+    el.innerHTML = `<div class="an-vrow"><span>Version <b>${i + 1}</b> of ${list.length}</span>
+        <button type="button" class="an-ib sm" data-ver="-1" title="Previous version"${i ? "" : " disabled"}>‹</button>
+        <button type="button" class="an-ib sm" data-ver="1" title="Next version"${i < list.length - 1 ? "" : " disabled"}>›</button>
+        <button type="button" class="an-ib" data-act="compare" title="Compare versions (K)">Compare</button></div>
+      ${cand.length ? `<div class="an-vrow carry"><span><b>${esc(S.prevOpen.asset.name)}</b> has ${cand.length} open note${cand.length > 1 ? "s" : ""}</span><button type="button" class="an-ib" data-act="carry" title="Copy them (with their drawings) onto this version">Copy here</button></div>` : ""}`;
+    el.querySelectorAll("[data-ver]").forEach((b) => { b.onclick = () => { const t = list[i + Number(b.dataset.ver)]; if (t) host.openAsset?.(t.id); }; });
+    el.querySelector("[data-act=compare]").onclick = () => host.openCompare?.(list.map((x) => x.id), S.asset.id);
+    const cb = el.querySelector("[data-act=carry]");
+    if (cb) cb.onclick = () => carryOver();
+  }
+  // Copies the previous version's open notes and their drawings here (new ids, data.from points
+  // at the original), scaled when the two versions differ in size. Video times and 3D views are
+  // kept as they are.
+  function carryOver(){
+    const p = S.prevOpen, notes = carryCandidates();
+    if (!p || !notes.length) return;
+    const g = geom();
+    const fx = g?.nw && p.asset.width ? g.nw / p.asset.width : 1;
+    const fy = g?.nh && p.asset.height ? g.nh / p.asset.height : 1;
+    const noteIds = new Set(notes.map((n) => n.id)), map = new Map();
+    const src = p.rows.filter((r) => noteIds.has(r.id) || (r.kind !== "note" && r.kind !== "status" && noteIds.has(r.data?.note)));
+    for (const r of src) map.set(r.id, uid());
+    const made = [];
+    for (const r of src){
+      const it = { id: map.get(r.id), kind: r.kind, sub: r.shape_kind || null, z: r.z_index || 0, data: structuredClone(r.data || {}) };
+      if (it.kind === "note"){
+        it.data.from = { id: r.id, asset: p.asset.id, name: p.asset.name };
+        it.data.shots = it.data.shots || [];
+      } else {
+        it.data.note = map.get(r.data.note);
+        if (!validItem(it)) continue;
+        if (Math.abs(fx - 1) > 1e-3 || Math.abs(fy - 1) > 1e-3){
+          const snapIt = structuredClone(it);
+          transformItem(it, snapIt, (x, y) => [x * fx, y * fy], { k: Math.sqrt(fx * fy), sx: fx, sy: fy });
+        }
+      }
+      made.push(it);
+    }
+    commit(made.map((it) => it.id), () => { for (const it of made) S.items.set(it.id, it); });
+    toast(`Copied ${notes.length} open note${notes.length > 1 ? "s" : ""} from <b>${esc(p.asset.name)}</b>`, 3000);
+    renderVersions();
+  }
+  async function setStatus(state){
+    if (!S.asset) return;
+    const a = S.asset, was = S.status;
+    S.status = state;
+    paintStatus();
+    try {
+      await host.api(`/api/assets/${a.id}/review-status`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, author: reviewer() }) });
+      host.onReviewChanged?.(a.id);
+    } catch (e){
+      console.warn(e);
+      if (S.asset?.id === a.id){ S.status = was; paintStatus(); }
+      toast("Could not save the review state");
+    }
+  }
+  function paintStatus(){
+    S.ui?.querySelectorAll("[data-rs]").forEach((b) => b.classList.toggle("on", b.dataset.rs === S.status));
   }
   function validItem(it){
     const d = it.data, t = typeOf(it);
@@ -687,7 +786,15 @@ export function createAnnotator(host){
     S.undo.push(e);
     afterChange();
   }
+  let notesSig = "", notesTimer = 0;
   function afterChange(){
+    const sig = [...S.items.values()].filter((it) => it.kind === "note").map((n) => n.id + (n.data.status || "")).join();
+    if (sig !== notesSig){
+      notesSig = sig;
+      const id = S.asset?.id;
+      clearTimeout(notesTimer);
+      notesTimer = setTimeout(() => { flush().then(() => host.onReviewChanged?.(id)); }, 600);
+    }
     rebuildViews();
     renderAll();
     renderSel();
@@ -1697,11 +1804,18 @@ export function createAnnotator(host){
       </div>
       <div class="an-menu" hidden>
         <button type="button" data-ex="pdf">PDF report…</button>
+        <button type="button" data-ex="html" title="One file that opens in any browser — the reviewer can reply, resolve and add notes, then send back a .srev">Web page for reviewers (.html)…</button>
         <button type="button" data-ex="pkg">Review file (.srev)…</button>
         <button type="button" data-ex="text">Copy notes as text</button>
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
       </div>
+      <div class="an-rs"><span>State</span><div class="an-seg">
+        <button type="button" data-rs="" title="No review state">—</button>
+        <button type="button" data-rs="review" title="Waiting for review">Needs review</button>
+        <button type="button" data-rs="changes" title="Changes requested">Changes</button>
+        <button type="button" data-rs="approved" title="Approved">Approved</button></div></div>
+      <div class="an-vers" hidden></div>
       <div class="an-views"></div>
       <div class="an-list"></div>
       <div class="an-compose">
@@ -1728,6 +1842,7 @@ export function createAnnotator(host){
         menu.hidden = true;
         const x = b.dataset.ex;
         if (x === "pdf") exportPdf();
+        else if (x === "html") exportHtml();
         else if (x === "pkg") exportPackage();
         else if (x === "text") copyText();
         else if (x === "import") el.querySelector(".an-file").click();
@@ -1735,6 +1850,7 @@ export function createAnnotator(host){
     });
     el.querySelector(".an-file").addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
     el.querySelector("[data-act=close]").onclick = () => togglePanel(false);
+    el.querySelectorAll("[data-rs]").forEach((b) => { b.onclick = () => setStatus(b.dataset.rs); });
     el.querySelector(".an-compose [data-act=shot]").onclick = () => screenshot(false);
     el.querySelector(".an-compose [data-act=region]").onclick = () => screenshot(true);
     el.querySelector("[data-act=add]").onclick = () => addNote();
@@ -1794,16 +1910,83 @@ export function createAnnotator(host){
       const ctx = ctxLabel(d.ctx);
       return `<div class="an-note${done ? " done" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
+          <button type="button" class="an-ib sm" data-reply="${n.id}" title="Reply">${ICON.reply}</button>
           <button type="button" class="an-ib sm${done ? " on" : ""}" data-done="${n.id}" title="${done ? "Reopen" : "Resolve"}">${ICON.check}</button>
           <button type="button" class="an-ib sm" data-del="${n.id}" title="Delete note and its drawings">${ICON.trash}</button></div>
         <div class="an-nt" title="Double-click to edit">${esc(d.text || "") || '<i class="an-empty">No text</i>'}</div>
         ${shots ? `<div class="an-shots">${shots}</div>` : ""}
-        ${counts.get(n.id) ? `<div class="an-nmeta">${counts.get(n.id)} drawing${counts.get(n.id) > 1 ? "s" : ""}</div>` : ""}
+        ${counts.get(n.id) || d.from ? `<div class="an-nmeta">${[counts.get(n.id) ? `${counts.get(n.id)} drawing${counts.get(n.id) > 1 ? "s" : ""}` : "", d.from ? `from ${esc(d.from.name || "previous version")}` : ""].filter(Boolean).join(" · ")}</div>` : ""}
+        ${repliesHtml(n)}
       </div>`;
     }).join("") : `<div class="an-hint"><p>No notes yet.</p><p>Draw on the ${S.kind === "model3d" ? "view" : S.kind === "video" ? "frame" : "picture"}, then type a note below — the drawings are attached to it.${S.kind === "video" ? " Notes are pinned to the current frame and show as markers on the timeline." : S.kind === "model3d" ? " The camera, shading and lights are saved with the note." : ""}</p><p><b>S</b> screenshot · <b>Shift+S</b> area</p></div>`;
     list.scrollTop = scroll;
     renderViews();
     renderPending();
+    renderVersions();
+    paintStatus();
+  }
+  const liveReplies = (n) => (n.data.replies || []).filter((r) => !r.deleted);
+  function repliesHtml(n){
+    const list = liveReplies(n);
+    if (!list.length) return "";
+    return `<div class="an-replies">${list.map((r) => `<div class="an-rep" data-rid="${esc(r.id)}">
+      <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span><button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
+      <div class="an-rt" title="Double-click to edit">${esc(r.text || "")}</div></div>`).join("")}</div>`;
+  }
+  // Inline editor under a note card (new reply) or in place of a reply's text (edit).
+  function replyEditor(card, anchor, initial, done){
+    const ta = document.createElement("textarea");
+    ta.className = "an-input an-redit";
+    ta.rows = 1;
+    ta.placeholder = "Reply…  Enter sends · Esc cancels";
+    ta.value = initial;
+    if (anchor) anchor.replaceWith(ta); else card.appendChild(ta);
+    ta.style.height = Math.min(160, ta.scrollHeight + 2) + "px";
+    ta.focus();
+    ta.addEventListener("click", (e) => e.stopPropagation());
+    ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(160, ta.scrollHeight + 2) + "px"; });
+    let ended = false; // removing the field blurs it, which calls end() a second time
+    const end = (ok) => {
+      if (ended || !ta.isConnected) return;
+      ended = true;
+      const v = ta.value.trim();
+      ta.remove();
+      if (ok && v && v !== initial) done(v); else renderPanel();
+    };
+    ta.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (hotkey(ev, "Enter")){ ev.preventDefault(); end(true); }
+      else if (hotkey(ev, "Escape")){ ev.preventDefault(); end(false); }
+    });
+    ta.addEventListener("blur", () => end(true));
+  }
+  function startReply(id){
+    const card = S.ui?.querySelector(`.an-note[data-id="${id}"]`);
+    if (!card || card.querySelector(".an-redit")) return;
+    replyEditor(card, null, "", (text) => {
+      commit([id], () => {
+        const d = S.items.get(id).data;
+        d.replies = [...(d.replies || []), { id: uid(), text, author: reviewer(), created: Date.now() }];
+      });
+    });
+  }
+  function editReply(id, rid, el){
+    const r = (S.items.get(id)?.data.replies || []).find((x) => x.id === rid);
+    if (!r) return;
+    replyEditor(el.closest(".an-note"), el, r.text || "", (text) => {
+      commit([id], () => {
+        const d = S.items.get(id).data;
+        d.replies = d.replies.map((x) => (x.id === rid ? { ...x, text, edited: Date.now() } : x));
+      });
+    });
+  }
+  // A deleted reply stays as a tombstone so merging a review file from before the delete
+  // does not bring it back (see Library.merge_replies).
+  function deleteReply(id, rid){
+    commit([id], () => {
+      const d = S.items.get(id).data;
+      d.replies = (d.replies || []).map((x) => (x.id === rid ? { id: x.id, created: x.created, deleted: Date.now() } : x));
+    });
   }
   function renderPending(){
     const el = S.ui;
@@ -1824,8 +2007,11 @@ export function createAnnotator(host){
     el.querySelectorAll("[data-vk]").forEach((b) => { b.onclick = () => goView(b.dataset.vk); });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-go],[data-done],[data-del],img[data-shot],.an-note");
+    const t = e.target.closest?.("[data-go],[data-done],[data-del],[data-reply],[data-rdel],img[data-shot],.an-rep,.an-note");
     if (!t) return;
+    if (t.dataset.reply){ startReply(t.dataset.reply); return; }
+    if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
+    if (t.classList.contains("an-rep")) return;
     if (t.dataset.done){
       const id = t.dataset.done;
       commit([id], () => { const d = S.items.get(id).data; d.status = d.status === "done" ? "open" : "done"; });
@@ -1851,6 +2037,8 @@ export function createAnnotator(host){
     if (card) goNote(card.dataset.id);
   }
   function onListDblClick(e){
+    const rt = e.target.closest?.(".an-rt");
+    if (rt){ editReply(rt.closest(".an-note").dataset.id, rt.closest(".an-rep").dataset.rid, rt); return; }
     const nt = e.target.closest?.(".an-nt");
     if (!nt) return;
     const id = nt.closest(".an-note").dataset.id, it = S.items.get(id);
@@ -1861,8 +2049,10 @@ export function createAnnotator(host){
     nt.replaceWith(ta);
     ta.style.height = Math.min(220, ta.scrollHeight + 4) + "px";
     ta.focus();
+    let ended = false;
     const end = (ok) => {
-      if (!ta.isConnected) return;
+      if (ended || !ta.isConnected) return;
+      ended = true;
       const v = ta.value.trim();
       ta.remove();
       if (ok && v !== (it.data.text || "")) commit([id], () => { S.items.get(id).data.text = v; });
@@ -2148,11 +2338,11 @@ export function createAnnotator(host){
       setTimeout(done, 3000);
     });
   }
-  async function exportPdf(){
-    if (!S.asset) return;
-    await flush();
+  // Renders what a report needs: the cover (picture with every drawing) and per note its frame /
+  // view with the drawings burned in. `everyFrame`: also a frame for a picture's only note (the
+  // HTML report shows frames per note; the PDF would just repeat the cover).
+  async function gatherReport(everyFrame){
     const a = S.asset, notes = notesSorted();
-    toast("Building PDF…", 60000);
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
     const v = video();
@@ -2167,7 +2357,7 @@ export function createAnnotator(host){
         const own = (it) => it.data.note === n.id;
         if (S.b2 && !S.b2.isVid){
           // One note on a picture: its frame would just repeat the cover.
-          if (notes.length > 1 && [...S.items.values()].some(own)) frame = toJpeg(composeNative(own, 1600));
+          if ((everyFrame || notes.length > 1) && [...S.items.values()].some(own)) frame = toJpeg(composeNative(own, 1600));
         } else if (v && c?.t != null){
           await seekTo(v, c.t);
           frame = toJpeg(composeNative((it) => visibleNow(it), 1600));
@@ -2182,7 +2372,8 @@ export function createAnnotator(host){
             frame = toJpeg(composeNative((it) => it.data.ctx?.vk === c.vk));
           }
         }
-        out.push({ num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, frameCaption: cap, shots: d.shots || [] });
+        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, frameCaption: cap, shots: d.shots || [],
+          replies: liveReplies(n).map((r) => ({ author: r.author || "", date: fmtDate(r.created), text: r.text || "" })) });
       }
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
@@ -2192,19 +2383,39 @@ export function createAnnotator(host){
     }
     const g = geom(), nw = g?.nw || a.width, nh = g?.nh || a.height;
     const dims = nw && nh ? `${nw} × ${nh}` : "";
-    const payload = {
+    const stateLabel = { review: "Needs review", changes: "Changes requested", approved: "Approved" }[S.status] || "";
+    return {
       asset_id: a.id,
       title: `Review — ${a.name}`,
       subtitle: a.path || "",
-      meta: [["Type", (a.ext || "").replace(".", "").toUpperCase()], ["Size", dims], ["Duration", a.duration ? fmtTime(a.duration, S.fps) : ""], ["Reviewer", reviewer()], ["Notes", String(notes.length)], ["Open", String(notes.filter((n) => n.data.status !== "done").length)], ["Exported", fmtDate(Date.now())]],
-      cover, notes: out, footer: `Sight ${host.appVersion?.() || ""}`.trim(), reveal: true,
+      meta: [["Type", (a.ext || "").replace(".", "").toUpperCase()], ["Size", dims], ["Duration", a.duration ? fmtTime(a.duration, S.fps) : ""], ["State", stateLabel], ["Reviewer", reviewer()], ["Notes", String(notes.length)], ["Open", String(notes.filter((n) => n.data.status !== "done").length)], ["Exported", fmtDate(Date.now())]],
+      cover, notes: out, footer: `Sight ${host.appVersion?.() || ""}`.trim(), reveal: true, author: reviewer(),
     };
+  }
+  async function exportPdf(){
+    if (!S.asset) return;
+    await flush();
+    toast("Building PDF…", 60000);
+    const payload = await gatherReport(false);
     try {
       const r = await host.api("/api/review/export/pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       toast(`Saved <b>${esc(r.name)}</b> · ${r.pages} page${r.pages > 1 ? "s" : ""}`, 4000);
     } catch (e){
       console.warn(e);
       toast("PDF export failed", 3000);
+    }
+  }
+  async function exportHtml(){
+    if (!S.asset) return;
+    await flush();
+    toast("Building the web page…", 60000);
+    const payload = await gatherReport(true);
+    try {
+      const r = await host.api("/api/review/export/html", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      toast(`Saved <b>${esc(r.name)}</b> — opens in any browser; replies come back as a .srev file`, 5000);
+    } catch (e){
+      console.warn(e);
+      toast("Export failed", 3000);
     }
   }
   async function exportPackage(){
@@ -2226,12 +2437,14 @@ export function createAnnotator(host){
       lines.push(`${i + 1}.${c ? " [" + c + "]" : ""} ${d.text || "(no text)"}${d.status === "done" ? "  ✓ resolved" : ""}`);
       const by = [d.author, fmtDate(d.created)].filter(Boolean).join(", ");
       if (by) lines.push("   — " + by);
+      for (const r of liveReplies(n)) lines.push(`   ↳ ${r.author ? r.author + ": " : ""}${r.text || ""}`);
     });
     try { await navigator.clipboard.writeText(lines.join("\n")); toast(`Copied ${notes.length} note${notes.length === 1 ? "" : "s"}`); }
     catch { toast("Clipboard not available"); }
   }
   async function importFile(file){
     let r;
+    await flush();
     try {
       const res = await fetch("/api/review/import", { method: "POST", body: await file.arrayBuffer() });
       r = await res.json().catch(() => ({}));
@@ -2242,9 +2455,15 @@ export function createAnnotator(host){
       toast("Import failed", 3000);
       return;
     }
-    toast(`Imported ${r.added} item${r.added === 1 ? "" : "s"}${r.author ? " from " + esc(r.author) : ""}`, 3000);
+    const parts = [["new", r.added], ["updated", r.updated], ["deleted", r.deleted]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
+    toast(parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 3500);
     await host.openAsset?.(r.asset_id);
-    if (S.asset?.id === r.asset_id){ await load(S.asset); toggle(true); togglePanel(true); }
+    if (S.asset?.id === r.asset_id){
+      // The rows changed underneath the undo history; it would restore pre-merge states.
+      S.undo = []; S.redo = [];
+      await load(S.asset); toggle(true); togglePanel(true);
+    }
+    host.onReviewChanged?.(r.asset_id);
   }
 
   // ---- mode -----------------------------------------------------------------------------------
@@ -2380,6 +2599,8 @@ export function createAnnotator(host){
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.focusNote = S.pinFocus = null;
+    S.status = ""; S.versions = []; S.prevOpen = null;
+    notesSig = "";
     S.fps = 25; S.fpsKnown = false;
     S.lastSig = "";
     if (!supported() && S.on) toggle(false);
@@ -2529,6 +2750,17 @@ function injectStyles(){
 .an-menu button { text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--fg); font-size: 12px; }
 .an-menu button:hover { background: var(--surface-2); }
 .an-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 2px; }
+.an-rs { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; color: var(--subtle); font-size: 11px; }
+.an-rs .an-seg { flex: 1; display: flex; }
+.an-rs .an-seg button { flex: 1; padding: 0 4px; white-space: nowrap; }
+.an-rs [data-rs=review].on { color: #ff9f0a; } .an-rs [data-rs=changes].on { color: #ff453a; } .an-rs [data-rs=approved].on { color: #34c759; }
+.an-vers { padding: 6px 14px 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--subtle); }
+.an-vers[hidden] { display: none; }
+.an-vrow { display: flex; align-items: center; gap: 4px; }
+.an-vrow > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-vrow b { color: var(--fg); font-weight: 600; }
+.an-vrow .an-ib[disabled] { opacity: .35; pointer-events: none; }
+.an-vrow.carry { padding: 5px 4px 5px 8px; border-radius: 8px; background: rgb(255 159 10 / .12); color: var(--fg); }
 .an-views { display: flex; align-items: center; gap: 4px; padding: 8px 14px 0; flex-wrap: wrap; color: var(--subtle); font-size: 11px; }
 .an-views[hidden] { display: none; }
 .an-views span { margin-right: 4px; }
@@ -2553,6 +2785,14 @@ function injectStyles(){
 .an-shots { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
 .an-shots img { height: 54px; max-width: 100%; border-radius: 5px; object-fit: cover; border: 1px solid var(--border); cursor: zoom-in; }
 .an-nmeta { margin-top: 4px; color: var(--subtle); font-size: 10px; }
+.an-replies { margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--border-strong); display: flex; flex-direction: column; gap: 5px; }
+.an-rep { cursor: default; }
+.an-rh { display: flex; align-items: center; gap: 4px; color: var(--subtle); font-size: 10px; }
+.an-rh span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-rh .an-ib { visibility: hidden; height: 16px; min-width: 16px; }
+.an-rep:hover .an-rh .an-ib { visibility: visible; }
+.an-rt { white-space: pre-wrap; word-break: break-word; line-height: 1.4; user-select: text; }
+.an-redit { margin-top: 6px; min-height: 30px; }
 .an-compose { border-top: 1px solid var(--border); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
 .an-pend { display: flex; gap: 4px; flex-wrap: wrap; }
 .an-pend[hidden] { display: none; }

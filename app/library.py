@@ -87,6 +87,37 @@ def asset_id(path: str) -> str:
     return hashlib.sha1(path.encode("utf-8", "surrogateescape")).hexdigest()[:16]
 
 
+# Review state of an asset: the newest kind='status' annotation row (data.state). Kept as an
+# annotation so it travels in .srev packages and merges like the notes do.
+REVIEW_STATES = ("review", "changes", "approved")
+_REVIEW_SQL = (
+    "(SELECT json_extract(an.data, '$.state') FROM annotations an WHERE an.scope='asset' "
+    "AND an.kind='status' AND an.target_asset_id=assets.id AND an.deleted_at IS NULL "
+    "ORDER BY an.updated_at DESC LIMIT 1)"
+)
+_OPEN_NOTES_SQL = (
+    "(SELECT COUNT(*) FROM annotations an WHERE an.scope='asset' AND an.kind='note' "
+    "AND an.target_asset_id=assets.id AND an.deleted_at IS NULL "
+    "AND COALESCE(json_extract(an.data, '$.status'), 'open') != 'done')"
+)
+
+# A version token in a file name: shot_v003, shot.v3, shot-ver2, shot_rev12, shot_r4 (the last
+# such token wins). Files in one folder whose names are equal once it is cut out are versions of
+# each other; a name without a token counts as version 0 of that group.
+_VERSION_RE = re.compile(r"(?i)(?:^|(?<=[ ._-]))(?:v|ver|version|rev|r)[ ._-]?(\d{1,4})(?=$|[ ._-])")
+
+
+def version_key(name: str) -> tuple[str, int]:
+    stem = os.path.splitext(name)[0]
+    m = None
+    for m in _VERSION_RE.finditer(stem):
+        pass
+    if not m:
+        return stem.lower() + "|", 0
+    key = (stem[: m.start()].rstrip(" ._-") + "|" + stem[m.end():].lstrip(" ._-")).lower()
+    return key, int(m.group(1))
+
+
 def normpath(p: object) -> str:
     """Case/separator-normalized form of a filesystem path, for cross-platform prefix and
     equality checks (excluded-subfolder matching, source-boundary checks) without hitting disk."""
@@ -932,6 +963,22 @@ class Library:
             out[row["kind"]] = out.get(row["kind"], 0) + n
             if row["status"] == "missing":
                 out["missing"] += n
+        out.update(self.review_counts())
+        return out
+
+    def review_counts(self) -> dict:
+        """Assets per review state and with open notes — the sidebar's Review rows."""
+        out = {f"review_{k}": 0 for k in (*REVIEW_STATES, "open")}
+        rows = self.query(
+            f"SELECT {_REVIEW_SQL} st, {_OPEN_NOTES_SQL} n FROM assets WHERE status != 'excluded' "
+            "AND id IN (SELECT target_asset_id FROM annotations WHERE scope='asset' AND deleted_at IS NULL "
+            "AND kind IN ('status', 'note'))"
+        )
+        for r in rows:
+            if r["st"] in REVIEW_STATES:
+                out[f"review_{r['st']}"] += 1
+            if r["n"]:
+                out["review_open"] += 1
         return out
 
     def sources(self) -> list[dict]:
@@ -1139,7 +1186,8 @@ class Library:
         """A file was moved/renamed: `old_id` (now missing) and `new_id` (a fresh 'ready' row at
         the new path) are the same file, matched by _reconcile_moved. Carries the old row's tags/
         rating/note/added_at and, if the cached thumbnail can be moved to the new id, its cached
-        derivatives too (so a move doesn't cost a re-thumbnail) — then drops the old row."""
+        derivatives too (so a move doesn't cost a re-thumbnail) and its lightbox annotations — then
+        drops the old row."""
         old_rows = self.query("SELECT * FROM assets WHERE id=?", (old_id,))
         if not old_rows:
             return
@@ -1187,6 +1235,11 @@ class Library:
                 [(c["collection_id"], new_id) for c in cols],
             )
         self.execute("DELETE FROM collection_assets WHERE asset_id=?", (old_id,))
+        # Lightbox annotations / review notes belong to the file, not to its old path.
+        self.execute(
+            "UPDATE annotations SET target_asset_id=? WHERE scope='asset' AND target_asset_id=?",
+            (new_id, old_id),
+        )
         self.execute("DELETE FROM assets WHERE id=?", (old_id,))
         self._have_thumb.discard(old_id)
         if moved_thumb:
@@ -2246,6 +2299,7 @@ class Library:
         missing: bool = False,
         collection_id: str = "",
         folder: str = "",
+        review: str = "",
     ) -> tuple[str, list[object]]:
         where = ["status != 'excluded'"]
         args: list[object] = []
@@ -2271,6 +2325,11 @@ class Library:
             prefix = os.path.normpath(folder).rstrip("\\/") + os.sep
             where.append("substr(path, 1, ?) = ?")
             args.extend([len(prefix), prefix])
+        if review in REVIEW_STATES:
+            where.append(f"{_REVIEW_SQL} = ?")
+            args.append(review)
+        elif review == "open":
+            where.append(f"{_OPEN_NOTES_SQL} > 0")
         return " AND ".join(where), args
 
     # Sort keys the UI can request, mapped to their SQL expression. "tag" sorts by each asset's
@@ -2309,12 +2368,14 @@ class Library:
         folder: str = "",
         sort: str = "",
         order: str = "asc",
+        review: str = "",
     ) -> list[dict]:
-        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder)
+        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
         order_sql = self._order_by(sort, order)
         sql = (
             f"SELECT id, source_id, path, name, ext, kind, size, mtime, width, height, "
-            f"duration, tags, note, rating, status, has_thumb, animated, added_at "
+            f"duration, tags, note, rating, status, has_thumb, animated, added_at, "
+            f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes "
             f"FROM assets WHERE {clause} {order_sql} LIMIT ? OFFSET ?"
         )
         args.extend([limit, offset])
@@ -2342,8 +2403,9 @@ class Library:
         missing: bool = False,
         collection_id: str = "",
         folder: str = "",
+        review: str = "",
     ) -> int:
-        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder)
+        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
         row = self.query(f"SELECT COUNT(*) c FROM assets WHERE {clause}", tuple(args))
         return int(row[0]["c"]) if row else 0
 
@@ -2769,28 +2831,178 @@ class Library:
                 return self.get_asset(r["id"])
         return None
 
-    def import_annotations(self, target: str, rows: list[dict], id_map: dict[str, str]) -> int:
-        """Inserts annotation rows from a review package onto asset `target` under fresh ids.
-        `id_map` (old -> new) is filled in so references between rows (a drawing's data.note) and
-        shot ids can be rewritten by the caller before/after; data.note is remapped here."""
+    def set_review_status(self, aid: str, state: str, author: str = "") -> dict:
+        """Sets (or with an empty state clears) an asset's review state. Updates the newest status
+        row in place so one row keeps travelling between machines instead of piling up."""
+        cur = self.query(
+            "SELECT id FROM annotations WHERE scope='asset' AND kind='status' AND target_asset_id=? "
+            "AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
+            (aid,),
+        )
+        if not state:
+            if cur:
+                self.delete_annotation(cur[0]["id"])
+            return {"state": ""}
+        if state not in REVIEW_STATES:
+            raise ValueError("unknown review state")
+        data = {"state": state, "author": author, "at": int(time.time() * 1000)}
+        if cur:
+            self.update_annotation(cur[0]["id"], {"data": data})
+        else:
+            self.add_annotation({"scope": "asset", "target_asset_id": aid, "kind": "status", "data": data})
+        return data
+
+    def asset_versions(self, aid: str) -> list[dict]:
+        """Other versions of an asset: images / PSDs / videos in the same folder whose names only
+        differ in the version token (see version_key), oldest first; includes the asset itself."""
+        a = self.get_asset(aid)
+        if not a:
+            return []
+        folder = os.path.dirname(a["path"])
+        prefix = folder.rstrip("\\/") + os.sep
+        key = version_key(a["name"])[0]
+        rows = self.query(
+            "SELECT id, name, path, kind, ext FROM assets WHERE status='ready' AND substr(path, 1, ?) = ? "
+            "AND (kind IN ('image', 'video') OR ext='.psd')",
+            (len(prefix), prefix),
+        )
+        out = []
         for r in rows:
-            if r.get("id"):
-                id_map.setdefault(str(r["id"]), asset_id(f"anno:{time.time_ns()}:{r['id']}"))
-        n = 0
-        for r in rows:
-            data = r.get("data") if isinstance(r.get("data"), dict) else {}
-            if data.get("note") in id_map:
-                data["note"] = id_map[data["note"]]
-            if "shots" in data:
-                data["shots"] = [id_map.get(str(x), str(x)) for x in data.get("shots") or []]
-            body = {k: r.get(k) for k in ("kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_index", "color", "locked")}
-            body.update({"scope": "asset", "target_asset_id": target, "data": data,
-                         "id": id_map.get(str(r.get("id") or ""), "")})
-            body["rotation"] = body.get("rotation") or 0
-            body["z_index"] = body.get("z_index") or 0
-            self.add_annotation(body)
-            n += 1
-        return n
+            if os.path.dirname(r["path"]) != folder:
+                continue
+            k, v = version_key(r["name"])
+            if k == key:
+                out.append((v, r["name"].lower(), r["id"]))
+        out.sort()
+        return [x for x in (self.get_asset(i) for _, _, i in out) if x]
+
+    def annotation_tombstones(self, aid: str) -> list[dict]:
+        """Deleted rows of an asset's annotations ({id, deleted_at}) — a review package carries
+        them so a delete on one machine also removes the row where the package is merged."""
+        rows = self.query(
+            "SELECT id, deleted_at FROM annotations WHERE scope='asset' AND target_asset_id=? "
+            "AND deleted_at IS NOT NULL",
+            (aid,),
+        )
+        return [{"id": r["id"], "deleted_at": r["deleted_at"]} for r in rows]
+
+    @staticmethod
+    def merge_replies(a: list | None, b: list | None) -> list[dict]:
+        """Union of two reply lists by id; for the same id the later edit (or delete) wins."""
+        def stamp(x: dict) -> int:
+            return max(int(x.get("edited") or x.get("created") or 0), int(x.get("deleted") or 0))
+
+        out: dict[str, dict] = {}
+        for x in [*(a or []), *(b or [])]:
+            if not isinstance(x, dict) or not x.get("id"):
+                continue
+            k = str(x["id"])
+            if k not in out or stamp(x) > stamp(out[k]):
+                out[k] = x
+        return sorted(out.values(), key=lambda x: int(x.get("created") or 0))
+
+    def import_annotations(self, target: str, rows: list[dict], deleted: list[dict] | None = None) -> dict:
+        """Merges the annotation rows of a review package into asset `target`.
+
+        Rows keep their ids, so importing the same file twice — or a file that went to a reviewer
+        and came back with answers — updates what is there instead of duplicating it. An id that
+        already belongs to another asset is replaced by a stable derived one (same result on every
+        import). Per row the later `updated_at` wins; a local delete wins over an older incoming
+        row; package tombstones delete local rows that were not edited after the delete. Replies of
+        a note are always unioned (see merge_replies), whichever side is newer.
+        Returns counts {added, updated, deleted, unchanged}."""
+        stats = {"added": 0, "updated": 0, "deleted": 0, "unchanged": 0}
+        id_re = re.compile(r"[0-9a-f]{16}")
+
+        def local_id(rid: str) -> str:
+            rid = rid.lower()
+            if not id_re.fullmatch(rid):
+                return asset_id(f"anno-import:{target}:{rid}")
+            cur = self.query("SELECT target_asset_id FROM annotations WHERE id=?", (rid,))
+            if cur and cur[0]["target_asset_id"] != target:
+                return asset_id(f"anno-import:{target}:{rid}")
+            return rid
+
+        ids = {str(r.get("id") or ""): local_id(str(r.get("id") or "")) for r in rows if r.get("id")}
+        tombs = [
+            (ids.get(str(t["id"])) or local_id(str(t["id"])), int(t["deleted_at"]))
+            for t in deleted or []
+            if isinstance(t, dict) and t.get("id") and t.get("deleted_at")
+        ]
+        now = int(time.time() * 1000)
+        with self.lock:
+            for r in rows:
+                rid = ids.get(str(r.get("id") or ""))
+                if not rid:
+                    continue
+                data = dict(r.get("data")) if isinstance(r.get("data"), dict) else {}
+                if data.get("note") in ids:
+                    data["note"] = ids[data["note"]]
+                upd = int(r.get("updated_at") or r.get("created_at") or now)
+                vals = {
+                    "kind": str(r.get("kind") or "shape"), "shape_kind": r.get("shape_kind"),
+                    "x": r.get("x"), "y": r.get("y"), "w": r.get("w"), "h": r.get("h"),
+                    "rotation": float(r.get("rotation") or 0), "z_index": int(r.get("z_index") or 0),
+                    "color": r.get("color"), "locked": 1 if r.get("locked") else 0,
+                }
+                cur = self.conn.execute(
+                    "SELECT data, updated_at, deleted_at FROM annotations WHERE id=?", (rid,)
+                ).fetchone()
+                if cur is None:
+                    self.conn.execute(
+                        "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, x, y, w, h, "
+                        "rotation, z_index, color, data, locked, created_at, updated_at, revision) "
+                        "VALUES (?,?,?,'asset',?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                        (rid, vals["kind"], vals["shape_kind"], target, vals["x"], vals["y"], vals["w"],
+                         vals["h"], vals["rotation"], vals["z_index"], vals["color"], json.dumps(data),
+                         vals["locked"], int(r.get("created_at") or upd), upd),
+                    )
+                    stats["added"] += 1
+                    continue
+                try:
+                    have = json.loads(cur["data"] or "{}")
+                except json.JSONDecodeError:
+                    have = {}
+                if cur["deleted_at"] is not None:
+                    if upd <= int(cur["deleted_at"]):
+                        stats["unchanged"] += 1
+                        continue
+                    newer = True
+                else:
+                    newer = upd > int(cur["updated_at"] or 0)
+                merged = data if newer else have
+                if vals["kind"] == "note" and (have.get("replies") or data.get("replies")):
+                    merged = {**merged, "replies": self.merge_replies(have.get("replies"), data.get("replies"))}
+                if not newer and merged == have:
+                    stats["unchanged"] += 1
+                    continue
+                if newer:
+                    self.conn.execute(
+                        "UPDATE annotations SET kind=?, shape_kind=?, x=?, y=?, w=?, h=?, rotation=?, "
+                        "z_index=?, color=?, locked=?, data=?, updated_at=?, deleted_at=NULL, "
+                        "revision=revision+1 WHERE id=?",
+                        (vals["kind"], vals["shape_kind"], vals["x"], vals["y"], vals["w"], vals["h"],
+                         vals["rotation"], vals["z_index"], vals["color"], vals["locked"],
+                         json.dumps(merged), upd, rid),
+                    )
+                else:
+                    self.conn.execute(
+                        "UPDATE annotations SET data=?, updated_at=?, revision=revision+1 WHERE id=?",
+                        (json.dumps(merged), max(now, int(cur["updated_at"] or 0)), rid),
+                    )
+                stats["updated"] += 1
+            for rid, when in tombs:
+                cur = self.conn.execute(
+                    "SELECT updated_at FROM annotations WHERE id=? AND target_asset_id=? AND deleted_at IS NULL",
+                    (rid, target),
+                ).fetchone()
+                if cur and when > int(cur["updated_at"] or 0):
+                    self.conn.execute(
+                        "UPDATE annotations SET deleted_at=?, updated_at=? WHERE id=?", (when, when, rid)
+                    )
+                    stats["deleted"] += 1
+            self.conn.commit()
+        return stats
 
     def strip_tag(self, name: str) -> int:
         want = name.strip().lower()

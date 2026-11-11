@@ -9,12 +9,14 @@ Sight.py                 launcher (venv bootstrap, window, port); --dev / SIGHT_
 app/server.py            FastAPI app; routes are closures inside build_app(lib, settings, dev)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
-app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package
+app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package,
+                         HTML page for reviewers without Sight
 app/settings.py          settings.json store (UI prefs) + defaults
 app/version.py           APP_VERSION (single source; exposed in /api/state as "version")
 app/static/index.html    the whole UI: one inline <script type="module"> (no build step)
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
+app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file
@@ -147,7 +149,10 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
 rect|ellipse|line|arrow, `text`, `pin`, `note` (the review comment: `text, author, created, status
-open|done, shots: [shot ids]`). A drawing points at its note with `data.note`. Ids are 16 hex chars
+open|done, shots: [shot ids], replies: [{id, text, author, created, edited?, deleted?}], from?: {id,
+asset, name}` when copied from a previous version), and `status` — the asset's review state
+(`data.state` review|changes|approved; the newest row wins, `Library.set_review_status` keeps one row
+per asset; it is not an editable item in annotate.js). A drawing points at its note with `data.note`. Ids are 16 hex chars
 made by the client; `POST /api/annotations` with an existing id revives the (tombstoned) row — undo
 of a delete relies on that. The x/y/w/h columns hold the drawing's bounding box only for queries;
 the geometry is in `data`.
@@ -188,6 +193,26 @@ preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for 
 /api/review/shots/{id}`, `POST /api/review/export/pdf` (client sends notes + JPEG data URLs; server
 lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK), `POST
 /api/review/export/package` (server builds the `.srev` JSON from the rows + shots; legacy `.sightreview` files still import),
-`POST /api/review/import` (raw file body; asset matched by id, else name+size, else name+kind;
-rows and shots get fresh ids, `data.note` / `data.shots` remapped; 404 `{missing}` if no match).
+`POST /api/review/export/html` (same payload as the PDF; the page embeds the report and the
+package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
+else name+size, else name+kind; 404 `{missing}` if no match). Import **merges**
+(`Library.import_annotations`): rows keep their ids (an id that already belongs to another asset
+gets a stable derived one), the later `updated_at` wins, a local delete beats an older incoming row,
+package `deleted` tombstones delete rows not edited since, and a note's replies are always unioned
+by id (`merge_replies`; deleted replies stay as tombstones). Shots keep their ids too (`put_shot`).
+`GET /api/assets/{id}/versions` (`Library.asset_versions` / `version_key`: same folder, same name
+once the last v/ver/version/rev/r + digits token is cut out), `PUT /api/assets/{id}/review-status`.
+`GET /api/assets` takes `review=open|review|changes|approved` and returns `review` / `open_notes`
+per item (subqueries `_REVIEW_SQL` / `_OPEN_NOTES_SQL`); `/api/state` counts carry `review_*`.
+Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
+
+**Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
+Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared
+zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is drawn whole at the
+bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
+to visible layer i — with `mix-blend-mode: difference` in Difference mode; tile layouts put a copy
+of the reference under each cell for the same effect. Video: `C.T` is a wall-clock timeline;
+layer local time = T − start/fps; `syncVideos()` nudges playbackRate for drift < 0.25 s and seeks
+beyond, pauses clips outside their span (dimmed). Keys go through `cmp.onKey` first while it is
+open and do not reach the library / lightbox.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
