@@ -14,12 +14,20 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
-## 0.19.1 — 2026-11-11 — Merge the lost 0.15.1–0.15.6 fixes (no console windows; grid blink)
+## 0.19.2 — 2026-11-11 — Merge the lost 0.15.1–0.15.6 fixes (no console windows; grid blink)
 - **What:** Console windows no longer flash on Windows while video/audio thumbnails and waveforms are built, and the library grid no longer blinks / jumps by a row while scrolling or zooming. Both had been fixed in 0.15.1 and 0.15.5, but those commits lived on the side branch `claude/review-and-startup-speed` and never reached master: 0.16.0 (annotations) was branched from 0.15.0, so every build since then shipped without them. This also brings in the rest of that branch: faster startup (0.15.2), maximize/focus on launch (0.15.3), splash closing with the window (0.15.4), `docs/PLAN.md`.
 - **Where:** merge of `claude/review-and-startup-speed` (0.15.1–0.15.6 entries below). Conflicts: `server.py` `/api/assets` keeps 0.17's `review` filter and returns 0.15.2's `JSONResponse`; `version.py`; this file.
 - **Notes:**
   - Check after a merge that `grep -n "subprocess\." app/*.py` shows `creationflags=NO_WINDOW` (from `fileinfo.py`) on every console program run by the windowless app (ffmpeg, powershell, cmd), and that `.grid` in `index.html` has `overflow-anchor: none`.
   - Before starting a feature branch, branch from the current master, not an older commit: that is how these fixes were lost.
+
+## 0.19.1 — 2026-11-11 — HTML page: empty fields close on an outside tap; new note behind a + button
+- **What:** on the reviewer page an empty reply field (no text, picture or *Mark as* state) closes when you tap anywhere else (Esc on desktop). The new-note form is no longer always at the end of the feed: the blue *+* in the bottom bar opens it (one at a time — + again just jumps to it; × discards it; empty + outside tap hides it).
+- **Where:** `app/review.py` HTML template — `newOpen` / `opening`, `closeEmpty` on a document `click` listener, `isEmpty`, `focusLater`, `#add` in `.foot`, `.compose h3` close button, composer `data-key`.
+- **Notes:**
+  - The outside-tap check runs on `click` (bubbling), after the tap's own handler, so a field that very tap opened is skipped via `opening`. It is not done on `pointerdown`: re-rendering there shifts the layout under the finger and the click lands elsewhere.
+  - A field with any content stays open on an outside tap — only empty means cancel. Taps on the name dialog or the zoomed picture are ignored.
+  - Focus is applied in `requestAnimationFrame` by looking the textarea up by key, because closing another empty field in the same click re-renders the page a second time.
 
 ## 0.19.0 — 2026-11-11 — Notes can be *In progress*; reply pictures; HTML page: name gate, pinned filters, chat-style field
 - **What:** a note is open, *in progress* (someone took it) or resolved — a clock button in Sight, orange number / timeline marker, logged in the thread like resolve. Replies can carry pictures. The HTML page asks the reviewer's name before anything else; the sender (*From …*), *You: … ✎* and the *All / Open / In progress / Resolved* filters with count badges are pinned with the title; search hides behind an icon. *Reply* opens one full-width field (paper clip = attach, paper plane in the bottom-right corner = send) with *Mark as In progress / Resolved / Reopen* chips — the state goes with the reply or alone. New notes take pictures too; unsent entries have × to take them back.
@@ -151,11 +159,3 @@ Add new entries directly below this line.
   - The grid pages in 400 at a time, so `waitForItems` polls until every target is loaded (10 s cap) before selecting and scrolling. If the board is shown full-width, the split is switched on so the grid can be seen.
   - Excluded files can't be shown and get an alert. Missing files still appear, because the folder views include them.
   - Checked with Playwright on an isolated `SIGHT_HOME`: one folder, one folder with two files, two subfolders, source root, two sources, right-drag still zooms, and no JS errors. Multi-file Explorer selection was checked through `Shell.Application` `SelectedItems()`.
-
-## 0.14.1 — 2026-09-24 — Library: deleting a folder marks the files inside it missing
-- **What:** Files inside a folder that is sent to the Recycle Bin, or moved out of a watched source, now turn "missing" right away. Before, they stayed "ready" until the next rescan or restart. It looked like a text-file bug only because the reported case was a folder holding only `.log`/`.ini` files (Unreal crash folders).
-- **Where:** `library.py`: new `Library._mark_gone(fp)`, used by the watchdog handler's `on_deleted` and by the `on_moved` fallback (files only).
-- **Notes:**
-  - On Windows, watchdog reports a folder recycle or a move out of the tree as ONE `deleted` event for the folder, with `is_directory=False` (the path can no longer be stat'ed). So every deleted path is treated as a possible folder: `_mark_gone` matches the path itself plus `substr(path,1,len(prefix)) = prefix + os.sep`. It uses `substr`, not `LIKE`, so `%`/`_` in names don't need escaping. `shutil.rmtree`-style deletes already sent one event per file. Renaming a folder inside the tree sends per-file `moved` events and already worked.
-  - `excluded` rows are not flipped to missing, same as `scan_source`. The path match is case-sensitive, same as everywhere else.
-  - Missing entries are still never removed automatically. Only a manual purge removes them (the 🧹 button on the sidebar's Missing row, the grid context menu, or the palette → `/api/missing/purge`). Scans only set the status, and `_reconcile_moved` carries metadata over to moved files.

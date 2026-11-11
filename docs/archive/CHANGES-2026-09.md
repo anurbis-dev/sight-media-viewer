@@ -2,6 +2,14 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.14.1 — 2026-09-24 — Library: deleting a folder marks the files inside it missing
+- **What:** Files inside a folder that is sent to the Recycle Bin, or moved out of a watched source, now turn "missing" right away. Before, they stayed "ready" until the next rescan or restart. It looked like a text-file bug only because the reported case was a folder holding only `.log`/`.ini` files (Unreal crash folders).
+- **Where:** `library.py`: new `Library._mark_gone(fp)`, used by the watchdog handler's `on_deleted` and by the `on_moved` fallback (files only).
+- **Notes:**
+  - On Windows, watchdog reports a folder recycle or a move out of the tree as ONE `deleted` event for the folder, with `is_directory=False` (the path can no longer be stat'ed). So every deleted path is treated as a possible folder: `_mark_gone` matches the path itself plus `substr(path,1,len(prefix)) = prefix + os.sep`. It uses `substr`, not `LIKE`, so `%`/`_` in names don't need escaping. `shutil.rmtree`-style deletes already sent one event per file. Renaming a folder inside the tree sends per-file `moved` events and already worked.
+  - `excluded` rows are not flipped to missing, same as `scan_source`. The path match is case-sensitive, same as everywhere else.
+  - Missing entries are still never removed automatically. Only a manual purge removes them (the 🧹 button on the sidebar's Missing row, the grid context menu, or the palette → `/api/missing/purge`). Scans only set the status, and `_reconcile_moved` carries metadata over to moved files.
+
 ## 0.14.0 — 2026-09-24 — Canvas: swap thumbnails for originals when zoomed in
 - **What:** Board items still start on the 360px library thumbnail, but a visible 2D picture that is shown bigger than its thumbnail now loads the original in the background and swaps it in; zooming back out returns to the thumbnail.
 - **Where:** `canvas.js`: `FULL_RES_EXT` / `fullResUrl` (module level), `scheduleResCheck` / `syncResolution` / `shownImageWidth` / `loadFull` in `createCanvasView`; `buildItemEl` stores `img.dataset.thumb/full/fullW/res` and its `load` listener is no longer `once` (it re-runs pixelation and records `thumbW` on every swap); hooks in `worldTransform` and `layoutItemEl`.
