@@ -54,6 +54,13 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
 - **Parallel sessions:** several agents may edit this repo at once. Re-read a file right before editing
   it, make targeted edits, never revert changes you don't recognise, and **do not push (or commit)
   without the user asking**. Stage only your own hunks.
+- **Code review per block, by a fresh agent:** when a block of work is done (a plan stage, a feature,
+  a sizeable fix) and before it is committed / reported as done, start a **new** reviewer agent
+  (the Agent tool, general-purpose, not a fork — it must not share your context or assumptions)
+  and give it only the diff range / files, the goal and the invariants from the docs. Ask for
+  correctness bugs with concrete failure scenarios. Fix what it confirms, re-run the tests, and say
+  in the RECENT entry what the review found. One review per block — do not batch several blocks
+  into one late review.
 - **Build before every push:** when the user asks for a push, first produce a fresh build of the current
   state (Windows: `build_exe.bat` → `dist\Sight\Sight.exe`; macOS: `build_app_macos.sh` → `dist/Sight.app`),
   make sure it succeeds, and only then push. `dist/` is git-ignored — the build is not committed, it just

@@ -8,7 +8,7 @@ later stage before the earlier ones it depends on.
 
 | # | Topic | Decision |
 |---|-------|----------|
-| 1 | Devices | **All**: iPhone, iPad (Apple Pencil: pressure, "pencil draws, finger pans"), Android. One web code base. |
+| 1 | Devices | **All**: iPhone, iPad (Apple Pencil: pressure, "pencil draws, finger pans"), Android. One web code base, shipped as a **PWA** (decision 13). |
 | 2 | Video in reviews | The **HTML page** keeps only the sent frames (drawing on those). The **app** downloads the video from the cloud and can draw on any frame. Downloaded files need **cleanup** (see Cache). |
 | 3 | What is downloaded | A **proxy** by default (Sight writes it next to the `.srev` on export: H.264 720p/1080p); the **original on a button** (check first that the device can play it, warn before downloading). |
 | 4 | Clouds | **Google Drive first, then Dropbox**, behind one storage interface (more later). |
@@ -18,8 +18,9 @@ later stage before the earlier ones it depends on.
 | 8 | Offline | **Fully offline**: downloaded reviews + proxies work without network, edits queue locally and sync later with the same merge rules as Sight. |
 | 9 | 3D | **Full 3D in the app right away**: glTF/GLB downloaded, orbit, notes on new views, drawing over a view (same `ctx.vk` / `cam` as Sight). To check: ftrack has no 3D viewer as far as known — then the model goes as a version component and notes to ftrack as flat pictures of the view. |
 | 10 | Order | See Stages; ftrack moved up to right after the drawing on the HTML page. |
-| 11 | Builds | **GitHub Actions builds every platform**: Sight (Windows / macOS / Linux, as now) and the app (Android APK, iOS IPA on a macOS runner). |
-| 12 | Distribution | **GitHub Releases to clients for now**; App Store / Google Play only if it comes to that. |
+| 11 | Builds | **GitHub Actions builds every platform**: Sight (Windows / macOS / Linux, as now) and the app — the PWA deployed to **GitHub Pages**; an Android APK (Capacitor) is optional. |
+| 12 | Distribution | **A link to the GitHub Pages PWA** for clients (Sight builds stay on GitHub Releases); App Store / Google Play only if it comes to that. |
+| 13 | iPhone | **PWA, not a signed app**: open the link in Safari → Share → *Add to Home Screen*; runs full-screen, offline (Service Worker), updates itself. No Apple account or signing needed. Capacitor / stores only as a fallback if Safari limits block us. |
 
 Also decided: **Sight is the desktop client of the owner's tracker**, so the annotation format is a
 shared contract between Sight, the app and that tracker. Sight as a system-wide quick viewer is a
@@ -59,6 +60,10 @@ separate plan: `docs/PLAN-viewer.md`.
   separate button/mode, not a gesture in the viewer.
 
 ### 3. ftrack (two-way)
+- **First check CORS**: whether the customer's ftrack server answers a browser request from the
+  GitHub Pages origin (preflight with `ftrack-user` / `ftrack-api-key` headers). If not, the PWA
+  needs a tiny pass-through proxy (e.g. a Cloudflare Worker that only forwards, stores nothing);
+  Sight (desktop, its own server) can call ftrack directly either way. Same check for ShotGrid.
 - Native connection from the client to the ftrack REST API (`https://<site>.ftrackapp.com/api`,
   POST of JSON operations), no middle server. ftrack authenticates **user + API key**, not a
   password: do the login like ftrack Connect — the user signs in on their ftrack site in a browser,
@@ -73,19 +78,23 @@ separate plan: `docs/PLAN-viewer.md`.
 - Sync is the same merge: pull ftrack notes into our rows, push our new / edited rows; conflicts by
   the same stamps.
 
-### 4. The app (iOS + Android)
-- Capacitor shell around the web core (share sheet to open `.html` / `.srev` from Telegram etc.,
-  file access, keychain). Same UI as the HTML page grown into a project browser.
-- Local-first store (IndexedDB / SQLite plugin): reviews, rows, shots, queued changes; sync when
-  online (decision 8).
-- Players: image, video (frame stepping, timecode, frame-accurate within the WebView's limits —
-  ±1 frame is acceptable for drawing), 3D (stage 6).
+### 4. The app — a PWA on GitHub Pages (iPhone, iPad, Android, desktop)
+- The web core grown into a project browser, served from GitHub Pages (a workflow builds and
+  deploys it from this repo). Web app manifest + Service Worker: installable (*Add to Home
+  Screen* on iOS), works offline, updates on the next launch (show "new version — reload").
+- Local-first store: IndexedDB for reviews, rows, shots and the queue of unsent changes; Cache
+  Storage for downloaded proxies / originals / models. Call `navigator.storage.persist()`. Sync
+  when online (decision 8) and push unsent changes at the first chance — iOS can still clear the
+  data when the phone runs out of space.
+- iOS facts to design around: home-screen web apps are exempt from Safari's 7-day storage wipe;
+  **no Web Share Target** (cannot receive a file from Telegram's share sheet — open it via the file
+  picker / Files instead; clouds and ftrack need no files); Web Share API *sending* files works;
+  push notifications from iOS 16.4, home-screen apps only; Pointer Events give Pencil pressure.
+- Players: image, video (frame stepping, timecode; ±1 frame is acceptable for drawing), 3D (stage 6).
 - **Cache:** downloaded proxies / originals are deleted when a review is closed / sent, and by
   oldest-first eviction over a size limit; a *Clear downloads* button shows the space used.
-- GitHub Actions: Android APK (debug-signed until a keystore is added as a secret), iOS IPA on a
-  macOS runner. **iOS install from GitHub needs signing:** at least a paid Apple Developer account
-  and ad-hoc signing with the clients' device UDIDs (≤100 per device type); AltStore sideload
-  works without one but the signature lasts 7 days. Open question for the owner.
+- Fallback only if Safari blocks something essential: wrap the same code in Capacitor (needs Apple
+  signing for iOS, see the history of decision 12).
 
 ### 5. Google Drive
 - OAuth on the device; a project folder holds `.srev` files + proxies; Sight writes the proxy on
@@ -107,7 +116,8 @@ separate plan: `docs/PLAN-viewer.md`.
   Sight (decision 6), so it speaks FORMAT.md directly; Sight becomes its desktop client.
 
 ## Open questions (ask when the stage comes)
-- iOS signing / Apple Developer account (stage 4).
+- Only if the PWA hits a Safari limit: iOS signing / Apple Developer account for a Capacitor build.
+- CORS on ftrack / ShotGrid → proxy or not (stage 3).
 - ftrack: confirm the login flow and the status names on the customer's site; whether 3D is
   viewable there.
 - Which repository is the owner's tracker.
