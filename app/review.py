@@ -115,11 +115,15 @@ h1 { font-size: 17pt; margin: 0 0 2pt 0; }
 .who { color: #6e6e73; }
 .text { font-size: 10.5pt; margin: 2pt 0 4pt 0; }
 .status { color: #34a853; font-weight: bold; }
+.prog { color: #c77c02; font-weight: bold; }
 .reply { font-size: 9.5pt; margin: 0 0 4pt 10pt; padding: 0 0 0 6pt; border-left: 1.5pt solid #c7c7cc; }
 .revent { font-size: 8.5pt; color: #6e6e73; margin: 0 0 4pt 10pt; padding: 0 0 0 6pt; border-left: 1.5pt solid #c7c7cc; }
 img { display: block; margin: 4pt 0 2pt 0; }
 .cap { color: #8e8e93; font-size: 7.5pt; margin: 0 0 4pt 0; }
 """
+
+# Thread entries that record a note state change (see annotate.js statusEvent).
+EVENT_LABEL = {"done": "Resolved", "progress": "In progress", "open": "Reopened"}
 
 PAGE = (595.0, 842.0)  # A4, points
 MARGIN = 40.0
@@ -135,7 +139,8 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
 
 def build_pdf(payload: dict, root: Path, out: Path) -> int:
     """payload: {title, subtitle, meta: [[label, value]], cover, notes: [{num, ctx, author, date,
-    text, status, frame, shots: [id], frameCaption, replies: [{author, date, text, event}]}]} — images
+    text, status (open|progress|done), frame, shots: [id], frameCaption, replies: [{author, date, text,
+    event, shots: [id]}]}]} — images
     are data URLs (cover/frame) or shot ids. Returns the page count."""
     import pymupdf
     from PIL import Image
@@ -186,17 +191,24 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             head.append(f'<span class="who">{who}</span>')
         if done:
             head.append('<span class="status">Resolved</span>')
+        elif n.get("status") == "progress":
+            head.append('<span class="prog">In progress</span>')
         parts.append(f'<div class="note{" done" if done else ""}"><p class="head">{" &#160; ".join(head)}</p>')
         if n.get("text"):
             parts.append(f'<p class="text">{esc(n["text"])}</p>')
         for r in n.get("replies") or []:
-            if r.get("event"):  # resolve / reopen entry in the thread
-                label = "Resolved" if r["event"] == "done" else "Reopened"
+            if r.get("event"):  # resolve / in progress / reopen entry in the thread
+                label = EVENT_LABEL.get(r["event"], "Reopened")
                 by = f" by {esc(r.get('author'))}" if r.get("author") else ""
                 parts.append(f'<p class="revent">{label}{by} &#183; {esc(r.get("date"))}</p>')
                 continue
             who = " &#183; ".join(esc(x) for x in (r.get("author"), r.get("date")) if x)
-            parts.append(f'<p class="reply"><span class="who">{who}</span><br/>{esc(r.get("text"))}</p>')
+            text = f"<br/>{esc(r.get('text'))}" if r.get("text") else ""
+            parts.append(f'<p class="reply"><span class="who">{who}</span>{text}</p>')
+            for sid in r.get("shots") or []:
+                shot = put_image(shot_bytes(str(sid)))
+                if shot:
+                    parts.append(_img_tag(*shot, max_h=200))
         frame = put_image(decode_data_url(n.get("frame") or ""))
         if frame:
             parts.append(_img_tag(*frame, max_h=300))
@@ -251,8 +263,15 @@ _ROW_KEYS = ("id", "kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_inde
 def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_version: str,
                   deleted: list[dict] | None = None) -> dict:
     shots: dict[str, str] = {}
+    def row_shots(d: dict) -> list:
+        out = list(d.get("shots") or [])
+        for x in d.get("replies") or []:  # pictures attached to replies
+            if isinstance(x, dict) and not x.get("deleted"):
+                out += list(x.get("shots") or [])
+        return out
+
     for r in rows:
-        for sid in (r.get("data") or {}).get("shots") or []:
+        for sid in row_shots(r.get("data") or {}):
             p = shot_path(root, str(sid))
             if p and sid not in shots:
                 mime = "image/jpeg" if p.suffix == ".jpg" else "image/png"
@@ -290,8 +309,9 @@ def parse_package(raw: bytes) -> dict:
 
 def build_html(report: dict, pkg: dict) -> str:
     """One self-contained page: the report (cover, per-note frames, notes, replies, screenshots)
-    plus the .srev package it came from. The reviewer can reply, resolve / reopen and add notes in
-    the browser (kept in localStorage), then download an updated .srev that merges back in Sight
+    plus the .srev package it came from. After giving their name the reviewer can reply (with
+    pictures), mark notes in progress / resolved / reopened and add notes in the browser (kept in
+    localStorage), then download an updated .srev that merges back in Sight
     (see Library.import_annotations). Everything is inline — no network access needed."""
     # "<" only occurs inside JSON strings, so \u003c is the same data and nothing in it can close
     # the <script> block or open a comment there.
@@ -307,70 +327,109 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%%TITLE%%</title>
 <style>
-:root { --bg: #f5f5f7; --card: #fff; --fg: #1d1d1f; --muted: #6e6e73; --line: #d9d9de; --accent: #0a84ff; --red: #d0342c; --green: #2f9d5b; --chip: #ececf0; }
-@media (prefers-color-scheme: dark) { :root { --bg: #141416; --card: #1f1f23; --fg: #f2f2f0; --muted: #9a9aa2; --line: #34343a; --accent: #4c9aff; --chip: #2a2a30; } }
+:root { --bg: #f5f5f7; --card: #fff; --fg: #1d1d1f; --muted: #6e6e73; --line: #d9d9de; --accent: #0a84ff; --red: #d0342c; --green: #2f9d5b; --amber: #d98200; --chip: #ececf0; }
+@media (prefers-color-scheme: dark) { :root { --bg: #141416; --card: #1f1f23; --fg: #f2f2f0; --muted: #9a9aa2; --line: #34343a; --accent: #4c9aff; --amber: #f0a020; --chip: #2a2a30; } }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+[hidden] { display: none !important; }
 .top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
 .top .in { max-width: 980px; margin: 0 auto; padding: 0 16px; }
-.hd { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--fg); font: inherit; padding: 10px 0; cursor: pointer; text-align: left; }
+.hd { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--fg); font: inherit; padding: 10px 0 4px; cursor: pointer; text-align: left; }
 .hd h1 { flex: 1; min-width: 0; font-size: 17px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hd .chev { flex: none; width: 28px; height: 28px; border-radius: 14px; display: grid; place-items: center; background: var(--chip); transition: transform .15s; }
 .hd[aria-expanded="true"] .chev { transform: rotate(180deg); }
-.details { padding: 0 0 10px; max-height: 55vh; overflow: auto; }
-.details[hidden] { display: none; }
+.details { padding: 4px 0 6px; max-height: 50vh; overflow: auto; }
 .hist { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.6; }
 .hist-h { font-weight: 600; color: var(--fg); }
+.people { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); min-height: 24px; }
+.people .from { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.people b { color: var(--fg); font-weight: 600; }
+.me { flex: none; max-width: 55%; display: inline-flex; align-items: center; gap: 4px; border: 0; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.me b { overflow: hidden; text-overflow: ellipsis; }
+.frow { display: flex; align-items: center; gap: 8px; padding: 12px 0 8px; }
+.seg { flex: 1; min-width: 0; display: flex; background: var(--chip); border-radius: 9px; padding: 2px; }
+.seg button { position: relative; flex: 1 1 auto; border: 0; background: none; color: var(--muted); padding: 5px 4px; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.seg button.on { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.seg .cnt { position: absolute; top: -9px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--muted); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 18px; font-style: normal; text-align: center; box-shadow: 0 0 0 2px var(--bg); }
+.seg .cnt.open { background: var(--red); }
+.seg .cnt.progress { background: var(--amber); }
+.seg .cnt.done { background: var(--green); }
+.seg .cnt.zero { opacity: .45; }
+.ib { flex: none; width: 34px; height: 34px; border-radius: 9px; border: 0; background: var(--chip); color: var(--fg); display: grid; place-items: center; cursor: pointer; }
+.ib.on { background: var(--accent); color: #fff; }
+.q { width: 100%; margin: 0 0 8px; }
 main { max-width: 980px; margin: 0 auto; padding: 14px 16px 90px; }
 .sub { color: var(--muted); font-size: 12px; word-break: break-all; margin: 0 0 8px; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 .meta span { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
 .meta b { font-weight: 600; color: var(--muted); margin-right: 4px; }
-.cover { width: 100%; border-radius: 10px; display: block; cursor: zoom-in; background: #000; }
-.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0 10px; }
-.seg { display: inline-flex; background: var(--chip); border-radius: 8px; padding: 2px; }
-.seg button { border: 0; background: none; color: var(--muted); padding: 4px 12px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
-.seg button.on { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.cover { width: 100%; border-radius: 10px; display: block; cursor: zoom-in; background: #000; margin-bottom: 4px; }
 input, textarea { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; outline: none; }
 input:focus, textarea:focus { border-color: var(--accent); }
-.who { width: 180px; }
-.q { flex: 1; min-width: 140px; }
 .note { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
 .note.done { opacity: .7; }
 .note.done .text { text-decoration: line-through; text-decoration-color: var(--muted); }
 .nh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .num { min-width: 22px; height: 22px; border-radius: 11px; background: var(--red); color: #fff; display: inline-grid; place-items: center; font-weight: 700; font-size: 11px; padding: 0 6px; }
+.progress .num { background: var(--amber); }
 .done .num { background: var(--green); }
 .ctx { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
-.state { margin-left: auto; }
+.state { margin-left: auto; border-radius: 999px; padding: 1px 9px; background: var(--chip); font-weight: 600; }
+.state.progress { color: var(--amber); }
+.state.done { color: var(--green); }
 .text { white-space: pre-wrap; word-break: break-word; margin: 6px 0; font-size: 15px; }
 .frame { max-width: 100%; border-radius: 8px; display: block; margin: 8px 0 2px; cursor: zoom-in; }
 .cap { font-size: 11px; color: var(--muted); }
-.shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-.shots img { height: 80px; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; }
+.shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.shots img { height: 80px; max-width: 100%; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
 .replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }
-.rep { margin: 6px 0; }
+.rep { margin: 6px 0; position: relative; }
 .rep .rh { font-size: 11px; color: var(--muted); }
 .rep .rt { white-space: pre-wrap; word-break: break-word; }
-.rep.mine .rh::after, .rep.ev.mine::after { content: " · not sent yet"; color: var(--accent); }
+.rep.mine .rh::after, .rep.ev.mine .el::after { content: " · not sent yet"; color: var(--accent); }
 .rep.ev { font-size: 12px; color: var(--muted); }
+.rep.ev.progress { color: var(--amber); }
 .rep.ev.done { color: var(--green); }
+.rep .x { position: absolute; right: -4px; top: -2px; width: 24px; height: 24px; border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 12px; }
+.rep.mine { padding-right: 22px; }
 .acts { display: flex; gap: 6px; margin-top: 10px; }
 .btn { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn[disabled] { opacity: .45; cursor: default; }
-.rbox { display: flex; gap: 6px; margin-top: 8px; }
-.rbox textarea { flex: 1; min-height: 38px; resize: vertical; }
-.compose { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 12px 14px; margin: 16px 0; }
-.compose textarea { width: 100%; min-height: 60px; resize: vertical; }
-.compose .acts { justify-content: flex-end; }
-.foot { position: fixed; left: 0; right: 0; bottom: 0; background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
+/* Message field: full width, attach on the left and send (paper plane) in the bottom-right corner. */
+.cmp { margin-top: 10px; }
+.opts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+.opt { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 999px; padding: 3px 11px; font: inherit; font-size: 12px; cursor: pointer; }
+.opt.on.progress { background: var(--amber); border-color: var(--amber); color: #fff; }
+.opt.on.done { background: var(--green); border-color: var(--green); color: #fff; }
+.opt.on.open { background: var(--accent); border-color: var(--accent); color: #fff; }
+.field { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 18px; }
+.field:focus-within { border-color: var(--accent); }
+.field textarea { display: block; width: 100%; border: 0; background: none; resize: none; min-height: 40px; max-height: 40vh; padding: 9px 46px 9px 42px; border-radius: 18px; }
+.field .atts { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 10px 0; }
+.field .atts span { position: relative; }
+.field .atts img { height: 56px; border-radius: 8px; display: block; border: 1px solid var(--line); }
+.field .atts button { position: absolute; right: -6px; top: -6px; width: 20px; height: 20px; border-radius: 10px; border: 0; background: #000; color: #fff; font-size: 13px; line-height: 20px; padding: 0; cursor: pointer; }
+.clip, .send { position: absolute; bottom: 4px; width: 32px; height: 32px; border-radius: 16px; border: 0; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.clip { left: 5px; background: none; color: var(--muted); }
+.send { right: 4px; background: var(--accent); color: #fff; }
+.send[disabled] { background: var(--chip); color: var(--muted); cursor: default; }
+.compose { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px 12px; margin: 16px 0; }
+.compose .cmp { margin: 0; }
+.compose h3 { font-size: 13px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+.foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
 .foot div { max-width: 980px; margin: 0 auto; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; }
 .foot span { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .foot .btn { white-space: nowrap; }
 .zoom { position: fixed; inset: 0; background: rgb(0 0 0 / .88); display: grid; place-items: center; cursor: zoom-out; z-index: 10; }
 .zoom img { max-width: 96vw; max-height: 96vh; }
+.gate { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
+.sheet { width: 100%; max-width: 360px; background: var(--card); border-radius: 16px; padding: 18px; box-shadow: 0 20px 60px rgb(0 0 0 / .35); }
+.sheet h2 { font-size: 17px; margin: 0 0 4px; }
+.sheet p { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.sheet input { width: 100%; font-size: 16px; padding: 9px 12px; margin-bottom: 12px; }
+.sheet .acts { justify-content: flex-end; margin: 0; }
 .empty { color: var(--muted); padding: 20px 0; }
 .gen { font-size: 11px; color: var(--muted); text-align: center; margin-top: 30px; }
 </style>
@@ -379,9 +438,13 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <header class="top"><div class="in">
 <button class="hd" id="hd" type="button" aria-expanded="false" aria-controls="details" title="File and review details"><h1 id="ttl"></h1><span class="chev" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
 <div class="details" id="details" hidden></div>
+<div class="people"><span class="from" id="from"></span><button class="me" id="me" type="button" title="Change your name">You: <b id="myname"></b> ✎</button></div>
+<div class="frow"><div class="seg" id="seg"></div><button class="ib" id="sbtn" type="button" title="Search notes" aria-label="Search notes"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg></button></div>
+<input class="q" id="q" type="search" placeholder="Search notes" hidden>
 </div></header>
 <main id="app"></main>
 <div class="foot"><div><span id="status"></span><button class="btn" id="reset" type="button">Discard</button><button class="btn primary" id="dl" type="button">Download reply</button></div></div>
+<div class="gate" id="gate" hidden><form class="sheet" id="gform"><h2>Who is reviewing?</h2><p>Your name goes on every reply, picture and status change you make on this page.</p><input id="gname" autocomplete="name" placeholder="Your name" maxlength="80" required><div class="acts"><button class="btn" id="gcancel" type="button">Cancel</button><button class="btn primary" type="submit">Continue</button></div></form></div>
 <script id="data" type="application/json">%%DATA%%</script>
 <script>
 (function(){
@@ -391,62 +454,166 @@ input:focus, textarea:focus { border-color: var(--accent); }
   var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at;
   var rows = {};
   PKG.annotations.forEach(function(r){ rows[r.id] = r; });
-  // Local edits: {replies: {noteId: [reply | status event]}, status: {noteId: "open"|"done"}, notes: [row]}.
-  // Resolve / reopen is also kept as an entry in the note's thread ({id, event, author, created}),
-  // the same shape Sight writes, so the history says who changed the state and when.
-  var E = { replies: {}, status: {}, notes: [] };
-  try { var saved = JSON.parse(localStorage.getItem(KEY)); if (saved) E = saved; } catch (e) {}
-  var filter = "all", query = "";
-  var who = localStorage.getItem("sight-review:name") || "";
-  function save(){ try { localStorage.setItem(KEY, JSON.stringify(E)); } catch (e) {} paintFoot(); }
+  // Local edits, kept in localStorage until downloaded: {replies: {noteId: [entry]}, notes: [row],
+  // att: {shotId: dataURL}}. An entry is a reply ({id, text, author, created, shots?}) or a state
+  // change ({id, event: "progress"|"done"|"open", author, created}) — the shapes Sight writes, so
+  // the thread keeps who did what and when. A note's state here is its last local change, else
+  // the exported one.
+  var E = { replies: {}, notes: [], att: {} };
+  try { var saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.replies) E = saved; } catch (e) {}
+  E.att = E.att || {};
+  var filter = "all", query = "", searchOn = false;
+  var drafts = {}, openReply = {};  // unsent text / pictures / state per field (survive re-render)
+  var who = "";
+  try { who = localStorage.getItem("sight-review:name") || ""; } catch (e) {}
+  var STATES = { open: "Open", progress: "In progress", done: "Resolved" };
+  var EV = { done: ["✓", "Resolved"], progress: ["▸", "In progress"], open: ["↺", "Reopened"] };
+  var warned = false;
+  function save(){
+    try { localStorage.setItem(KEY, JSON.stringify(E)); }
+    catch (e) { if (!warned){ warned = true; alert("This browser cannot keep that many pictures on the page. Download the reply now so nothing is lost."); } }
+    paintFoot(); paintSeg();
+  }
   function uid(){ var a = new Uint8Array(8); crypto.getRandomValues(a); return Array.prototype.map.call(a, function(b){ return ("0" + b.toString(16)).slice(-2); }).join(""); }
   function el(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function svg(path, w){ var s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("width", w || 18); s.setAttribute("height", w || 18); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = path; return s; }
   function fmt(ms){ try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } }
-  function hasEvent(k){ return (E.replies[k] || []).some(function(r){ return r.event; }); }
   function changes(){
     var n = E.notes.length;
     Object.keys(E.replies).forEach(function(k){ n += E.replies[k].length; });
-    Object.keys(E.status).forEach(function(k){ if (rows[k] && (rows[k].data.status || "open") !== E.status[k] && !hasEvent(k)) n++; });
     return n;
   }
-  function statusOf(id){ return E.status[id] || (rows[id] && rows[id].data.status) || "open"; }
+  function origStatus(id){ return (rows[id] && rows[id].data.status) || "open"; }
+  function statusOf(id){
+    var L = E.replies[id] || [];
+    for (var i = L.length - 1; i >= 0; i--) if (L[i].event) return L[i].event;
+    return origStatus(id);
+  }
   function zoom(src){
     var z = el("div", "zoom"); var i = el("img"); i.src = src; z.appendChild(i);
     z.onclick = function(){ z.remove(); };
     document.body.appendChild(z);
   }
-  function shotSrc(sid){ return (PKG.shots || {})[sid] || ""; }
+  function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
+  function thumbs(list){
+    var srcs = (list || []).map(shotSrc).filter(Boolean);
+    if (!srcs.length) return null;
+    var sh = el("div", "shots");
+    srcs.forEach(function(s){ var i = el("img"); i.src = s; i.alt = ""; i.onclick = function(){ zoom(s); }; sh.appendChild(i); });
+    return sh;
+  }
+  // Pictures are scaled down to 1600 px JPEG so the reply file and the page's storage stay small.
+  function readImage(file){
+    return new Promise(function(ok){
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function(){
+        var k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        var g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); ok(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); ok(null); };
+      img.src = url;
+    });
+  }
+  var coarse = window.matchMedia && matchMedia("(pointer: coarse)").matches;
+  // One message field: text, pictures and (for a note) a state to set with it.
+  // opts: {key, placeholder, status (current state, or null for a new note), onSend(text, shots, state)}.
+  function composer(opts){
+    var dr = drafts[opts.key] = drafts[opts.key] || { text: "", shots: [], state: "" };
+    var box = el("div", "cmp");
+    var send = el("button", "send"); send.type = "button"; send.title = "Send"; send.setAttribute("aria-label", "Send");
+    send.appendChild(svg('<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor"/>', 17));
+    function can(){ return !!(dr.text.trim() || dr.shots.length || dr.state); }
+    function paint(){ send.disabled = !can(); }
+    if (opts.status){
+      var o = el("div", "opts"); o.appendChild(el("span", "", "Mark as"));
+      ["progress", "done", "open"].forEach(function(s){
+        if (s === opts.status) return;
+        var b = el("button", "opt " + s + (dr.state === s ? " on" : ""), s === "open" ? "Reopen" : STATES[s]); b.type = "button";
+        b.onclick = function(){ dr.state = dr.state === s ? "" : s; o.querySelectorAll(".opt").forEach(function(x){ x.classList.remove("on"); }); if (dr.state) b.classList.add("on"); paint(); };
+        o.appendChild(b);
+      });
+      box.appendChild(o);
+    }
+    var f = el("div", "field");
+    var atts = el("div", "atts");
+    function paintAtts(){
+      atts.textContent = ""; atts.hidden = !dr.shots.length;
+      dr.shots.forEach(function(a, i){
+        var s = el("span"), im = el("img"); im.src = a.src; im.alt = ""; s.appendChild(im);
+        var x = el("button", "", "×"); x.type = "button"; x.title = "Remove picture";
+        x.onclick = function(){ dr.shots.splice(i, 1); paintAtts(); paint(); };
+        s.appendChild(x); atts.appendChild(s);
+      });
+    }
+    var ta = el("textarea"); ta.rows = 1; ta.placeholder = opts.placeholder; ta.value = dr.text;
+    function grow(){ ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; }
+    ta.oninput = function(){ dr.text = ta.value; grow(); paint(); };
+    ta.addEventListener("keydown", function(e){ if (!coarse && e.key === "Enter" && !e.shiftKey && !e.isComposing){ e.preventDefault(); send.onclick(); } });
+    var file = el("input"); file.type = "file"; file.accept = "image/*"; file.multiple = true; file.hidden = true;
+    file.onchange = function(){
+      var fs = Array.prototype.slice.call(file.files || []); file.value = "";
+      Promise.all(fs.map(readImage)).then(function(list){
+        list.forEach(function(src){ if (src) dr.shots.push({ id: uid(), src: src }); });
+        paintAtts(); paint();
+      });
+    };
+    var clip = el("button", "clip"); clip.type = "button"; clip.title = "Attach pictures"; clip.setAttribute("aria-label", "Attach pictures");
+    clip.appendChild(svg('<path d="m20.5 11.5-8.3 8.3a5.2 5.2 0 0 1-7.4-7.4l8.6-8.6a3.5 3.5 0 0 1 4.9 4.9l-8.6 8.6a1.7 1.7 0 0 1-2.5-2.5l7.9-7.9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>', 19));
+    clip.onclick = function(){ file.click(); };
+    send.onclick = function(){
+      if (!can()) return;
+      dr.shots.forEach(function(a){ E.att[a.id] = a.src; });
+      delete drafts[opts.key];  // before onSend: it re-renders, which would bring the draft back
+      opts.onSend(dr.text.trim(), dr.shots.map(function(a){ return a.id; }), dr.state);
+    };
+    f.appendChild(atts); f.appendChild(ta); f.appendChild(clip); f.appendChild(send); f.appendChild(file);
+    box.appendChild(f);
+    paintAtts(); paint();
+    box.focusField = function(){ ta.focus(); };
+    requestAnimationFrame(grow);
+    return box;
+  }
+  function entry(r){
+    var mine = r.mine;
+    if (r.event){
+      var ev = EV[r.event] || EV.open;
+      var d = el("div", "rep ev " + r.event + (mine ? " mine" : ""));
+      d.appendChild(el("span", "el", ev[0] + " " + ev[1] + (r.author ? " by " + r.author : "") + (r.date ? " · " + r.date : "")));
+      return d;
+    }
+    var d2 = el("div", "rep" + (mine ? " mine" : ""));
+    d2.appendChild(el("div", "rh", [r.author, r.date].filter(Boolean).join(" · ")));
+    if (r.text) d2.appendChild(el("div", "rt", r.text));
+    var sh = thumbs(r.shots); if (sh) d2.appendChild(sh);
+    return d2;
+  }
   function noteCard(n, local){
     var id = n.id, st = local ? "open" : statusOf(id);
-    var c = el("div", "note" + (st === "done" ? " done" : ""));
+    var c = el("div", "note " + st);
     var h = el("div", "nh");
     h.appendChild(el("span", "num", local ? "+" : String(n.num)));
     if (n.ctx) h.appendChild(el("span", "ctx", n.ctx));
     h.appendChild(el("span", "", [n.author, n.date].filter(Boolean).join(" · ")));
-    if (!local) h.appendChild(el("span", "state", st === "done" ? "Resolved" : "Open"));
-    else h.appendChild(el("span", "state", "New · not sent yet"));
+    h.appendChild(el("span", "state " + st, local ? "New · not sent yet" : STATES[st] || "Open"));
     c.appendChild(h);
     if (n.text) c.appendChild(el("div", "text", n.text));
     if (n.frame){ var f = el("img", "frame"); f.src = n.frame; f.alt = ""; f.onclick = function(){ zoom(n.frame); }; c.appendChild(f); }
     if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
-    var shots = (n.shots || []).map(shotSrc).filter(Boolean);
-    if (shots.length){
-      var sh = el("div", "shots");
-      shots.forEach(function(s){ var i = el("img"); i.src = s; i.alt = ""; i.onclick = function(){ zoom(s); }; sh.appendChild(i); });
-      c.appendChild(sh);
-    }
-    var reps = (n.replies || []).concat((E.replies[id] || []).map(function(r){ return { author: r.author, date: fmt(r.created), text: r.text, event: r.event, mine: true }; }));
+    var sh = thumbs(n.shots); if (sh) c.appendChild(sh);
+    var mineL = E.replies[id] || [];
+    var reps = (n.replies || []).concat(mineL.map(function(r){ return { id: r.id, author: r.author, date: fmt(r.created), text: r.text, event: r.event, shots: r.shots, mine: true }; }));
     if (reps.length){
       var rb = el("div", "replies");
       reps.forEach(function(r){
-        if (r.event){
-          var label = (r.event === "done" ? "✓ Resolved" : "↺ Reopened") + (r.author ? " by " + r.author : "") + (r.date ? " · " + r.date : "");
-          rb.appendChild(el("div", "rep ev" + (r.event === "done" ? " done" : "") + (r.mine ? " mine" : ""), label));
-          return;
+        var d = entry(r);
+        if (r.mine){
+          var x = el("button", "x", "×"); x.type = "button"; x.title = "Remove (not sent yet)";
+          x.onclick = function(){ E.replies[id] = mineL.filter(function(y){ return y.id !== r.id; }); if (!E.replies[id].length) delete E.replies[id]; save(); render(); };
+          d.appendChild(x);
         }
-        var d = el("div", "rep" + (r.mine ? " mine" : ""));
-        d.appendChild(el("div", "rh", [r.author, r.date].filter(Boolean).join(" · ")));
-        d.appendChild(el("div", "rt", r.text));
         rb.appendChild(d);
       });
       c.appendChild(rb);
@@ -457,32 +624,22 @@ input:focus, textarea:focus { border-color: var(--accent); }
       var a0 = el("div", "acts"); a0.appendChild(del); c.appendChild(a0);
       return c;
     }
-    var acts = el("div", "acts");
-    var rbtn = el("button", "btn", "Reply");
-    var sbtn = el("button", "btn", st === "done" ? "Reopen" : "Resolve");
-    sbtn.onclick = function(){
-      var orig = (rows[id] && rows[id].data.status) || "open", next = st === "done" ? "open" : "done";
-      var L = E.replies[id] = E.replies[id] || [], last = L[L.length - 1];
-      // Undoing an unsent toggle drops its entry instead of logging a second one.
-      if (next === orig && last && last.event) L.pop();
-      else L.push({ id: uid(), event: next, author: who, created: Date.now() });
-      if (!L.length) delete E.replies[id];
-      if (next === orig) delete E.status[id]; else E.status[id] = next;
-      save(); render();
-    };
-    rbtn.onclick = function(){
-      if (c.querySelector(".rbox")) return;
-      var box = el("div", "rbox"), ta = el("textarea"); ta.placeholder = "Your reply";
-      var send = el("button", "btn primary", "Add");
-      send.onclick = function(){
-        var t = ta.value.trim(); if (!t) return;
-        (E.replies[id] = E.replies[id] || []).push({ id: uid(), text: t, author: who, created: Date.now() });
+    if (openReply[id]){
+      var cmp = composer({ key: id, placeholder: "Reply", status: st, onSend: function(text, shots, state){
+        var L = E.replies[id] = E.replies[id] || [], now = Date.now();
+        if (text || shots.length){ var r = { id: uid(), text: text, author: who, created: now }; if (shots.length) r.shots = shots; L.push(r); }
+        if (state) L.push({ id: uid(), event: state, author: who, created: now + 1 });
+        delete openReply[id];
         save(); render();
-      };
-      ta.addEventListener("keydown", function(e){ if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send.onclick(); } });
-      box.appendChild(ta); box.appendChild(send); c.appendChild(box); ta.focus();
-    };
-    acts.appendChild(rbtn); acts.appendChild(sbtn); c.appendChild(acts);
+      } });
+      c.appendChild(cmp);
+      if (openReply[id] === "focus"){ openReply[id] = true; requestAnimationFrame(cmp.focusField); }
+    } else {
+      var acts = el("div", "acts");
+      var rbtn = el("button", "btn", "Reply");
+      rbtn.onclick = function(){ openReply[id] = "focus"; render(); };
+      acts.appendChild(rbtn); c.appendChild(acts);
+    }
     return c;
   }
   function render(){
@@ -490,52 +647,45 @@ input:focus, textarea:focus { border-color: var(--accent); }
     var keepY = window.scrollY;
     app.textContent = "";
     if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(R.cover); }; app.appendChild(cv); }
-    var bar = el("div", "bar");
-    var seg = el("div", "seg");
-    [["all", "All"], ["open", "Open"], ["done", "Resolved"]].forEach(function(f){
-      var b = el("button", filter === f[0] ? "on" : "", f[1]);
-      b.onclick = function(){ filter = f[0]; render(); };
-      seg.appendChild(b);
-    });
-    bar.appendChild(seg);
-    var q = el("input", "q"); q.placeholder = "Search notes"; q.value = query;
-    q.oninput = function(){ query = q.value; renderList(); };
-    bar.appendChild(q);
-    var w = el("input", "who"); w.placeholder = "Your name"; w.value = who;
-    w.onchange = function(){ who = w.value.trim(); try { localStorage.setItem("sight-review:name", who); } catch (e) {} };
-    bar.appendChild(w);
-    app.appendChild(bar);
     var list = el("div", ""); list.id = "list"; app.appendChild(list);
     var comp = el("div", "compose");
-    var ta = el("textarea"); ta.placeholder = "Add a new note…";
-    var add = el("button", "btn primary", "Add note");
-    add.onclick = function(){
-      var t = ta.value.trim(); if (!t) return;
-      E.notes.push({ id: uid(), text: t, author: who, created: Date.now() });
+    comp.appendChild(el("h3", "", "New note"));
+    comp.appendChild(composer({ key: "+new", placeholder: "Add a new note…", status: null, onSend: function(text, shots){
+      E.notes.push({ id: uid(), text: text, author: who, created: Date.now(), shots: shots });
       save(); render();
-    };
-    var ca = el("div", "acts"); ca.appendChild(add);
-    comp.appendChild(ta); comp.appendChild(ca);
+    } }));
     app.appendChild(comp);
     app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight."));
     renderList();
-    paintFoot();
+    paintFoot(); paintSeg();
     window.scrollTo(0, keepY);
+  }
+  function stateOfShown(n){ return n.local ? "open" : statusOf(n.id); }
+  function allNotes(){
+    return (R.notes || []).concat(E.notes.map(function(n){ return { id: n.id, text: n.text, author: n.author, date: fmt(n.created), shots: n.shots, local: true }; }));
   }
   function renderList(){
     var list = document.getElementById("list");
     list.textContent = "";
-    var ql = query.toLowerCase();
-    var shown = (R.notes || []).filter(function(n){
-      var st = statusOf(n.id);
-      if (filter !== "all" && st !== filter) return false;
+    var ql = query.trim().toLowerCase();
+    allNotes().filter(function(n){
+      if (filter !== "all" && stateOfShown(n) !== filter) return false;
       if (!ql) return true;
-      var hay = [n.text, n.author, n.ctx].concat((n.replies || []).map(function(r){ return r.text || ""; })).join(" ").toLowerCase();
+      var hay = [n.text, n.author, n.ctx].concat((n.replies || []).map(function(r){ return r.text || ""; }), (E.replies[n.id] || []).map(function(r){ return r.text || ""; })).join(" ").toLowerCase();
       return hay.indexOf(ql) >= 0;
-    });
-    shown.forEach(function(n){ list.appendChild(noteCard(n, false)); });
-    if (filter !== "done") E.notes.forEach(function(n){ list.appendChild(noteCard({ id: n.id, text: n.text, author: n.author, date: fmt(n.created) }, true)); });
+    }).forEach(function(n){ list.appendChild(noteCard(n, !!n.local)); });
     if (!list.childNodes.length) list.appendChild(el("p", "empty", "No notes here."));
+  }
+  function paintSeg(){
+    var seg = document.getElementById("seg"), cnt = { all: 0, open: 0, progress: 0, done: 0 };
+    allNotes().forEach(function(n){ cnt.all++; cnt[stateOfShown(n)] = (cnt[stateOfShown(n)] || 0) + 1; });
+    seg.textContent = "";
+    [["all", "All"], ["open", "Open"], ["progress", "In progress"], ["done", "Resolved"]].forEach(function(f){
+      var b = el("button", filter === f[0] ? "on" : "", f[1]); b.type = "button";
+      b.appendChild(el("i", "cnt " + f[0] + (cnt[f[0]] ? "" : " zero"), String(cnt[f[0]] || 0)));
+      b.onclick = function(){ filter = f[0]; paintSeg(); renderList(); };
+      seg.appendChild(b);
+    });
   }
   function paintFoot(){
     var n = changes();
@@ -544,20 +694,27 @@ input:focus, textarea:focus { border-color: var(--accent); }
     document.getElementById("reset").hidden = !n;
   }
   function download(){
-    var now = Date.now();
+    var now = Date.now(), used = {};
     var out = JSON.parse(JSON.stringify(PKG));
     out.author = who; out.exported_at = now; out.app = (PKG.app || "Sight") + " (web reply)";
-    // Replies and the open/done state carry their own stamps (merged on their own in Sight), so
-    // the note's updated_at stays as exported: answering must not make this copy of the note's
-    // text win over edits made in Sight since.
+    out.shots = out.shots || {};
+    function keep(list){ (list || []).forEach(function(s){ if (E.att[s]){ out.shots[s] = E.att[s]; used[s] = 1; } }); }
+    // Replies and the note state carry their own stamps (merged on their own in Sight), so the
+    // note's updated_at stays as exported: answering must not make this copy of the note's text
+    // win over edits made in Sight since.
     out.annotations.forEach(function(r){
       if (r.kind !== "note") return;
-      if (E.replies[r.id] && E.replies[r.id].length) r.data.replies = (r.data.replies || []).concat(E.replies[r.id]);
-      if (E.status[r.id] && E.status[r.id] !== (r.data.status || "open")){ r.data.status = E.status[r.id]; r.data.status_at = now; }
+      var L = E.replies[r.id];
+      if (!L || !L.length) return;
+      r.data.replies = (r.data.replies || []).concat(L);
+      L.forEach(function(x){ keep(x.shots); });
+      var evs = L.filter(function(x){ return x.event; });
+      if (evs.length){ var last = evs[evs.length - 1]; r.data.status = last.event; r.data.status_at = last.created; }
     });
     E.notes.forEach(function(n){
+      keep(n.shots);
       out.annotations.push({ id: n.id, kind: "note", shape_kind: null, x: null, y: null, w: null, h: null, rotation: 0, z_index: 0, color: null,
-        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: [] }, locked: 0, created_at: n.created, updated_at: n.created });
+        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: n.shots || [] }, locked: 0, created_at: n.created, updated_at: n.created });
     });
     var name = ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "") + ".srev";
     var blob = new Blob([JSON.stringify(out)], { type: "application/json" });
@@ -570,9 +727,17 @@ input:focus, textarea:focus { border-color: var(--accent); }
     document.getElementById("ttl").textContent = R.title || "Review";
     var det = document.getElementById("details"), hd = document.getElementById("hd");
     if (R.subtitle) det.appendChild(el("p", "sub", R.subtitle));
-    var meta = el("div", "meta");
-    (R.meta || []).forEach(function(m){ if (m[1] === "" || m[1] == null) return; var s = el("span"); s.appendChild(el("b", "", m[0])); s.appendChild(document.createTextNode(m[1])); meta.appendChild(s); });
+    var meta = el("div", "meta"), sender = PKG.author || "";
+    (R.meta || []).forEach(function(m){
+      if (m[0] === "Reviewer"){ sender = sender || m[1] || ""; return; }  // shown under the title instead
+      if (m[1] === "" || m[1] == null) return;
+      var s = el("span"); s.appendChild(el("b", "", m[0])); s.appendChild(document.createTextNode(m[1])); meta.appendChild(s);
+    });
     det.appendChild(meta);
+    var from = document.getElementById("from");
+    if (sender){ from.appendChild(document.createTextNode("From ")); from.appendChild(el("b", "", sender)); }
+    var day = ""; try { day = new Date(PKG.exported_at).toLocaleDateString(undefined, { day: "numeric", month: "short" }); } catch (e) {}
+    if (day) from.appendChild(document.createTextNode((sender ? " · " : "Sent ") + day));
     // Who set the review state and when (Library.set_review_status keeps the history), newest first.
     var st = PKG.annotations.filter(function(r){ return r.kind === "status"; }).sort(function(a, b){ return (b.updated_at || 0) - (a.updated_at || 0); })[0];
     var hist = (st && st.data && Array.isArray(st.data.history)) ? st.data.history.slice().reverse()
@@ -586,10 +751,35 @@ input:focus, textarea:focus { border-color: var(--accent); }
     }
     hd.onclick = function(){ var open = det.hidden; det.hidden = !open; hd.setAttribute("aria-expanded", String(open)); };
   }
+  // Nothing can be done on the page until the reviewer has said who they are.
+  function paintMe(){ document.getElementById("myname").textContent = who || "—"; }
+  function askName(){
+    var g = document.getElementById("gate"), inp = document.getElementById("gname");
+    inp.value = who; g.hidden = false;
+    document.getElementById("gcancel").hidden = !who;
+    setTimeout(function(){ inp.focus(); }, 30);
+  }
+  document.getElementById("gform").onsubmit = function(e){
+    e.preventDefault();
+    var v = document.getElementById("gname").value.trim();
+    if (!v) return;
+    who = v; try { localStorage.setItem("sight-review:name", who); } catch (x) {}
+    document.getElementById("gate").hidden = true; paintMe();
+  };
+  document.getElementById("gcancel").onclick = function(){ if (who) document.getElementById("gate").hidden = true; };
+  document.getElementById("me").onclick = askName;
+  var sb = document.getElementById("sbtn"), q = document.getElementById("q");
+  sb.onclick = function(){
+    searchOn = !searchOn; q.hidden = !searchOn; sb.classList.toggle("on", searchOn);
+    if (searchOn) q.focus(); else if (query){ query = ""; q.value = ""; renderList(); }
+  };
+  q.oninput = function(){ query = q.value; renderList(); };
   header();
+  paintMe();
   document.getElementById("dl").onclick = download;
-  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, status changes and new notes on this page?")){ E = { replies: {}, status: {}, notes: [] }; save(); render(); } };
+  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, pictures, status changes and new notes on this page?")){ E = { replies: {}, notes: [], att: {} }; drafts = {}; openReply = {}; save(); render(); } };
   render();
+  if (!who) askName();
 })();
 </script>
 </body>

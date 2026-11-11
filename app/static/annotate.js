@@ -43,6 +43,7 @@ const ICON = {
   annotate: ico(`<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/>`),
   close: ico(`<path d="M6 6l12 12M18 6 6 18"/>`),
   check: ico(`<path d="m5 12.5 4.5 4.5L19 7.5"/>`),
+  prog: ico(`<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>`),
   trash: ico(`<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>`),
   reply: ico(`<path d="M10 8 5 12.5l5 4.5"/><path d="M5 12.5h9a5 5 0 0 1 5 5V19"/>`),
   view: ico(`<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/>`),
@@ -1923,12 +1924,13 @@ export function createAnnotator(host){
     const counts = new Map();
     for (const it of S.items.values()) if (isDrawing(it) && it.data.note) counts.set(it.data.note, (counts.get(it.data.note) || 0) + 1);
     list.innerHTML = notes.length ? notes.map((n, i) => {
-      const d = n.data, done = d.status === "done";
+      const d = n.data, done = d.status === "done", prog = d.status === "progress";
       const shots = (d.shots || []).map((sid) => `<img src="/api/review/shots/${sid}" data-src="/api/review/shots/${sid}" data-shot="${sid}" alt="" loading="lazy">`).join("");
       const ctx = ctxLabel(d.ctx);
-      return `<div class="an-note${done ? " done" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
+      return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
           <button type="button" class="an-ib sm" data-reply="${n.id}" title="Reply">${ICON.reply}</button>
+          <button type="button" class="an-ib sm${prog ? " on" : ""}" data-prog="${n.id}" title="${prog ? "Not in progress" : "In progress — someone is working on it"}">${ICON.prog}</button>
           <button type="button" class="an-ib sm${done ? " on" : ""}" data-done="${n.id}" title="${done ? "Reopen" : "Resolve"}">${ICON.check}</button>
           <button type="button" class="an-ib sm" data-del="${n.id}" title="Delete note and its drawings">${ICON.trash}</button></div>
         <div class="an-nt" title="Double-click to edit">${esc(d.text || "") || '<i class="an-empty">No text</i>'}</div>
@@ -1944,18 +1946,22 @@ export function createAnnotator(host){
     paintStatus();
   }
   const liveReplies = (n) => (n.data.replies || []).filter((r) => !r.deleted);
-  // Resolving / reopening also leaves an entry in the note's thread (`{id, event: "done"|"open",
-  // author, created}`), so the history shows who changed the state and when. These entries merge
-  // like replies (by id) and are never edited or deleted.
+  // A note is open, in progress (someone took it) or done. Every change also leaves an entry in
+  // the note's thread (`{id, event: "done"|"progress"|"open", author, created}`), so the history
+  // shows who changed the state and when. These entries merge like replies (by id) and are never
+  // edited or deleted. Replies may carry pictures (`shots: [id]`, review_shots like a note's).
   const statusEvent = (state) => ({ id: uid(), event: state, author: reviewer(), created: Date.now() });
-  const eventLabel = (r) => (r.event === "done" ? "Resolved" : "Reopened");
+  const EVENT = { done: ["✓", "Resolved"], progress: ["▸", "In progress"], open: ["↺", "Reopened"] };
+  const eventLabel = (r) => (EVENT[r.event] || EVENT.open)[1];
+  const eventIcon = (r) => (EVENT[r.event] || EVENT.open)[0];
   function repliesHtml(n){
     const list = liveReplies(n);
     if (!list.length) return "";
-    return `<div class="an-replies">${list.map((r) => r.event ? `<div class="an-rep an-rev ${r.event === "done" ? "done" : ""}" data-rid="${esc(r.id)}">
-      <span>${r.event === "done" ? "✓" : "↺"} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
+    return `<div class="an-replies">${list.map((r) => r.event ? `<div class="an-rep an-rev ${r.event === "done" ? "done" : r.event === "progress" ? "prog" : ""}" data-rid="${esc(r.id)}">
+      <span>${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
       <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span><button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
-      <div class="an-rt" title="Double-click to edit">${esc(r.text || "")}</div></div>`).join("")}</div>`;
+      ${r.text ? `<div class="an-rt" title="Double-click to edit">${esc(r.text)}</div>` : ""}
+      ${r.shots?.length ? `<div class="an-shots">${r.shots.map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join("")}</div>` : ""}</div>`).join("")}</div>`;
   }
   // Inline editor under a note card (new reply) or in place of a reply's text (edit).
   function replyEditor(card, anchor, initial, done){
@@ -2031,16 +2037,17 @@ export function createAnnotator(host){
     el.querySelectorAll("[data-vk]").forEach((b) => { b.onclick = () => goView(b.dataset.vk); });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-go],[data-done],[data-del],[data-reply],[data-rdel],img[data-shot],.an-rep,.an-note");
+    const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],img[data-shot],img[data-rshot],.an-rep,.an-note");
     if (!t) return;
     if (t.dataset.reply){ startReply(t.dataset.reply); return; }
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
+    if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
     if (t.classList.contains("an-rep")) return;
-    if (t.dataset.done){
-      const id = t.dataset.done;
+    if (t.dataset.done || t.dataset.prog){
+      const id = t.dataset.done || t.dataset.prog, want = t.dataset.done ? "done" : "progress";
       commit([id], () => {
         const d = S.items.get(id).data;
-        d.status = d.status === "done" ? "open" : "done";
+        d.status = d.status === want ? "open" : want;
         d.status_at = Date.now();
         d.replies = [...(d.replies || []), statusEvent(d.status)];
       });
@@ -2174,7 +2181,7 @@ export function createAnnotator(host){
       const t = n.data.ctx?.t;
       if (t == null) return;
       seen.add(t);
-      html += `<i class="an-mk note${n.data.status === "done" ? " done" : ""}" data-t="${t}" data-note="${n.id}" style="left:${(t / dur * 100).toFixed(3)}%" title="${esc(i + 1 + ". " + (n.data.text || "").slice(0, 80))}"></i>`;
+      html += `<i class="an-mk note${n.data.status === "done" ? " done" : n.data.status === "progress" ? " prog" : ""}" data-t="${t}" data-note="${n.id}" style="left:${(t / dur * 100).toFixed(3)}%" title="${esc(i + 1 + ". " + (n.data.text || "").slice(0, 80))}"></i>`;
     });
     for (const it of S.items.values()){
       const t = it.data.ctx?.t;
@@ -2404,7 +2411,7 @@ export function createAnnotator(host){
           }
         }
         out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, frameCaption: cap, shots: d.shots || [],
-          replies: liveReplies(n).map((r) => ({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "" })) });
+          replies: liveReplies(n).map((r) => ({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
       }
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
@@ -2419,7 +2426,7 @@ export function createAnnotator(host){
       asset_id: a.id,
       title: `Review — ${a.name}`,
       subtitle: a.path || "",
-      meta: [["Type", (a.ext || "").replace(".", "").toUpperCase()], ["Size", dims], ["Duration", a.duration ? fmtTime(a.duration, S.fps) : ""], ["State", stateLabel], ["Reviewer", reviewer()], ["Notes", String(notes.length)], ["Open", String(notes.filter((n) => n.data.status !== "done").length)], ["Exported", fmtDate(Date.now())]],
+      meta: [["Type", (a.ext || "").replace(".", "").toUpperCase()], ["Size", dims], ["Duration", a.duration ? fmtTime(a.duration, S.fps) : ""], ["State", stateLabel], ["Reviewer", reviewer()], ["Notes", String(notes.length)], ["Open", String(notes.filter((n) => n.data.status !== "done").length)], ["In progress", String(notes.filter((n) => n.data.status === "progress").length || "")], ["Exported", fmtDate(Date.now())]],
       cover, notes: out, footer: `Sight ${host.appVersion?.() || ""}`.trim(), reveal: true, author: reviewer(),
     };
   }
@@ -2465,12 +2472,12 @@ export function createAnnotator(host){
     const lines = [`Review — ${a.name}`, a.path || "", ""];
     notes.forEach((n, i) => {
       const d = n.data, c = ctxLabel(d.ctx);
-      lines.push(`${i + 1}.${c ? " [" + c + "]" : ""} ${d.text || "(no text)"}${d.status === "done" ? "  ✓ resolved" : ""}`);
+      lines.push(`${i + 1}.${c ? " [" + c + "]" : ""} ${d.text || "(no text)"}${d.status === "done" ? "  ✓ resolved" : d.status === "progress" ? "  ▸ in progress" : ""}`);
       const by = [d.author, fmtDate(d.created)].filter(Boolean).join(", ");
       if (by) lines.push("   — " + by);
       for (const r of liveReplies(n)){
-        lines.push(r.event ? `   ${r.event === "done" ? "✓" : "↺"} ${eventLabel(r)}${r.author ? " by " + r.author : ""}, ${fmtDate(r.created)}`
-          : `   ↳ ${r.author ? r.author + ": " : ""}${r.text || ""}`);
+        lines.push(r.event ? `   ${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + r.author : ""}, ${fmtDate(r.created)}`
+          : `   ↳ ${r.author ? r.author + ": " : ""}${r.text || ""}${r.shots?.length ? ` [${r.shots.length} picture${r.shots.length > 1 ? "s" : ""}]` : ""}`);
       }
     });
     try { await navigator.clipboard.writeText(lines.join("\n")); toast(`Copied ${notes.length} note${notes.length === 1 ? "" : "s"}`); }
@@ -2813,6 +2820,7 @@ function injectStyles(){
 .an-nh { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .an-nn { flex: none; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 9px; background: #d0342c; color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
 .an-note.done .an-nn { background: #2f9d5b; }
+.an-note.prog .an-nn { background: #e08a00; }
 .an-nctx { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 5px; background: var(--surface-3, #2a2b31); color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .an-nctx svg { width: 12px; height: 12px; }
 .an-nwho { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); font-size: 10px; }
@@ -2829,6 +2837,7 @@ function injectStyles(){
 .an-rep:hover .an-rh .an-ib { visibility: visible; }
 .an-rev { color: var(--subtle); font-size: 10px; }
 .an-rev.done { color: var(--ok, #2f9d5b); }
+.an-rev.prog { color: #e0a030; }
 .an-rt { white-space: pre-wrap; word-break: break-word; line-height: 1.4; user-select: text; }
 .an-redit { margin-top: 6px; min-height: 30px; }
 .an-compose { border-top: 1px solid var(--border); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
@@ -2849,6 +2858,7 @@ function injectStyles(){
 .an-mk { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #ffd60a; box-shadow: 0 0 0 1px rgb(0 0 0 / .5); pointer-events: auto; cursor: pointer; }
 .an-mk.note { width: 10px; height: 10px; margin: -5px 0 0 -5px; background: #ff453a; box-shadow: 0 0 0 1.5px #fff; }
 .an-mk.note.done { background: #34c759; }
+.an-mk.note.prog { background: #ff9f0a; }
 .an-mk:hover { transform: scale(1.35); }
 .light-bar .an-btn { position: relative; }
 .light-bar .an-btn.on { color: var(--accent); }

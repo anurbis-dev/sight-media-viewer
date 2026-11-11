@@ -69,11 +69,13 @@
     takes the drawings currently on screen that aren't attached to a note yet, the reviewer name
     (field at the top), and the date. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (its drawings
-    are highlighted), double-click its text to edit, ✓ resolves it, the bin deletes it with its
+    are highlighted), double-click its text to edit, the clock marks it *In progress* (someone took
+    it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
-    a note adds a line to its thread (*✓ Resolved by Anna · date*), so the history shows who did it
-    and when; these lines cannot be edited or deleted.
+    a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
+    the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
+    reviewer attached to a reply (on the web page) show under it; click to enlarge.
   - **Review state** — the *State* row at the top of the panel marks the file *Needs review*,
     *Changes* or *Approved*. Under it: who set the state last and when; *History* lists every
     change. The grid shows it as a pill on the card together with the number of open
@@ -85,7 +87,7 @@
     and *Compare*. When the previous version still has open notes, *Copy here* brings them over
     with their drawings (scaled if the size changed; the note says where it came from).
   - **Video** — drawings and notes belong to the frame they were made on, and show as markers on the
-    timeline (red = note, green = resolved, yellow = drawing). Click a marker to go there. `,` / `.`
+    timeline (red = note, orange = in progress, green = resolved, yellow = drawing). Click a marker to go there. `,` / `.`
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
     whole clip; the onion button shows drawings within ±1 s faded.
@@ -102,10 +104,14 @@
     their replies / new notes / resolved states, and what was deleted on one side is deleted on the
     other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
     in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
-    note, screenshot and reply. The title stays pinned at the top while scrolling; tap it (or the
-    arrow) for the file details and the review-state history. The reviewer types a name, replies,
-    resolves or adds notes (kept in that browser until sent; a resolve is logged in the thread like
-    in Sight) and taps *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
+    note, screenshot and reply. The page first asks the reviewer's name (nothing can be done
+    without it; *You: … ✎* changes it). The title, who sent the page, and the *All / Open / In
+    progress / Resolved* filters with their counts stay pinned at the top; tap the title (or the
+    arrow) for the file details and the review-state history. *Reply* opens a message field (paper
+    clip attaches pictures, the paper plane sends) with *Mark as In progress / Resolved / Reopen*
+    above it — a state can be sent alone or with the reply, and is logged in the thread like in
+    Sight. New notes can carry pictures too. Unsent entries have × to take them back. Everything
+    stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
   file (see *Versions* above). Also the palette and the review panel's *Compare* button.

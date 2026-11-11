@@ -2997,6 +2997,12 @@ class Library:
                         data["shots"] = [shot_map.get(str(x), str(x)) for x in data["shots"]]
                     if not isinstance(data.get("replies"), (list, type(None))):
                         data["replies"] = []
+                    if data.get("replies"):  # pictures attached to replies (web page / Sight)
+                        data["replies"] = [
+                            {**x, "shots": [shot_map.get(str(y), str(y)) for y in x["shots"]]}
+                            if isinstance(x, dict) and isinstance(x.get("shots"), list) else x
+                            for x in data["replies"]
+                        ]
                     kind = str(r.get("kind") or "shape")
                     upd = st(r.get("updated_at") or r.get("created_at")) or now
                     vals = (

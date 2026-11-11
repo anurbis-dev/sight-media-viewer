@@ -149,9 +149,11 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
 rect|ellipse|line|arrow, `text`, `pin`, `note` (the review comment: `text, author, created, status
-open|done, status_at, edited_at, shots: [shot ids], replies: [{id, text, author, created, edited?,
-deleted?} | {id, event: "done"|"open", author, created}], from?: {id, asset, name}` when copied from a
-previous version — `event` entries log resolve / reopen in the thread and are never edited), and
+open|progress|done, status_at, edited_at, shots: [shot ids], replies: [{id, text, author, created,
+edited?, deleted?, shots?: [shot ids]} | {id, event: "done"|"progress"|"open", author, created}],
+from?: {id, asset, name}` when copied from a previous version — `event` entries log state changes
+in the thread and are never edited; reply pictures are review_shots like a note's, packed into
+`.srev` `shots` by `build_package` and remapped on import), and
 `status` — the asset's review state (`data.state` review|changes|approved|null, `data.history`
 [{state, author, at}] with state "" = cleared; the newest row wins, `Library.set_review_status`
 keeps one row per asset, appends to the history and on clear keeps the row with state null; it is
