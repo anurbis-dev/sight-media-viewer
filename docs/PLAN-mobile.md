@@ -28,7 +28,7 @@ separate plan: `docs/PLAN-viewer.md`.
 
 ## Stages
 
-### 1. Shared annotation format + shared JS core
+### 1. Shared annotation format + shared JS core — done in 0.20.0 (see RECENT)
 - Write `docs/FORMAT.md`: a versioned JSON schema for everything a review carries — asset identity
   (id, name, size, kind, versions), notes (`text, author, created, status open|progress|done,
   status_at, edited_at, shots, replies, from`), replies and status events, drawings (`stroke`

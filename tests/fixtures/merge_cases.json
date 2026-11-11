@@ -1,0 +1,1611 @@
+[
+ {
+  "name": "new rows are added",
+  "now": 1800000000000,
+  "local": [],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Too dark",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "Fixed?",
+       "author": "Bob",
+       "created": 1790000000010
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": 7,
+    "y": 7,
+    "w": 86,
+    "h": 31,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      10,
+      10,
+      0.5,
+      40,
+      30,
+      0.8,
+      90,
+      35,
+      0.3
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000001
+   },
+   {
+    "id": "00000000000000a4",
+    "kind": "stroke",
+    "shape_kind": "pencil",
+    "x": 2,
+    "y": 2,
+    "w": 7,
+    "h": 8,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      5,
+      5,
+      0.5,
+      6,
+      7,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000,
+     "reply": "00000000000000a7"
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000011
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "identical import is unchanged",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Too dark",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "ok",
+       "author": "Bob",
+       "created": 1790000000005
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": -2,
+    "y": -1,
+    "w": 8,
+    "h": 8,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      1,
+      2,
+      0.5,
+      3,
+      4,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000001
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Too dark",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "ok",
+       "author": "Bob",
+       "created": 1790000000005
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": -2,
+    "y": -1,
+    "w": 8,
+    "h": 8,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      1,
+      2,
+      0.5,
+      3,
+      4,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000001
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "later text edit wins, replies unioned",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Too dark",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "done",
+     "ctx": null,
+     "shots": [],
+     "status_at": 1790000000006,
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "mine",
+       "author": "Ann",
+       "created": 1790000000005
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000006
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Too dark on the left",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000020,
+     "replies": [
+      {
+       "id": "00000000000000a8",
+       "text": "theirs",
+       "author": "Bob",
+       "created": 1790000000003
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000020
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "stale text loses, new reply and state win",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Edited in Sight",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000050
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000050
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "Original",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "done",
+     "ctx": null,
+     "shots": [],
+     "status_at": 1790000000061,
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "done!",
+       "author": "Bob",
+       "created": 1790000000060
+      },
+      {
+       "id": "00000000000000aa",
+       "event": "done",
+       "author": "Bob",
+       "created": 1790000000061
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000005
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "reply edit and delete stamps",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "n",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "local edit",
+       "author": "Bob",
+       "created": 1790000000001,
+       "edited": 1790000000030
+      },
+      {
+       "id": "00000000000000a8",
+       "text": "keep",
+       "author": "Bob",
+       "created": 1790000000002
+      },
+      {
+       "id": "00000000000000a9",
+       "created": 1790000000003,
+       "deleted": 1790000000040
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "n",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "remote edit",
+       "author": "Bob",
+       "created": 1790000000001,
+       "edited": 1790000000020
+      },
+      {
+       "id": "00000000000000a8",
+       "text": "keep",
+       "author": "Bob",
+       "created": 1790000000002,
+       "edited": 1790000000025
+      },
+      {
+       "id": "00000000000000a9",
+       "text": "remote edit after?",
+       "author": "Bob",
+       "created": 1790000000003,
+       "edited": 1790000000035
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "local delete beats older incoming, newer revives",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "gone",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": []
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000,
+    "deleted_at": 1790000000100
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": -2,
+    "y": -2,
+    "w": 6,
+    "h": 6,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      1,
+      1,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000001,
+    "deleted_at": 1790000000100
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "gone too",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": []
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000,
+    "deleted_at": 1790000000100
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "gone",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "late reply",
+       "author": "Bob",
+       "created": 1790000000200
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": -2,
+    "y": -2,
+    "w": 6,
+    "h": 6,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      1,
+      1,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000050
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "rewritten later",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000150,
+     "replies": [
+      {
+       "id": "00000000000000a8",
+       "text": "r",
+       "author": "Bob",
+       "created": 1790000000151
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "tombstones",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "old",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": []
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": -2,
+    "y": -2,
+    "w": 7,
+    "h": 7,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      1,
+      1,
+      0.5,
+      2,
+      2,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000010
+   },
+   {
+    "id": "00000000000000a4",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": 3,
+    "y": 3,
+    "w": 24,
+    "h": 14,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 5,
+     "y": 5,
+     "w": 20,
+     "h": 10,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000500
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "edited after",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000900
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "incoming": [],
+  "deleted": [
+   {
+    "id": "00000000000000a0",
+    "deleted_at": 1790000000300
+   },
+   {
+    "id": "00000000000000a3",
+    "deleted_at": 1790000000300
+   },
+   {
+    "id": "00000000000000a4",
+    "deleted_at": 1790000000300
+   },
+   {
+    "id": "00000000000000a1",
+    "deleted_at": 1790000000300
+   },
+   {
+    "id": "00000000000000a2",
+    "deleted_at": 1790000000300
+   },
+   {
+    "id": "",
+    "deleted_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a5",
+    "deleted_at": 0
+   }
+  ],
+  "shot_map": {}
+ },
+ {
+  "name": "drawings by updated_at",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a3",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": -2,
+    "y": -2,
+    "w": 14,
+    "h": 14,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 0,
+     "y": 0,
+     "w": 10,
+     "h": 10,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000010
+   },
+   {
+    "id": "00000000000000a4",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": -2,
+    "y": -2,
+    "w": 14,
+    "h": 14,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 0,
+     "y": 0,
+     "w": 10,
+     "h": 10,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000090
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a3",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": 48,
+    "y": 58,
+    "w": 34,
+    "h": 24,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 50,
+     "y": 60,
+     "w": 30,
+     "h": 20,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000020
+   },
+   {
+    "id": "00000000000000a4",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": -1,
+    "y": -1,
+    "w": 5,
+    "h": 5,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 1,
+     "y": 1,
+     "w": 1,
+     "h": 1,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000040
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "status history union",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a6",
+    "kind": "status",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000010,
+    "data": {
+     "state": "changes",
+     "author": "Ann",
+     "at": 1790000000010,
+     "history": [
+      {
+       "state": "review",
+       "author": "Ann",
+       "at": 1790000000000,
+       "via": "sight"
+      },
+      {
+       "state": "changes",
+       "author": "Ann",
+       "at": 1790000000010
+      },
+      {
+       "state": "review",
+       "author": "Cy",
+       "at": 1790000000010
+      }
+     ]
+    }
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a6",
+    "kind": "status",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000020,
+    "data": {
+     "state": "approved",
+     "author": "Bob",
+     "at": 1790000000020,
+     "history": [
+      {
+       "state": "review",
+       "author": "Ann",
+       "at": 1790000000000,
+       "via": "web"
+      },
+      {
+       "state": "",
+       "author": "Bob",
+       "at": 1790000000005
+      },
+      {
+       "state": null,
+       "author": "Bob",
+       "at": 1790000000005
+      },
+      {
+       "state": "approved",
+       "author": "Bob",
+       "at": 1790000000010
+      },
+      {
+       "state": "approved",
+       "author": "Bob",
+       "at": 1790000000020
+      }
+     ]
+    }
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "shot map",
+  "now": 1800000000000,
+  "local": [],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "pics",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [
+      "s1",
+      "keep"
+     ],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "see",
+       "author": "Bob",
+       "created": 1790000000001,
+       "shots": [
+        "s2"
+       ]
+      },
+      "junk"
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "deleted": [],
+  "shot_map": {
+   "s1": "00000000000000f1",
+   "s2": "00000000000000f2"
+  }
+ },
+ {
+  "name": "ids are lower-cased",
+  "now": 1800000000000,
+  "local": [],
+  "incoming": [
+   {
+    "id": "00000000000000A0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "caps",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": []
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000A3",
+    "kind": "stroke",
+    "shape_kind": "brush",
+    "x": -2,
+    "y": -2,
+    "w": 6,
+    "h": 6,
+    "rotation": 0,
+    "z_index": 2,
+    "color": "#ff3b30",
+    "data": {
+     "color": "#ff3b30",
+     "size": 6,
+     "opacity": 1,
+     "pressure": true,
+     "pen": true,
+     "pts": [
+      1,
+      1,
+      0.5
+     ],
+     "ctx": null,
+     "note": "00000000000000A0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000001
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "tie keeps local text",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "local",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000005
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "remote",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000005,
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "x",
+       "author": "Bob",
+       "created": 1790000000006
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "loose values",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "has replies",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "a",
+       "author": "Bob",
+       "created": 1790000000001
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a3",
+    "x": "12.5",
+    "y": 3,
+    "w": null,
+    "rotation": null,
+    "z_index": "4",
+    "color": 7,
+    "locked": true,
+    "created_at": "1790000000500",
+    "updated_at": null,
+    "data": {
+     "note": "00000000000000a1",
+     "replies": {
+      "x": 1
+     }
+    }
+   },
+   {
+    "kind": "note",
+    "data": {
+     "text": "no id"
+    }
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "has replies",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": []
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a4",
+    "kind": "pin",
+    "shape_kind": null,
+    "data": null
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "status_at both ways, drawing revived",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "a",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "done",
+     "ctx": null,
+     "shots": [],
+     "status_at": 1790000000010
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "b",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "progress",
+     "ctx": null,
+     "shots": [],
+     "status_at": 1790000000050
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": -2,
+    "y": -2,
+    "w": 9,
+    "h": 9,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 0,
+     "y": 0,
+     "w": 5,
+     "h": 5,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000005,
+    "deleted_at": 1790000000020
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "a",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "status_at": 1790000000030
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "b",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "done",
+     "ctx": null,
+     "shots": [],
+     "status_at": 1790000000040
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a3",
+    "kind": "shape",
+    "shape_kind": "rect",
+    "x": 7,
+    "y": 7,
+    "w": 9,
+    "h": 9,
+    "rotation": 0,
+    "z_index": 1,
+    "color": "#34c759",
+    "data": {
+     "color": "#34c759",
+     "strokeOn": true,
+     "width": 4,
+     "dash": "solid",
+     "fillOn": false,
+     "fill": "#34c759",
+     "fillOpacity": 0.2,
+     "radius": 0,
+     "opacity": 1,
+     "x": 9,
+     "y": 9,
+     "w": 5,
+     "h": 5,
+     "rot": 0,
+     "ctx": {
+      "t": 1.5,
+      "hold": 0
+     },
+     "note": "00000000000000a0",
+     "created": 1790000000000
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000025
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ },
+ {
+  "name": "duplicate ids in one package",
+  "now": 1800000000000,
+  "local": [],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "first",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "a",
+       "author": "Bob",
+       "created": 1790000000001
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "second",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000009,
+     "replies": [
+      {
+       "id": "00000000000000a8",
+       "text": "b",
+       "author": "Bob",
+       "created": 1790000000002
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
+ }
+]

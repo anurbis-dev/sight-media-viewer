@@ -7,6 +7,9 @@
 - .srev package (legacy extension .sightreview): one JSON file holding the media's identity,
   every annotation row and the screenshots (base64), so a review can be mailed / sent by messenger
   and opened on another machine that has the same media file in its library.
+  The format of everything in it is specified in docs/FORMAT.md.
+- HTML page: a self-contained reviewer page; it inlines app/static/review-core.js (the drawing
+  primitives and merge rules shared with Sight and the mobile app).
 """
 
 from __future__ import annotations
@@ -307,6 +310,22 @@ def parse_package(raw: bytes) -> dict:
 
 # ---- HTML page for reviewers without Sight ------------------------------------------------------
 
+CORE_JS = Path(__file__).resolve().parent / "static" / "review-core.js"
+_core_src: str | None = None
+
+
+def core_js() -> str:
+    """review-core.js as inlined into the HTML page. It is put into a <script> verbatim, so it must
+    not contain anything that ends the script block or opens a comment there."""
+    global _core_src
+    if _core_src is None:
+        src = CORE_JS.read_text(encoding="utf-8")
+        if re.search(r"</script|<!--", src, re.I):
+            raise ValueError("review-core.js contains '</script' or '<!--' and cannot be inlined")
+        _core_src = src
+    return _core_src
+
+
 def build_html(report: dict, pkg: dict) -> str:
     """One self-contained page: the report (cover, per-note frames, notes, replies, screenshots)
     plus the .srev package it came from. After giving their name the reviewer can reply (with
@@ -317,7 +336,9 @@ def build_html(report: dict, pkg: dict) -> str:
     # the <script> block or open a comment there.
     data = json.dumps({"report": report, "package": pkg}, ensure_ascii=False).replace("<", "\\u003c")
     title = html.escape(str(report.get("title") or "Review"))
-    return _HTML_TEMPLATE.replace("%%TITLE%%", title).replace("%%DATA%%", data)
+    # One pass, so a note text or title that happens to contain a placeholder stays as it is.
+    parts = {"TITLE": title, "DATA": data, "CORE": core_js()}
+    return re.sub(r"%%(TITLE|DATA|CORE)%%", lambda m: parts[m.group(1)], _HTML_TEMPLATE)
 
 
 _HTML_TEMPLATE = r"""<!doctype html>
@@ -453,8 +474,12 @@ body.zoomed { overflow: hidden; }
 <div class="gate" id="gate" hidden><form class="sheet" id="gform"><h2>Who is reviewing?</h2><p>Your name goes on every reply, picture and status change you make on this page.</p><input id="gname" autocomplete="name" placeholder="Your name" maxlength="80" required><div class="acts"><button class="btn" id="gcancel" type="button">Cancel</button><button class="btn primary" type="submit">Continue</button></div></form></div>
 <script id="data" type="application/json">%%DATA%%</script>
 <script>
+%%CORE%%
+</script>
+<script>
 (function(){
   "use strict";
+  var RC = window.SightReviewCore;  // review-core.js, inlined above: merge rules + drawing primitives
   var D = JSON.parse(document.getElementById("data").textContent);
   var R = D.report, PKG = D.package;
   var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at;
@@ -481,7 +506,7 @@ body.zoomed { overflow: hidden; }
     catch (e) { if (!warned){ warned = true; alert("This browser cannot keep that many pictures on the page. Download the reply now so nothing is lost."); } }
     paintFoot(); paintSeg();
   }
-  function uid(){ var a = new Uint8Array(8); crypto.getRandomValues(a); return Array.prototype.map.call(a, function(b){ return ("0" + b.toString(16)).slice(-2); }).join(""); }
+  var uid = RC.uid;
   function el(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
   function svg(path, w){ var s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("width", w || 18); s.setAttribute("height", w || 18); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = path; return s; }
   function fmt(ms){ try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } }
@@ -766,28 +791,42 @@ body.zoomed { overflow: hidden; }
     document.getElementById("dl").disabled = !n;
     document.getElementById("reset").hidden = !n;
   }
+  // The reply file is the exported package with this page's edits merged in by the shared rules
+  // (review-core.js mergeRows = Library.import_annotations): local replies / state changes are
+  // unioned into their notes, the state goes by status_at, new notes are added. The note's own
+  // content stamp (edited_at / created) is untouched, so answering never makes this copy of the
+  // note's text win over edits made in Sight since.
   function download(){
     var now = Date.now(), used = {};
     var out = JSON.parse(JSON.stringify(PKG));
     out.author = who; out.exported_at = now; out.app = (PKG.app || "Sight") + " (web reply)";
     out.shots = out.shots || {};
     function keep(list){ (list || []).forEach(function(s){ if (E.att[s]){ out.shots[s] = E.att[s]; used[s] = 1; } }); }
-    // Replies and the note state carry their own stamps (merged on their own in Sight), so the
-    // note's updated_at stays as exported: answering must not make this copy of the note's text
-    // win over edits made in Sight since.
+    var mine = [];
     out.annotations.forEach(function(r){
       if (r.kind !== "note") return;
       var L = E.replies[r.id];
       if (!L || !L.length) return;
-      r.data.replies = (r.data.replies || []).concat(L);
       L.forEach(function(x){ keep(x.shots); });
+      var d = { replies: L };
       var evs = L.filter(function(x){ return x.event; });
-      if (evs.length){ var last = evs[evs.length - 1]; r.data.status = last.event; r.data.status_at = last.created; }
+      if (evs.length){ var last = evs[evs.length - 1]; d.status = last.event; d.status_at = last.created; }
+      mine.push(Object.assign({}, r, { data: Object.assign({}, r.data, d) }));
     });
     E.notes.forEach(function(n){
       keep(n.shots);
-      out.annotations.push({ id: n.id, kind: "note", shape_kind: null, x: null, y: null, w: null, h: null, rotation: 0, z_index: 0, color: null,
+      mine.push({ id: n.id, kind: "note", shape_kind: null, x: null, y: null, w: null, h: null, rotation: 0, z_index: 0, color: null,
         data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: n.shots || [] }, locked: 0, created_at: n.created, updated_at: n.created });
+    });
+    var keys = ["id", "kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_index", "color", "data", "locked", "created_at", "updated_at"];
+    // An exported note keeps its exported updated_at: Sight before 0.17 merged notes by it, and a
+    // reply must not make this copy of the text win (or revive a note deleted) there.
+    var was = {};
+    out.annotations.forEach(function(r){ was[r.id] = r.updated_at; });
+    out.annotations = RC.mergeRows(out.annotations, mine, { now: now }).rows.map(function(r){
+      var o = {}; keys.forEach(function(k){ o[k] = r[k]; });
+      if (o.kind === "note" && Object.prototype.hasOwnProperty.call(was, o.id)) o.updated_at = was[o.id];
+      return o;
     });
     var name = ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "") + ".srev";
     var blob = new Blob([JSON.stringify(out)], { type: "application/json" });

@@ -17,6 +17,12 @@
 // camera matches that view; images: none (always visible).
 
 import { hotkey, runHotkeys } from "/static/keys.js";
+// Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
+// mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
+import "/static/review-core.js";
+const RC = globalThis.SightReviewCore;
+const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, rotPt, bendHandle, textLayout,
+  primsOf, primSvg, boundsOf, hitTest, transformItem, validItem } = RC;
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const ico = (body) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
@@ -64,16 +70,7 @@ const TOOLS = [
   ["text", "KeyT", "Text", ICON.text],
   ["pin", "KeyN", "Numbered pin", ICON.pin],
 ];
-const STROKE_TOOLS = new Set(["brush", "pencil", "marker"]);
-const SHAPE_TOOLS = new Set(["rect", "ellipse", "line", "arrow"]);
 const SWATCHES = ["#ff3b30", "#ff9500", "#ffd60a", "#34c759", "#32ade6", "#3478f6", "#af52de", "#ffffff", "#111111"];
-const FONTS = [
-  ["sans", "Sans", '"Segoe UI", system-ui, -apple-system, Arial, sans-serif'],
-  ["serif", "Serif", 'Georgia, "Times New Roman", serif'],
-  ["mono", "Mono", 'Consolas, "SF Mono", ui-monospace, monospace'],
-  ["hand", "Hand", '"Segoe Print", "Comic Sans MS", "Bradley Hand", cursive'],
-  ["impact", "Impact", 'Impact, "Arial Black", sans-serif'],
-];
 const HEADS = [["none", "—"], ["triangle", "▶"], ["open", "›"], ["diamond", "◆"], ["dot", "●"], ["bar", "|"]];
 const BODIES = [["straight", "Straight"], ["curve", "Curve"], ["elbow", "Elbow"]];
 const DASHES = [["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]];
@@ -144,25 +141,8 @@ const PROPS = {
   select: [],
 };
 
-const uid = () => [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join("");
-const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const r2 = (v) => Math.round(v * 100) / 100;
-const hyp = (x, y) => Math.sqrt(x * x + y * y);
-const typeOf = (it) => it.sub || it.kind;
 const isDrawing = (it) => it.kind !== "note";
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fontStack = (id) => (FONTS.find((f) => f[0] === id) || FONTS[0])[2];
-function segDist(px, py, ax, ay, bx, by){
-  const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
-  let t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0;
-  t = clamp(t, 0, 1);
-  return hyp(px - ax - t * dx, py - ay - t * dy);
-}
-function rotPt(x, y, cx, cy, deg){
-  if (!deg) return [x, y];
-  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-  return [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c];
-}
+
 function fmtTime(t, fps){
   if (!Number.isFinite(t)) return "";
   const f = Math.round((t % 1) * (fps || 25));
@@ -175,367 +155,12 @@ function fmtDate(ms){
   catch { return ""; }
 }
 
-// ---- geometry → primitives -------------------------------------------------------------------
-// Every object is turned into a list of primitives, which both the SVG overlay and the canvas
-// compositor (screenshots, PDF frames) draw, so they always look the same.
-//   { d, fill, stroke, sw, op, dash, cap, join, rot:[deg,cx,cy] }    path
-//   { text: [...lines], x, y, font, size, lh, align, w, fill, stroke, sw, op, underline, rot }
-
-function smoothPath(pts, closed){
-  // Quadratic curves through the midpoints of consecutive points (points: [[x,y],...]).
-  const n = pts.length;
-  if (!n) return "";
-  if (n < 3) return "M" + pts.map((p) => r2(p[0]) + " " + r2(p[1])).join("L") + (closed ? "Z" : "");
-  let d = "M" + r2(pts[0][0]) + " " + r2(pts[0][1]);
-  for (let i = 1; i < n - 1; i++){
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
-    d += "Q" + r2(pts[i][0]) + " " + r2(pts[i][1]) + " " + r2(mx) + " " + r2(my);
-  }
-  d += "L" + r2(pts[n - 1][0]) + " " + r2(pts[n - 1][1]);
-  return d + (closed ? "Z" : "");
-}
-
-function strokeRadii(it){
-  const d = it.data, pts = d.pts, n = pts.length / 3, base = d.size / 2;
-  const pen = !!d.pen && d.pressure !== false;
-  const lo = typeOf(it) === "pencil" ? 0.45 : 0.12;
-  const rs = new Array(n);
-  let acc = 0;
-  const total = (() => { let s = 0; for (let i = 3; i < pts.length; i += 3) s += hyp(pts[i] - pts[i - 3], pts[i + 1] - pts[i - 2]); return s; })();
-  for (let i = 0; i < n; i++){
-    if (i) acc += hyp(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
-    let r = base;
-    if (pen) r = base * (lo + (1 - lo) * clamp(pts[i * 3 + 2], 0, 1));
-    else if (typeOf(it) === "brush"){
-      // Mouse strokes have no pressure — taper the ends a little so they still read as a brush.
-      const t = Math.min(1, acc / (base * 4 + 1e-6), (total - acc) / (base * 4 + 1e-6));
-      r = base * (0.4 + 0.6 * Math.sqrt(clamp(t, 0, 1)));
-    }
-    rs[i] = Math.max(r, 0.05);
-  }
-  return rs;
-}
-
-function strokeOutline(it){
-  const pts = it.data.pts, n = pts.length / 3;
-  const rs = strokeRadii(it);
-  if (n === 1 || (n === 2 && hyp(pts[3] - pts[0], pts[4] - pts[1]) < 0.01)){
-    const r = rs[0], x = pts[0], y = pts[1];
-    return `M${r2(x - r)} ${r2(y)}a${r2(r)} ${r2(r)} 0 1 0 ${r2(r * 2)} 0a${r2(r)} ${r2(r)} 0 1 0 ${r2(-r * 2)} 0Z`;
-  }
-  const L = [], R = [];
-  for (let i = 0; i < n; i++){
-    const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
-    let tx = pts[b * 3] - pts[a * 3], ty = pts[b * 3 + 1] - pts[a * 3 + 1];
-    const l = hyp(tx, ty) || 1;
-    tx /= l; ty /= l;
-    const x = pts[i * 3], y = pts[i * 3 + 1], r = rs[i];
-    L.push([x - ty * r, y + tx * r]);
-    R.push([x + ty * r, y - tx * r]);
-  }
-  const re = rs[n - 1], rb = rs[0];
-  let d = smoothPath(L, false);
-  d += `A${r2(re)} ${r2(re)} 0 0 1 ${r2(R[n - 1][0])} ${r2(R[n - 1][1])}`;
-  d += smoothPath(R.slice().reverse(), false).replace(/^M/, "L");
-  d += `A${r2(rb)} ${r2(rb)} 0 0 1 ${r2(L[0][0])} ${r2(L[0][1])}Z`;
-  return d;
-}
-
-function dashArray(dash, w){
-  if (dash === "dashed") return [w * 3, w * 2.2];
-  if (dash === "dotted") return [0.01, w * 2];
-  return null;
-}
-
-function rectPath(x, y, w, h, r){
-  r = clamp(r || 0, 0, Math.min(Math.abs(w), Math.abs(h)) / 2);
-  if (w < 0){ x += w; w = -w; }
-  if (h < 0){ y += h; h = -h; }
-  if (!r) return `M${r2(x)} ${r2(y)}h${r2(w)}v${r2(h)}h${r2(-w)}Z`;
-  return `M${r2(x + r)} ${r2(y)}h${r2(w - 2 * r)}a${r2(r)} ${r2(r)} 0 0 1 ${r2(r)} ${r2(r)}v${r2(h - 2 * r)}a${r2(r)} ${r2(r)} 0 0 1 ${r2(-r)} ${r2(r)}h${r2(-(w - 2 * r))}a${r2(r)} ${r2(r)} 0 0 1 ${r2(-r)} ${r2(-r)}v${r2(-(h - 2 * r))}a${r2(r)} ${r2(r)} 0 0 1 ${r2(r)} ${r2(-r)}Z`;
-}
-function ellipsePath(cx, cy, rx, ry){
-  rx = Math.abs(rx); ry = Math.abs(ry);
-  return `M${r2(cx - rx)} ${r2(cy)}a${r2(rx)} ${r2(ry)} 0 1 0 ${r2(rx * 2)} 0a${r2(rx)} ${r2(ry)} 0 1 0 ${r2(-rx * 2)} 0Z`;
-}
-
-// Points along a line/arrow body: straight, curved (quadratic, data.bend = signed offset of the
-// control point from the chord's midpoint) or elbow (one right-angle corner).
-function linePoints(d){
-  const [x1, y1, x2, y2] = d.pts;
-  if (d.body === "curve"){
-    const [cx, cy] = bendCtrl(d);
-    const out = [];
-    for (let i = 0; i <= 24; i++){
-      const t = i / 24, u = 1 - t;
-      out.push([u * u * x1 + 2 * u * t * cx + t * t * x2, u * u * y1 + 2 * u * t * cy + t * t * y2]);
-    }
-    return out;
-  }
-  if (d.body === "elbow"){
-    const horiz = Math.abs(x2 - x1) >= Math.abs(y2 - y1);
-    return horiz ? [[x1, y1], [(x1 + x2) / 2, y1], [(x1 + x2) / 2, y2], [x2, y2]] : [[x1, y1], [x1, (y1 + y2) / 2], [x2, (y1 + y2) / 2], [x2, y2]];
-  }
-  return [[x1, y1], [x2, y2]];
-}
-function bendCtrl(d){
-  const [x1, y1, x2, y2] = d.pts;
-  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, l = hyp(x2 - x1, y2 - y1) || 1;
-  const b = d.bend ?? l * 0.25;
-  // Control point so that the curve's apex (t = .5) sits `b` away from the chord midpoint.
-  return [mx - (y2 - y1) / l * b * 2, my + (x2 - x1) / l * b * 2];
-}
-function bendHandle(d){
-  const [x1, y1, x2, y2] = d.pts;
-  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, l = hyp(x2 - x1, y2 - y1) || 1;
-  const b = d.bend ?? l * 0.25;
-  return [mx - (y2 - y1) / l * b, my + (x2 - x1) / l * b];
-}
-
-function headPrims(kind, tip, from, w, size, color, op){
-  if (kind === "none") return { prims: [], trim: 0 };
-  const h = Math.max(w * 4.5, w + 9) * (size || 1);
-  let ux = tip[0] - from[0], uy = tip[1] - from[1];
-  const l = hyp(ux, uy) || 1;
-  ux /= l; uy /= l;
-  const nx = -uy, ny = ux, [tx, ty] = tip;
-  const P = (a, b) => [tx - ux * a + nx * b, ty - uy * a + ny * b];
-  const path = (pts, close) => "M" + pts.map((p) => r2(p[0]) + " " + r2(p[1])).join("L") + (close ? "Z" : "");
-  if (kind === "triangle") return { prims: [{ d: path([P(0, 0), P(h, h * 0.5), P(h, -h * 0.5)], true), fill: color, op, join: "round", stroke: color, sw: w * 0.5 }], trim: h * 0.85 };
-  if (kind === "diamond") return { prims: [{ d: path([P(0, 0), P(h * 0.55, h * 0.4), P(h * 1.1, 0), P(h * 0.55, -h * 0.4)], true), fill: color, op }], trim: h * 1.0 };
-  if (kind === "open") return { prims: [{ d: path([P(h, h * 0.55), P(0, 0), P(h, -h * 0.55)], false), stroke: color, sw: w, op, cap: "round", join: "round" }], trim: 0 };
-  if (kind === "dot") return { prims: [{ d: ellipsePath(tx, ty, h * 0.38, h * 0.38), fill: color, op }], trim: h * 0.3 };
-  if (kind === "bar") return { prims: [{ d: path([P(0, h * 0.55), P(0, -h * 0.55)], false), stroke: color, sw: w, op, cap: "round" }], trim: 0 };
-  return { prims: [], trim: 0 };
-}
-
-function trimPolyline(pts, atStart, amount){
-  if (!amount || pts.length < 2) return pts;
-  const out = pts.map((p) => p.slice());
-  if (atStart) out.reverse();
-  let left = amount;
-  while (out.length >= 2){
-    const a = out[out.length - 1], b = out[out.length - 2];
-    const l = hyp(a[0] - b[0], a[1] - b[1]);
-    if (l > left){ const t = left / l; a[0] += (b[0] - a[0]) * t; a[1] += (b[1] - a[1]) * t; break; }
-    left -= l;
-    if (out.length === 2){ out[1] = out[0].slice(); break; }
-    out.pop();
-  }
-  if (atStart) out.reverse();
-  return out;
-}
-
-const measureCtx = document.createElement("canvas").getContext("2d");
-function textFont(d){ return `${d.italic ? "italic " : ""}${d.bold ? "700 " : "400 "}${d.size}px ${fontStack(d.font)}`; }
-function textLayout(d){
-  measureCtx.font = textFont(d);
-  const lines = String(d.text || "").split("\n");
-  const widths = lines.map((l) => measureCtx.measureText(l || " ").width);
-  const w = Math.max(d.size * 0.5, ...widths), lh = d.size * 1.25;
-  const pad = d.bgOn ? d.size * 0.3 : 0;
-  return { lines, widths, w, h: lh * lines.length, lh, pad, box: [d.x - pad, d.y - pad, w + pad * 2, lh * lines.length + pad * 2] };
-}
-
-function primsOf(it, numOf){
-  const d = it.data, t = typeOf(it);
-  if (t === "brush" || t === "pencil") return [{ d: strokeOutline(it), fill: d.color, op: d.opacity ?? 1 }];
-  if (t === "marker"){
-    const pts = [];
-    for (let i = 0; i < d.pts.length; i += 3) pts.push([d.pts[i], d.pts[i + 1]]);
-    if (pts.length === 1) pts.push([pts[0][0] + 0.01, pts[0][1]]);
-    return [{ d: smoothPath(pts, false), stroke: d.color, sw: d.size, op: d.opacity ?? 0.4, cap: "round", join: "round" }];
-  }
-  if (t === "rect" || t === "ellipse"){
-    const out = [], rot = d.rot ? [d.rot, d.x + d.w / 2, d.y + d.h / 2] : null;
-    const path = t === "rect" ? rectPath(d.x, d.y, d.w, d.h, d.radius) : ellipsePath(d.x + d.w / 2, d.y + d.h / 2, d.w / 2, d.h / 2);
-    const op = d.opacity ?? 1;
-    if (d.fillOn) out.push({ d: path, fill: d.fill, op: op * (d.fillOpacity ?? 1), rot });
-    if (d.strokeOn !== false) out.push({ d: path, stroke: d.color, sw: d.width, op, dash: dashArray(d.dash, d.width), cap: d.dash === "dotted" ? "round" : "butt", join: "round", rot });
-    if (!out.length) out.push({ d: path, stroke: d.color, sw: d.width, op: 0.25, dash: [d.width * 2, d.width * 2], rot });
-    return out;
-  }
-  if (t === "line" || t === "arrow"){
-    let pts = linePoints(d);
-    const w = d.width, op = d.opacity ?? 1, n = pts.length;
-    const h1 = headPrims(d.head1 || "none", pts[n - 1], pts[n - 2], w, d.headSize, d.color, op);
-    const h0 = headPrims(d.head0 || "none", pts[0], pts[1], w, d.headSize, d.color, op);
-    pts = trimPolyline(trimPolyline(pts, false, h1.trim), true, h0.trim);
-    const body = { d: "M" + pts.map((p) => r2(p[0]) + " " + r2(p[1])).join("L"), stroke: d.color, sw: w, op, dash: dashArray(d.dash, w), cap: "round", join: "round" };
-    return [body, ...h0.prims, ...h1.prims];
-  }
-  if (t === "text"){
-    const L = textLayout(d), op = d.opacity ?? 1;
-    const rot = d.rot ? [d.rot, L.box[0] + L.box[2] / 2, L.box[1] + L.box[3] / 2] : null;
-    const out = [];
-    if (d.bgOn) out.push({ d: rectPath(...L.box, d.size * 0.18), fill: d.bg, op: op * (d.bgOpacity ?? 0.6), rot });
-    out.push({ text: L.lines, widths: L.widths, x: d.x, y: d.y, w: L.w, lh: L.lh, font: textFont(d), family: fontStack(d.font), size: d.size, bold: d.bold, italic: d.italic, underline: d.underline, align: d.align || "left", fill: d.color, stroke: d.outline ? d.outlineColor : null, sw: d.outline ? d.outline * 2 : 0, op, rot });
-    return out;
-  }
-  if (t === "pin"){
-    const r = d.size / 2, n = numOf ? numOf(it) : "";
-    return [
-      { d: ellipsePath(d.x, d.y, r, r), fill: d.color, stroke: "#ffffff", sw: Math.max(1, r * 0.14), op: 1 },
-      { text: [String(n || "•")], widths: null, x: d.x, y: d.y - r * 0.62, w: 0, lh: r * 1.24, font: `700 ${r * 1.05}px ${fontStack("sans")}`, family: fontStack("sans"), size: r * 1.05, bold: true, align: "center", fill: "#ffffff", op: 1, center: true },
-    ];
-  }
-  return [];
-}
-
-function primSvg(p){
-  const tf = p.rot ? ` transform="rotate(${r2(p.rot[0])} ${r2(p.rot[1])} ${r2(p.rot[2])})"` : "";
-  const op = p.op != null && p.op < 1 ? ` opacity="${r2(p.op)}"` : "";
-  if (p.text){
-    const anchor = p.align === "center" ? "middle" : p.align === "right" ? "end" : "start";
-    const x0 = p.center ? p.x : p.align === "center" ? p.x + p.w / 2 : p.align === "right" ? p.x + p.w : p.x;
-    const st = p.stroke ? ` stroke="${esc(p.stroke)}" stroke-width="${r2(p.sw)}" stroke-linejoin="round" paint-order="stroke"` : "";
-    const lines = p.text.map((l, i) => `<text x="${r2(x0)}" y="${r2(p.y + i * p.lh + p.size * 0.92)}"${l ? "" : ' opacity="0"'}>${esc(l || " ")}</text>`).join("");
-    return `<g${tf}${op} font-family="${esc(p.family)}" font-size="${r2(p.size)}" font-weight="${p.bold ? 700 : 400}" font-style="${p.italic ? "italic" : "normal"}" text-anchor="${anchor}" fill="${esc(p.fill)}"${p.underline ? ' text-decoration="underline"' : ""}${st} style="white-space:pre">${lines}</g>`;
-  }
-  const fill = p.fill ? ` fill="${esc(p.fill)}"` : ` fill="none"`;
-  const st = p.stroke ? ` stroke="${esc(p.stroke)}" stroke-width="${r2(p.sw)}" stroke-linecap="${p.cap || "butt"}" stroke-linejoin="${p.join || "miter"}"${p.dash ? ` stroke-dasharray="${p.dash.map(r2).join(" ")}"` : ""}` : "";
-  return `<path d="${p.d}"${fill}${st}${op}${tf}/>`;
-}
-
-function primCanvas(cx, p){
-  cx.save();
-  if (p.rot){ cx.translate(p.rot[1], p.rot[2]); cx.rotate(p.rot[0] * Math.PI / 180); cx.translate(-p.rot[1], -p.rot[2]); }
-  cx.globalAlpha = p.op ?? 1;
-  if (p.text){
-    cx.font = p.font;
-    cx.textBaseline = "alphabetic";
-    cx.textAlign = p.align === "center" ? "center" : p.align === "right" ? "right" : "left";
-    const x0 = p.center ? p.x : p.align === "center" ? p.x + p.w / 2 : p.align === "right" ? p.x + p.w : p.x;
-    p.text.forEach((l, i) => {
-      const y = p.y + i * p.lh + p.size * 0.92;
-      if (p.stroke && p.sw){ cx.lineJoin = "round"; cx.lineWidth = p.sw; cx.strokeStyle = p.stroke; cx.strokeText(l, x0, y); }
-      cx.fillStyle = p.fill;
-      cx.fillText(l, x0, y);
-      if (p.underline && l){
-        const lw = cx.measureText(l).width, ux = p.align === "center" ? x0 - lw / 2 : p.align === "right" ? x0 - lw : x0;
-        cx.fillRect(ux, y + p.size * 0.1, lw, Math.max(1, p.size * 0.06));
-      }
-    });
-    cx.restore();
-    return;
-  }
-  const path = new Path2D(p.d);
-  if (p.fill){ cx.fillStyle = p.fill; cx.fill(path); }
-  if (p.stroke){
-    cx.strokeStyle = p.stroke;
-    cx.lineWidth = p.sw;
-    cx.lineCap = p.cap || "butt";
-    cx.lineJoin = p.join || "miter";
-    if (p.dash) cx.setLineDash(p.dash);
-    cx.stroke(path);
-  }
-  cx.restore();
-}
-
-// ---- bounds / hit testing / transforms --------------------------------------------------------
-
-function boundsOf(it){
-  const d = it.data, t = typeOf(it);
-  if (STROKE_TOOLS.has(t)){
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (let i = 0; i < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
-    const r = d.size / 2;
-    return [x0 - r, y0 - r, x1 + r, y1 + r];
-  }
-  if (t === "line" || t === "arrow"){
-    const pts = linePoints(d), r = d.width * 2.5 * (d.headSize || 1);
-    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-    return [Math.min(...xs) - r, Math.min(...ys) - r, Math.max(...xs) + r, Math.max(...ys) + r];
-  }
-  let box, rot = d.rot || 0;
-  if (t === "rect" || t === "ellipse") box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
-  else if (t === "text") box = textLayout(d).box;
-  else if (t === "pin") return [d.x - d.size / 2, d.y - d.size / 2, d.x + d.size / 2, d.y + d.size / 2];
-  else return [0, 0, 0, 0];
-  const [x, y, w, h] = box, cx = x + w / 2, cy = y + h / 2;
-  const pad = t === "text" ? 0 : (d.strokeOn !== false ? d.width / 2 : 0);
-  const cs = [[x - pad, y - pad], [x + w + pad, y - pad], [x + w + pad, y + h + pad], [x - pad, y + h + pad]].map((p) => rotPt(p[0], p[1], cx, cy, rot));
-  return [Math.min(...cs.map((c) => c[0])), Math.min(...cs.map((c) => c[1])), Math.max(...cs.map((c) => c[0])), Math.max(...cs.map((c) => c[1]))];
-}
-
-function hitTest(it, x, y, tol){
-  const d = it.data, t = typeOf(it);
-  const b = boundsOf(it);
-  if (x < b[0] - tol || y < b[1] - tol || x > b[2] + tol || y > b[3] + tol) return false;
-  if (STROKE_TOOLS.has(t)){
-    const rs = t === "marker" ? null : strokeRadii(it);
-    const n = d.pts.length / 3;
-    if (n === 1) return hyp(x - d.pts[0], y - d.pts[1]) <= (rs ? rs[0] : d.size / 2) + tol;
-    for (let i = 1; i < n; i++){
-      const r = rs ? Math.max(rs[i], rs[i - 1]) : d.size / 2;
-      if (segDist(x, y, d.pts[i * 3 - 3], d.pts[i * 3 - 2], d.pts[i * 3], d.pts[i * 3 + 1]) <= r + tol) return true;
-    }
-    return false;
-  }
-  if (t === "line" || t === "arrow"){
-    const pts = linePoints(d);
-    for (let i = 1; i < pts.length; i++) if (segDist(x, y, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) <= d.width / 2 + tol) return true;
-    return false;
-  }
-  if (t === "pin") return hyp(x - d.x, y - d.y) <= d.size / 2 + tol;
-  let box;
-  if (t === "text") box = textLayout(d).box;
-  else box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
-  const [bx, by, bw, bh] = box, cx = bx + bw / 2, cy = by + bh / 2;
-  const [lx, ly] = rotPt(x, y, cx, cy, -(d.rot || 0));
-  if (t === "text" || d.fillOn) return lx >= bx - tol && lx <= bx + bw + tol && ly >= by - tol && ly <= by + bh + tol;
-  const sw = d.width / 2 + tol;
-  if (t === "rect"){
-    const inOuter = lx >= bx - sw && lx <= bx + bw + sw && ly >= by - sw && ly <= by + bh + sw;
-    const inInner = lx > bx + sw && lx < bx + bw - sw && ly > by + sw && ly < by + bh - sw;
-    return inOuter && !inInner;
-  }
-  const rx = bw / 2, ry = bh / 2;
-  if (rx < 1e-6 || ry < 1e-6) return false;
-  const k = hyp((lx - cx) / rx, (ly - cy) / ry);
-  return Math.abs(k - 1) * Math.min(rx, ry) <= sw;
-}
-
-// Applies an affine map to an object, using `src` (a snapshot) as the starting point.
-//   map(x, y) → [x, y]   k: uniform scale (for widths/sizes)   da: rotation added (degrees)
-//   sx, sy: axis scales (rect/ellipse boxes when unrotated)
-function transformItem(it, src, map, { k = 1, da = 0, sx = 1, sy = 1 } = {}){
-  const d = it.data, s = src.data, t = typeOf(it);
-  if (STROKE_TOOLS.has(t)){
-    for (let i = 0; i < s.pts.length; i += 3){ const [x, y] = map(s.pts[i], s.pts[i + 1]); d.pts[i] = x; d.pts[i + 1] = y; }
-    d.size = s.size * k;
-  } else if (t === "line" || t === "arrow"){
-    const [a, b] = map(s.pts[0], s.pts[1]), [c, e] = map(s.pts[2], s.pts[3]);
-    d.pts = [a, b, c, e];
-    d.width = s.width * k;
-    if (s.bend != null) d.bend = s.bend * k * (sx * sy < 0 ? -1 : 1);
-  } else if (t === "rect" || t === "ellipse"){
-    const [cx, cy] = map(s.x + s.w / 2, s.y + s.h / 2);
-    const rotd = !!s.rot || !!da;
-    const w = Math.abs(s.w) * (rotd ? k : Math.abs(sx)), h = Math.abs(s.h) * (rotd ? k : Math.abs(sy));
-    d.x = cx - w / 2; d.y = cy - h / 2; d.w = w; d.h = h;
-    d.rot = ((s.rot || 0) + da) % 360;
-    d.width = s.width * k;
-    if (s.radius) d.radius = s.radius * k;
-  } else if (t === "text"){
-    const L = textLayout(s), [bx, by, bw, bh] = L.box;
-    const [cx, cy] = map(bx + bw / 2, by + bh / 2);
-    d.size = s.size * k;
-    if (s.outline) d.outline = s.outline * k;
-    const N = textLayout(d);
-    d.x = cx - N.box[2] / 2 + N.pad; d.y = cy - N.box[3] / 2 + N.pad;
-    d.rot = ((s.rot || 0) + da) % 360;
-  } else if (t === "pin"){
-    [d.x, d.y] = map(s.x, s.y);
-  }
-}
-
 // =================================================================================================
 
 export function createAnnotator(host){
   injectStyles();
   const S = {
-    on: false, panelOn: readJSON("sight.annotate.panel", true), hidden: false, onion: false,
+    on: false, panelOn: readJSON("sight.annotate.panel", true), hidden: false, onion: false, hiddenReplies: new Set(),
     tool: "brush", styles: loadStyles(), hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null,
@@ -744,16 +369,6 @@ export function createAnnotator(host){
       + (h.length > 1 ? `<button type="button" class="an-rsh-more">${S.histOpen ? "Less" : `History (${h.length})`}</button>` : "");
     el.querySelector(".an-rsh-more")?.addEventListener("click", () => { S.histOpen = !S.histOpen; paintStatus(); });
   }
-  function validItem(it){
-    const d = it.data, t = typeOf(it);
-    if (it.kind === "note") return true;
-    if (STROKE_TOOLS.has(t)) return Array.isArray(d.pts) && d.pts.length >= 3;
-    if (t === "line" || t === "arrow") return Array.isArray(d.pts) && d.pts.length === 4;
-    if (t === "rect" || t === "ellipse") return [d.x, d.y, d.w, d.h].every(Number.isFinite);
-    if (t === "text" || t === "pin") return Number.isFinite(d.x) && Number.isFinite(d.y);
-    return false;
-  }
-
   // ---- undo ----------------------------------------------------------------------------------
   const snap = (it) => (it ? structuredClone(it) : null);
   // Runs `mutate` and records one undo step for the objects in `ids` (new objects created inside
@@ -867,7 +482,16 @@ export function createAnnotator(host){
     }
     return null;
   }
+  // A drawing made on a reply (data.reply, FORMAT.md) goes with that reply: it disappears when the
+  // reply is deleted (here or in a merged review file) and while its eye toggle is off.
+  function replyGone(it){
+    const rid = it.data.reply;
+    if (!rid) return false;
+    const r = (S.items.get(it.data.note)?.data.replies || []).find((x) => x.id === rid);
+    return !!r?.deleted;
+  }
   function visibleNow(it){
+    if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) return false;
     const c = it.data.ctx;
     if (!c) return true;
     if (S.kind === "video"){
@@ -882,6 +506,7 @@ export function createAnnotator(host){
   }
   function ghostNow(it){
     if (!S.onion || S.kind !== "video") return false;
+    if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) return false;
     const c = it.data.ctx, v = video();
     return !!(c && v && c.t != null && Math.abs(v.currentTime - c.t) <= 1.0);
   }
@@ -1954,12 +1579,19 @@ export function createAnnotator(host){
   const EVENT = { done: ["✓", "Resolved"], progress: ["▸", "In progress"], open: ["↺", "Reopened"] };
   const eventLabel = (r) => (EVENT[r.event] || EVENT.open)[1];
   const eventIcon = (r) => (EVENT[r.event] || EVENT.open)[0];
+  // Eye + count for a reply that carries drawings: shows / hides them on the picture.
+  function rdrawChip(n, r){
+    const c = replyDrawings(n.id, r.id).length;
+    if (!c) return "";
+    const off = S.hiddenReplies.has(r.id);
+    return `<button type="button" class="an-rdraw${off ? " off" : ""}" data-rdraw="${esc(r.id)}" title="${off ? "Show" : "Hide"} this reply's drawing${c > 1 ? "s" : ""}">${off ? ICON.eyeOff : ICON.eye}${c}</button>`;
+  }
   function repliesHtml(n){
     const list = liveReplies(n);
     if (!list.length) return "";
     return `<div class="an-replies">${list.map((r) => r.event ? `<div class="an-rep an-rev ${r.event === "done" ? "done" : r.event === "progress" ? "prog" : ""}" data-rid="${esc(r.id)}">
       <span>${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
-      <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span><button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
+      <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span>${rdrawChip(n, r)}<button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
       ${r.text ? `<div class="an-rt" title="Double-click to edit">${esc(r.text)}</div>` : ""}
       ${r.shots?.length ? `<div class="an-shots">${r.shots.map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join("")}</div>` : ""}</div>`).join("")}</div>`;
   }
@@ -2012,12 +1644,17 @@ export function createAnnotator(host){
   }
   // A deleted reply stays as a tombstone so merging a review file from before the delete
   // does not bring it back (see Library.merge_replies).
+  // Its drawings (data.reply) go with it, in the same undo step.
   function deleteReply(id, rid){
-    commit([id], () => {
+    const drawn = replyDrawings(id, rid).map((it) => it.id);
+    commit([id, ...drawn], () => {
       const d = S.items.get(id).data;
       d.replies = (d.replies || []).map((x) => (x.id === rid ? { id: x.id, created: x.created, deleted: Date.now() } : x));
+      for (const x of drawn) S.items.delete(x);
     });
+    S.hiddenReplies.delete(rid);
   }
+  const replyDrawings = (id, rid) => [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === id && it.data.reply === rid);
   function renderPending(){
     const el = S.ui;
     if (!el) return;
@@ -2037,8 +1674,20 @@ export function createAnnotator(host){
     el.querySelectorAll("[data-vk]").forEach((b) => { b.onclick = () => goView(b.dataset.vk); });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],img[data-shot],img[data-rshot],.an-rep,.an-note");
+    const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-note");
     if (!t) return;
+    if (t.dataset.rdraw){
+      const rid = t.dataset.rdraw;
+      if (S.hiddenReplies.has(rid)) S.hiddenReplies.delete(rid);
+      else {
+        S.hiddenReplies.add(rid);
+        // Hidden drawings must not stay selected: Delete would remove them unseen.
+        for (const it of S.items.values()) if (it.data.reply === rid) S.sel.delete(it.id);
+        renderProps();
+      }
+      paintVisibility(); renderSel(); renderPanel();
+      return;
+    }
     if (t.dataset.reply){ startReply(t.dataset.reply); return; }
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
     if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
@@ -2244,9 +1893,7 @@ export function createAnnotator(host){
   function startTick(){ if (!S.raf) S.raf = requestAnimationFrame(tick); }
 
   // ---- screenshots / compositing --------------------------------------------------------------
-  function drawItems(cx, items){
-    for (const it of items.sort((a, b) => a.z - b.z)) for (const p of primsOf(it, numOf)) primCanvas(cx, p);
-  }
+  const drawItems = (cx, items) => RC.drawCanvas(cx, items, numOf);
   // What is on screen right now (picture + visible drawings), at device resolution.
   async function composeView(){
     const g = geom();
@@ -2384,15 +2031,15 @@ export function createAnnotator(host){
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
     const v = video();
-    const keep = { t: v?.currentTime, cam: curCam(), v3d: host.getV3D?.(), vk: S.curVk, hidden: S.hidden };
-    S.hidden = false;
+    const keep = { t: v?.currentTime, cam: curCam(), v3d: host.getV3D?.(), vk: S.curVk, hidden: S.hidden, hiddenReplies: S.hiddenReplies };
+    S.hidden = false; S.hiddenReplies = new Set();
     let cover = null;
     try {
-      if (S.b2 && !S.b2.isVid) cover = toJpeg(composeNative(() => true));
+      if (S.b2 && !S.b2.isVid) cover = toJpeg(composeNative((it) => !replyGone(it)));
       for (const [i, n] of notes.entries()){
         const d = n.data, c = d.ctx || null;
         let frame = null, cap = "";
-        const own = (it) => it.data.note === n.id;
+        const own = (it) => it.data.note === n.id && !replyGone(it);
         if (S.b2 && !S.b2.isVid){
           // One note on a picture: its frame would just repeat the cover.
           if ((everyFrame || notes.length > 1) && [...S.items.values()].some(own)) frame = toJpeg(composeNative(own, 1600));
@@ -2407,7 +2054,7 @@ export function createAnnotator(host){
             S.b3.setCam(view.cam);
             S.curVk = c.vk;
             await nextFrame(); await nextFrame(); await nextFrame();
-            frame = toJpeg(composeNative((it) => it.data.ctx?.vk === c.vk));
+            frame = toJpeg(composeNative((it) => it.data.ctx?.vk === c.vk && !replyGone(it)));
           }
         }
         out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, frameCaption: cap, shots: d.shots || [],
@@ -2416,7 +2063,7 @@ export function createAnnotator(host){
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
       if (S.b3 && keep.cam){ if (keep.v3d) host.setV3D?.(keep.v3d); S.b3.setCam(keep.cam); }
-      S.hidden = keep.hidden;
+      S.hidden = keep.hidden; S.hiddenReplies = keep.hiddenReplies;
       paintVisibility();
     }
     const g = geom(), nw = g?.nw || a.width, nh = g?.nh || a.height;
@@ -2639,7 +2286,7 @@ export function createAnnotator(host){
     S.items.clear(); S.saved.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
-    S.focusNote = S.pinFocus = null;
+    S.focusNote = S.pinFocus = null; S.hiddenReplies.clear();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
     notesSig = "";
     S.fps = 25; S.fpsKnown = false;
@@ -2835,6 +2482,10 @@ function injectStyles(){
 .an-rh span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-rh .an-ib { visibility: hidden; height: 16px; min-width: 16px; }
 .an-rep:hover .an-rh .an-ib { visibility: visible; }
+.an-rdraw { flex: none; display: inline-flex; align-items: center; gap: 2px; height: 16px; padding: 0 5px 0 3px; border: 0; border-radius: 8px; background: none; color: var(--subtle); font: inherit; font-size: 10px; cursor: pointer; }
+.an-rdraw svg { width: 12px; height: 12px; }
+.an-rdraw:hover { color: var(--fg); background: rgb(127 127 127 / .18); }
+.an-rdraw.off { opacity: .55; }
 .an-rev { color: var(--subtle); font-size: 10px; }
 .an-rev.done { color: var(--ok, #2f9d5b); }
 .an-rev.prog { color: #e0a030; }

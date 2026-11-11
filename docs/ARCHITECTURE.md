@@ -16,10 +16,12 @@ app/version.py           APP_VERSION (single source; exposed in /api/state as "v
 app/static/index.html    the whole UI: one inline <script type="module"> (no build step)
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
+app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
-docs/                    RECENT.md (changelog, newest first), archive/, this file
+docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
+tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node)
 build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
 build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script gives dist/Sight/Sight
 .github/workflows/release.yml  CI: all four platform builds + headless smoke test; tag v<APP_VERSION> publishes a Release
@@ -186,6 +188,20 @@ whole clip), 3D `{vk, cam:{p,t,fov,turns}}` (+ `v3d`, a copy of `state.v3d`, on 
 drawing shows only while the live camera matches its view within 0.4 % of the camera distance
 (`camMatch`); orbit damping is switched off while annotating so the camera stops exactly. Images:
 no context, always visible.
+
+**Format** — the rows, package and merge rules are specified in `docs/FORMAT.md` (the contract with
+the HTML page, the mobile app and the owner's tracker). A drawing made on a reply carries
+`data.reply` besides `data.note`; annotate.js hides it with a deleted reply / the reply's eye toggle
+(`S.hiddenReplies`, session only) and deletes it with the reply.
+
+**Shared core** — `app/static/review-core.js` is a plain script (no imports, sets
+`globalThis.SightReviewCore`, `module.exports` under Node) holding the geometry → primitives
+(`primsOf`, `primSvg`, `primCanvas`, `drawCanvas`, `svgMarkup`), bounds / hit tests / transforms,
+`validItem` and the JS merge (`mergeRows`, `mergeReplies`, `mergeHistory`, `contentAt` — a port of
+`Library.import_annotations`). annotate.js imports it for its side effect and destructures the
+global; `review.build_html` inlines it verbatim into the HTML page (`core_js()` refuses a source
+containing a closing script tag or an HTML comment opener). `tests/test_merge_parity.py` runs the
+Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every row.
 
 **Rendering** — every object becomes primitives (`primsOf`) that both the SVG overlay (`primSvg`) and
 the canvas compositor (`primCanvas`, screenshots and PDF frames) draw, so they match. The overlay is

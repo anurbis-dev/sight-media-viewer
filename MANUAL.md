@@ -75,7 +75,9 @@
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
-    reviewer attached to a reply (on the web page) show under it; click to enlarge.
+    reviewer attached to a reply (on the web page) show under it; click to enlarge. A reply that
+    came with drawings (made in the mobile app or on the web page) shows an eye with their count:
+    click it to hide / show those drawings; deleting the reply deletes its drawings too.
   - **Review state** — the *State* row at the top of the panel marks the file *Needs review*,
     *Changes* or *Approved*. Under it: who set the state last and when; *History* lists every
     change. The grid shows it as a pill on the card together with the number of open
