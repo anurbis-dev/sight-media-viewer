@@ -81,7 +81,7 @@
     at the top of the panel, or a click on the note, bring the camera and settings back. While
     annotating, left-drag on empty space with the select tool orbits.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots,
-    saved to Downloads and shown in the file manager), *Review file (.sightreview)* — one file with
+    saved to Downloads and shown in the file manager), *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
     (drag it onto the window, the same Export menu → Import, or the palette "Import review file")
     gets the review on the same media file, found by path, else by name and size. *Copy notes as

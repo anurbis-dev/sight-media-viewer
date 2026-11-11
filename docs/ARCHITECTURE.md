@@ -9,7 +9,7 @@ Sight.py                 launcher (venv bootstrap, window, port); --dev / SIGHT_
 app/server.py            FastAPI app; routes are closures inside build_app(lib, settings, dev)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
-app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .sightreview package
+app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package
 app/settings.py          settings.json store (UI prefs) + defaults
 app/version.py           APP_VERSION (single source; exposed in /api/state as "version")
 app/static/index.html    the whole UI: one inline <script type="module"> (no build step)
@@ -187,7 +187,7 @@ preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for 
 **Review API** — `POST /api/review/shots` (raw PNG/JPEG body → `{id, url}`), `GET
 /api/review/shots/{id}`, `POST /api/review/export/pdf` (client sends notes + JPEG data URLs; server
 lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK), `POST
-/api/review/export/package` (server builds the `.sightreview` JSON from the rows + shots),
+/api/review/export/package` (server builds the `.srev` JSON from the rows + shots; legacy `.sightreview` files still import),
 `POST /api/review/import` (raw file body; asset matched by id, else name+size, else name+kind;
 rows and shots get fresh ids, `data.note` / `data.shots` remapped; 404 `{missing}` if no match).
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.

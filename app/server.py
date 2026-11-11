@@ -864,7 +864,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         rows = lib.annotations_for_asset(a["id"])
         pkg = review.build_package(a, rows, lib.root, str(body.get("author") or ""), APP_VERSION)
         stem = review.safe_name(f"{Path(a['name']).stem} review")
-        out = review.unique_path(review.export_dir(lib.root), stem, ".sightreview")
+        out = review.unique_path(review.export_dir(lib.root), stem, review.PACKAGE_EXT)
         out.write_text(json.dumps(pkg, ensure_ascii=False), encoding="utf-8")
         return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
 

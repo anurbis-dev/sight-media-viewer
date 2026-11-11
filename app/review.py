@@ -4,9 +4,9 @@
   data.shots list by id.
 - PDF report: built here with PyMuPDF's Story (HTML layout -> paginated PDF), so any script the
   notes are written in (Cyrillic, CJK ...) renders with MuPDF's bundled fallback fonts.
-- .sightreview package: one JSON file holding the media's identity, every annotation row and the
-  screenshots (base64), so a review can be mailed / sent by messenger and opened on another machine
-  that has the same media file in its library.
+- .srev package (legacy extension .sightreview): one JSON file holding the media's identity,
+  every annotation row and the screenshots (base64), so a review can be mailed / sent by messenger
+  and opened on another machine that has the same media file in its library.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from pathlib import Path
 
 PACKAGE_FORMAT = "sight-review"
 PACKAGE_VERSION = 1
+PACKAGE_EXT = ".srev"  # files exported before 0.16.2 used ".sightreview"; both import
 SHOT_ID = re.compile(r"^[0-9a-f]{16}$")
 
 
@@ -216,7 +217,7 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
     return total
 
 
-# ---- .sightreview package ----------------------------------------------------------------------
+# ---- .srev package ----------------------------------------------------------------------------
 
 _ROW_KEYS = ("id", "kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_index", "color", "data",
              "locked", "created_at", "updated_at")

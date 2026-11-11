@@ -6975,7 +6975,7 @@ function paletteActions(){
       await refreshMeta();
       openBoard(b.id);
     } },
-    { label: "Import review file (.sightreview)…", run: () => pickReviewFile() },
+    { label: "Import review file (.srev)…", run: () => pickReviewFile() },
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
     ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
@@ -7024,11 +7024,11 @@ async function saveAppDefaults(){
   renderOptions(); // the sliders' per-slider "reset" targets were bound to the old defaults
   return true;
 }
-// A .sightreview package (annotate.js / app/review.py) opens on the same media in this library.
+// A .srev review package (annotate.js / app/review.py; legacy .sightreview too) opens on the same media in this library.
 function pickReviewFile(){
   const inp = document.createElement("input");
   inp.type = "file";
-  inp.accept = ".sightreview,application/json";
+  inp.accept = ".srev,.sightreview,application/json";
   inp.onchange = () => { if (inp.files?.[0]) annot.importFile(inp.files[0]); };
   inp.click();
 }
@@ -7039,7 +7039,7 @@ window.addEventListener("drop", (e) => {
   const files = [...(e.dataTransfer?.files || [])];
   if (!files.length) return;
   e.preventDefault(); // never let the browser navigate to a dropped file
-  const f = files.find((x) => /\.sightreview$/i.test(x.name));
+  const f = files.find((x) => /\.(srev|sightreview)$/i.test(x.name));
   if (f) annot.importFile(f);
 });
 function paletteKinds(){

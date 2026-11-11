@@ -1,6 +1,6 @@
 // Annotations / review session for the lightbox — vector drawings on top of an image, a video frame
 // or a 3D view, plus a side panel of review notes with screenshots, exportable as PDF or as a
-// .sightreview package (see app/review.py).
+// .srev review package (see app/review.py).
 //
 // Self-contained ES module (zero-build): index.html creates one annotator with createAnnotator()
 // and drives it from the lightbox (mount/unmount, setAsset, bind2d/bind3d, onKey).
@@ -1697,7 +1697,7 @@ export function createAnnotator(host){
       </div>
       <div class="an-menu" hidden>
         <button type="button" data-ex="pdf">PDF report…</button>
-        <button type="button" data-ex="pkg">Review file (.sightreview)…</button>
+        <button type="button" data-ex="pkg">Review file (.srev)…</button>
         <button type="button" data-ex="text">Copy notes as text</button>
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
@@ -1714,7 +1714,7 @@ export function createAnnotator(host){
           <button type="button" class="btn an-add" data-act="add">Add</button>
         </div>
       </div>
-      <input type="file" class="an-file" accept=".sightreview,application/json" hidden>`;
+      <input type="file" class="an-file" accept=".srev,.sightreview,application/json" hidden>`;
     el.addEventListener("pointerdown", (e) => e.stopPropagation());
     const who = el.querySelector(".an-who");
     who.value = reviewer();

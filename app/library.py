@@ -2746,7 +2746,7 @@ class Library:
         self.execute("UPDATE annotations SET deleted_at=?, updated_at=? WHERE id=?", (now, now, aid))
 
     def match_review_asset(self, meta: dict) -> dict | None:
-        """Finds the library asset a .sightreview package was made on: the same id (same path on
+        """Finds the library asset a .srev package was made on: the same id (same path on
         this machine), else the same file name and size, else the same name and kind."""
         aid = str(meta.get("id") or "")
         if aid:
