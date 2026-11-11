@@ -196,10 +196,17 @@ lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK
 `POST /api/review/export/html` (same payload as the PDF; the page embeds the report and the
 package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
 else name+size, else name+kind; 404 `{missing}` if no match). Import **merges**
-(`Library.import_annotations`): rows keep their ids (an id that already belongs to another asset
-gets a stable derived one), the later `updated_at` wins, a local delete beats an older incoming row,
-package `deleted` tombstones delete rows not edited since, and a note's replies are always unioned
-by id (`merge_replies`; deleted replies stay as tombstones). Shots keep their ids too (`put_shot`).
+(`Library.import_annotations`, one transaction, rolled back on a malformed row): rows keep their
+ids (an id that already belongs to another asset gets a stable derived one), the later **content
+stamp** wins (`_content_at`: a note's `data.edited_at`, else `data.created`; a drawing's
+`updated_at`), a local delete beats an incoming row not edited after it, package `deleted`
+tombstones delete rows not edited since, a note's replies are always unioned by id
+(`merge_replies`; deleted replies stay as tombstones) and its open/done state goes by
+`data.status_at`. So a reply or a resolve never makes a stale copy of a note's text win, and never
+revives a deleted note. annotate.js sets `edited_at` on text / screenshot edits and `status_at`
+on resolve. The import route matches the asset by package id, then the asset already holding most
+of the package's row ids (`asset_holding_annotations`), then name+size / kind. Shots keep their ids
+(`put_shot`; a non-hex id becomes a content hash and `data.shots` is remapped).
 `GET /api/assets/{id}/versions` (`Library.asset_versions` / `version_key`: same folder, same name
 once the last v/ver/version/rev/r + digits token is cut out), `PUT /api/assets/{id}/review-status`.
 `GET /api/assets` takes `review=open|review|changes|approved` and returns `review` / `open_notes`

@@ -347,6 +347,9 @@ export function createCompare(host){
         if (!inside){ if (!m.paused) m.pause(); continue; }
         if (m.readyState < 1) continue;
         if (C.playing){
+          // A seek still in flight: correcting again would restart it every frame and a slow
+          // clip would never get to play. Wait for it to land.
+          if (m.seeking) continue;
           const d = m.currentTime - local;
           if (Math.abs(d) > 0.25 || force){ if (Math.abs(d) > 1 / C.fps || force) m.currentTime = local; m.playbackRate = 1; }
           else m.playbackRate = clamp(1 - d * 2, 0.85, 1.15);

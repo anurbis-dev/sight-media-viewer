@@ -46,9 +46,13 @@ def save_shot(root: Path, data: bytes) -> str:
 
 def put_shot(root: Path, sid: str, data: bytes) -> str:
     """Stores an imported screenshot under its original id (ids are random 64-bit, so the same id
-    is the same picture): importing a package again does not copy its screenshots again."""
+    is the same picture): importing a package again does not copy its screenshots again. A
+    package that uses other ids gets one derived from the picture's bytes — still stable across
+    imports; the caller remaps data.shots with the returned id."""
     if not SHOT_ID.match(sid or ""):
-        return save_shot(root, data)
+        import hashlib
+
+        sid = hashlib.sha1(data).hexdigest()[:16]
     if shot_path(root, sid) is None:
         ext = ".jpg" if data[:3] == b"\xff\xd8\xff" else ".png"
         (shots_dir(root) / f"{sid}{ext}").write_bytes(data)
@@ -509,16 +513,17 @@ input:focus, textarea:focus { border-color: var(--accent); }
     var now = Date.now();
     var out = JSON.parse(JSON.stringify(PKG));
     out.author = who; out.exported_at = now; out.app = (PKG.app || "Sight") + " (web reply)";
+    // Replies and the open/done state carry their own stamps (merged on their own in Sight), so
+    // the note's updated_at stays as exported: answering must not make this copy of the note's
+    // text win over edits made in Sight since.
     out.annotations.forEach(function(r){
       if (r.kind !== "note") return;
-      var changed = false;
-      if (E.replies[r.id] && E.replies[r.id].length){ r.data.replies = (r.data.replies || []).concat(E.replies[r.id]); changed = true; }
-      if (E.status[r.id] && E.status[r.id] !== (r.data.status || "open")){ r.data.status = E.status[r.id]; changed = true; }
-      if (changed) r.updated_at = now;
+      if (E.replies[r.id] && E.replies[r.id].length) r.data.replies = (r.data.replies || []).concat(E.replies[r.id]);
+      if (E.status[r.id] && E.status[r.id] !== (r.data.status || "open")){ r.data.status = E.status[r.id]; r.data.status_at = now; }
     });
     E.notes.forEach(function(n){
       out.annotations.push({ id: n.id, kind: "note", shape_kind: null, x: null, y: null, w: null, h: null, rotation: 0, z_index: 0, color: null,
-        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: [] }, locked: 0, created_at: n.created, updated_at: now });
+        data: { text: n.text, author: n.author, created: n.created, status: "open", ctx: null, shots: [] }, locked: 0, created_at: n.created, updated_at: n.created });
     });
     var name = ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "") + ".srev";
     var blob = new Blob([JSON.stringify(out)], { type: "application/json" });

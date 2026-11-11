@@ -2834,17 +2834,19 @@ class Library:
     def set_review_status(self, aid: str, state: str, author: str = "") -> dict:
         """Sets (or with an empty state clears) an asset's review state. Updates the newest status
         row in place so one row keeps travelling between machines instead of piling up."""
+        if state and state not in REVIEW_STATES:
+            raise ValueError("unknown review state")
         cur = self.query(
             "SELECT id FROM annotations WHERE scope='asset' AND kind='status' AND target_asset_id=? "
-            "AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
+            "AND deleted_at IS NULL ORDER BY updated_at DESC",
             (aid,),
         )
+        # A merge can leave several live status rows (one set on each machine); clearing or
+        # setting the state retires all but the one kept, so an older state can't resurface.
+        for r in cur[0 if not state else 1:]:
+            self.delete_annotation(r["id"])
         if not state:
-            if cur:
-                self.delete_annotation(cur[0]["id"])
             return {"state": ""}
-        if state not in REVIEW_STATES:
-            raise ValueError("unknown review state")
         data = {"state": state, "author": author, "at": int(time.time() * 1000)}
         if cur:
             self.update_annotation(cur[0]["id"], {"data": data})
@@ -2863,8 +2865,8 @@ class Library:
         key = version_key(a["name"])[0]
         rows = self.query(
             "SELECT id, name, path, kind, ext FROM assets WHERE status='ready' AND substr(path, 1, ?) = ? "
-            "AND (kind IN ('image', 'video') OR ext='.psd')",
-            (len(prefix), prefix),
+            "AND instr(substr(path, ?), ?) = 0 AND (kind IN ('image', 'video') OR ext='.psd')",
+            (len(prefix), prefix, len(prefix) + 1, os.sep),
         )
         out = []
         for r in rows:
@@ -2890,7 +2892,7 @@ class Library:
     def merge_replies(a: list | None, b: list | None) -> list[dict]:
         """Union of two reply lists by id; for the same id the later edit (or delete) wins."""
         def stamp(x: dict) -> int:
-            return max(int(x.get("edited") or x.get("created") or 0), int(x.get("deleted") or 0))
+            return max(Library._stamp(x.get("edited") or x.get("created")), Library._stamp(x.get("deleted")))
 
         out: dict[str, dict] = {}
         for x in [*(a or []), *(b or [])]:
@@ -2899,20 +2901,43 @@ class Library:
             k = str(x["id"])
             if k not in out or stamp(x) > stamp(out[k]):
                 out[k] = x
-        return sorted(out.values(), key=lambda x: int(x.get("created") or 0))
+        return sorted(out.values(), key=lambda x: Library._stamp(x.get("created")))
 
-    def import_annotations(self, target: str, rows: list[dict], deleted: list[dict] | None = None) -> dict:
+    @staticmethod
+    def _stamp(v: object) -> int:
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _content_at(cls, kind: str, data: dict, created: object, updated: object) -> int:
+        """When a row's own content last changed. For a note that is its text / shots
+        (`data.edited_at`, else when it was written) — replies and the resolved state carry their
+        own stamps and are merged separately, so answering a note never makes a stale copy of the
+        rest of it win. Drawings: the row's updated_at."""
+        if kind == "note":
+            return cls._stamp(data.get("edited_at") or data.get("created") or created)
+        return cls._stamp(updated or created)
+
+    def import_annotations(self, target: str, rows: list[dict], deleted: list[dict] | None = None,
+                           shot_map: dict[str, str] | None = None) -> dict:
         """Merges the annotation rows of a review package into asset `target`.
 
         Rows keep their ids, so importing the same file twice — or a file that went to a reviewer
         and came back with answers — updates what is there instead of duplicating it. An id that
         already belongs to another asset is replaced by a stable derived one (same result on every
-        import). Per row the later `updated_at` wins; a local delete wins over an older incoming
-        row; package tombstones delete local rows that were not edited after the delete. Replies of
-        a note are always unioned (see merge_replies), whichever side is newer.
-        Returns counts {added, updated, deleted, unchanged}."""
+        import). Per row the later content stamp wins (`_content_at`); a local delete wins over
+        an incoming row that was not edited after it; package tombstones delete local rows that
+        were not edited after the delete. A note's replies are always unioned (merge_replies) and
+        its open/done state goes by `data.status_at`, whichever side is newer otherwise.
+        `shot_map` renames screenshot ids (see review.put_shot). The whole merge is one
+        transaction: a malformed row rolls everything back. Returns counts
+        {added, updated, deleted, unchanged}."""
         stats = {"added": 0, "updated": 0, "deleted": 0, "unchanged": 0}
         id_re = re.compile(r"[0-9a-f]{16}")
+        shot_map = shot_map or {}
+        st = self._stamp
 
         def local_id(rid: str) -> str:
             rid = rid.lower()
@@ -2923,86 +2948,129 @@ class Library:
                 return asset_id(f"anno-import:{target}:{rid}")
             return rid
 
-        ids = {str(r.get("id") or ""): local_id(str(r.get("id") or "")) for r in rows if r.get("id")}
+        rows = [r for r in rows if isinstance(r, dict) and r.get("id")]
+        ids = {str(r["id"]): local_id(str(r["id"])) for r in rows}
         tombs = [
-            (ids.get(str(t["id"])) or local_id(str(t["id"])), int(t["deleted_at"]))
+            (ids.get(str(t["id"])) or local_id(str(t["id"])), st(t["deleted_at"]))
             for t in deleted or []
-            if isinstance(t, dict) and t.get("id") and t.get("deleted_at")
+            if isinstance(t, dict) and t.get("id") and st(t.get("deleted_at"))
         ]
+
+        def num(v: object) -> float | None:
+            try:
+                return None if v is None else float(v)
+            except (TypeError, ValueError):
+                return None
+
         now = int(time.time() * 1000)
         with self.lock:
-            for r in rows:
-                rid = ids.get(str(r.get("id") or ""))
-                if not rid:
-                    continue
-                data = dict(r.get("data")) if isinstance(r.get("data"), dict) else {}
-                if data.get("note") in ids:
-                    data["note"] = ids[data["note"]]
-                upd = int(r.get("updated_at") or r.get("created_at") or now)
-                vals = {
-                    "kind": str(r.get("kind") or "shape"), "shape_kind": r.get("shape_kind"),
-                    "x": r.get("x"), "y": r.get("y"), "w": r.get("w"), "h": r.get("h"),
-                    "rotation": float(r.get("rotation") or 0), "z_index": int(r.get("z_index") or 0),
-                    "color": r.get("color"), "locked": 1 if r.get("locked") else 0,
-                }
-                cur = self.conn.execute(
-                    "SELECT data, updated_at, deleted_at FROM annotations WHERE id=?", (rid,)
-                ).fetchone()
-                if cur is None:
-                    self.conn.execute(
-                        "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, x, y, w, h, "
-                        "rotation, z_index, color, data, locked, created_at, updated_at, revision) "
-                        "VALUES (?,?,?,'asset',?,?,?,?,?,?,?,?,?,?,?,?,1)",
-                        (rid, vals["kind"], vals["shape_kind"], target, vals["x"], vals["y"], vals["w"],
-                         vals["h"], vals["rotation"], vals["z_index"], vals["color"], json.dumps(data),
-                         vals["locked"], int(r.get("created_at") or upd), upd),
+            try:
+                for r in rows:
+                    rid = ids[str(r["id"])]
+                    data = dict(r.get("data")) if isinstance(r.get("data"), dict) else {}
+                    if isinstance(data.get("note"), str) and data["note"] in ids:
+                        data["note"] = ids[data["note"]]
+                    if isinstance(data.get("shots"), list):
+                        data["shots"] = [shot_map.get(str(x), str(x)) for x in data["shots"]]
+                    if not isinstance(data.get("replies"), (list, type(None))):
+                        data["replies"] = []
+                    kind = str(r.get("kind") or "shape")
+                    upd = st(r.get("updated_at") or r.get("created_at")) or now
+                    vals = (
+                        kind, r.get("shape_kind"), num(r.get("x")), num(r.get("y")), num(r.get("w")),
+                        num(r.get("h")), num(r.get("rotation")) or 0.0, int(num(r.get("z_index")) or 0),
+                        r.get("color") if isinstance(r.get("color"), str) else None,
+                        1 if r.get("locked") else 0,
                     )
-                    stats["added"] += 1
-                    continue
-                try:
-                    have = json.loads(cur["data"] or "{}")
-                except json.JSONDecodeError:
-                    have = {}
-                if cur["deleted_at"] is not None:
-                    if upd <= int(cur["deleted_at"]):
+                    cur = self.conn.execute(
+                        "SELECT data, created_at, updated_at, deleted_at FROM annotations WHERE id=?", (rid,)
+                    ).fetchone()
+                    if cur is None:
+                        self.conn.execute(
+                            "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, x, y, w, h, "
+                            "rotation, z_index, color, locked, data, created_at, updated_at, revision) "
+                            "VALUES (?,?,?,'asset',?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                            (rid, vals[0], vals[1], target, *vals[2:], json.dumps(data),
+                             st(r.get("created_at")) or upd, upd),
+                        )
+                        stats["added"] += 1
+                        continue
+                    try:
+                        have = json.loads(cur["data"] or "{}")
+                    except json.JSONDecodeError:
+                        have = {}
+                    inc_at = self._content_at(kind, data, r.get("created_at"), upd)
+                    if cur["deleted_at"] is not None:
+                        # Deleted here: only content edited after the delete brings it back.
+                        if inc_at <= st(cur["deleted_at"]):
+                            stats["unchanged"] += 1
+                            continue
+                        newer = True
+                    else:
+                        newer = inc_at > self._content_at(kind, have, cur["created_at"], cur["updated_at"])
+                    merged = dict(data if newer else have)
+                    if kind == "note":
+                        if have.get("replies") or data.get("replies"):
+                            merged["replies"] = self.merge_replies(have.get("replies"), data.get("replies"))
+                        a_at, b_at = st(have.get("status_at")), st(data.get("status_at"))
+                        if b_at > a_at:
+                            merged["status"], merged["status_at"] = data.get("status"), b_at
+                        elif a_at > b_at:
+                            merged["status"], merged["status_at"] = have.get("status"), a_at
+                    if not newer and merged == have:
                         stats["unchanged"] += 1
                         continue
-                    newer = True
-                else:
-                    newer = upd > int(cur["updated_at"] or 0)
-                merged = data if newer else have
-                if vals["kind"] == "note" and (have.get("replies") or data.get("replies")):
-                    merged = {**merged, "replies": self.merge_replies(have.get("replies"), data.get("replies"))}
-                if not newer and merged == have:
-                    stats["unchanged"] += 1
-                    continue
-                if newer:
-                    self.conn.execute(
-                        "UPDATE annotations SET kind=?, shape_kind=?, x=?, y=?, w=?, h=?, rotation=?, "
-                        "z_index=?, color=?, locked=?, data=?, updated_at=?, deleted_at=NULL, "
-                        "revision=revision+1 WHERE id=?",
-                        (vals["kind"], vals["shape_kind"], vals["x"], vals["y"], vals["w"], vals["h"],
-                         vals["rotation"], vals["z_index"], vals["color"], vals["locked"],
-                         json.dumps(merged), upd, rid),
-                    )
-                else:
-                    self.conn.execute(
-                        "UPDATE annotations SET data=?, updated_at=?, revision=revision+1 WHERE id=?",
-                        (json.dumps(merged), max(now, int(cur["updated_at"] or 0)), rid),
-                    )
-                stats["updated"] += 1
-            for rid, when in tombs:
-                cur = self.conn.execute(
-                    "SELECT updated_at FROM annotations WHERE id=? AND target_asset_id=? AND deleted_at IS NULL",
-                    (rid, target),
-                ).fetchone()
-                if cur and when > int(cur["updated_at"] or 0):
-                    self.conn.execute(
-                        "UPDATE annotations SET deleted_at=?, updated_at=? WHERE id=?", (when, when, rid)
-                    )
-                    stats["deleted"] += 1
-            self.conn.commit()
+                    if newer:
+                        self.conn.execute(
+                            "UPDATE annotations SET kind=?, shape_kind=?, x=?, y=?, w=?, h=?, rotation=?, "
+                            "z_index=?, color=?, locked=?, data=?, updated_at=?, deleted_at=NULL, "
+                            "revision=revision+1 WHERE id=?",
+                            (*vals, json.dumps(merged), max(upd, now if kind == "note" else upd), rid),
+                        )
+                    else:
+                        self.conn.execute(
+                            "UPDATE annotations SET data=?, updated_at=?, revision=revision+1 WHERE id=?",
+                            (json.dumps(merged), max(now, st(cur["updated_at"])), rid),
+                        )
+                    stats["updated"] += 1
+                for rid, when in tombs:
+                    cur = self.conn.execute(
+                        "SELECT kind, data, created_at, updated_at FROM annotations WHERE id=? "
+                        "AND target_asset_id=? AND deleted_at IS NULL",
+                        (rid, target),
+                    ).fetchone()
+                    if not cur:
+                        continue
+                    try:
+                        have = json.loads(cur["data"] or "{}")
+                    except json.JSONDecodeError:
+                        have = {}
+                    if when > self._content_at(cur["kind"], have, cur["created_at"], cur["updated_at"]):
+                        self.conn.execute(
+                            "UPDATE annotations SET deleted_at=?, updated_at=? WHERE id=?", (when, when, rid)
+                        )
+                        stats["deleted"] += 1
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
         return stats
+
+    def asset_holding_annotations(self, ids: list[str]) -> dict | None:
+        """The ready asset that already holds most of these annotation ids — where an earlier
+        import of the same review (or the review itself) lives, so a merge goes back there."""
+        want = [i.lower() for i in ids if isinstance(i, str)][:900]
+        if not want:
+            return None
+        rows = self.query(
+            f"SELECT target_asset_id t, COUNT(*) c FROM annotations WHERE scope='asset' AND id IN "
+            f"({','.join('?' * len(want))}) GROUP BY target_asset_id ORDER BY c DESC LIMIT 1",
+            tuple(want),
+        )
+        if not rows or not rows[0]["t"]:
+            return None
+        a = self.get_asset(rows[0]["t"])
+        return a if a and a.get("status") == "ready" else None
 
     def strip_tag(self, name: str) -> int:
         want = name.strip().lower()

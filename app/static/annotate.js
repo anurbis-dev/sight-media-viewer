@@ -2014,7 +2014,7 @@ export function createAnnotator(host){
     if (t.classList.contains("an-rep")) return;
     if (t.dataset.done){
       const id = t.dataset.done;
-      commit([id], () => { const d = S.items.get(id).data; d.status = d.status === "done" ? "open" : "done"; });
+      commit([id], () => { const d = S.items.get(id).data; d.status = d.status === "done" ? "open" : "done"; d.status_at = Date.now(); });
       return;
     }
     if (t.dataset.del){
@@ -2027,7 +2027,7 @@ export function createAnnotator(host){
     if (t.dataset.shot){
       if (e.altKey){
         const card = t.closest(".an-note"), id = card.dataset.id, sid = t.dataset.shot;
-        commit([id], () => { const d = S.items.get(id).data; d.shots = (d.shots || []).filter((x) => x !== sid); });
+        commit([id], () => { const d = S.items.get(id).data; d.shots = (d.shots || []).filter((x) => x !== sid); d.edited_at = Date.now(); });
         return;
       }
       showShot(t.dataset.src);
@@ -2055,7 +2055,9 @@ export function createAnnotator(host){
       ended = true;
       const v = ta.value.trim();
       ta.remove();
-      if (ok && v !== (it.data.text || "")) commit([id], () => { S.items.get(id).data.text = v; });
+      // edited_at: the note's content stamp — merging a review file compares it, not the row's
+      // updated_at (which replies and resolving also move; see Library._content_at).
+      if (ok && v !== (it.data.text || "")) commit([id], () => { const d = S.items.get(id).data; d.text = v; d.edited_at = Date.now(); });
       else renderPanel();
     };
     ta.addEventListener("keydown", (ev) => {

@@ -885,7 +885,7 @@ async function compareFromContext(){
   let ids = null, focus = null;
   if (light) focus = light.id;
   else {
-    const sel = selectedAssets().filter(comparable);
+    const sel = activeSelectionAssetIds().map((id) => assetById(id) || canvasCtl?.assetOf?.(id)).filter(comparable);
     if (sel.length >= 2){
       sel.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       ids = sel.map((a) => a.id);
@@ -893,7 +893,7 @@ async function compareFromContext(){
     } else focus = (sel[0] || assetUnderPointer())?.id || null;
   }
   if (!ids){
-    const a = focus && (assetById(focus) || (light && light.id === focus ? light.asset : null));
+    const a = focus && (assetById(focus) || canvasCtl?.assetOf?.(focus) || (light && light.id === focus ? light.asset : null));
     if (!a || !comparable(a)){ flash("Compare: select 2 or more images / videos, or open one that has versions"); return; }
     let list = [];
     try { list = ((await api(`/api/assets/${focus}/versions`)).items || []).filter(comparable); } catch {}
@@ -2248,7 +2248,7 @@ function ensureCanvasCtl(){
       // Shared with the library grid rather than re-implemented: the marquee modifier rules and the
       // nearest-neighbour switch for small (pixel-art) sources.
       combineSelection, markSmallSrc, syncPixelation,
-      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && canvasPaneActive(),
+      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
       onContextMenu: showCanvasCtx,
     });
   }

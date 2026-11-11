@@ -909,16 +909,27 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         except ValueError as e:
             raise HTTPException(400, str(e))
         meta = pkg["asset"]
-        a = lib.match_review_asset(meta)
+        rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+        # Same path on this machine first, then wherever this review's rows already live (an
+        # earlier import), then name + size / kind.
+        a = None
+        if meta.get("id"):
+            a = lib.get_asset(str(meta["id"]))
+            a = a if a and a.get("status") == "ready" else None
+        a = a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
         if not a:
             return JSONResponse({"ok": False, "missing": meta.get("name") or "", "asset": meta}, status_code=404)
-        for sid, url in (pkg.get("shots") or {}).items():
+        shot_map: dict[str, str] = {}
+        shots = pkg.get("shots") if isinstance(pkg.get("shots"), dict) else {}
+        for sid, url in shots.items():
             data = review.decode_data_url(url)
             if data:
-                await asyncio.to_thread(review.put_shot, lib.root, str(sid), data)
-        rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+                shot_map[str(sid)] = await asyncio.to_thread(review.put_shot, lib.root, str(sid), data)
         deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
-        stats = await asyncio.to_thread(lib.import_annotations, a["id"], rows, deleted)
+        try:
+            stats = await asyncio.to_thread(lib.import_annotations, a["id"], rows, deleted, shot_map)
+        except (TypeError, ValueError, AttributeError) as e:
+            raise HTTPException(400, f"Review file is damaged ({e})")
         return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or ""}
 
     @app.get("/api/events")
