@@ -5,6 +5,10 @@ owner's machine with a copy of the real library (1,028 assets, 3,600 thumbnails)
 otherwise. Take an item, do it, delete it from here, and add the RECENT entry as usual. Add new
 items with their numbers. Order inside a section is the suggested order.
 
+Bigger plans live in their own files: **`docs/PLAN-mobile.md`** (mobile review app, drawing on the
+HTML page, shared format, ftrack / ShotGrid / cloud sync — the next big track) and
+**`docs/PLAN-viewer.md`** (Sight as the tray quick viewer on Space, later).
+
 ## Bugs found, not fixed yet
 
 1. **`refreshItems()` refreshes only the first 800 assets.** It asks `/api/assets` for

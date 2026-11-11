@@ -9,6 +9,7 @@ Read this file first; it is short on purpose. Details live in `docs/`.
 2. `docs/ARCHITECTURE.md` — how the pieces fit (files, DB tables, API, canvas internals, gotchas).
 3. `README.md` / `MANUAL.md` — user-facing behaviour.
 4. `docs/PLAN.md` — queued improvements and known bugs, with the numbers behind them. Take work from here.
+   Bigger tracks: `docs/PLAN-mobile.md` (mobile review app, drawing, ftrack sync) and `docs/PLAN-viewer.md`.
 
 ## MemPalace (shared memory across sessions)
 
