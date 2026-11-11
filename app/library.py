@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from .fileinfo import file_info, obj_is_binary
+from .fileinfo import NO_WINDOW, file_info, obj_is_binary
 
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff",
@@ -55,6 +55,11 @@ KIND_LABEL = {
 # Bump when how models get rendered/thumbnailed changes enough that existing model thumbnails
 # are wrong (see Library._drop_stale_model_thumbs). 3: studio env + single key light (all models).
 MODEL_THUMB_VERSION = 3
+
+# Bump when usdz_convert's output changes in a way that makes previously cached .glb files (and the
+# thumbnails rendered from them) wrong; Library wipes both on a mismatch. Kept here, not in
+# usdz_convert, so the startup check does not import that module (numpy alone costs ~160 ms).
+USDZ_CONVERTER_VERSION = 2
 
 PRI_VISIBLE = 0
 PRI_PREFETCH = 1
@@ -660,7 +665,11 @@ class Library:
         row = self.conn.execute("SELECT value FROM meta WHERE key='scan_ignore'").fetchone()
         self.ignore = IgnoreRules(row["value"] if row else "")
         self.bus = Bus()
-        self.ffmpeg = find_ffmpeg()
+        # find_ffmpeg() can take ~150 ms (imageio-ffmpeg runs `ffmpeg -version`), so it runs off the
+        # startup path. Readers go through ffmpeg_exe(), which waits for it.
+        self.ffmpeg: str | None = None
+        self._ffmpeg_searched = threading.Event()
+        threading.Thread(target=self._search_ffmpeg, daemon=True).start()
         self._scan_lock = threading.Lock()
         self._usdz_lock = threading.Lock()
         self.scanning = 0
@@ -672,6 +681,10 @@ class Library:
         self._seq = 0
         self._inflight: set[str] = set()
         self._have_thumb: set[str] = set()
+        # thumb_version() per asset, so listing a page of 400 assets does not stat 400-800 thumbnail
+        # files (that was ~80% of /api/assets time on Windows). Re-read whenever a thumbnail is
+        # written, dropped by _forget_thumb() whenever one is deleted or invalidated.
+        self._thumb_v: dict[str, int] = {}
         self._info_cache: dict[str, tuple[tuple, list[dict]]] = {}
         self._wake = threading.Condition(self._heap_lock)
         try:
@@ -688,16 +701,26 @@ class Library:
             threading.Thread(target=self._worker, daemon=True).start()
         threading.Thread(target=self._load_legacy_thumb_cache, daemon=True).start()
 
+    def _search_ffmpeg(self) -> None:
+        try:
+            self.ffmpeg = find_ffmpeg()
+        finally:
+            self._ffmpeg_searched.set()
+
+    def ffmpeg_exe(self) -> str | None:
+        """The ffmpeg to run, or None. Waits for the startup search, and searches again when that
+        found none, so an ffmpeg installed while Sight runs is picked up."""
+        self._ffmpeg_searched.wait(15)
+        if not self.ffmpeg:
+            self.ffmpeg = find_ffmpeg()
+        return self.ffmpeg
+
     def _drop_stale_model_thumbs(self) -> None:
         """One-time cleanup when model rendering changes. FBX thumbnails made before external
         textures were resolved are black/blank, and USDZ ones (plus the .glb they were rendered
         from) predate the up-axis/texture fixes in usdz_convert — drop them so the client
         re-renders each the next time it scrolls into view."""
-        try:
-            from .usdz_convert import CONVERTER_VERSION
-        except Exception:
-            CONVERTER_VERSION = 0
-        stamp = f"{MODEL_THUMB_VERSION}.{CONVERTER_VERSION}"
+        stamp = f"{MODEL_THUMB_VERSION}.{USDZ_CONVERTER_VERSION}"
         marker = self.thumbs / "model_version"
         try:
             if marker.read_text(encoding="utf-8").strip() == stamp:
@@ -1241,7 +1264,7 @@ class Library:
             (new_id, old_id),
         )
         self.execute("DELETE FROM assets WHERE id=?", (old_id,))
-        self._have_thumb.discard(old_id)
+        self._forget_thumb(old_id)
         if moved_thumb:
             self._have_thumb.add(new_id)
 
@@ -1308,7 +1331,7 @@ class Library:
         self.executemany("DELETE FROM collection_assets WHERE asset_id=?", [(a,) for a in gone])
         self.executemany("DELETE FROM assets WHERE id=?", [(a,) for a in gone])
         for aid in gone:
-            self._have_thumb.discard(aid)
+            self._forget_thumb(aid)
             for p in (
                 self.thumbs / f"{aid}.jpg", self.thumbs / f"{aid}.png",
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb",
@@ -1401,7 +1424,7 @@ class Library:
                             """,
                             (st.st_size, st.st_mtime, name, Path(fp).suffix.lower(), kind, prev[2]),
                         )
-                        self._have_thumb.discard(prev[2])
+                        self._forget_thumb(prev[2])
                         continue
                     inserts.append(
                         (
@@ -1537,7 +1560,7 @@ class Library:
         if thumb_ok or animated is not None:
             ev = {
                 "type": "thumb", "id": aid, "hasThumb": thumb_ok, "animated": animated,
-                "v": self.thumb_version(aid),
+                "v": self.thumb_version(aid, fresh=True),
             }
             # width/height are only just now known (the client's copy of this asset predates
             # thumbnailing) — carried on the same event rather than making every card wait on
@@ -1568,20 +1591,36 @@ class Library:
         self.execute("UPDATE assets SET has_thumb=1 WHERE id=?", (aid,))
         self.bus.publish({
             "type": "thumb", "id": aid, "hasThumb": True, "animated": None,
-            "v": self.thumb_version(aid),
+            "v": self.thumb_version(aid, fresh=True),
         })
         return True
 
-    def thumb_version(self, aid: str) -> int:
+    def thumb_version(self, aid: str, fresh: bool = False) -> int:
         """Changes whenever the cached thumbnail is rewritten. The client puts it in the thumb URL
         (?v=), which the server serves as immutable — without it a regenerated thumbnail would
-        keep being shown from the browser cache."""
+        keep being shown from the browser cache. Cached in memory; `fresh` re-reads the file, which
+        every code path that writes a thumbnail must ask for."""
+        if not fresh:
+            v = self._thumb_v.get(aid)
+            if v is not None:
+                return v
+        v = 0
         for ext in (".jpg", ".png"):
             try:
-                return (self.thumbs / f"{aid}{ext}").stat().st_mtime_ns // 1_000_000
+                v = (self.thumbs / f"{aid}{ext}").stat().st_mtime_ns // 1_000_000
+                break
             except OSError:
                 continue
-        return 0
+        if v:
+            self._thumb_v[aid] = v
+        else:
+            self._thumb_v.pop(aid, None)
+        return v
+
+    def _forget_thumb(self, aid: str) -> None:
+        """The asset's thumbnail is gone or stale: drop what is known about it in memory."""
+        self._have_thumb.discard(aid)
+        self._thumb_v.pop(aid, None)
 
     def refresh_thumbs(self, ids: list[str]) -> list[str]:
         """Drops the cached thumbnails of `ids` and rebuilds them. Server-made kinds are requeued
@@ -1598,7 +1637,7 @@ class Library:
                     (self.thumbs / f"{aid}{ext}").unlink(missing_ok=True)
             except OSError:
                 continue  # still being served/written — leave it, the user can retry
-            self._have_thumb.discard(aid)
+            self._forget_thumb(aid)
             done.append(aid)
             if rows[0]["kind"] != "model3d":
                 queue.append(aid)
@@ -1624,9 +1663,7 @@ class Library:
             return None
 
     def _thumb_video(self, path: Path, dest: Path) -> tuple[int, int] | None:
-        if not self.ffmpeg:
-            self.ffmpeg = find_ffmpeg()
-        if not self.ffmpeg:
+        if not self.ffmpeg_exe():
             return None
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".tmp.jpg")
@@ -1636,7 +1673,7 @@ class Library:
             "-frames:v", "1", "-vf", f"scale={THUMB_SIZE}:-2", "-q:v", "5", str(tmp),
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=20)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=20, creationflags=NO_WINDOW)
             if tmp.exists():
                 tmp.replace(dest)
                 from PIL import Image
@@ -1767,6 +1804,7 @@ class Library:
         if p:
             return p
         wh = self._thumb_psd(path, self.thumbs / f"{aid}.jpg")
+        self.thumb_version(aid, fresh=True)
         p = self.thumb_path(aid)
         if p and wh:
             self.execute(
@@ -1889,9 +1927,7 @@ class Library:
     def _decode_peaks(self, path: Path, bars: int = 96) -> tuple[list[int], int] | None:
         """Shared ffmpeg PCM decode + peak bucketing, used by both the interactive waveform
         (§make_waveform) and the audio thumbnail."""
-        if not self.ffmpeg:
-            self.ffmpeg = find_ffmpeg()
-        if not self.ffmpeg:
+        if not self.ffmpeg_exe():
             return None
         sr = 8000
         cmd = [
@@ -1899,7 +1935,7 @@ class Library:
             "-i", str(path), "-ac", "1", "-ar", str(sr), "-f", "s16le", "-",
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=60, check=True)
+            proc = subprocess.run(cmd, capture_output=True, timeout=60, check=True, creationflags=NO_WINDOW)
         except Exception:
             return None
         raw = proc.stdout
@@ -1967,9 +2003,8 @@ class Library:
         hit = self._info_cache.get(aid)
         if hit and hit[0] == key:
             return hit[1]
-        if not self.ffmpeg and a["kind"] in ("video", "audio"):
-            self.ffmpeg = find_ffmpeg()
-        info = file_info(path, a["kind"], a["ext"], self.ffmpeg)
+        ffmpeg = self.ffmpeg_exe() if a["kind"] in ("video", "audio") else self.ffmpeg
+        info = file_info(path, a["kind"], a["ext"], ffmpeg)
         if len(self._info_cache) > 256:
             self._info_cache.clear()
         self._info_cache[aid] = (key, info)
@@ -2256,7 +2291,7 @@ class Library:
                 """,
                 (st.st_size, st.st_mtime, name, ext, kind, aid),
             )
-            self._have_thumb.discard(aid)
+            self._forget_thumb(aid)
         else:
             self.execute(
                 """

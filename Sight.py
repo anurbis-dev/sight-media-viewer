@@ -28,7 +28,8 @@ DEPS = [
     "zstandard>=0.22",
     "pymupdf>=1.24",
 ]
-PROBE = "import fastapi, uvicorn, PIL, watchdog, imageio_ffmpeg, psd_tools, zstandard, pymupdf"
+DEP_MODULES = ("fastapi", "uvicorn", "PIL", "watchdog", "imageio_ffmpeg", "psd_tools", "zstandard", "pymupdf")
+PROBE = "import " + ", ".join(DEP_MODULES)
 ROOT = Path(__file__).resolve().parent
 
 
@@ -87,7 +88,21 @@ def log(msg: str) -> None:
     print(f"Sight · {msg}", flush=True)
 
 
+def _same_file(a: str | Path, b: str | Path) -> bool:
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
 def has_deps(python: str | Path) -> bool:
+    """Whether `python` can import the libraries Sight needs. For the running interpreter this is
+    checked in-process with find_spec, which locates a package without importing it: the old
+    subprocess that imported them all cost ~1.4 s on every launch. Another interpreter still gets
+    the subprocess probe."""
+    if _same_file(python, sys.executable):
+        import importlib
+        import importlib.util
+
+        importlib.invalidate_caches()  # a pip install a moment ago must be seen
+        return all(importlib.util.find_spec(m) is not None for m in DEP_MODULES)
     r = subprocess.run([str(python), "-c", PROBE], capture_output=True)
     return r.returncode == 0
 
@@ -118,6 +133,11 @@ def bootstrap() -> None:
     py = venv_python(home)
     marker = runtime / ".deps-v4"
     in_venv = Path(sys.prefix).resolve() == runtime.resolve()
+    if not in_venv and py.exists() and marker.exists():
+        # The private runtime was complete when the marker was written. Re-exec straight into it:
+        # probing it from here would start a second Python just to import everything (~1.4 s), and
+        # the re-exec'd run checks its own libraries in-process anyway and reinstalls what is gone.
+        os.execv(str(py), [str(py), str(Path(__file__).resolve()), *sys.argv[1:]])
     if not py.exists():
         log("setting up a private runtime (once)")
         subprocess.check_call([sys.executable, "-m", "venv", str(runtime)])
@@ -193,6 +213,28 @@ def find_app_browser() -> list[str] | None:
     return None
 
 
+def listen_socket(port: int = 0, start: int = 8765) -> "socket.socket":
+    """A loopback socket that is already bound and listening, on `port` or the first free one from
+    `start`. main() opens it before the slow server imports and hands it to uvicorn later, so the
+    browser can start in parallel: its connections wait in the backlog until the server takes over.
+    (Polling a port nobody listens on yet is slow on Windows, where each refused connect takes ~2 s.)
+    SO_REUSEADDR as free_port() and uvicorn's own bind set it, so the port picked stays the same."""
+    import socket
+
+    for p in [port] if port else range(start, start + 30):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", p))
+            s.listen(128)
+            return s
+        except OSError:
+            s.close()
+            if port:
+                raise
+    raise RuntimeError("No free port")
+
+
 def free_port(start: int = 8765) -> int:
     import socket
 
@@ -232,7 +274,10 @@ def start_splash() -> subprocess.Popen | None:
         return subprocess.Popen(
             [
                 "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-                "-File", str(script), "-MaxWaitSeconds", "45",
+                # ShowAfterMs: a launch that brings its window up within about 1.7 s (PowerShell
+                # itself takes ~0.7 s to start) never shows the splash at all, instead of flashing
+                # it for a fraction of a second over the window that is just appearing.
+                "-File", str(script), "-MaxWaitSeconds", "45", "-ShowAfterMs", "1000",
             ],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -240,8 +285,50 @@ def start_splash() -> subprocess.Popen | None:
         return None
 
 
-def _find_browser_window(pid: int, user32) -> int | None:
-    """The given process's real top-level browser window, or None if it doesn't have one (yet).
+def _process_tree(root: int) -> set[int]:
+    """`root` and every process descended from it that is still running (Windows only).
+
+    Needed because the Popen'd msedge.exe is usually not the browser: it starts the real browser
+    process and exits within a second (exit code 0), so the window and the processes to close
+    belong to its child. A child keeps its parent's pid after the parent has exited."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return {root}
+    children: dict[int, list[int]] = {}
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            children.setdefault(entry.th32ParentProcessID, []).append(entry.th32ProcessID)
+            ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snap)
+    tree, todo = {root}, [root]
+    while todo:
+        for kid in children.get(todo.pop(), ()):
+            if kid not in tree:
+                tree.add(kid)
+                todo.append(kid)
+    return tree
+
+
+def _find_browser_window(pids: set[int], user32) -> int | None:
+    """The real top-level browser window of any of `pids`, or None if there isn't one (yet).
     Matches on window class, not just "owned by this pid": a Chromium process briefly owns several
     other top-level windows during startup too (IME, drag-and-drop, power-broadcast helpers —
     Chrome_WidgetWin_0 and others), and Chrome_WidgetWin_1 is the real one."""
@@ -254,7 +341,7 @@ def _find_browser_window(pid: int, user32) -> int | None:
     def _cb(hwnd: int, _lparam: int) -> bool:
         owner_pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner_pid))
-        if owner_pid.value != pid:
+        if owner_pid.value not in pids:
             return True
         cls = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, cls, 64)
@@ -283,7 +370,9 @@ def _offscreen_point() -> tuple[int, int]:
     return -32000, -32000
 
 
-def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, timeout: float = 30.0) -> None:
+def reveal_when_ready(
+    proc: subprocess.Popen, ready_port: int, maximized: bool, on_ready=None, timeout: float = 30.0,
+) -> None:
     """`proc`'s window was launched off-screen (see _open() below) rather than hidden. Hiding was
     the first thing tried here, and it doesn't work: Windows fully suspends a Chromium window's
     rendering while it's hidden — confirmed by testing, requestAnimationFrame simply stops firing,
@@ -302,15 +391,20 @@ def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, 
     but ShowWindow(SW_MAXIMIZE) takes no coordinates, so it isn't exposed to that problem.
 
     Bounded by `timeout`: if the page never pings (crash, stuck load), whatever's there is brought
-    to the front anyway once it elapses rather than sitting off-screen forever."""
+    to the front anyway once it elapses rather than sitting off-screen forever.
+
+    `on_ready` runs the moment the page pings (it closes the splash): the window is on screen from
+    then on, so nothing that follows here (finding the window, maximizing) may keep the splash up."""
     import ctypes
 
     user32 = ctypes.windll.user32
     _wait_for_ping(ready_port, timeout=timeout)
+    if on_ready:
+        on_ready()
     hwnd = None
     deadline = time.time() + 3.0
     while hwnd is None and time.time() < deadline:
-        hwnd = _find_browser_window(proc.pid, user32)
+        hwnd = _find_browser_window(_process_tree(proc.pid), user32)
         if hwnd is None:
             time.sleep(0.02)
     if hwnd is None:
@@ -318,6 +412,24 @@ def reveal_when_ready(proc: subprocess.Popen, ready_port: int, maximized: bool, 
     if maximized:
         user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
     user32.SetForegroundWindow(hwnd)
+
+
+def close_browser(proc: subprocess.Popen) -> None:
+    """Closes the browser main() opened, when the start failed after the launch. On Windows the
+    Popen handle is usually only a launcher that has already exited (see _process_tree()), so the
+    processes it started are closed too. The launcher goes first, so it cannot start the browser
+    after the snapshot of its children was taken."""
+    if proc.poll() is None:
+        proc.terminate()
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        for pid in _process_tree(proc.pid) - {proc.pid}:
+            handle = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+            if handle:
+                kernel32.TerminateProcess(handle, 1)
+                kernel32.CloseHandle(handle)
 
 
 def _wait_for_ping(ready_port: int, timeout: float) -> None:
@@ -360,6 +472,12 @@ def main() -> None:
     dev = (args.dev or os.environ.get("SIGHT_DEV") == "1") and not getattr(sys, "frozen", False)
 
     splash_proc: subprocess.Popen | None = None
+    # The server once built (its `started` turns True when it serves) and the browser process this
+    # launch opened, so a failed start can close a window that would otherwise wait off-screen.
+    launched: dict[str, object] = {}
+    # Guards the browser launch against main()'s exit: once main() has given up ("failed"), the
+    # launcher thread must not start a browser any more.
+    launch_lock = threading.Lock()
     try:
         bootstrap()
         # After bootstrap(), not before: a source/dev run without its deps yet re-execs itself into
@@ -373,40 +491,29 @@ def main() -> None:
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
 
-        import uvicorn
-
-        from app.library import Library
-        from app.server import build_app
-        from app.settings import SettingsStore
-
         home = data_dir()
-        lib = Library(home)  # already resolves lib.ffmpeg itself
-        if lib.ffmpeg:
-            log(f"ffmpeg · {lib.ffmpeg}")
-        else:
-            log("ffmpeg not found — video stills wait until a clip is on screen")
-        lib.resume_watchers()
+        from app.settings import SettingsStore  # stdlib only, cheap
+
         settings = SettingsStore(home)
-        app = build_app(lib, settings, dev)
-        if dev:
-            log("developer mode - 'Save as app defaults' rewrites app/static/defaults.json")
-        port = args.port or int(os.environ.get("SIGHT_PORT") or 0) or free_port()
+        # Listen before the server is even imported (~0.6 s of fastapi/uvicorn imports and library
+        # setup), so the browser window can start in parallel with all of that.
+        sock = listen_socket(args.port or int(os.environ.get("SIGHT_PORT") or 0))
+        port = sock.getsockname()[1]
         url = f"http://127.0.0.1:{port}/"
         log(f"opening {url}")
         frozen = getattr(sys, "frozen", False)
         log("closing the Sight tab will quit" if frozen else "close this window to quit")
 
-        def _open() -> None:
-            import urllib.request
+        def _wait_serving(timeout: float = 20.0) -> None:
+            deadline = time.time() + timeout
+            while time.time() < deadline and not getattr(launched.get("server"), "started", False):
+                time.sleep(0.02)
 
-            for _ in range(40):
-                try:
-                    urllib.request.urlopen(url + "api/health", timeout=0.4)
-                    break
-                except Exception:
-                    time.sleep(0.15)
-            if args.no_browser:
-                return
+        def _close_splash() -> None:
+            if splash_proc and splash_proc.poll() is None:
+                splash_proc.terminate()
+
+        def _open() -> None:
             # Whichever branch below actually opens the window, the splash always gets closed right
             # after — a single guaranteed spot, so it can never linger on screen because some branch
             # forgot to close it.
@@ -447,19 +554,28 @@ def main() -> None:
                         # spot and jumped to the saved one after the page had loaded.
                         # ?app=1 tells the page it lives in its own window, so it may track and
                         # restore that window's geometry (a plain browser tab must not).
-                        proc = subprocess.Popen([
-                            *browser,
-                            f"--user-data-dir={home / 'browser'}",
-                            "--no-first-run",
-                            "--no-default-browser-check",
-                            *launch_extra,
-                            f"--app={url}{query}",
-                        ])
+                        # Started before the server is up on purpose (see listen_socket()); on
+                        # Windows the window stays off-screen until the page has content anyway.
+                        with launch_lock:
+                            if launched.get("failed"):
+                                return
+                            proc = subprocess.Popen([
+                                *browser,
+                                f"--user-data-dir={home / 'browser'}",
+                                "--no-first-run",
+                                "--no-default-browser-check",
+                                *launch_extra,
+                                f"--app={url}{query}",
+                            ])
+                            launched["browser"] = proc
                         if sys.platform == "win32" and ready_port:
-                            reveal_when_ready(proc, ready_port, maximized)
+                            reveal_when_ready(proc, ready_port, maximized, on_ready=_close_splash)
                         return
                     except OSError:
                         pass
+                # A tab in the user's own browser opens on screen right away and cannot be closed
+                # again if the start fails, so it waits until the server serves.
+                _wait_serving()
                 if sys.platform == "win32":
                     try:
                         os.startfile(url)  # type: ignore[attr-defined]
@@ -468,13 +584,31 @@ def main() -> None:
                         pass
                 webbrowser.open(url)
             finally:
-                if splash_proc and splash_proc.poll() is None:
-                    splash_proc.terminate()
+                _close_splash()
 
-        threading.Thread(target=_open, daemon=True).start()
+        if not args.no_browser:
+            threading.Thread(target=_open, daemon=True).start()
+
+        import uvicorn
+
+        from app.library import Library
+        from app.server import build_app
+
+        lib = Library(home)  # looks for ffmpeg in the background; lib.ffmpeg_exe() waits for it
+
+        def _log_ffmpeg() -> None:
+            exe = lib.ffmpeg_exe()
+            log(f"ffmpeg · {exe}" if exe else "ffmpeg not found — video stills wait until a clip is on screen")
+
+        threading.Thread(target=_log_ffmpeg, daemon=True).start()
+        lib.resume_watchers()
+        app = build_app(lib, settings, dev)
+        if dev:
+            log("developer mode - 'Save as app defaults' rewrites app/static/defaults.json")
 
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         server = uvicorn.Server(config)
+        launched["server"] = server
 
         if frozen and not args.no_browser:
             # No console window to close, so treat "no tab pinging /api/heartbeat for a while" as
@@ -504,10 +638,18 @@ def main() -> None:
             threading.Thread(target=_watch_tab, daemon=True).start()
 
         try:
-            server.run()
+            server.run(sockets=[sock])
         finally:
             lib.close()
     finally:
+        # A browser window opened for a server that never started would wait off-screen for good,
+        # so close it, and stop the launcher thread from opening one after this point.
+        if not getattr(launched.get("server"), "started", False):
+            with launch_lock:
+                launched["failed"] = True
+                browser_proc = launched.get("browser")
+                if isinstance(browser_proc, subprocess.Popen):
+                    close_browser(browser_proc)
         # Normally _open()'s own finally has already closed the splash — this only catches
         # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
         # it doesn't sit on screen for its full timeout.

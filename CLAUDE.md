@@ -8,6 +8,7 @@ Read this file first; it is short on purpose. Details live in `docs/`.
 1. `docs/RECENT.md` — what changed lately and why, newest first. **Start here** instead of re-reading source.
 2. `docs/ARCHITECTURE.md` — how the pieces fit (files, DB tables, API, canvas internals, gotchas).
 3. `README.md` / `MANUAL.md` — user-facing behaviour.
+4. `docs/PLAN.md` — queued improvements and known bugs, with the numbers behind them. Take work from here.
 
 ## MemPalace (shared memory across sessions)
 

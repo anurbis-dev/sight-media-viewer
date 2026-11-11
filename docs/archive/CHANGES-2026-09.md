@@ -2,6 +2,65 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.14.0 — 2026-09-24 — Canvas: swap thumbnails for originals when zoomed in
+- **What:** Board items still start on the 360px library thumbnail, but a visible 2D picture that is shown bigger than its thumbnail now loads the original in the background and swaps it in; zooming back out returns to the thumbnail.
+- **Where:** `canvas.js`: `FULL_RES_EXT` / `fullResUrl` (module level), `scheduleResCheck` / `syncResolution` / `shownImageWidth` / `loadFull` in `createCanvasView`; `buildItemEl` stores `img.dataset.thumb/full/fullW/res` and its `load` listener is no longer `once` (it re-runs pixelation and records `thumbW` on every swap); hooks in `worldTransform` and `layoutItemEl`.
+- **Notes:**
+  - Thresholds: upgrade above 1.25× the thumbnail width (in device pixels), downgrade below 0.8×; the gap is deliberate hysteresis. Upgrades only for items in view, nearest the centre first, max 3 concurrent; the original is `decode()`d off-screen before the swap, so there is no blank frame.
+  - Formats: JPEG/PNG/GIF/WebP/BMP/AVIF via `/api/file`, PSD via its composite. SVG deliberately excluded (no dependable `naturalWidth`, which crop and pixelation read). TIFF/HEIC/JXL are not browser-decodable and stay on the thumbnail; a server-side converted preview would be the way to add them. Animated GIFs will animate once swapped.
+  - A failed load marks the `<img>` `res=failed` and it stays on the thumbnail for the session. Not tested in a browser (no Playwright in the runtime).
+
+## 0.13.0 — 2026-09-24 — Canvas: resize handle follows the cursor's corner
+- **What:** The transform frame's single resize handle is no longer fixed at the bottom-right. It jumps to the frame corner in the cursor's quadrant, and dragging it pins the opposite corner. Works for one item (rotated too) and for a group.
+- **Where:** `canvas.js`: CSS `.cframe[data-corner=…] .chandle`, `updateHandleCorner` / `frameGeom` / `CORNER_SIGNS` (called from `updateSelectionFrame` and the window `pointermove` when no drag is under way), `resizeAnchor`, `startResize` (`sx`/`sy`/`anchor`, group `ax`/`ay`), the `resize` / `gresize` branches of `onPointerMove`, `uncropForResize` (re-pins the anchor).
+- **Notes:**
+  - Still one handle element, positioned via `frameEl.dataset.corner`; the corner is frozen while `drag` is set. The cursor style follows the rotated diagonal.
+  - Single-item resize now measures pointer movement along the item's own (rotated) axes and keeps the opposite corner in place; before it used world deltas and kept `x/y`, which drifted on rotated items. Ctrl-snap snaps the dragged corner in world axes (exact only for unrotated items, as before).
+  - Group resize is still uniform, anchored at the opposite corner of the union bounding box. No edge (side) handles were added.
+
+## 0.12.1 — 2026-09-24 — 3D: explode guards for models with huge part counts
+- **What:** Explode can no longer freeze the page on a model split into thousands of tiny meshes (e.g. one mesh per face). Up to 1000 parts per assembly it uses the explosion graph. Bigger assemblies, and any assembly reached after a 400 ms budget, use a simple axial mode: each part moves along the dominant axis of its offset from the assembly center. Above 50,000 meshes in total the explode control is hidden.
+- **Where:** `index.html`: `EXPLODE_GRAPH_MAX` / `EXPLODE_MAX_MESHES` / `EXPLODE_BUDGET_MS`, `buildExplodeRig` (`solveAxial`, one post-order pass for "has a mesh", BFS queue instead of recursion, `place` / `pushAll` / `largest` helpers), `applyExplode` (iterative over `rig.list`, reusing a per-item `off` vector).
+- **Notes:**
+  - Measured: 800 touching parts (graph) 134 ms, 3150 (axial) 21 ms, 60,000 rejected in 4 ms.
+  - Nothing may spread a per-part array into arguments (`Math.max(...x)`, `push(...x)` throw a RangeError at ~100k elements) or recurse per part (ride-along chains can be thousands long). `rig.list` is the removal order reversed, which puts every carry before the parts that ride on it.
+  - The budget is checked between assemblies, so one graph solve (≤1000 parts, ~250 ms worst case) can overrun it once.
+
+## 0.12.0 — 2026-09-24 — 3D: assembly-aware explode (explosion graph, grounded part, one axis per part)
+- **What:** Explode no longer pushes every top-level child radially away from the center. It follows the explosion-graph method of Li, Agrawala, Curless & Salesin (SIGGRAPH 2008), which is also how CAD auto-explode behaves: the largest part of each assembly stays put, every other part slides out along one model axis (±X/±Y/±Z) in an unblocked direction, parts ride along with the part they rest on, and sub-assemblies from the file's node hierarchy move as a unit and then explode inside themselves. The slider is staged: top-level parts first, then their insides, each part easing in turn.
+- **Where:** `index.html`: `buildExplodeRig(THREE, obj)` (replaces the radial `explodeMap` build in boot3d), `applyExplode(rig, t)` (signature changed, `explodeScale` removed).
+- **Notes:**
+  - Solved once per load, with `obj` temporarily at identity so the model's own axes are the canonical directions; offsets are stored in each part's parent-local space, so the 90° turns never invalidate them. "Up" (the preferred direction on ties, down is least preferred) is the model axis that maps to world up at load time.
+  - Assembly = a node with 2+ children that contain meshes (single-child wrappers are skipped). A Mesh is always atomic. Flat files (OBJ, most STL-to-glTF) get one level.
+  - Blocking and contact use precise **bounding boxes**, not geometry (the paper uses real geometry and splits containers — not done). A part nested inside another's box is blocked on all sides; the fallback then removes the part with the fewest blockers. Expect odd but valid results for concentric parts and large voxel-like grids of equal parts (long ride-along chains).
+  - Cost is O(n²·6) for the pair tests; escape distances are cached and invalidated for the neighbours of each removed part. 800 touching parts solve in ~140 ms.
+  - Explode still moves parts by `position` only; `fitRig` sets t = 0 to measure the floor.
+
+## 0.11.0 — 2026-09-24 — 3D: hide/isolate meshes, F keeps the view direction, Ctrl+right-drag explode, Solid material and FOV settings
+- **What:** In the 3D lightbox: H hides the selected meshes, Ctrl+H hides every other mesh, Alt+H shows all. F now frames the selection (or the whole model as it is right now: explode and hidden meshes count) without turning the camera; it only moves and zooms. Explode moved from Ctrl+wheel to Ctrl+right-drag (right or up = further apart). Gear panel: new "Solid shading" section (Color, Metallic, Roughness for the Solid mode) and a Camera "Field of view" slider (10–120°).
+- **Where:** `index.html`: boot3d Ctrl+RMB `pointerdown/move/up` (before OrbitControls; replaces the 0.10.0 wheel handler), inspector `boxOf` / `selBox` / `modelBox` / `hide(mode)`, F handler (`frameBox` for meshes, `frame()` only for splats), H / Ctrl+H / Alt+H in the main keydown handler, `.li-item.hid` (dimmed in the Meshes list), `DEFAULT_V3D` (`solidColor`, `solidMetal`, `solidRough`, `camFov`), `applyBaseMaterial` (tags Solid materials with `userData._v3dSolid`), syncRig retints them live (`shadeApplied.solid` key), `makeCameraRig().step()` applies `camFov` every frame, `v3dCameraRows` / `renderV3DPanel`.
+- **Notes:**
+  - Hiding uses `mesh.visible`, so shadows, Ctrl+click picking (visible meshes only) and the wire overlay (a child of the mesh) follow. It is whole meshes only: a material selected on a multi-material mesh hides the entire mesh. H also clears the selection; Ctrl+H keeps it. Hidden state is not persisted and resets when the model is opened again.
+  - F no longer returns to the opening camera for meshes (`home` is still used by splats and by turns). `selBox` and `modelBox` measure visible meshes, falling back to all of them when everything is hidden.
+  - The Ctrl+RMB handler swallows the gesture even on a single-mesh model (no explode), so it never dollies.
+  - FOV is applied in `step()` because both the mesh viewer and the splat viewer call it every frame. The opening framing does not depend on FOV; F refits with the current FOV.
+
+## 0.10.0 — 2026-09-24 — 3D: Ctrl+wheel explode, F frames the selection, floor/grid/shadow/anchor on the toolbar
+- **What:** In the 3D lightbox, Ctrl+wheel changes the explode amount (5% per notch, toast shows the value). F frames the selected mesh/material/texture when there is a selection, the whole model otherwise. Floor, Grid, Shadow-only and the light anchor (World ↔ Camera, the icon switches globe ↔ camera) moved from the gear panel to icon buttons in the bottom toolbar, next to the 90° turn button; the panel's Floor section keeps only Shadow strength.
+- **Where:** `index.html`: boot3d `wheel` handler on `renderer.domElement` (bound before OrbitControls), `initThinSlider` now returns `{ set }` (kept as `light.explodeSlider`), `makeCameraRig().frameBox(box, label)`, inspector `selBox()`, F handler, `V3D_ICONS` + `paintShadeButtons` (anchor icon/title), `toggleShadeFlag` (floor ↔ shadowOnly coupling), toolbar markup, `renderV3DPanel` (rows removed), hint strings.
+- **Notes:**
+  - Ctrl+wheel must stay bound before `new OrbitControls` and call `stopImmediatePropagation()`, or the wheel also zooms; `preventDefault()` stops the browser's Ctrl+wheel page zoom. On a single-mesh model (no explode) Ctrl+wheel does nothing (it is still swallowed, no zoom).
+  - Floor, Grid and Shadow-only reuse the `data-toggle` mechanism of the wireframe / x-ray buttons (`toggleShadeFlag` + `paintShadeButtons`). Shadow-only is a mode of the floor: turning it on turns the floor on; turning the floor off clears it.
+  - `frameBox` keeps the current viewing direction and fits the selection's bounding sphere; it does not change `home`, so F with nothing selected still returns to the opening framing.
+
+## 0.9.0 — 2026-09-24 — Ctrl+click picks a mesh in the 3D view; dropdowns stay inside the window
+- **What:** In the 3D lightbox, Ctrl+click on the model selects the mesh under the cursor (orange highlight, marked in the info panel's Meshes list, UV pane follows); Ctrl+click it again deselects; a click on empty space clears any selection (mesh, material or texture). Every `<select>` in the app now opens an in-page list that stays inside the window (flips above the control near the bottom edge) — the UV texture-channel picker used to open its native list below the window.
+- **Where:** `index.html`: boot3d pick handlers on `renderer.domElement` (after OrbitControls setup), new `setInspectSel(sel, reveal)` (shared with `onLightInfoClick`), "Select dropdowns" block (`#selPop`, `openSelectPop`, `closeSelectPop`, capture-phase `mousedown`), Escape in the main keydown handler, `.sel-pop` CSS.
+- **Notes:**
+  - A pick is a left click that moved ≤ 4 px (a drag is an orbit / Ctrl-drag pan). Alt is excluded (Alt-drag rotates the lights). Only meshes in `v3dInspect.meshes` are raycast, so highlight overlays, floor and gizmos never get picked. A plain click on the model deliberately does nothing.
+  - A viewport pick opens the Meshes section of the info panel (if the panel is shown) and scrolls the entry into view; with the panel hidden the highlight still shows.
+  - `#selPop` follows the `#colorPop` pattern: the `<select>` stays the source of truth (value set, then `input` + `change` fired), so no existing handler changed. Keyboard use of a focused select is left native. `multiple` / `size > 1` selects are not intercepted. The popup closes on outside pointerdown, Escape, resize, page scroll, and via `registerAutoClose`.
+
 ## 0.8.0 — 2026-09-24 — Scan ignore list; compiled .obj files skipped; 3D textured mode no longer freezes on multi-material meshes
 - **What:** Settings → Scanning → Ignore: one pattern per line (`*.meta`, `Library/`, `BurstCache/`, `Library/PackageCache`, `# comment`), *Apply* hides matching files and folders in every source and rescans. `.obj` files that are compiler output (MSVC/COFF — Unity BurstCache, VS `obj/`) are no longer indexed as 3D models; ones indexed earlier disappear on the next scan. Fix: the 3D lightbox froze (render loop threw every frame) in Textured mode on FBX files with a multi-material mesh.
 - **Where:** `library.py`: `IgnoreRules`, `rel_parts`, `Library.ignore` (loaded in `__init__` from the new `meta` table, key `scan_ignore`), `hidden()`, `set_ignore()`, `scan_source` (dir pruning + `hide` list), `set_excluded` (re-including a folder does not revive ignored files), `_touch_one` (watcher). `fileinfo.py`: `obj_is_binary` (shared by scanner and info overlay). `server.py`: `PUT /api/scan/ignore`, `/api/state` → `scanIgnore`. `index.html`: Settings "Scanning" block (`#scanIgnore`, `applyScanIgnore`, `refreshMeta` fills the textarea unless it has unsaved edits), `applyXray` / new `xrayMaterial`.

@@ -63,6 +63,10 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
 - `cloneModel` clones each distinct material once — meshes that shared a material keep sharing it.
 - Library grid tile rescaling on window resize is driven by `#mainBody` width (not the grid's), so
   hiding/squeezing the grid for the board split never changes the zoom.
+- `.grid` has `overflow-anchor: none`. Any scroller whose content is virtualised needs it: Chromium's
+  scroll anchoring otherwise shifts `scrollTop` when the code swaps the nodes above the view.
+- Grid thumbnails use `decoding="async"` on purpose: a scroll can bring dozens of new thumbnails at
+  once, and their decoding must not hold up the frame.
 
 ## Backend conventions
 
@@ -85,6 +89,16 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   (else O(n) axial mode); no explode above `EXPLODE_MAX_MESHES`; no per-part recursion or spreads.
 - 3D: `mesh.material` may be an **array** (multi-material mesh); code that walks materials must
   handle both forms.
+- Windows console children (ffmpeg, powershell, cmd) get `creationflags=NO_WINDOW` (defined in
+  `fileinfo.py`); the app has no console, so each would otherwise flash a console window.
+- ffmpeg is found in a background thread at startup: read it through `lib.ffmpeg_exe()` (waits for
+  the search, retries when none was found), not `lib.ffmpeg`.
+- `thumb_version()` is cached in memory. Code that writes a thumbnail calls
+  `thumb_version(aid, fresh=True)`; code that deletes or invalidates one calls `_forget_thumb(aid)`.
+- Launch order in `Sight.py`: bootstrap → `listen_socket()` → browser started in parallel → server
+  imports → `server.run(sockets=[sock])`. The browser's first request waits in the socket backlog.
+  Keep heavy imports (numpy, psd_tools, pymupdf, usd) out of the startup path: import them inside
+  the function that needs them.
 
 ## Canvas (boards)
 

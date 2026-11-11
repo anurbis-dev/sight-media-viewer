@@ -1,5 +1,8 @@
 param(
-    [int]$MaxWaitSeconds = 45
+    [int]$MaxWaitSeconds = 45,
+    # Wait this long before showing anything. Sight.py closes this process once its window is up,
+    # so a fast launch never shows the splash; only a slow one (first run, cold disk) does.
+    [int]$ShowAfterMs = 0
 )
 
 # Small native "Sight is loading" indicator shown the instant Sight launches - purely a sign of
@@ -41,7 +44,8 @@ $title.Font = New-Object System.Drawing.Font('Georgia', 24, [System.Drawing.Font
 $form.Controls.Add($title)
 
 $status = New-Object System.Windows.Forms.Label
-$status.Text = 'loading…'
+# [char] instead of a literal ellipsis: Windows PowerShell 5.1 reads this BOM-less file as ANSI.
+$status.Text = 'loading' + [char]0x2026
 $status.Dock = 'Bottom'
 $status.Height = 26
 $status.TextAlign = 'MiddleCenter'
@@ -56,5 +60,6 @@ $timer.Interval = [Math]::Max(1, $MaxWaitSeconds) * 1000
 $timer.Add_Tick({ $form.Close() })
 $timer.Start()
 
+if ($ShowAfterMs -gt 0) { Start-Sleep -Milliseconds $ShowAfterMs }
 $form.Show()
 [System.Windows.Forms.Application]::Run($form)
