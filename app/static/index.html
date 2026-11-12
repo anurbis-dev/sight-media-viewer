@@ -306,6 +306,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light { position: fixed; inset: 0; background: var(--bg); z-index: 50; display: flex; flex-direction: column; opacity: 0; transform: scale(0.985); transition: opacity var(--motion-fast) var(--ease), transform 220ms var(--ease); }
 .light.on { opacity: 1; transform: none; }
 .light-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.light-bar .btn.on { color: var(--accent); border-color: var(--accent); }
 .light-bar .t { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .light-hint { font-size: 11px; color: var(--subtle); }
 .light-stage { flex: 1; min-height: 0; overflow: hidden; display: grid; place-items: center; background: var(--bg); container-type: size; box-sizing: border-box; }
@@ -4835,6 +4836,24 @@ function releaseMedia(free){
   if (free) fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true }) }).catch(() => {});
 }
 
+// The lightbox view's turn (0 / 90 / 180 / 270°) and mirror per file, remembered across sessions.
+// View only: the file and the drawings on it keep the media's own pixels (annotate.js maps the
+// pointer back through the turn).
+const TURN_KEY = "sight.viewTurn";
+function loadTurn(id){
+  try { const m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; const v = m[id]; if (Array.isArray(v)) return { rot: ((v[0] | 0) % 360 + 360) % 360, mir: !!v[1] }; } catch {}
+  return { rot: 0, mir: false };
+}
+function saveTurn(id, t){
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; } catch {}
+  delete m[id];
+  if (t.rot || t.mir) m[id] = [t.rot, t.mir ? 1 : 0];
+  const keys = Object.keys(m);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 500))) delete m[k];  // the newest 500 files
+  try { localStorage.setItem(TURN_KEY, JSON.stringify(m)); } catch {}
+}
+
 // opts.embedded: a picture that is not the lightbox asset itself (the 3D UV pane) — no thumbnail
 // placeholder and no claim on light.video / light.setZoom. Returns { fit, zoom } for its owner.
 function attachViewer(stage, a, src, opts = {}){
@@ -4856,7 +4875,36 @@ function attachViewer(stage, a, src, opts = {}){
   let phEl = stage.querySelector(".view-ph");
   const hud = stage.querySelector(".view-hud");
   const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit", panD: null, zoomD: null };
-  if (light && !opts.embedded){ light.video = isVid ? el : null; light.setZoom = (n) => toScale(n); }
+  // Turn / mirror about the window's centre, in front of the picture's own translate + scale;
+  // pan and zoom work in the unturned frame (unturn maps the pointer there).
+  const turn = opts.embedded ? { rot: 0, mir: false } : loadTurn(a.id);
+  function turnCss(){
+    if (!turn.rot && !turn.mir) return "";
+    const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2;
+    return `translate(${cx}px,${cy}px) rotate(${turn.rot}deg) scale(${turn.mir ? -1 : 1},1) translate(${-cx}px,${-cy}px) `;
+  }
+  function unturn(x, y){
+    if (!turn.rot && !turn.mir) return [x, y];
+    const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2, r = -turn.rot * Math.PI / 180;
+    const dx = x - cx, dy = y - cy;
+    let ux = dx * Math.cos(r) - dy * Math.sin(r);
+    const uy = dx * Math.sin(r) + dy * Math.cos(r);
+    if (turn.mir) ux = -ux;
+    return [cx + ux, cy + uy];
+  }
+  function unturnVec(dx, dy){ const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2, p = unturn(cx + dx, cy + dy); return [p[0] - cx, p[1] - cy]; }
+  function setTurn(t){
+    turn.rot = ((t.rot % 360) + 360) % 360; turn.mir = !!t.mir;
+    saveTurn(a.id, turn);
+    if (vs.mode === "fit") toFit(); else apply();
+    if (light) light.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
+  }
+  if (light && !opts.embedded){
+    light.video = isVid ? el : null; light.setZoom = (n) => toScale(n);
+    light.turn = () => setTurn({ rot: turn.rot + 90, mir: turn.mir });
+    light.mirror = () => setTurn({ rot: turn.rot, mir: !turn.mir });
+    light.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
+  }
   // Scrubbing sets currentTime far faster than a long-GOP clip can decode. Firing a seek per
   // pointer event piles them up and the picture freezes until the pointer stops, so only the latest
   // wanted time is kept and the next seek goes out once the previous one has landed ("seeked").
@@ -4897,11 +4945,11 @@ function attachViewer(stage, a, src, opts = {}){
   function fitS(){
     const w = wrap.clientWidth, h = wrap.clientHeight;
     if (!vs.nat.w || !w) return 1;
-    return Math.min(w / vs.nat.w, h / vs.nat.h);
+    return turn.rot % 180 ? Math.min(w / vs.nat.h, h / vs.nat.w) : Math.min(w / vs.nat.w, h / vs.nat.h);
   }
   function geom(){
     const w = wrap.clientWidth, h = wrap.clientHeight;
-    return { x0: (w - vs.nat.w * vs.scale) / 2 + vs.pan.x, y0: (h - vs.nat.h * vs.scale) / 2 + vs.pan.y, s: vs.scale, w: vs.nat.w, h: vs.nat.h };
+    return { x0: (w - vs.nat.w * vs.scale) / 2 + vs.pan.x, y0: (h - vs.nat.h * vs.scale) / 2 + vs.pan.y, s: vs.scale, w: vs.nat.w, h: vs.nat.h, turn: turnCss() };
   }
   function apply(){
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -4909,7 +4957,7 @@ function attachViewer(stage, a, src, opts = {}){
     const y = (h - vs.nat.h * vs.scale) / 2 + vs.pan.y;
     el.style.width = vs.nat.w + "px";
     el.style.height = vs.nat.h + "px";
-    el.style.transform = `translate(${x}px,${y}px) scale(${vs.scale})`;
+    el.style.transform = `${turnCss()}translate(${x}px,${y}px) scale(${vs.scale})`;
     if (phEl){
       phEl.style.width = el.style.width;
       phEl.style.height = el.style.height;
@@ -4926,6 +4974,7 @@ function attachViewer(stage, a, src, opts = {}){
   // keeps whatever content is under the cursor/anchor fixed in place as scale changes.
   function zoomAt(newScale, mx, my){
     newScale = Math.min(16, Math.max(0.05, newScale));
+    [mx, my] = unturn(mx, my);
     const w = wrap.clientWidth, h = wrap.clientHeight;
     const xOld = (w - vs.nat.w * vs.scale) / 2 + vs.pan.x;
     const yOld = (h - vs.nat.h * vs.scale) / 2 + vs.pan.y;
@@ -5068,7 +5117,8 @@ function attachViewer(stage, a, src, opts = {}){
   });
   wrap.addEventListener("pointermove", (e) => {
     if (vs.panD){
-      vs.pan = { x: vs.panD.px + (e.clientX - vs.panD.x), y: vs.panD.py + (e.clientY - vs.panD.y) };
+      const [dx, dy] = unturnVec(e.clientX - vs.panD.x, e.clientY - vs.panD.y);
+      vs.pan = { x: vs.panD.px + dx, y: vs.panD.py + dy };
       vs.mode = "free";
       apply();
       return;
@@ -5110,7 +5160,7 @@ function attachViewer(stage, a, src, opts = {}){
   wrap.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
   // Annotations draw over this picture (its listeners go in first, in the capture phase, so a
   // drawing gesture never reaches the pan / scrub / play handlers above).
-  if (light && !opts.embedded) annot.bind2d({ wrap, media: el, isVid, geom });
+  if (light && !opts.embedded) annot.bind2d({ wrap, media: el, isVid, geom, unturn });
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const t = state.theme;
@@ -5167,6 +5217,8 @@ function toggleLight(a){
       <span class="t"></span>
       <span class="light-hint" id="lightHint"></span>
       <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Annotate &amp; review (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg><span class="an-badge" hidden></span></button>
+      <button class="btn ghost" id="turnBtn" type="button" style="width:40px;padding:0" title="Turn the view 90° (Shift+R)" aria-label="Turn 90 degrees" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+      <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
     </div>
@@ -5215,6 +5267,8 @@ function toggleLight(a){
   light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null };
   annot.mount(wrap);
   wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
+  wrap.querySelector("#turnBtn").onclick = () => light?.turn?.();
+  wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
   wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
   wrap.querySelector("#infoBtn").onclick = () => toggleLightInfo();
@@ -5252,9 +5306,9 @@ function toggleLight(a){
   requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("on")));
 }
 
-const LIGHT_HINT = "A annotate · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const LIGHT_HINT_VIDEO = "A annotate · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const ANNOT_HINT = "B brush · P pencil · M marker · E eraser · L line · W arrow · R rect · O ellipse · T text · N pin · V select · S / Shift+S screenshot · C notes · A exit";
+const LIGHT_HINT = "A annotate · Shift+R turn · Shift+M mirror · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
+const LIGHT_HINT_VIDEO = "A annotate · Shift+R turn · Shift+M mirror · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
+const ANNOT_HINT = "B brush · P pencil · M marker · E eraser (Ctrl held) · L line · W arrow · R rect · O ellipse · T text · N pin · V select · Shift+Del clear · S / Shift+S screenshot · C notes · A exit";
 function syncLightHint(){
   const el = $("lightHint");
   if (!el || !light) return;
@@ -5283,6 +5337,9 @@ function showInLight(a){
   light.video = null;
   light.audio = null;
   light.setZoom = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
+  light.turn = light.mirror = null; // set by attachViewer (pictures, PSD, video)
+  const flat = a.kind === "image" || a.kind === "video" || a.ext === ".psd";
+  light.el.querySelector("#turnBtn").hidden = light.el.querySelector("#mirBtn").hidden = !flat;
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
   // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
   insp.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch {} });
@@ -7959,6 +8016,8 @@ document.addEventListener("keydown", (e) => {
     }
   }
   if (light && hotkey(e, "KeyI") && !typing3d){ e.preventDefault(); toggleLightInfo(); return; }
+  if (light && light.turn && !typing && hotkey(e, "Shift+KeyR")){ e.preventDefault(); light.turn(); return; }
+  if (light && light.mirror && !typing && hotkey(e, "Shift+KeyM")){ e.preventDefault(); light.mirror(); return; }
   // D in the lightbox of a PSD opens its layers panel; everywhere else it toggles Details.
   if (hotkey(e, "KeyD") && !typing && !in3d){
     if (light && !$("psdBtn").hidden) togglePsdPanel(); else toggleDetails();

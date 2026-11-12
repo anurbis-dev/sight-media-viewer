@@ -21,7 +21,7 @@ import { hotkey, runHotkeys } from "/static/keys.js";
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
 import "/static/review-core.js";
 const RC = globalThis.SightReviewCore;
-const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, rotPt, bendHandle, textLayout,
+const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, textLayout,
   primsOf, primSvg, boundsOf, hitTest, transformItem, validItem } = RC;
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -61,7 +61,7 @@ const TOOLS = [
   ["brush", "KeyB", "Brush — pen pressure", ICON.brush],
   ["pencil", "KeyP", "Pencil", ICON.pencil],
   ["marker", "KeyM", "Highlighter", ICON.marker],
-  ["eraser", "KeyE", "Eraser", ICON.eraser],
+  ["eraser", "KeyE", "Eraser — or hold Ctrl with any tool", ICON.eraser],
   null,
   ["line", "KeyL", "Line — Shift snaps to 15°", ICON.line],
   ["arrow", "KeyW", "Arrow — Shift snaps to 15°", ICON.arrow],
@@ -167,7 +167,7 @@ export function createAnnotator(host){
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
-    status: "", versions: [], prevOpen: null,
+    status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
   };
 
   function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
@@ -421,6 +421,7 @@ export function createAnnotator(host){
   }
   let notesSig = "", notesTimer = 0;
   function afterChange(){
+    modeCache = null;
     const sig = [...S.items.values()].filter((it) => it.kind === "note").map((n) => n.id + (n.data.status || "")).join();
     if (sig !== notesSig){
       notesSig = sig;
@@ -499,10 +500,38 @@ export function createAnnotator(host){
     const r = (S.items.get(it.data.note)?.data.replies || []).find((x) => x.id === rid);
     return !!r?.deleted;
   }
-  function visibleNow(it){
+  // The base rule: the drawing's frame / view is on screen, its reply is neither hidden nor
+  // deleted, and its note (if it has one) still exists — a drawing of a deleted note never shows.
+  function ctxShown(it){
     if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) return false;
+    if (it.data.note && S.items.get(it.data.note)?.kind !== "note") return false;
     return RC.ctxVisible(it.data.ctx, frameNow());
   }
+  // What the media shows besides that (viewMode, worked out once per change):
+  //   compose — a new note is being made (its field focused or filled, a drawing being drawn, or
+  //             drawings / screenshots waiting for it): only what goes with the new note, a clean
+  //             picture otherwise;
+  //   pin     — a note picked in the panel: only its drawings;
+  //   hover   — a note under the pointer in the panel: the others dimmed.
+  let modeCache = null;
+  function viewMode(){
+    if (modeCache) return modeCache;
+    const inp = S.ui && !S.ui.hidden ? S.ui.querySelector(".an-input") : null, D = S.drag;
+    const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
+      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && ctxShown(it));
+    const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
+    modeCache = { compose, pin: note(S.pinFocus), hover: note(S.focusNote) };
+    queueMicrotask(() => { modeCache = null; });
+    return modeCache;
+  }
+  function modeAllows(it){
+    if (!it.data.note) return true;
+    const m = viewMode();
+    return !m.compose && (!m.pin || it.data.note === m.pin);
+  }
+  function visibleNow(it){ return ctxShown(it) && modeAllows(it); }
+  // The view mode may have changed (typing started, a note picked): repaint what shows.
+  function modeChanged(){ modeCache = null; if (!S.layer) return; paintVisibility(); renderSel(); renderPending(); }
   // The frame on screen, as review-core's ctxVisible takes it.
   function frameNow(){
     if (S.kind === "video"){ const v = video(); return v ? { t: v.currentTime, fps: S.fps } : null; }
@@ -512,6 +541,8 @@ export function createAnnotator(host){
   function ghostNow(it){
     if (!S.onion || S.kind !== "video") return false;
     if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) return false;
+    if (it.data.note && S.items.get(it.data.note)?.kind !== "note") return false;
+    if (!modeAllows(it)) return false;
     const c = it.data.ctx, v = video();
     return !!(c && v && c.t != null && Math.abs(v.currentTime - c.t) <= 1.0);
   }
@@ -548,10 +579,15 @@ export function createAnnotator(host){
     return null;
   }
   const surfaceEl = () => S.b2?.wrap || S.b3?.host || null;
+  // The pointer in the surface's px, in the viewer's unturned frame (the lightbox can turn /
+  // mirror the view; the layer turns with the picture, so everything below works unturned).
+  function local(e){
+    const r = surfaceEl().getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    return S.b2?.unturn ? S.b2.unturn(x, y) : [x, y];
+  }
   function toDoc(e){
-    const el = surfaceEl(), g = geom();
-    const r = el.getBoundingClientRect();
-    return [(e.clientX - r.left - g.ox) / g.s, (e.clientY - r.top - g.oy) / g.s];
+    const g = geom(), [x, y] = local(e);
+    return [(x - g.ox) / g.s, (y - g.oy) / g.s];
   }
   function toScreen(x, y){ const g = geom(); return [g.ox + x * g.s, g.oy + y * g.s]; }
   const k = () => 1 / (geom()?.s || 1); // doc units per screen px
@@ -574,6 +610,8 @@ export function createAnnotator(host){
     if (!L || !g) return;
     L.doc.setAttribute("viewBox", `${r2(-g.ox / g.s)} ${r2(-g.oy / g.s)} ${r2(g.w / g.s)} ${r2(g.h / g.s)}`);
     L.ui.setAttribute("viewBox", `0 0 ${g.w} ${g.h}`);
+    const tc = S.b2 ? S.b2.geom().turn || "" : "";
+    if (L.root.style.transform !== tc){ L.root.style.transformOrigin = "0 0"; L.root.style.transform = tc; }
   }
   function renderItem(it){
     const L = S.layer;
@@ -597,7 +635,8 @@ export function createAnnotator(host){
   function paintVisibility(){
     const L = S.layer;
     if (!L) return;
-    const focus = S.focusNote;
+    modeCache = null;
+    const m = viewMode(), focus = !m.compose && !m.pin ? m.hover : null;
     for (const [id, g] of L.els){
       const it = S.items.get(id);
       if (!it) continue;
@@ -611,67 +650,17 @@ export function createAnnotator(host){
   const visibleDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && visibleNow(it));
 
   // ---- selection overlay ----------------------------------------------------------------------
-  function selBounds(ids){
-    let b = null;
-    for (const id of ids){
-      const it = S.items.get(id);
-      if (!it) continue;
-      const q = boundsOf(it);
-      b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q.slice();
-    }
-    return b;
-  }
-  function singleLine(){
-    if (S.sel.size !== 1) return null;
-    const it = S.items.get([...S.sel][0]);
-    return it && (typeOf(it) === "line" || typeOf(it) === "arrow") ? it : null;
-  }
-  // Handles in screen px: [id, x, y]
+  // The selected objects on screen now: the ones the handles (review-core xf*) work on.
+  const selVisible = () => [...S.sel].map((id) => S.items.get(id)).filter((it) => it && visibleNow(it));
+  // Handles in screen px: [id, x, y] (review-core xfHandles, mapped from doc units).
   function handles(){
-    const ln = singleLine();
-    if (ln){
-      const d = ln.data, [a, b] = toScreen(d.pts[0], d.pts[1]), [c, e] = toScreen(d.pts[2], d.pts[3]);
-      const out = [["p0", a, b], ["p1", c, e]];
-      if (d.body === "curve"){ const [hx, hy] = bendHandle(d); out.push(["bend", ...toScreen(hx, hy)]); }
-      else out.push(["mid", (a + c) / 2, (b + e) / 2]);
-      return out;
-    }
-    const b = selBounds(S.sel);
-    if (!b) return [];
-    const [x0, y0] = toScreen(b[0], b[1]), [x1, y1] = toScreen(b[2], b[3]);
-    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-    const out = [["nw", x0, y0], ["n", mx, y0], ["ne", x1, y0], ["e", x1, my], ["se", x1, y1], ["s", mx, y1], ["sw", x0, y1], ["w", x0, my]];
-    const onlyPins = [...S.sel].every((id) => typeOf(S.items.get(id) || {}) === "pin");
-    if (onlyPins) return [];
-    out.push(["rot", mx, y0 - 22]);
-    return out;
+    return RC.xfHandles(selVisible(), k(), S.drag?.xf).map(([id, x, y]) => [id, ...toScreen(x, y)]);
   }
   function renderSel(){
     const L = S.layer;
     if (!L) return;
     syncViewBox();
-    let html = "";
-    for (const id of S.sel){
-      const it = S.items.get(id);
-      if (!it || !visibleNow(it)) continue;
-      const b = boundsOf(it), [x0, y0] = toScreen(b[0], b[1]), [x1, y1] = toScreen(b[2], b[3]);
-      html += `<rect class="an-selbox" x="${r2(x0)}" y="${r2(y0)}" width="${r2(x1 - x0)}" height="${r2(y1 - y0)}"/>`;
-    }
-    const visSel = [...S.sel].filter((id) => S.items.get(id) && visibleNow(S.items.get(id)));
-    if (visSel.length){
-      const ln = singleLine();
-      if (!ln && visSel.length > 1){
-        const b = selBounds(visSel), [x0, y0] = toScreen(b[0], b[1]), [x1, y1] = toScreen(b[2], b[3]);
-        html += `<rect class="an-selall" x="${r2(x0)}" y="${r2(y0)}" width="${r2(x1 - x0)}" height="${r2(y1 - y0)}"/>`;
-      }
-      for (const [id, x, y] of handles()){
-        if (id === "rot"){
-          const b = selBounds(visSel), [, y0] = toScreen(b[0], b[1]);
-          html += `<line class="an-rotline" x1="${r2(x)}" y1="${r2(y0)}" x2="${r2(x)}" y2="${r2(y + 5)}"/><circle class="an-handle rot" cx="${r2(x)}" cy="${r2(y)}" r="5"/>`;
-        } else if (id === "bend" || id === "mid") html += `<circle class="an-handle bend" cx="${r2(x)}" cy="${r2(y)}" r="5"/>`;
-        else html += `<rect class="an-handle" x="${r2(x - 4.5)}" y="${r2(y - 4.5)}" width="9" height="9"/>`;
-      }
-    }
+    let html = RC.xfSvg(selVisible(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
     if (S.drag?.marquee){
       const m = S.drag.marquee;
       html += `<rect class="an-marquee" x="${r2(Math.min(m[0], m[2]))}" y="${r2(Math.min(m[1], m[3]))}" width="${r2(Math.abs(m[2] - m[0]))}" height="${r2(Math.abs(m[3] - m[1]))}"/>`;
@@ -682,7 +671,7 @@ export function createAnnotator(host){
       html += `<path class="an-regionshade" d="M0 0H${g.w}V${g.h}H0Z M${x} ${y}v${h}h${w}v${-h}Z"/><rect class="an-region" x="${x}" y="${y}" width="${w}" height="${h}"/><text class="an-regionlbl" x="${x + 4}" y="${y - 6}">${Math.round(w)} × ${Math.round(h)}</text>`;
     }
     if (S.hover && !S.drag && !S.region){
-      const t = S.tool, st = S.styles[t];
+      const t = effTool(), st = S.styles[t];
       if (STROKE_TOOLS.has(t) || t === "eraser"){
         const r = Math.max(1, st.size / 2);
         html += `<circle class="an-cursor${t === "eraser" ? " er" : ""}" cx="${r2(S.hover[0])}" cy="${r2(S.hover[1])}" r="${r2(r)}"/>`;
@@ -725,8 +714,9 @@ export function createAnnotator(host){
     if (S.kind === "video"){ const v = video(); if (v && !v.paused) v.pause(); }
     const el = surfaceEl();
     const [x, y] = toDoc(e);
-    const r = el.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
-    const tool = penEraser ? "eraser" : S.tool;
+    const [sx, sy] = local(e);
+    // Ctrl held: the eraser for this stroke (the select tool keeps Ctrl+click for the selection).
+    const tool = penEraser || (e.ctrlKey && !e.metaKey && S.tool !== "select" && !S.region) ? "eraser" : S.tool;
 
     if (S.region){
       grab(e);
@@ -767,6 +757,8 @@ export function createAnnotator(host){
       eraseAt(x, y);
       return;
     }
+    // Drawing starts a new note: a note picked in the panel lets go (the media shows the new one).
+    if (S.pinFocus){ S.pinFocus = S.focusNote = null; renderPanel(); }
     if (STROKE_TOOLS.has(tool)){
       const st = styleDoc(tool);
       const p = pen ? clamp(e.pressure || 0.5, 0, 1) : 0.5;
@@ -826,8 +818,9 @@ export function createAnnotator(host){
     if (!S.on) return;
     const el = surfaceEl();
     if (!el) return;
-    const r = el.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+    const [sx, sy] = local(e);
     S.hover = [sx, sy];
+    if (S.ctrlHeld !== e.ctrlKey && !S.drag) S.ctrlHeld = e.ctrlKey;
     const D = S.drag;
     if (!D){ updateCursor(sx, sy); renderSel(); return; }
     e.preventDefault();
@@ -953,11 +946,8 @@ export function createAnnotator(host){
     }
   }
 
-  function snapAngle(x0, y0, x, y){
-    const a = Math.atan2(y - y0, x - x0), l = hyp(x - x0, y - y0);
-    const s = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
-    return [x0 + Math.cos(s) * l, y0 + Math.sin(s) * l];
-  }
+  const snapAngle = RC.snap15;
+
 
   function eraseAt(x, y){
     const D = S.drag, rad = S.styles.eraser.size / 2 * k();
@@ -993,66 +983,16 @@ export function createAnnotator(host){
     }
   }
 
+  // Scale / rotate / line-end handles: review-core xfStart / xfDrag (shared with the HTML page's
+  // and the phone app's drawing canvas). The rotate handle follows the pointer out from the pivot.
   function startHandleDrag(h, x, y, e){
-    const ids = [...S.sel];
-    const b = selBounds(ids);
-    S.drag = { handle: h, x, y, ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), box: b, moved: false };
+    const list = selVisible(), ids = list.map((it) => it.id);
+    S.drag = { handle: h, xf: RC.xfStart(h, list, x, y), ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), moved: false };
   }
   function dragHandle(D, x, y, e){
     D.moved = true;
-    const h = D.handle;
-    if (h === "p0" || h === "p1" || h === "bend" || h === "mid"){
-      const it = S.items.get(D.ids[0]), src = D.src.get(D.ids[0]), d = it.data, s = src.data;
-      if (h === "p0" || h === "p1"){
-        const fx = h === "p0" ? s.pts[2] : s.pts[0], fy = h === "p0" ? s.pts[3] : s.pts[1];
-        const [px, py] = e.shiftKey ? snapAngle(fx, fy, x, y) : [x, y];
-        d.pts = h === "p0" ? [px, py, s.pts[2], s.pts[3]] : [s.pts[0], s.pts[1], px, py];
-      } else {
-        // Dragging the middle bends the line (a straight one turns into a curve).
-        const [x1, y1, x2, y2] = s.pts, l = hyp(x2 - x1, y2 - y1) || 1;
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-        d.body = "curve";
-        d.bend = ((x - mx) * -(y2 - y1) + (y - my) * (x2 - x1)) / l;
-      }
-      renderItem(it); renderSel();
-      return;
-    }
-    const [bx0, by0, bx1, by1] = D.box, cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
-    if (h === "rot"){
-      let a = Math.atan2(y - cy, x - cx) - Math.atan2(D.y - cy, D.x - cx);
-      let deg = a * 180 / Math.PI;
-      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
-      for (const id of D.ids){
-        const it = S.items.get(id), src = D.src.get(id);
-        if (!it || !src) continue;
-        transformItem(it, src, (px, py) => rotPt(px, py, cx, cy, deg), { da: deg });
-        renderItem(it);
-      }
-      renderSel();
-      return;
-    }
-    // Scale about the opposite edge / corner (Alt: about the centre). Corners keep the ratio
-    // with Shift, edges scale one axis.
-    const ax = h.includes("w") ? bx1 : h.includes("e") ? bx0 : cx;
-    const ay = h.includes("n") ? by1 : h.includes("s") ? by0 : cy;
-    const ox = e.altKey ? cx : ax, oy = e.altKey ? cy : ay;
-    const w0 = h.includes("w") || h.includes("e") ? D.x - ox : 1;
-    const h0 = (h.includes("n") || h.includes("s")) ? D.y - oy : 1;
-    let sx = h.includes("w") || h.includes("e") ? (x - ox) / (Math.abs(w0) < 1e-6 ? 1e-6 : w0) : 1;
-    let sy = h.includes("n") || h.includes("s") ? (y - oy) / (Math.abs(h0) < 1e-6 ? 1e-6 : h0) : 1;
-    const corner = h.length === 2;
-    const onlyText = D.ids.every((id) => typeOf(S.items.get(id)) === "text" || typeOf(S.items.get(id)) === "pin");
-    if ((corner && e.shiftKey) || onlyText){ const m = corner ? Math.max(Math.abs(sx), Math.abs(sy)) : Math.abs(h.length === 1 && (h === "n" || h === "s") ? sy : sx); sx = Math.sign(sx || 1) * m; sy = Math.sign(sy || 1) * m; }
-    sx = Math.abs(sx) < 0.01 ? 0.01 * Math.sign(sx || 1) : sx;
-    sy = Math.abs(sy) < 0.01 ? 0.01 * Math.sign(sy || 1) : sy;
-    const kk = Math.sqrt(Math.abs(sx * sy));
-    for (const id of D.ids){
-      const it = S.items.get(id), src = D.src.get(id);
-      if (!it || !src) continue;
-      // Corners scale widths with the object; edges stretch the geometry and keep line widths.
-      transformItem(it, src, (px, py) => [ox + (px - ox) * sx, oy + (py - oy) * sy], { k: corner || onlyText ? kk : 1, sx, sy });
-      renderItem(it);
-    }
+    RC.xfDrag(D.xf, x, y, { shift: e.shiftKey, alt: e.altKey });
+    for (const it of D.xf.items) renderItem(it);
     renderSel();
   }
 
@@ -1063,15 +1003,25 @@ export function createAnnotator(host){
     if (S.region) c = "crosshair";
     else if (S.tool === "select"){
       const h = S.sel.size ? handleAt(sx, sy) : null;
-      if (h) c = h === "rot" ? "grab" : h === "p0" || h === "p1" || h === "bend" || h === "mid" ? "move" : ({ n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize" })[h];
+      if (h) c = RC.XF_CURSOR[h];
       else {
         const [x, y] = toDocS(sx, sy);
         c = hitAt(x, y) ? "move" : S.kind === "model3d" ? "" : "default";
       }
-    } else if (STROKE_TOOLS.has(S.tool) || S.tool === "eraser") c = "none";
+    } else if (STROKE_TOOLS.has(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
     el.style.cursor = c;
   }
+  // The tool a press would use now: Ctrl held turns any drawing tool into the eraser.
+  const effTool = () => S.ctrlHeld && S.tool !== "select" && !S.region ? "eraser" : S.tool;
+  function ctrlChanged(on){
+    if (S.ctrlHeld === on) return;
+    S.ctrlHeld = on;
+    if (S.on && S.hover && !S.drag){ updateCursor(...S.hover); renderSel(); }
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Control") ctrlChanged(true); }, true);
+  document.addEventListener("keyup", (e) => { if (e.key === "Control") ctrlChanged(false); }, true);
+  window.addEventListener("blur", () => ctrlChanged(false));
 
   // ---- text editing ---------------------------------------------------------------------------
   function editText(it, isNew){
@@ -1082,7 +1032,9 @@ export function createAnnotator(host){
     ta.className = "an-textedit";
     ta.spellcheck = false;
     ta.value = it.data.text || "";
-    el.appendChild(ta);
+    // In the layer, so it turns / mirrors with the picture.
+    (S.b2 && S.layer ? S.layer.root : el).appendChild(ta);
+    ta.style.pointerEvents = "auto";
     S.edit = { it, ta, isNew, before: isNew ? null : snap(it) };
     if (!isNew){ S.items.set(it.id, it); S.layer?.els.get(it.id)?.setAttribute("opacity", "0"); }
     const place = () => {
@@ -1147,6 +1099,16 @@ export function createAnnotator(host){
   }
 
   // ---- selection commands ---------------------------------------------------------------------
+  // Removes every drawing on screen now, in one undo step: while a new note is being made that is
+  // its drawings, with a note picked that note's, else all on this frame / picture / view.
+  function clearShown(){
+    if (S.hidden){ toast("Drawings are hidden (Shift+H)"); return; }
+    finishEdit();
+    const ids = visibleDrawings().map((it) => it.id);
+    if (!ids.length){ toast("No drawings on screen"); return; }
+    commit(ids, () => { for (const id of ids) S.items.delete(id); });
+    toast(`Cleared ${ids.length} drawing${ids.length > 1 ? "s" : ""} · Ctrl+Z brings ${ids.length > 1 ? "them" : "it"} back`, 2600);
+  }
   function deleteSelection(){
     const ids = [...S.sel].filter((id) => S.items.has(id));
     if (!ids.length) return false;
@@ -1235,6 +1197,7 @@ export function createAnnotator(host){
         <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="undo" title="Undo (Ctrl+Z)">${ICON.undo}</button>
         <button type="button" class="an-tool" data-act="redo" title="Redo (Ctrl+Shift+Z)">${ICON.redo}</button>
+        <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete)">${ICON.trash}</button>
         <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="onion" data-only="video" title="Onion skin — drawings within ±1 s, faded">${ICON.onion}</button>
         <button type="button" class="an-tool" data-act="hide" title="Hide / show drawings (Shift+H)">${ICON.eye}</button>
@@ -1248,6 +1211,7 @@ export function createAnnotator(host){
     bar.querySelectorAll("[data-tool]").forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
     bar.querySelector("[data-act=undo]").onclick = () => undo();
     bar.querySelector("[data-act=redo]").onclick = () => redo();
+    bar.querySelector("[data-act=clear]").onclick = () => clearShown();
     bar.querySelector("[data-act=shot]").onclick = () => screenshot(false);
     bar.querySelector("[data-act=region]").onclick = () => screenshot(true);
     bar.querySelector("[data-act=onion]").onclick = () => { S.onion = !S.onion; paintBar(); paintVisibility(); };
@@ -1466,6 +1430,7 @@ export function createAnnotator(host){
       <div class="an-rsh" hidden></div>
       <div class="an-vers" hidden></div>
       <div class="an-views"></div>
+      <div class="an-filt an-seg"></div>
       <div class="an-list"></div>
       <div class="an-compose">
         <div class="an-pend"></div>
@@ -1509,7 +1474,17 @@ export function createAnnotator(host){
       if (hotkey(e, "Enter")){ e.preventDefault(); addNote(); }
       else if (hotkey(e, "Escape")){ e.preventDefault(); inp.blur(); }
     });
-    inp.addEventListener("input", () => { inp.style.height = "auto"; inp.style.height = Math.min(160, inp.scrollHeight + 2) + "px"; });
+    inp.addEventListener("input", () => { inp.style.height = "auto"; inp.style.height = Math.min(160, inp.scrollHeight + 2) + "px"; modeChanged(); });
+    // Typing a new note shows the clean picture (with only the new note's drawings).
+    inp.addEventListener("focus", modeChanged);
+    inp.addEventListener("blur", modeChanged);
+    el.querySelector(".an-filt").addEventListener("click", (e) => {
+      const b = e.target.closest?.("[data-filt]");
+      if (!b) return;
+      S.filter = b.dataset.filt;
+      writeJSON("sight.annotate.filter", S.filter);
+      renderPanel();
+    });
     el.querySelector(".an-list").addEventListener("click", onListClick);
     el.querySelector(".an-list").addEventListener("dblclick", onListDblClick);
     el.querySelector(".an-list").addEventListener("pointerover", (e) => {
@@ -1544,16 +1519,28 @@ export function createAnnotator(host){
     if (show) renderPanel();
   }
   // Drawings a new note picks up: not attached to a note yet and on screen right now.
-  const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note && visibleNow(it));
+  const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note && ctxShown(it));
   function renderPanel(){
     const el = S.ui;
     if (!el || el.hidden) return;
-    const notes = notesSorted();
+    // The cards are rebuilt under the pointer: a hover on a card that is gone must not stay.
+    if (S.focusNote && S.focusNote !== S.pinFocus){ S.focusNote = S.pinFocus; queueMicrotask(() => paintVisibility()); }
+    const all = notesSorted(), num = new Map(all.map((n, i) => [n.id, i + 1]));
+    const stOf = (n) => n.data.status === "done" ? "done" : n.data.status === "progress" ? "progress" : "open";
+    const tally = { all: all.length, open: 0, progress: 0, done: 0 };
+    for (const n of all) tally[stOf(n)]++;
+    if (!(S.filter in tally)) S.filter = "all";
+    const filt = el.querySelector(".an-filt");
+    filt.hidden = !all.length;
+    filt.innerHTML = [["all", "All"], ["open", "Open"], ["progress", "In progress"], ["done", "Resolved"]].map(([k, l]) =>
+      `<button type="button" data-filt="${k}" class="${S.filter === k ? "on" : ""}">${l}<i class="an-fc ${k}${tally[k] ? "" : " zero"}">${tally[k]}</i></button>`).join("");
+    const notes = S.filter === "all" ? all : all.filter((n) => stOf(n) === S.filter);
     const list = el.querySelector(".an-list");
     const scroll = list.scrollTop;
     const counts = new Map();
     for (const it of S.items.values()) if (isDrawing(it) && it.data.note) counts.set(it.data.note, (counts.get(it.data.note) || 0) + 1);
-    list.innerHTML = notes.length ? notes.map((n, i) => {
+    list.innerHTML = !all.length ? "" : !notes.length ? `<div class="an-hint"><p>No ${S.filter === "done" ? "resolved" : S.filter === "progress" ? "in-progress" : "open"} notes.</p></div>` : notes.map((n) => {
+      const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
       const shots = (d.shots || []).map((sid) => `<img src="/api/review/shots/${sid}" data-src="/api/review/shots/${sid}" data-shot="${sid}" alt="" loading="lazy">`).join("");
       const ctx = ctxLabel(d.ctx);
@@ -1564,16 +1551,90 @@ export function createAnnotator(host){
           <button type="button" class="an-ib sm${done ? " on" : ""}" data-done="${n.id}" title="${done ? "Reopen" : "Resolve"}">${ICON.check}</button>
           <button type="button" class="an-ib sm" data-del="${n.id}" title="Delete note and its drawings">${ICON.trash}</button></div>
         <div class="an-nt" title="Double-click to edit">${esc(d.text || "") || '<i class="an-empty">No text</i>'}</div>
+        ${notePreview(n)}
         ${shots ? `<div class="an-shots">${shots}</div>` : ""}
         ${counts.get(n.id) || d.from ? `<div class="an-nmeta">${[counts.get(n.id) ? `${counts.get(n.id)} drawing${counts.get(n.id) > 1 ? "s" : ""}` : "", d.from ? `from ${esc(d.from.name || "previous version")}` : ""].filter(Boolean).join(" · ")}</div>` : ""}
         ${repliesHtml(n)}
       </div>`;
-    }).join("") : `<div class="an-hint"><p>No notes yet.</p><p>Draw on the ${S.kind === "model3d" ? "view" : S.kind === "video" ? "frame" : "picture"}, then type a note below — the drawings are attached to it.${S.kind === "video" ? " Notes are pinned to the current frame and show as markers on the timeline." : S.kind === "model3d" ? " The camera, shading and lights are saved with the note." : ""}</p><p><b>S</b> screenshot · <b>Shift+S</b> area</p></div>`;
+    }).join("");
+    if (!all.length) list.innerHTML = `<div class="an-hint"><p>No notes yet.</p><p>Draw on the ${S.kind === "model3d" ? "view" : S.kind === "video" ? "frame" : "picture"}, then type a note below — the drawings are attached to it.${S.kind === "video" ? " Notes are pinned to the current frame and show as markers on the timeline." : S.kind === "model3d" ? " The camera, shading and lights are saved with the note." : ""}</p><p><b>S</b> screenshot · <b>Shift+S</b> area</p></div>`;
     list.scrollTop = scroll;
     renderViews();
     renderPending();
     renderVersions();
     paintStatus();
+  }
+  // ---- note previews: the clean picture / video frame with the note's drawings over it (vector,
+  // nothing burned in) ---------------------------------------------------------------------------
+  function notePreview(n){
+    if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
+    return previewBox(n, [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply), "");
+  }
+  // A reply's drawings (made on the HTML page or the phone) on the note's picture, under the reply.
+  function replyPreview(n, r){
+    if (S.hiddenReplies.has(r.id)) return "";
+    return previewBox(n, replyDrawings(n.id, r.id), " sm");
+  }
+  function previewBox(n, list, cls){
+    if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
+    const g = geom();
+    if (!list.length || !g?.nw || !g?.nh) return "";
+    let img;
+    if (S.kind === "video"){
+      const t = n.data.ctx?.t;
+      if (t == null) return "";
+      const url = previewFrame(t);
+      img = url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`;
+    } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
+    return `<div class="an-nprev${cls}" style="aspect-ratio:${g.nw} / ${g.nh}" title="Show this note's drawings">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="none">${RC.svgMarkup(list, numOf)}</svg></div>`;
+  }
+  // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
+  // kept per time for the open asset.
+  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false };
+  function resetPF(){
+    if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); }
+    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false;
+  }
+  function previewFrame(t){
+    const key = Number(t).toFixed(3);
+    if (PF.aid !== S.asset?.id){ resetPF(); PF.aid = S.asset?.id || null; }
+    const hit = PF.cache.get(key);
+    if (hit) return hit;
+    if (!PF.want.includes(key)) PF.want.push(key);
+    queueMicrotask(pumpPF);
+    return null;
+  }
+  async function pumpPF(){
+    if (PF.busy || !PF.want.length || !PF.aid) return;
+    PF.busy = true;
+    const aid = PF.aid;
+    try {
+      if (!PF.v){
+        const v = document.createElement("video");
+        v.muted = true; v.preload = "auto"; v.playsInline = true; v.src = `/api/file/${aid}`;
+        PF.v = v;
+        await new Promise((ok, no) => { v.addEventListener("loadeddata", ok, { once: true }); v.addEventListener("error", () => no(new Error("video")), { once: true }); });
+      }
+      while (PF.want.length && PF.aid === aid){
+        const key = PF.want.shift(), v = PF.v;
+        await new Promise((ok) => {
+          let to = 0;
+          const done = () => { clearTimeout(to); v.removeEventListener("seeked", done); ok(); };
+          v.addEventListener("seeked", done);
+          to = setTimeout(done, 4000);
+          v.currentTime = Number(key);
+        });
+        if (PF.aid !== aid || !v.videoWidth) break;
+        const w = Math.min(480, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(v, 0, 0, w, h);
+        const url = c.toDataURL("image/jpeg", 0.8);
+        PF.cache.set(key, url);
+        S.ui?.querySelectorAll(`img[data-ft="${key}"]`).forEach((im) => { im.src = url; im.removeAttribute("data-ft"); });
+      }
+    } catch (e){ console.warn("note frame", e); }
+    finally { if (PF.aid === aid) PF.busy = false; }
   }
   const liveReplies = (n) => (n.data.replies || []).filter((r) => !r.deleted);
   // A note is open, in progress (someone took it) or done. Every change also leaves an entry in
@@ -1598,6 +1659,7 @@ export function createAnnotator(host){
       <span>${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
       <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span>${rdrawChip(n, r)}<button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
       ${r.text ? `<div class="an-rt" title="Double-click to edit">${esc(r.text)}</div>` : ""}
+      ${replyPreview(n, r)}
       ${r.shots?.length ? `<div class="an-shots">${r.shots.map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join("")}</div>` : ""}</div>`).join("")}</div>`;
   }
   // Inline editor under a note card (new reply) or in place of a reply's text (edit).
@@ -2060,7 +2122,7 @@ export function createAnnotator(host){
           if (!forPage && notes.length > 1 && [...S.items.values()].some(own)) cv = composeNative(own, 1600);
         } else if (v && c?.t != null){
           await seekTo(v, c.t);
-          cv = composeNative(pick((it) => visibleNow(it)), 1600);
+          cv = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
           cap = "Frame " + Math.round(c.t * S.fps) + " · " + fmtTime(c.t, S.fps);
         } else if (S.b3 && c?.vk){
           const view = S.views.get(c.vk);
@@ -2238,7 +2300,7 @@ export function createAnnotator(host){
       ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = S.focusNote = null; paintVisibility(); renderPanel(); return; } toggle(false); }],
       ["KeyA", () => toggle(false)], ["Shift+KeyA", () => toggle(false)],
       ["Ctrl+KeyZ", () => undo()], ["Ctrl+Shift+KeyZ", () => redo()], ["Ctrl+KeyY", () => redo()],
-      ["Delete", () => deleteSelection()], ["Backspace", () => deleteSelection()], ["KeyX", () => deleteSelection()],
+      ["Delete", () => deleteSelection()], ["Shift+Delete", () => clearShown()], ["Backspace", () => deleteSelection()], ["KeyX", () => deleteSelection()],
       ["Ctrl+KeyC", () => copySelection()], ["Ctrl+KeyV", () => paste()], ["Ctrl+KeyD", () => duplicateSelection()],
       ["Ctrl+KeyA", () => selectAll()],
       ["Ctrl+BracketRight", () => reorder(1)], ["Ctrl+BracketLeft", () => reorder(-1)],
@@ -2292,6 +2354,7 @@ export function createAnnotator(host){
     S.asset = null;
     S.items.clear(); S.saved.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = [];
+    resetPF();
     host.onModeChange?.(false);
   }
   function setAsset(a){
@@ -2306,6 +2369,7 @@ export function createAnnotator(host){
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.focusNote = S.pinFocus = null; S.hiddenReplies.clear();
+    resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
     notesSig = "";
     S.fps = 25; S.fpsKnown = false;
@@ -2353,6 +2417,7 @@ export function createAnnotator(host){
     }
     renderAll();
     renderMarks();
+    renderPanel();  // the note previews need the picture
     startTick();
   }
   function viewChanged(){ if (S.on && S.layer){ syncViewBox(); renderSel(); if (S.edit) S.edit.place(); } }
@@ -2477,6 +2542,14 @@ function injectStyles(){
 .an-views span { margin-right: 4px; }
 .an-vchip { min-width: 24px; height: 22px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
 .an-vchip.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.an-filt { display: flex; margin: 8px 14px 0; }
+.an-filt[hidden] { display: none; }
+.an-filt button { flex: 1; padding: 0 4px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.an-fc { font-style: normal; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--muted); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 15px; }
+.an-fc.open { background: #ff453a; } .an-fc.progress { background: #ff9f0a; } .an-fc.done { background: #34c759; } .an-fc.zero { opacity: .4; }
+.an-nprev { position: relative; width: 100%; margin: 6px 0 2px; border-radius: 6px; overflow: hidden; background: #000; }
+.an-nprev.sm { margin-top: 4px; }
+.an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 .an-hint { color: var(--subtle); padding: 10px 8px; line-height: 1.5; }
 .an-hint p { margin: 0 0 8px; }

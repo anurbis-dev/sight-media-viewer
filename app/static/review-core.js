@@ -442,6 +442,142 @@ var SightReviewCore = (function(){
     }
   }
 
+  // ---- transform: the select tool's box and handles ----------------------------------------------
+  // Shared by Sight's editor (annotate.js) and the drawing canvas (review-draw.js), so both move,
+  // scale and rotate alike. Positions are doc units; `px` = doc units per screen pixel (handles keep
+  // their screen size). The rotate handle sits above the box; while it is dragged it follows the
+  // pointer out from the box's centre (the pivot), so a longer arm turns more finely.
+  function cloneItem(v){ return JSON.parse(JSON.stringify(v)); }
+  function xfBox(list){
+    var b = null;
+    list.forEach(function(it){
+      var q = boundsOf(it);
+      b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q.slice();
+    });
+    return b;
+  }
+  function xfLine(list){
+    if (list.length !== 1) return null;
+    var t = typeOf(list[0]);
+    return t === "line" || t === "arrow" ? list[0] : null;
+  }
+  // [[id, x, y]]: p0 / p1 / bend | mid for one line or arrow, else the eight scale handles + rot.
+  // D: the drag in progress (a rotation shows only its own handle, at the pointer).
+  function xfHandles(list, px, D){
+    var ln = xfLine(list);
+    if (ln){
+      var d = ln.data, out = [["p0", d.pts[0], d.pts[1]], ["p1", d.pts[2], d.pts[3]]];
+      if (d.body === "curve"){ var bh = bendHandle(d); out.push(["bend", bh[0], bh[1]]); }
+      else out.push(["mid", (d.pts[0] + d.pts[2]) / 2, (d.pts[1] + d.pts[3]) / 2]);
+      return out;
+    }
+    if (!list.length || list.every(function(it){ return typeOf(it) === "pin"; })) return [];
+    if (D && D.handle === "rot" && D.at) return [["rot", D.at[0], D.at[1]]];
+    var b = xfBox(list), mx = (b[0] + b[2]) / 2, my = (b[1] + b[3]) / 2;
+    return [["nw", b[0], b[1]], ["n", mx, b[1]], ["ne", b[2], b[1]], ["e", b[2], my], ["se", b[2], b[3]], ["s", mx, b[3]], ["sw", b[0], b[3]], ["w", b[0], my], ["rot", mx, b[1] - 22 * px]];
+  }
+  // The handle nearest to (x, y) within tol, or null.
+  function xfAt(hs, x, y, tol){
+    var best = null, bd = tol;
+    hs.forEach(function(h){ var dd = hyp(x - h[1], y - h[2]); if (dd <= bd){ bd = dd; best = h[0]; } });
+    return best;
+  }
+  // Starts a drag of handle h ("move" = the objects themselves) at (x, y) on the live items.
+  function xfStart(h, items, x, y){
+    return { handle: h, x: x, y: y, items: items, src: items.map(cloneItem), box: xfBox(items), moved: false, at: null };
+  }
+  function snap15(x0, y0, x, y){
+    var a = Math.atan2(y - y0, x - x0), l = hyp(x - x0, y - y0), s = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
+    return [x0 + Math.cos(s) * l, y0 + Math.sin(s) * l];
+  }
+  // Moves the drag to (x, y). m: {shift, alt} — move: Shift keeps one axis; line ends: Shift snaps
+  // to 15°; rotate: Shift snaps to 15°; corners: Shift keeps the ratio; Alt scales about the centre.
+  function xfDrag(D, x, y, m){
+    m = m || {};
+    D.moved = true;
+    var h = D.handle, its = D.items, src = D.src, i;
+    if (h === "move"){
+      var dx = x - D.x, dy = y - D.y;
+      if (m.shift){ if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      for (i = 0; i < its.length; i++) transformItem(its[i], src[i], function(px, py){ return [px + dx, py + dy]; });
+      return;
+    }
+    if (h === "p0" || h === "p1" || h === "bend" || h === "mid"){
+      var d = its[0].data, s = src[0].data;
+      if (h === "p0" || h === "p1"){
+        var fx = h === "p0" ? s.pts[2] : s.pts[0], fy = h === "p0" ? s.pts[3] : s.pts[1];
+        var p = m.shift ? snap15(fx, fy, x, y) : [x, y];
+        d.pts = h === "p0" ? [p[0], p[1], s.pts[2], s.pts[3]] : [s.pts[0], s.pts[1], p[0], p[1]];
+      } else {
+        // Dragging the middle bends the line (a straight one turns into a curve).
+        var x1 = s.pts[0], y1 = s.pts[1], x2 = s.pts[2], y2 = s.pts[3], l = hyp(x2 - x1, y2 - y1) || 1;
+        d.body = "curve";
+        d.bend = ((x - (x1 + x2) / 2) * -(y2 - y1) + (y - (y1 + y2) / 2) * (x2 - x1)) / l;
+      }
+      return;
+    }
+    var bx0 = D.box[0], by0 = D.box[1], bx1 = D.box[2], by1 = D.box[3], cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+    if (h === "rot"){
+      D.at = [x, y];
+      var deg = (Math.atan2(y - cy, x - cx) - Math.atan2(D.y - cy, D.x - cx)) * 180 / Math.PI;
+      if (m.shift) deg = Math.round(deg / 15) * 15;
+      D.deg = deg;
+      for (i = 0; i < its.length; i++) transformItem(its[i], src[i], function(px, py){ return rotPt(px, py, cx, cy, deg); }, { da: deg });
+      return;
+    }
+    // Scale about the opposite edge / corner (Alt: the centre). Edges scale one axis.
+    var ax = h.indexOf("w") >= 0 ? bx1 : h.indexOf("e") >= 0 ? bx0 : cx;
+    var ay = h.indexOf("n") >= 0 ? by1 : h.indexOf("s") >= 0 ? by0 : cy;
+    var ox = m.alt ? cx : ax, oy = m.alt ? cy : ay;
+    var horiz = h.indexOf("w") >= 0 || h.indexOf("e") >= 0, vert = h.indexOf("n") >= 0 || h.indexOf("s") >= 0;
+    var w0 = horiz ? D.x - ox : 1, h0 = vert ? D.y - oy : 1;
+    var sx = horiz ? (x - ox) / (Math.abs(w0) < 1e-6 ? 1e-6 : w0) : 1;
+    var sy = vert ? (y - oy) / (Math.abs(h0) < 1e-6 ? 1e-6 : h0) : 1;
+    var corner = h.length === 2;
+    var onlyText = its.every(function(it){ var t = typeOf(it); return t === "text" || t === "pin"; });
+    if ((corner && m.shift) || onlyText){
+      var mm = corner ? Math.max(Math.abs(sx), Math.abs(sy)) : Math.abs(h === "n" || h === "s" ? sy : sx);
+      sx = Math.sign(sx || 1) * mm; sy = Math.sign(sy || 1) * mm;
+    }
+    sx = Math.abs(sx) < 0.01 ? 0.01 * Math.sign(sx || 1) : sx;
+    sy = Math.abs(sy) < 0.01 ? 0.01 * Math.sign(sy || 1) : sy;
+    var kk = Math.sqrt(Math.abs(sx * sy));
+    // Corners scale widths with the object; edges stretch the geometry and keep line widths.
+    for (i = 0; i < its.length; i++) transformItem(its[i], src[i], function(px, py){ return [ox + (px - ox) * sx, oy + (py - oy) * sy]; }, { k: corner || onlyText ? kk : 1, sx: sx, sy: sy });
+  }
+  // SVG markup of the selection: a dashed box per object, the group's box, the handles and, while
+  // rotating, the arm from the pivot to the pointer. o: {px (doc units per screen px), D (drag),
+  // map(x, y) → output space (default: doc units), u (output units per screen px, default px),
+  // hs (handle size factor, e.g. bigger for fingers)}.
+  function xfSvg(list, o){
+    if (!list.length) return "";
+    var px = o.px, u = o.u != null ? o.u : px, z = (o.hs || 1) * u, D = o.D;
+    var mp = o.map || function(x, y){ return [x, y]; }, C = "#4c9aff", out = "";
+    var rect = function(b, extra){
+      var a = mp(b[0], b[1]), c = mp(b[2], b[3]);
+      return '<rect x="' + r2(Math.min(a[0], c[0])) + '" y="' + r2(Math.min(a[1], c[1])) + '" width="' + r2(Math.abs(c[0] - a[0])) + '" height="' + r2(Math.abs(c[1] - a[1])) + '" fill="none" stroke="' + C + '" stroke-width="' + r2(u) + '"' + (extra || "") + "/>";
+    };
+    var rotating = D && D.handle === "rot" && D.at;
+    if (!rotating) list.forEach(function(it){ out += rect(boundsOf(it), ' stroke-dasharray="' + r2(3 * u) + " " + r2(3 * u) + '"'); });
+    var ln = xfLine(list);
+    if (!ln && list.length > 1 && !rotating) out += rect(xfBox(list));
+    var hs = xfHandles(list, px, D), b = rotating ? D.box : xfBox(list);
+    hs.forEach(function(hh){
+      var p = mp(hh[1], hh[2]), id = hh[0];
+      if (id === "rot"){
+        // The arm: from the top of the box, or from the pivot (centre) while rotating.
+        var from = rotating ? mp((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) : mp((b[0] + b[2]) / 2, b[1]);
+        out += '<line x1="' + r2(from[0]) + '" y1="' + r2(from[1]) + '" x2="' + r2(p[0]) + '" y2="' + r2(p[1]) + '" stroke="' + C + '" stroke-width="' + r2(u) + '"/>';
+        if (rotating) out += '<circle cx="' + r2(from[0]) + '" cy="' + r2(from[1]) + '" r="' + r2(3 * z) + '" fill="#fff" stroke="' + C + '" stroke-width="' + r2(1.5 * u) + '"/>';
+      }
+      if (id === "rot" || id === "bend" || id === "mid") out += '<circle cx="' + r2(p[0]) + '" cy="' + r2(p[1]) + '" r="' + r2(5 * z) + '" fill="' + C + '" stroke="#fff" stroke-width="' + r2(1.5 * u) + '"/>';
+      else out += '<rect x="' + r2(p[0] - 4.5 * z) + '" y="' + r2(p[1] - 4.5 * z) + '" width="' + r2(9 * z) + '" height="' + r2(9 * z) + '" fill="#fff" stroke="' + C + '" stroke-width="' + r2(1.5 * u) + '"/>';
+    });
+    return out;
+  }
+  // The cursor for a handle (desktop).
+  var XF_CURSOR = { rot: "grab", p0: "move", p1: "move", bend: "move", mid: "move", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize" };
+
   // Whether a row / item carries geometry a client can draw (notes always pass; status rows and
   // unknown kinds do not).
   function validItem(it){
@@ -656,6 +792,7 @@ var SightReviewCore = (function(){
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
+    xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
     ctxVisible: ctxVisible, drawingRow: drawingRow,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };

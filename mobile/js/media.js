@@ -156,3 +156,74 @@ export function fmtBytes(n){
   while (n >= 1024 && i < u.length - 1){ n /= 1024; i++; }
   return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i];
 }
+
+// The scrub cache: small JPEG frames of the whole clip, kept in memory while the review is open, so
+// a scrub on the phone shows the frame under the finger at once (like Sight's RAM cache) while the
+// player is still decoding its seek. A hidden player runs through the clip muted (faster than real
+// time for long clips) and keeps the frame of every step it presents (requestVideoFrameCallback);
+// at most MAX frames, so a long clip keeps one frame every few. near(t) gives the closest frame.
+export class ScrubCache {
+  static MAX = 1500;
+  constructor(url, duration, fps, onProgress){
+    this.url = url; this.d = duration || 0; this.onProgress = onProgress || (() => {});
+    this.step = Math.max(1 / (fps || 25), this.d / ScrubCache.MAX);
+    this.frames = new Map(); this.keys = null; this.v = null; this.c = null; this.closed = false; this.done = false;
+  }
+  start(){
+    if (this.v || this.closed || !this.d) return;
+    const v = document.createElement("video");
+    if (!v.requestVideoFrameCallback) return;  // old WebKit: no cache, the player alone
+    v.muted = true; v.playsInline = true; v.preload = "auto"; v.setAttribute("playsinline", "");
+    v.style.cssText = "position:fixed;left:-10px;top:-10px;width:2px;height:2px;opacity:0;pointer-events:none";
+    document.body.appendChild(v);
+    this.v = v;
+    v.src = this.url;
+    const tick = (_, meta) => {
+      if (this.closed) return;
+      this.keep(meta.mediaTime);
+      if (!v.ended) v.requestVideoFrameCallback(tick);
+    };
+    v.addEventListener("loadeddata", () => {
+      if (this.closed) return;
+      // A pass of at most ~20 s; a short clip plays at its own speed and gives every frame.
+      v.playbackRate = Math.min(4, Math.max(1, this.d / 20));
+      v.requestVideoFrameCallback(tick);
+      v.play().catch(() => {});
+    }, { once: true });
+    v.addEventListener("ended", () => { this.done = true; this.onProgress(1); this.release(); });
+  }
+  keep(t){
+    const k = Math.round(t / this.step);
+    if (this.frames.has(k) || !this.v || !this.v.videoWidth) return;
+    const v = this.v, w = Math.min(640, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
+    if (!this.c){ this.c = document.createElement("canvas"); this.c.width = w; this.c.height = h; }
+    this.c.getContext("2d").drawImage(v, 0, 0, w, h);
+    this.frames.set(k, null);  // taken; the JPEG follows
+    this.c.toBlob((b) => {
+      if (this.closed || !b){ this.frames.delete(k); return; }
+      this.frames.set(k, URL.createObjectURL(b));
+      this.keys = null;
+      this.onProgress(Math.min(1, t / this.d));
+    }, "image/jpeg", 0.75);
+  }
+  // The cached frame closest to t (null while there is none).
+  near(t){
+    if (!this.frames.size) return null;
+    const k = Math.round(t / this.step), hit = this.frames.get(k);
+    if (hit) return hit;
+    if (!this.keys) this.keys = [...this.frames.keys()].filter((x) => this.frames.get(x)).sort((a, b) => a - b);
+    const ks = this.keys;
+    if (!ks.length) return null;
+    let lo = 0, hi = ks.length - 1;
+    while (lo < hi){ const m = (lo + hi) >> 1; if (ks[m] < k) lo = m + 1; else hi = m; }
+    const best = lo > 0 && Math.abs(ks[lo - 1] - k) <= Math.abs(ks[lo] - k) ? ks[lo - 1] : ks[lo];
+    return this.frames.get(best);
+  }
+  release(){ if (this.v){ this.v.pause(); this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } if (this.c){ dropCanvas(this.c); this.c = null; } }
+  close(){
+    this.closed = true;
+    this.release();
+    this.frames.forEach((u) => { if (u) URL.revokeObjectURL(u); });
+    this.frames.clear();
+  }
+}

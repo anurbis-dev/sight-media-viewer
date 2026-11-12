@@ -244,11 +244,41 @@ Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every 
 3D, null = picture); annotate.js `visibleNow` goes through it. `drawingRow(it, at)` makes a
 FORMAT.md row (bbox columns from `boundsOf`) from an editor item.
 
+**Transform (select tool)** — `review-core.js` `xfBox / xfHandles / xfAt / xfStart / xfDrag /
+xfSvg / XF_CURSOR / snap15`: handles, hit test, the drag math (move, 8 scale handles, rotate, line
+ends / bend) and the selection markup, shared by annotate.js (screen-px overlay: `map` = toScreen,
+`u` = 1) and review-draw.js (doc-unit overlay: sizes × doc-per-px). While the rotate knob is
+dragged, `D.at` = the pointer: the knob is drawn there with an arm from the pivot (the box centre),
+the angle is atan2 about the pivot, so a longer arm turns finer.
+
 **Drawing canvas** (`app/static/review-draw.js`, `SightReviewDraw.open`) — shared by the HTML page
-(inlined) and the phone app. Tools: brush, highlighter, arrow, rect, ellipse, **text**, eraser. Text:
+(inlined) and the phone app. Tools: select / transform (`V`), brush, highlighter, arrow, rect,
+ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The trash deletes the selection,
+else every item drawn here (one undo step). Undo keeps whole `items` arrays: a transform drags
+*copies* of the selected objects (`stroke.prev` restores on a tap / cancel), never objects an undo
+state holds. View: `screen = V.o + Rot(V.r)·diag(V.z·V.m, V.z)·(local − box centre)` (`fwd0` /
+`inv` / `pin` keep a local point under a screen point for pinch, wheel, right-drag zoom); two
+fingers zoom + pan + turn (snaps to quarters within 6°), the top bar turns 90° / mirrors / fits
+(fit straightens to the nearest quarter, the box size swaps on 90 / 270). `o.view {rot, mirror}`
+opens it that way, `o.onView` hears the turn / mirror buttons. The text field lives inside the
+transformed box (box px = doc / (vb.w / BW)), so it turns and zooms with the picture. Text:
 the field opens on pointer *up* (iOS shows the keyboard only from a touch-end gesture), a tap on a
 text drawn in this session edits it, a tap elsewhere / Done / Esc commits, empty text removes it;
 Sight's text defaults (dark box 0.6, size 24 screen px at the current zoom → doc units).
+
+**Visibility on the desktop** (annotate.js) — `ctxShown(it)` is the base rule (ctx on screen,
+reply not hidden / deleted, its note still exists — a drawing of a deleted note never shows);
+`visibleNow` adds the view mode (`viewMode()`, cached per microtask, reset in `afterChange` /
+`paintVisibility`): **compose** (the note field focused or filled, a stroke / shape being drawn, a
+new text, screenshots or unattached drawings waiting) shows only unattached drawings = a clean
+picture for the new note; **pin** (a note clicked) only that note's; **hover** dims the others.
+Hit tests, the eraser, selection and "clear on screen" follow `visibleNow`; reports and exports
+use `ctxShown` (every drawing on that frame). Cards show the note's own drawings (and each reply's)
+over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset).
+The lightbox view's **turn / mirror** (index.html `attachViewer`: `turn {rot, mir}`, localStorage
+`sight.viewTurn`, newest 500 files) is a CSS prefix about the window centre on the media and on
+annotate's layer root (`geom().turn`); `unturn(x, y)` maps the pointer back, so pan / zoom and
+annotate's `local(e)` / `toDoc` work in the unturned frame. Doc units never change.
 
 **HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)`) — the report
 comes from `gatherReport(true)`: **clean** pictures (no drawings burned in) — `cover` (images /
@@ -258,9 +288,11 @@ frame of their own (the page shows the cover with the note's drawings). The PDF 
 `gatherReport(false)` and still burns drawings in. The page draws the package's drawing rows with
 review-core as an SVG overlay (`.ov`, `viewBox` in doc units: `0 0 w h` for pictures / video —
 frames are the whole media scaled; `-500·a -500 1000·a 1000` for 3D, a = frame aspect). Frames
-(`frameOf(key)`): `"cover"` = every drawing; a note id = picture notes: the cover filtered by
+(`frameOf(key)`): `"cover"` = every drawing (the page shows the cover itself clean — gallery
+entry `clean: true` — the drawings are on the note pictures); a note id = picture notes: the cover filtered by
 `data.note`; video / 3D: everything `ctxVisible` at the note's `ctx`. Its drawing canvas
-(`drawSheet`) edits items in the same doc units; drafts keep `{frame, items}`; sending turns them
+(`drawSheet`) edits items in the same doc units, on the clean picture (`base: []`) for a new note
+or reply, and opens turned / mirrored as last left (localStorage `sight-review:view:<asset id>`); drafts keep `{frame, items}`; sending turns them
 into rows in `E.rows` (localStorage) with `data.note`, `data.reply` (a reply) and the frame's ctx
 (`drawCtx`: video `{t, hold}` of the note, 3D `{vk, cam}`); a new note drawn on a frame takes that
 note's whole ctx. *Download reply* merges `E.rows` like any other row (`RC.mergeRows`). Drawing on
@@ -374,6 +406,16 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   median averaged, snapped to a common rate within 1.5 %), 25 until then (shown as "≈25 fps").
   Frames for cards, reply drawings and reports come from a second hidden `<video>` (`Grabber`,
   one seek at a time) and are cached in `frames`.
+- **Scrub cache** (`media.js ScrubCache`): after the video opens, a hidden muted player runs
+  through the clip (rate max(1, min(4, duration / 20))) and keeps a ≤ 640 px JPEG per step
+  (`requestVideoFrameCallback`; ≤ 1500 frames, step = max(frame, duration / 1500)) as blob URLs,
+  in memory only. During a scrub (stage drag, position bar) `near(t)` is shown in `.scrubimg` over
+  the player until the last seek has landed (`seeked` with nothing pending) or it plays. Closed
+  (URLs revoked) with the review / on re-pick. No rVFC (old WebKit): no cache.
+- **View**: `R.meta.view {rot, mirror}` (saved with the list entry) turns / mirrors the stage
+  (`turnEl`: a 90 / 270 element gets the stage's swapped size, centred), the full-screen viewer and
+  the canvas (`drawCanvas` passes `view` / `onView`). While a new note is open the stage shows only
+  its own drawing (`stageDrawings`); canvases for a new note / reply / a note's drawing open clean.
 - **Overlays**: the stage `<svg>` uses `viewBox 0 0 w h` + `xMidYMid meet`, which matches the
   media's `object-fit: contain`; card pictures use `preserveAspectRatio="none"` over the scaled
   picture (same aspect). Doc units are pixels of the picture as shown (`asset.width/height`; when

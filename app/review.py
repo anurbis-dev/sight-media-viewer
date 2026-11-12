@@ -411,10 +411,11 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .state.progress { color: var(--amber); }
 .state.done { color: var(--green); }
 .text { white-space: pre-wrap; word-break: break-word; margin: 6px 0; font-size: 15px; }
-.frame { max-width: 100%; border-radius: 8px; display: block; margin: 8px 0 2px; cursor: zoom-in; }
+.frame { width: 100%; border-radius: 8px; display: block; margin: 8px 0 2px; cursor: zoom-in; }
 .cap { font-size: 11px; color: var(--muted); }
-.shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-.shots img { height: 80px; max-width: 100%; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
+/* Every picture in a card is shown big (full width): no extra click to read it. */
+.shots { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.shots img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
 .replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }
 .rep { margin: 6px 0; position: relative; }
 .rep .rh { font-size: 11px; color: var(--muted); }
@@ -472,14 +473,14 @@ body.zoomed { overflow: hidden; }
 .empty { color: var(--muted); padding: 20px 0; }
 .gen { font-size: 11px; color: var(--muted); text-align: center; margin-top: 30px; }
 /* Pictures with drawings: the vector overlay (review-core) sits on the clean picture. */
-.fw { position: relative; display: block; width: fit-content; max-width: 100%; margin: 8px 0 2px; cursor: zoom-in; }
-.fw > img { display: block; max-width: 100%; }
+.fw { position: relative; display: block; width: 100%; margin: 8px 0 2px; cursor: zoom-in; }
+.fw > img { display: block; width: 100%; }
 .fw .frame { margin: 0; }
 .fw.cover-w { width: 100%; margin: 0 0 4px; }
-.fw.sm { display: inline-block; margin: 6px 0 0; }
-.fw.sm > img { height: 80px; width: auto; border-radius: 6px; border: 1px solid var(--line); }
+.fw.sm { margin: 6px 0 0; }
+.fw.sm > img { border-radius: 8px; border: 1px solid var(--line); }
 .ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
-.field .atts .fw { margin: 0; }
+.field .atts .fw { margin: 0; width: fit-content; }
 .field .atts .fw > img { height: 56px; width: auto; border-radius: 8px; border: 1px solid var(--line); }
 .field .atts .fw::after { content: "\270E"; position: absolute; left: 4px; bottom: 2px; color: #fff; font-size: 12px; text-shadow: 0 0 3px #000; }
 .field textarea.d { padding-left: 74px; }
@@ -668,13 +669,26 @@ body.zoomed { overflow: hidden; }
   var frameGal = [], noteGal = null;
   function zoom(gal, at){
     var z = el("div", "zoom"), w = el("div", "zw"), i = el("img"), cnt = el("div", "zn"), idx = at, ov = null;
+    // Zoom as in Sight's viewer: right-drag (mouse or the pen's side button) zooms about where it
+    // started, the wheel zooms, a drag pans while zoomed in; a double-click toggles 2.5×.
+    var zs = { z: 1, x: 0, y: 0 }, zd = null;
+    function paintZ(){ w.style.transformOrigin = "0 0"; w.style.transform = zs.z === 1 ? "" : "translate(" + zs.x + "px," + zs.y + "px) scale(" + zs.z + ")"; z.style.cursor = zs.z > 1 ? "grab" : ""; }
+    function zoomAt(nz, cx, cy){
+      nz = Math.min(12, Math.max(1, nz));
+      var r = w.getBoundingClientRect(), bx = r.left - zs.x, by = r.top - zs.y;  // the untransformed corner
+      var qx = (cx - bx - zs.x) / zs.z, qy = (cy - by - zs.y) / zs.z;
+      zs = nz <= 1.01 ? { z: 1, x: 0, y: 0 } : { z: nz, x: cx - bx - nz * qx, y: cy - by - nz * qy };
+      w.style.transition = "none";
+      paintZ();
+    }
     var db = el("button", "btn zd", "✎ Draw"); db.type = "button"; db.title = "Draw on this picture";
     w.appendChild(i); z.appendChild(w); z.appendChild(cnt); z.appendChild(db);
     function showAt(){
       var g = gal[idx];
       i.src = g.f ? g.f.src : g.src;
       if (ov){ ov.remove(); ov = null; }
-      if (g.f){ var list = shownOn(g.f); if (list.length){ ov = overlay(g.f, list); w.appendChild(ov); } }
+      if (g.f && !g.clean){ var list = shownOn(g.f); if (list.length){ ov = overlay(g.f, list); w.appendChild(ov); } }
+      zs = { z: 1, x: 0, y: 0 }; paintZ();
       cnt.textContent = gal.length > 1 ? (idx + 1) + " / " + gal.length : "";
       db.hidden = !drawTarget(g);
     }
@@ -682,7 +696,7 @@ body.zoomed { overflow: hidden; }
     db.onclick = function(e){ e.stopPropagation(); var t = drawTarget(gal[idx]); close(); if (t) t(); };
     function go(d, fromX){
       var j = idx + d;
-      if (j < 0 || j >= gal.length){ w.style.transition = "transform .2s"; w.style.transform = ""; return; }
+      if (j < 0 || j >= gal.length){ if (zs.z > 1) return; w.style.transition = "transform .2s"; w.style.transform = ""; return; }
       idx = j; showAt();
       w.style.transition = "none"; w.style.transform = "translateX(" + (fromX || d * 40) + "px)";
       void w.offsetWidth;
@@ -697,28 +711,45 @@ body.zoomed { overflow: hidden; }
       e.preventDefault(); e.stopPropagation();
     }
     var p0 = null, tap = false;
-    z.onclick = function(){ if (tap) close(); tap = false; };
+    z.onclick = function(){ if (tap){ if (zs.z > 1){ zs = { z: 1, x: 0, y: 0 }; paintZ(); } else close(); } tap = false; };
+    z.addEventListener("contextmenu", function(e){ e.preventDefault(); });
+    z.addEventListener("wheel", function(e){ e.preventDefault(); zoomAt(zs.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016)), e.clientX, e.clientY); }, { passive: false });
+    z.addEventListener("dblclick", function(e){ if (e.target.closest(".zd")) return; e.preventDefault(); zoomAt(zs.z > 1.2 ? 1 : 2.5, e.clientX, e.clientY); });
     z.addEventListener("pointerdown", function(e){
       if (e.target.closest(".zd")) return;  // the Draw button gets its own click
-      p0 = { x: e.clientX, y: e.clientY, id: e.pointerId }; w.style.transition = "none"; try { z.setPointerCapture(e.pointerId); } catch (_){}
+      try { z.setPointerCapture(e.pointerId); } catch (_){}
+      if (e.button === 2 || e.button === 1){
+        e.preventDefault();
+        zd = { id: e.pointerId, y: e.clientY, x: e.clientX, z0: zs.z, mid: e.button === 1, px: zs.x, py: zs.y };
+        return;
+      }
+      p0 = { x: e.clientX, y: e.clientY, id: e.pointerId, px: zs.x, py: zs.y }; w.style.transition = "none";
     });
     z.addEventListener("pointermove", function(e){
+      if (zd && e.pointerId === zd.id){
+        if (zd.mid){ zs.x = zd.px + e.clientX - zd.x; zs.y = zd.py + e.clientY - zd.y; if (zs.z > 1) paintZ(); }
+        else zoomAt(zd.z0 * Math.exp((zd.y - e.clientY) * 0.012), zd.x, zd.y);
+        return;
+      }
       if (!p0 || e.pointerId !== p0.id) return;
+      if (zs.z > 1){ zs.x = p0.px + e.clientX - p0.x; zs.y = p0.py + e.clientY - p0.y; paintZ(); return; }
       var dx = e.clientX - p0.x, dy = e.clientY - p0.y;
       w.style.transform = Math.abs(dx) > Math.abs(dy) ? "translateX(" + dx + "px)" : "translateY(" + dy + "px)";
       z.style.background = Math.abs(dy) > Math.abs(dx) ? "rgb(0 0 0 / " + Math.max(.3, .88 - Math.abs(dy) / 600) + ")" : "";
     });
     function end(e){
+      if (zd && e.pointerId === zd.id){ zd = null; return; }
       if (!p0 || e.pointerId !== p0.id) return;
       var dx = e.clientX - p0.x, dy = e.clientY - p0.y; p0 = null;
       z.style.background = "";
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8){ tap = true; return; }
+      if (zs.z > 1) return;  // that was a pan
       if (Math.abs(dy) > Math.abs(dx)){ if (Math.abs(dy) > 60) close(); else { w.style.transition = "transform .2s"; w.style.transform = ""; } return; }
       if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1, dx < 0 ? window.innerWidth / 3 : -window.innerWidth / 3);
       else { w.style.transition = "transform .2s"; w.style.transform = ""; }
     }
     z.addEventListener("pointerup", end);
-    z.addEventListener("pointercancel", function(e){ if (p0 && e.pointerId === p0.id){ p0 = null; z.style.background = ""; w.style.transition = "transform .2s"; w.style.transform = ""; } });
+    z.addEventListener("pointercancel", function(e){ if (zd && e.pointerId === zd.id) zd = null; if (p0 && e.pointerId === p0.id){ p0 = null; z.style.background = ""; w.style.transition = "transform .2s"; w.style.transform = ""; } });
     z.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
     document.addEventListener("keydown", onKey, true);
     showAt();
@@ -777,7 +808,8 @@ body.zoomed { overflow: hidden; }
     var dr = drafts[dkey], f = frameOf(fkey);
     if (!dr || !f) return;
     if (dr.draw && dr.draw.frame !== fkey && !confirm("This note already has a drawing on another frame. Replace it?")) return;
-    drawSheet({ src: f.src, vb: vbOf(f), base: shownOn(f), items: dr.draw && dr.draw.frame === fkey ? dr.draw.items : [], onDone: function(items){
+    // A new note or reply is drawn on the clean picture (the others' drawings stay on their notes).
+    drawSheet({ src: f.src, vb: vbOf(f), base: [], items: dr.draw && dr.draw.frame === fkey ? dr.draw.items : [], onDone: function(items){
       dr.draw = items.length ? { frame: fkey, items: items } : null;
       if (dkey === "+new") newOpen = true; else openReply[dkey] = true;
       render();
@@ -789,7 +821,7 @@ body.zoomed { overflow: hidden; }
     im.onload = function(){
       var w = im.naturalWidth, h = im.naturalHeight;
       if (!w || !h) return;
-      drawSheet({ src: src, vb: [0, 0, w, h], base: [], items: [], onDone: function(items){
+      drawSheet({ src: src, vb: [0, 0, w, h], base: [], items: [], view: null, onView: null, onDone: function(items){
         if (!items.length) return;
         var k = Math.min(1, 1600 / Math.max(w, h)), c = document.createElement("canvas");
         c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
@@ -805,7 +837,13 @@ body.zoomed { overflow: hidden; }
   // review-draw.js (inlined above, shared with the mobile app): brush with pen pressure,
   // highlighter, arrow, rectangle, ellipse, eraser, five colours, undo / redo, pinch / pan.
   // o: {src, vb, base, items, onDone(items)}.
-  function drawSheet(o){ SightReviewDraw.open(Object.assign({ numOf: numOf }, o)); }
+  // The canvas opens turned / mirrored as it was last left for this media (remembered here).
+  var VIEW_KEY = "sight-review:view:" + (PKG.asset && PKG.asset.id);
+  function drawSheet(o){
+    var v = null;
+    try { v = JSON.parse(localStorage.getItem(VIEW_KEY)); } catch (e) {}
+    SightReviewDraw.open(Object.assign({ numOf: numOf, view: v, onView: function(nv){ try { localStorage.setItem(VIEW_KEY, JSON.stringify(nv)); } catch (e) {} } }, o));
+  }
 
   function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
   function thumbs(list, nid){
@@ -1017,7 +1055,8 @@ body.zoomed { overflow: hidden; }
     var keepY = window.scrollY;
     app.textContent = "";
     var cf = frameOf("cover");
-    if (cf){ var cw = pic(cf, shownOn(cf), "cover-w"); cw.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cw); }
+    // The picture on top is the original: the drawings are on the notes' pictures below.
+    if (cf){ var cw = pic(cf, [], "cover-w"); cw.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cw); }
     else if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cv); }
     var list = el("div", ""); list.id = "list"; app.appendChild(list);
     if (newOpen){
@@ -1061,7 +1100,7 @@ body.zoomed { overflow: hidden; }
     var list = document.getElementById("list");
     list.textContent = "";
     var cf = frameOf("cover");
-    frameGal = cf ? [{ f: cf }] : R.cover ? [{ src: R.cover }] : [];
+    frameGal = cf ? [{ f: cf, clean: true }] : R.cover ? [{ src: R.cover }] : [];
     var ql = query.trim().toLowerCase();
     allNotes().filter(function(n){
       if (filter !== "all" && stateOfShown(n) !== filter) return false;

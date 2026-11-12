@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.15.6 — 2026-11-10 — Grid thumbnails decode asynchronously again
+- **What:** Reverts 0.15.4's `decoding="sync"` on grid thumbnails back to the original `async`. Nothing changes visibly.
+- **Where:** `index.html` `fillThumb`; `docs/ARCHITECTURE.md`.
+- **Notes:** `sync` was added against the scroll blink, but that blink was scroll anchoring (0.15.5), and `sync` made no measurable difference in the off-screen Edge runs. `async` was the deliberate original choice: a fast scroll or the first screen brings dozens of new thumbnails at once, and `sync` makes the frame wait until all of them are decoded (the decode itself still runs off the main thread), while `async` shows the frame and fills the images in. The lightbox keeps `sync` for an already-cached picture: that is a single image, swapped in place, where an empty frame is worse than a short wait.
+
 ## 0.15.5 — 2026-11-10 — Grid: no more blinking while dragging slowly (scroll anchoring)
 - **What:** The library grid no longer blinks while it is scrolled slowly. At certain positions it flipped between two rows on every frame, and kept doing so after the scrolling stopped.
 - **Where:** `index.html` CSS: `.grid { overflow-anchor: none; }`.

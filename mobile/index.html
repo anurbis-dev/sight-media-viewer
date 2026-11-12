@@ -75,6 +75,9 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .transport .tc { font-variant-numeric: tabular-nums; font-size: 12.5px; min-width: 0; flex: 1; text-align: center; white-space: nowrap; overflow: hidden; }
 .scrub { position: relative; height: 26px; margin: 0 14px; }
 .scrub input { position: absolute; left: 0; right: 0; top: 4px; width: 100%; margin: 0; padding: 0; background: none; border: 0; accent-color: #0a84ff; height: 18px; }
+.scrub .cachebar { position: absolute; left: 0; top: 23px; height: 2px; width: 0; background: #30d158; opacity: .55; border-radius: 1px; pointer-events: none; }
+.stage .scrubimg[hidden] { display: none; }
+.stage img, .stage video, .stage svg { transform-origin: 50% 50%; }
 .scrub .mk { position: absolute; top: 0; width: 3px; height: 6px; margin-left: -1.5px; border-radius: 2px; background: #ff453a; pointer-events: none; }
 .scrub .mk.done { background: #30d158; } .scrub .mk.progress { background: #ffd60a; }
 .tools { display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px; }

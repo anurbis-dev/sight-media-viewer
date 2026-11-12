@@ -14,6 +14,33 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.24.0 — 2026-11-12 — One transform tool everywhere, clean picture for new notes, turn / mirror, phone scrub cache
+- **What:** the select / transform tool (`V`) is now in the shared drawing canvas too (HTML page,
+  phone); its rotate knob follows the pointer out from the pivot (longer arm = finer turn), same in
+  Sight. Ctrl held = temporary eraser; a bin clears the drawings on screen (Sight: Shift+Delete).
+  A new note (or reply) is drawn on a clean picture: Sight hides other notes' drawings while you
+  draw / type a new one, a clicked note shows only its own; cards show the note's (and each reply's)
+  drawings over the clean picture / video frame. Sight's panel got the All / Open / In progress /
+  Resolved filter. View turn 90° / mirror: Sight's viewer (Shift+R / Shift+M, per file), the
+  phone (stage, viewer, canvas; saved with the review), the canvas (buttons + two-finger turn).
+  HTML page: the top picture is the original, every card picture is full width, the zoom viewer
+  zooms with right-drag / pen side button / wheel / double-click (the canvas: right-drag too).
+  Phone: a scrub cache of small frames so scrubbing follows the finger at once.
+- **Where:** `app/static/review-core.js` (xf*), `review-draw.js` (rewritten view + select tool),
+  `annotate.js` (viewMode / ctxShown, local() through the turn, previews, filter, clearShown,
+  Ctrl eraser), `index.html` (attachViewer turn / unturn, buttons, keys, hints), `app/review.py`
+  (template), `mobile/js/app.js`, `mobile/js/media.js` (ScrubCache), `mobile/index.html`; new
+  `tests/test_review_page.py` + `tests/page_e2e.cjs` (Sight → page → Sight with a reply picture,
+  a reply drawing, a resolve and a new drawn note).
+- **Notes:** turning / mirroring is view only — doc units (the media's own pixels) never change;
+  exports and screenshots stay unturned. Reports use `ctxShown`, never `visibleNow` (the view mode
+  must not drop drawings from a PDF). "Pictures lost in the merge" (user report): the round trip
+  loses nothing (new test); what looked lost were reply drawings Sight only listed as an eye + count
+  and the page's cover showing everything at once — both now shown where they belong. The phone
+  cache is memory only (≤ 1500 frames ≤ 640 px); scrubbing still seeks the real player and the
+  cached picture hides when the seek lands. The canvas's undo keeps item arrays: transforms work on
+  copies, never mutate an object an undo state holds. Review: a fresh-agent review runs on this commit; its fixes follow in the next one.
+
 ## 0.23.1 — 2026-11-12 — Video frame stepping and note times land on the frame on screen (Sight + phone app)
 - **What:** in Sight's video lightbox `,` / `.` stepped from the *nearest* frame boundary, so a step taken after a pause or a scrub late in a frame skipped a frame forward (or stayed put backwards); a note / drawing made while paused late in frame k was stored at the raw time and showed on frame k+1. Now a step goes from the frame on screen and a new note / drawing is stored at that frame's start (+0.01 frame, where stepping lands). Without annotating, stepping used 25 fps on every clip (the rate was only read when annotation mode came on); it is now read when a video opens. Found by the fresh-agent review of the phone app (0.23.0), which already had the fix.
 - **Where:** `app/static/annotate.js` (`frameStart`, `stepFrame`, `ctxNow`, `setAsset` → `loadFps`); `mobile/js/app.js` (`frameStart` keeps the raw time while the rate is a guess, like Sight). Docs: ARCHITECTURE (phone app video), PLAN.md (known bug removed).
@@ -163,8 +190,3 @@ Add new entries directly below this line.
   - PDF: client composes frames (`composeNative`: native image/video frame, or the 3D view) as JPEG data URLs; the server lays out HTML with MuPDF Story, whose fallback fonts cover Cyrillic. `max-height` is ignored by MuPDF, so images are sized by width (`_img_tag`). Export goes to `~/Downloads` (else `<SIGHT_HOME>/exports`) and is revealed; a missing file manager is ignored.
   - Not done: a `sight://` link / file association that opens a review from a messenger directly (needs launcher + OS registration, untested platform work) — the package file is the transport for now. No point-level stroke editing (Grease Pencil edit mode); strokes transform as a whole and the eraser can split them.
   - Checked with Playwright on an isolated `SIGHT_HOME` (images, video 24 fps, a GLB cube under SwiftShader): every tool, synthetic pen pressure, Shift snapping, bend, eraser + undo, rotate/scale/duplicate/copy/paste/delete, text re-edit, notes, both screenshots, frame stepping and markers, onion, 3D view switch + shading restore, PDF (image/video/3D) and package export + import (UI and API), no JS errors. Not checked: a real pen tablet, Windows/macOS file reveal, the packaged builds.
-
-## 0.15.6 — 2026-11-10 — Grid thumbnails decode asynchronously again
-- **What:** Reverts 0.15.4's `decoding="sync"` on grid thumbnails back to the original `async`. Nothing changes visibly.
-- **Where:** `index.html` `fillThumb`; `docs/ARCHITECTURE.md`.
-- **Notes:** `sync` was added against the scroll blink, but that blink was scroll anchoring (0.15.5), and `sync` made no measurable difference in the off-screen Edge runs. `async` was the deliberate original choice: a fast scroll or the first screen brings dozens of new thumbnails at once, and `sync` makes the frame wait until all of them are decoded (the decode itself still runs off the main thread), while `async` shows the frame and fills the images in. The lightbox keeps `sync` for an already-cached picture: that is a single image, swapped in place, where an empty frame is worse than a short wait.

@@ -62,27 +62,37 @@
   - While drawing: `Shift` snaps lines, arrows and straight brush strokes to 15° steps (0/45/90…),
     makes rectangles square and ellipses round; `Alt` draws from the centre. Select tool: click /
     Shift+click / drag a box to select, drag to move (Shift locks the axis), Alt+drag duplicates,
-    corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps), arrows
-    nudge (Shift ×10). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
+    corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
+    you turn it the knob follows the pointer out from the centre, so pulling it further away turns
+    more finely; arrows nudge (Shift ×10). Hold `Ctrl` with any drawing tool to erase for a moment;
+    the bin in the toolbar (`Shift+Delete`) clears the drawings on screen in one step (undo brings
+    them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
     `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
   - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
-    takes the drawings currently on screen that aren't attached to a note yet, the reviewer name
-    (field at the top), and the date. `S` adds a screenshot of what you see, `Shift+S` one of an area
-    you drag out; they go into the note you are writing. Click a note to jump to it (its drawings
-    are highlighted), double-click its text to edit, the clock marks it *In progress* (someone took
+    takes the drawings currently on screen that aren't attached to a note yet (as vector drawings,
+    shown on a picture of the frame in its card), the reviewer name (field at the top), and the
+    date. While a new note is being made — you draw, or type in the field — the picture is clean:
+    other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
+    above the list filter the notes. `S` adds a screenshot of what you see, `Shift+S` one of an area
+    you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
+    show; click it again or Esc to see all; hovering a note dims the others), double-click its text to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
     reviewer attached to a reply (on the web page) show under it; click to enlarge. A reply that
-    came with drawings (made in the mobile app or on the web page) shows an eye with their count:
-    click it to hide / show those drawings; deleting the reply deletes its drawings too.
+    came with drawings (made in the mobile app or on the web page) shows them on a picture under it
+    and an eye with their count: click it to hide / show those drawings; deleting the reply (or the
+    note) deletes its drawings too.
   - **Review state** — the *State* row at the top of the panel marks the file *Needs review*,
     *Changes* or *Approved*. Under it: who set the state last and when; *History* lists every
     change. The grid shows it as a pill on the card together with the number of open
     notes, and the sidebar (under Types) gets *Open notes / Needs review / Changes requested /
     Approved* rows that filter the library.
+  - **Turn / mirror the view** — the ↻ and mirror buttons at the top of the viewer (`Shift+R`,
+    `Shift+M`) turn a picture or video by 90° and mirror it; Sight remembers it per file. Only the
+    view changes: the file and the drawings on it stay as they are.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
     first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them
@@ -106,7 +116,8 @@
     their replies / new notes / resolved states, and what was deleted on one side is deleted on the
     other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
     in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
-    note, screenshot and reply. The page first asks the reviewer's name (nothing can be done
+    note, screenshot and reply. The picture on top is the original; each note shows its frame with
+    its drawings, and every picture in a card is shown at full width. The page first asks the reviewer's name (nothing can be done
     without it; *You: … ✎* changes it). The title, who sent the page, and the *All / Open / In
     progress / Resolved* filters with their counts stay pinned at the top; tap the title (or the
     arrow) for the file details and the review-state history. *Reply* opens a message field (paper
@@ -116,14 +127,20 @@
     *+* in the bottom bar (one at a time; it can carry pictures too). Unsent entries have × to take
     them back. Tap a picture to view it full screen: swipe left / right (or ← / →) for the next
     or previous one — the picture and the note frames form one row, a note's attachments (its own
-    and its replies') another — and swipe up / down, tap or Esc to close. **Drawing**: the pencil
+    and its replies') another — and swipe up / down, tap or Esc to close. Right-drag (mouse, or the pen's side button) zooms
+    as in Sight, so do the wheel and a double-click; drag to pan while zoomed in. **Drawing**: the pencil
     in a message field (or *✎ Draw* in the full-screen viewer) opens a full-screen canvas over the
     note's frame (a new note: over the picture, or — video / 3D — over a note frame you pick; the
-    new note then sits on that frame): brush (pen pressure), highlighter, arrow, rectangle, ellipse,
-    text (tap where it goes, type; tap your text again to change it, empty it to remove it),
-    eraser, five colours, undo / redo (Ctrl+Z / Ctrl+Shift+Z), *Done* / *Cancel*. Two fingers
-    zoom and pan; once you have drawn with a pen (Apple Pencil, stylus) the pen draws and a finger
-    pans; with a mouse the wheel zooms and the middle / right button pans. The drawing goes with
+    new note then sits on that frame). A new note or a reply is drawn on the clean picture. Tools:
+    select / transform (`V`: tap or drag a box to select, drag to move, handles scale, the round knob
+    rotates and follows your finger out from the centre for finer turns; a colour recolours the
+    selection), brush (pen pressure), highlighter, arrow, rectangle, ellipse, text (tap where it
+    goes, type; tap your text again to change it, empty it to remove it), eraser (or hold Ctrl),
+    five colours, undo / redo (Ctrl+Z / Ctrl+Shift+Z), the bin (deletes the selection, else clears
+    everything drawn here), *Done* / *Cancel*. Two fingers zoom, pan and turn the picture (a
+    quarter turn snaps); the top bar turns it 90°, mirrors it and fits it back. Once you have drawn
+    with a pen (Apple Pencil, stylus) the pen draws and a finger pans; with a mouse the wheel and
+    right-drag zoom, the middle button pans. The drawing goes with
     the reply as vectors and shows in Sight on that frame / view under the reply's eye toggle. Tap
     an attached picture in the field (or *✎ Draw* on an attachment in the viewer) to draw over a
     copy of it instead — that one is sent as a flat picture. The pencil next to the search shows
@@ -135,14 +152,18 @@
   made in Safari before installing stay in Safari. *Photo or video* picks from the library / camera
   roll, *Open a file…* from Files (pictures, videos, or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
-  changes it). The picture / video stays on top; on a video, drag left / right across the picture to
-  scrub (as click-drag in Sight: the picture's width is the whole clip; Shift with a mouse = finer),
+  changes it). The picture / video stays on top; ↻ and the mirror button next to the eye turn it 90° and
+  mirror it (the full-screen view and the canvas follow; the drawings stay put on the picture). On
+  a video, drag left / right across the picture to
+  scrub (as click-drag in Sight: the picture's width is the whole clip; Shift with a mouse = finer;
+  after opening, the app runs through the clip once and keeps small frames in memory — the green
+  line under the position bar — so the scrub follows the finger at once),
   tap it to play / pause; below it: play, ◀ ▶ one frame back / forward,
   ‹ › previous / next note, the timecode and frame number, and a position bar with the notes
   marked (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for notes). *+ Note* adds a note — on
-  a video at the frame on screen; *✎ Draw a note* (or tapping the picture → *✎ Draw*) opens the
-  same drawing canvas as the web page (brush with pen pressure, highlighter, arrow, rectangle,
-  ellipse, text, eraser, colours, undo / redo, pinch / pan) on the picture or the paused frame, and the
+  a video at the frame on screen; while it is open the picture is clean (only its own drawing); *✎ Draw a note* (or tapping the picture → *✎ Draw*) opens the
+  same drawing canvas as the web page (select / transform, brush with pen pressure, highlighter,
+  arrow, rectangle, ellipse, text, eraser, colours, undo / redo, clear, pinch / pan / turn) on the picture or the paused frame, and the
   note goes there. Each note has *Reply* (text, pictures, a drawing on its frame, *Mark as In
   progress / Resolved / Reopen*), *Resolve* / *Reopen*, and ⋯ for *Edit text*, *Edit the drawing*,
   *Mark in progress*, *Delete*; × deletes a reply. Tap a timecode to go to that frame, a picture to

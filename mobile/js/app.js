@@ -6,7 +6,7 @@
 // shared with Sight's HTML reviewer page), shortcuts from Sight's keys.js.
 
 import * as DB from "./store.js";
-import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
+import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, ScrubCache, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
 import { videoFps } from "./mp4.js";
 import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
@@ -34,6 +34,7 @@ const ICONS = {
   clip: '<path d="m20.5 11.5-8.3 8.3a5.2 5.2 0 0 1-7.4-7.4l8.6-8.6a3.5 3.5 0 0 1 4.9 4.9l-8.6 8.6a1.7 1.7 0 0 1-2.5-2.5l7.9-7.9"/>',
   send: '<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor" stroke="none"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  turn: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>', mirror: '<path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/>',
 };
 function ico(name, size = 20){ return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
 function ibtn(name, title, fn, size){ const b = btn("ib", null, fn, title); b.innerHTML = ico(name, size); return b; }
@@ -413,6 +414,7 @@ function closeReview(){
   flush();
   if (R.video){ R.video.pause(); R.video.removeAttribute("src"); R.video.load(); }
   if (R.grab) R.grab.close();
+  if (R.scrub) R.scrub.close();
   if (R.url) URL.revokeObjectURL(R.url);
   R.frames.forEach((f) => URL.revokeObjectURL(f.url));
   R.shotUrls.forEach((u) => URL.revokeObjectURL(u));
@@ -515,22 +517,47 @@ function overlay(vb, list, cls){
   return s;
 }
 // What shows on the main picture right now.
+// While a new note is open the picture is clean: only that note's own drawing shows (on its frame).
 function stageDrawings(){
   if (R.hide) return [];
-  const all = M.drawings(R.rows);
-  if (kindNow() === "video"){
-    const v = R.video;
-    if (!v) return [];
-    return all.filter((it) => RC.ctxVisible(it.data.ctx, { t: v.currentTime, fps: R.fps }));
+  const v = R.video, at = kindNow() === "video" ? (v ? { t: R.scrubT != null ? R.scrubT : v.currentTime, fps: R.fps } : null) : null;
+  if (kindNow() === "video" && !at) return [];
+  if (R.newOpen){
+    const d = R.drafts["+new"];
+    if (!d || !d.draw) return [];
+    return !at || RC.ctxVisible(d.draw.frame.ctx, at) ? d.draw.items : [];
   }
-  return all;
+  const all = M.drawings(R.rows);
+  return at ? all.filter((it) => RC.ctxVisible(it.data.ctx, at)) : all;
 }
 function paintOverlay(){
   if (!els || !els.svg) return;
   els.svg.setAttribute("viewBox", [0, 0, docW() || 1, docH() || 1].join(" "));
   els.svg.innerHTML = RC.svgMarkup(stageDrawings(), numOf);
 }
+// The view's turn (0 / 90 / 180 / 270°) and mirror, kept with the review (R.meta.view): the stage,
+// the full-screen viewer and the drawing canvas show the picture that way. View only — drawings
+// stay in the picture's own pixels.
+const viewOf = () => R.meta.view || { rot: 0, mirror: false };
+// Places an element showing the whole picture (object-fit: contain) turned / mirrored in a W × H box.
+function turnEl(n, W, H, vw){
+  const side = vw.rot % 180 !== 0, tf = (vw.rot ? `rotate(${vw.rot}deg) ` : "") + (vw.mirror ? "scaleX(-1)" : "");
+  Object.assign(n.style, side ? { width: H + "px", height: W + "px", left: (W - H) / 2 + "px", top: (H - W) / 2 + "px" } : { width: "", height: "", left: "", top: "" });
+  n.style.transform = tf;
+}
+function applyStageView(){
+  if (!els || !els.stage) return;
+  const st = els.stage, W = st.clientWidth, H = st.clientHeight, vw = viewOf();
+  st.querySelectorAll(":scope > img, :scope > video, :scope > svg").forEach((n) => turnEl(n, W, H, vw));
+}
+function setView(vw){
+  R.meta.view = { rot: ((vw.rot % 360) + 360) % 360, mirror: !!vw.mirror };
+  putIfAlive(R, "reviews", R.meta);
+  applyStageView();
+  if (els && els.mirB) els.mirB.classList.toggle("on", R.meta.view.mirror);
+}
 
+let stageRO = null;
 function buildStage(){
   const { stage, transport, scrub, tools } = els, a = R.meta.asset;
   stage.textContent = ""; transport.textContent = ""; scrub.textContent = ""; tools.textContent = "";
@@ -547,7 +574,7 @@ function buildStage(){
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
   if (a.kind === "image"){
-    const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; stage.appendChild(img); stage.appendChild(svg); paintOverlay();
+    const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; stage.appendChild(img); stage.appendChild(svg); paintOverlay(); applyStageView();
       stage.onclick = () => openPicture(); };
     if (R.url) show(R.url);
     else {
@@ -559,7 +586,10 @@ function buildStage(){
       const v = el("video");
       v.playsInline = true; v.setAttribute("playsinline", ""); v.preload = "auto"; v.src = R.url;
       R.video = v;
-      stage.appendChild(v); stage.appendChild(svg);
+      // A cached frame shown over the player while a scrub waits for its seek (ScrubCache).
+      const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
+      els.scrubImg = si;
+      stage.appendChild(v); stage.appendChild(si); stage.appendChild(svg);
       const big = btn("playbig", null, () => togglePlay(), "Play"); big.innerHTML = ico("play", 30);
       stage.appendChild(big);
       v.addEventListener("loadedmetadata", () => {
@@ -567,7 +597,13 @@ function buildStage(){
         const aa = R.meta.asset;
         if (!aa.width && v.videoWidth){ aa.width = v.videoWidth; aa.height = v.videoHeight; }
         if (!aa.duration && Number.isFinite(v.duration)) aa.duration = v.duration;
-        paintTime(); paintMarkers(); paintOverlay();
+        paintTime(); paintMarkers(); paintOverlay(); applyStageView();
+        const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
+        if (!rv.scrub && d){
+          rv.scrub = new ScrubCache(rv.url, d, rv.fps, (f) => { if (R === rv && els && els.cacheBar) els.cacheBar.style.width = (f * 100).toFixed(1) + "%"; });
+          // After the player's own first frame, so the two do not race for the decoder.
+          setTimeout(() => { if (R === rv && rv.scrub) rv.scrub.start(); }, 600);
+        }
       });
       v.addEventListener("error", () => toast("This device cannot play this video (format or codec).", 5000));
       ["timeupdate", "seeked", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (R && R.newOpen && els.where) els.where(); }));
@@ -583,6 +619,13 @@ function buildStage(){
   const eye = ibtn(R.hide ? "eyeoff" : "eye", "Show / hide drawings", () => { R.hide = !R.hide; eye.innerHTML = ico(R.hide ? "eyeoff" : "eye"); eye.classList.toggle("on", R.hide); paintOverlay(); });
   eye.classList.toggle("on", R.hide);
   tools.appendChild(eye);
+  tools.appendChild(ibtn("turn", "Turn the view 90°", () => setView({ rot: viewOf().rot + 90, mirror: viewOf().mirror })));
+  const mirB = ibtn("mirror", "Mirror the view", () => setView({ rot: viewOf().rot, mirror: !viewOf().mirror }));
+  mirB.classList.toggle("on", viewOf().mirror);
+  els.mirB = mirB;
+  tools.appendChild(mirB);
+  if (!stageRO){ stageRO = new ResizeObserver(() => applyStageView()); }
+  stageRO.disconnect(); stageRO.observe(stage);
   tools.appendChild(el("span", "sp"));
   const st = btn("rstate", "", reviewStateMenu, "Review state");
   els.rstate = st;
@@ -596,7 +639,8 @@ async function rebind(file){
   const rv = R;
   if (rv.url) URL.revokeObjectURL(rv.url);
   if (rv.grab) rv.grab.close();
-  rv.grab = null;
+  if (rv.scrub) rv.scrub.close();
+  rv.grab = null; rv.scrub = null;
   const old = rv.frames.get("img");
   if (old){ URL.revokeObjectURL(old.url); rv.frames.delete("img"); }
   await DB.del("frames", rv.meta.key + "|img").catch(() => {});
@@ -636,13 +680,23 @@ function jumpNote(dir){
 // px, so a tap still plays / pauses and an upward / downward swipe still scrolls the page
 // (touch-action: pan-y). Only the latest wanted time is sought; the next seek goes out when the
 // previous one has landed, so a long-GOP clip does not freeze under the finger.
+// The scrub cache (ScrubCache) puts the frame under the finger up at once; the player's own picture
+// takes over when its last seek has landed.
+function showCached(t){
+  const si = els && els.scrubImg, u = R && R.scrub && R.scrub.near(t);
+  if (!si) return;
+  if (u){ if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
+}
+function hideCached(){ if (els && els.scrubImg) els.scrubImg.hidden = true; }
 function bindScrub(stage, v){
   stage.style.touchAction = "pan-y";
   let sd = null, want = null, scrubEnd = -1e9;
   const pump = () => { if (want == null || v.seeking) return; const t = want; want = null; if (Math.abs(t - v.currentTime) > 1e-3) v.currentTime = t; };
-  v.addEventListener("seeked", () => { pump(); if (!sd && want == null && R && R.video === v && R.scrubT != null){ R.scrubT = null; paintTime(); } });
+  const settle = () => { if (R && R.video === v && R.scrubT != null){ R.scrubT = null; paintTime(); paintOverlay(); } hideCached(); };
+  v.addEventListener("seeked", () => { pump(); if (!sd && want == null) settle(); });
+  v.addEventListener("play", hideCached);
   const stop = () => {
-    if (sd && sd.on){ scrubEnd = performance.now(); if (want == null && !v.seeking && R && R.video === v){ R.scrubT = null; paintTime(); } }
+    if (sd && sd.on){ scrubEnd = performance.now(); if (want == null && !v.seeking) settle(); }
     sd = null;
   };
   stage.addEventListener("pointerdown", (e) => {
@@ -668,7 +722,8 @@ function bindScrub(stage, v){
     if (!d) return;
     const t = Math.min(d, Math.max(0, sd.t0 + (e.clientX - sd.x) / Math.max(stage.clientWidth, 1) * d * (sd.fine ? 0.1 : 1)));
     R.scrubT = t; want = t;
-    pump(); paintTime();
+    showCached(t);
+    pump(); paintTime(); paintOverlay();
   });
   const end = (e) => { if (sd && e.pointerId === sd.id) stop(); };
   stage.addEventListener("pointerup", end);
@@ -688,10 +743,12 @@ function buildTransport(){
   els.tc = tc;
   [play, ibtn("prev", "Previous note", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), tc, ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next note", () => jumpNote(1))].forEach((b) => transport.appendChild(b));
   const r = el("input"); r.type = "range"; r.min = "0"; r.step = "any"; r.value = "0"; r.setAttribute("aria-label", "Position");
-  r.addEventListener("input", () => { const v = R.video; if (!v) return; if (!v.paused) v.pause(); v.currentTime = Number(r.value); });
+  r.addEventListener("input", () => { const v = R.video; if (!v) return; if (!v.paused) v.pause(); showCached(Number(r.value)); v.currentTime = Number(r.value); });
+  r.addEventListener("change", () => { const v = R.video; if (v && !v.seeking) hideCached(); });
   els.range = r;
   els.marks = el("div");
-  scrub.appendChild(els.marks); scrub.appendChild(r);
+  els.cacheBar = el("i", "cachebar"); els.cacheBar.title = "Frames ready for scrubbing";
+  scrub.appendChild(els.cacheBar); scrub.appendChild(els.marks); scrub.appendChild(r);
 }
 function paintTime(){
   const v = R && R.video;
@@ -970,7 +1027,8 @@ async function editNoteDrawing(n){
   if (!f){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
   const rv = R, own = M.drawings(R.rows).filter((r) => r.data.note === n.id && !r.data.reply);
   const ownIds = new Set(own.map((r) => r.id));
-  DRAW.open({ src: f.url, vb: f.vb, numOf, base: drawingsOn(f).filter((r) => !ownIds.has(r.id)),
+  // On the clean picture: only this note's own drawings, editable.
+  drawCanvas({ src: f.url, vb: f.vb, base: [],
     items: own.map((r) => ({ id: r.id, kind: r.kind, shape_kind: r.shape_kind, z: r.z_index, data: r.data })),
     onDone: (items) => {
       if (R !== rv) return;
@@ -1058,7 +1116,8 @@ function composer(opts){
   async function drawDraft(fr){
     const rv = R;
     if (!await ensureName() || R !== rv) return;
-    DRAW.open({ src: fr.url, vb: fr.vb, numOf, base: fr.base || [], items: dr.draw ? dr.draw.items : [], onDone: (items) => {
+    // A new note or a reply is drawn on the clean picture: the other notes' drawings stay on theirs.
+    drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: dr.draw ? dr.draw.items : [], onDone: (items) => {
       if (R !== rv) return;
       dr.draw = items.length ? { frame: fr, items } : null;
       paintAtts(); paint(); paintPen();
@@ -1105,6 +1164,7 @@ function paintNewBar(){
     const add = btn("add", "+ Note", () => { if (!canNote){ toast("Pick the video again to add notes on its frames"); return; } R.newOpen = "focus"; paintNewBar(); });
     row.appendChild(add);
     nb.appendChild(row);
+    paintOverlay();
     return;
   }
   const row = el("div", "row"), lab = el("span");
@@ -1116,7 +1176,7 @@ function paintNewBar(){
     delete R.drafts["+new"]; R.newOpen = false; paintNewBar();
   }, "Close"));
   nb.appendChild(row);
-  nb.appendChild(composer({ key: "+new", placeholder: "Add a note…", status: null, frameFor: currentFrame, onChange: where,
+  nb.appendChild(composer({ key: "+new", placeholder: "Add a note…", status: null, frameFor: currentFrame, onChange: () => { where(); paintOverlay(); },
     onSend: (text, shots, state, draw) => {
       const t = now(), ctx = draw ? draw.frame.ctx : ctxNow();
       const n = M.newNote({ text, author: who, ctx, shots }, t);
@@ -1127,6 +1187,7 @@ function paintNewBar(){
     } }));
   where();
   els.where = where;
+  paintOverlay();  // a new note: the clean picture (with only its own drawing)
   if (R.newOpen === "focus"){ R.newOpen = true; focusLater("+new"); }
 }
 // The picture on screen as a frame to draw a new note on: the picture, or the paused video frame.
@@ -1160,12 +1221,19 @@ async function drawNew(){
   const rv = R, d = R.drafts["+new"] = R.drafts["+new"] || newDraft();
   if (d.draw && !(await ask({ title: "Replace the drawing?", text: "The new note already has a drawing.", ok: "Replace" }))) return;
   if (R !== rv) return;
-  DRAW.open({ src: fr.url, vb: fr.vb, numOf, base: fr.base, items: [], onDone: (items) => {
+  drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: [], onDone: (items) => {
     if (!items.length || R !== rv) return;
     d.draw = { frame: fr, items };
     R.newOpen = "focus";
     paintNewBar();
   } });
+}
+
+// The drawing canvas, opened turned / mirrored as the review's view; its turn / mirror buttons
+// change that view.
+function drawCanvas(o){
+  const rv = R;
+  DRAW.open(Object.assign({ numOf, view: viewOf(), onView: (vw) => { if (R === rv) setView({ rot: vw.rot, mirror: vw.mirror }); } }, o));
 }
 
 // ---- full-screen viewer ------------------------------------------------------------------------
@@ -1180,12 +1248,14 @@ function viewer(o){
   if (o.onDraw) top.appendChild(btn("btn", "✎ Draw", () => { close(); o.onDraw(); }));
   v.appendChild(box); v.appendChild(top);
   let V = { z: 1, x: 0, y: 0 }, base = { w: 1, h: 1 };
+  const vw = o.view || { rot: 0, mirror: false };
   function fit(){
-    const W = innerWidth, H = innerHeight, a = o.vb[2] / o.vb[3];
+    const W = innerWidth, H = innerHeight, a = vw.rot % 180 ? o.vb[3] / o.vb[2] : o.vb[2] / o.vb[3];
     let w = W, h = W / a;
     if (h > H){ h = H; w = H * a; }
     base = { w, h };
     box.style.width = w + "px"; box.style.height = h + "px";
+    box.querySelectorAll(":scope > img, :scope > svg").forEach((n) => turnEl(n, w, h, vw));
     V = { z: 1, x: (W - w) / 2, y: (H - h) / 2 };
     apply();
   }
@@ -1238,10 +1308,10 @@ function viewer(o){
 async function openPicture(){
   const url = R.url || (await getPicture() || {}).url;
   if (!url) return;
-  viewer({ url, vb: [0, 0, docW() || 1, docH() || 1], rows: R.hide ? [] : M.drawings(R.rows), onDraw: drawNew });
+  viewer({ url, vb: [0, 0, docW() || 1, docH() || 1], rows: stageDrawings(), view: viewOf(), onDraw: drawNew });
 }
 function openFrame(n, f, rid){
-  viewer({ url: f.url, vb: f.vb, rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), onDraw: () => {
+  viewer({ url: f.url, vb: f.vb, view: viewOf(), rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), onDraw: () => {
     R.openReply[n.id] = true; renderNotes();
     const box = document.querySelector(`.cmp[data-key="${n.id}"]`);
     if (box) box.querySelector(".pen").click();
