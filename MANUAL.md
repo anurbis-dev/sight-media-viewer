@@ -161,7 +161,7 @@
   Two fingers on the picture pan, zoom and turn it (as on the drawing canvas); a swipe down goes
   back to the list of reviews. Under the picture the thin **Notes Panel** bar: tap it (or swipe up
   on it / on the picture) and the player slides up off the screen and the notes come in; the bar
-  then holds the filters (All / Open / In progress / Resolved). Pull the list down when it is at
+  then holds the filters (All / Open / In progress / Resolved); a playing video pauses where it is. Pull the list down when it is at
   its top note to go back to the player. *+ Note* shows only with the panel open. The pencil
   (*Draw a note*) floats at the bottom right of the picture — on a video just above the
   transport — the same place as in the full-screen view, for pictures and videos alike. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
@@ -175,7 +175,7 @@
   screen, also right after a scrub. Notes are listed and numbered in
   the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
   adds a note — on a video at the frame on screen; while it is open the picture is clean (only its
-  own drawing). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
+  own drawing) and so is the timeline (only the frames it is drawn on). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
   highlighter, arrow, rectangle, ellipse, text, eraser, colours, undo / redo, clear, pinch / pan /
   turn), its buttons floating over the picture. Opened from the player, the picture stays exactly
   where and as big as it was (zoom and turn too) — drawing only brings the tools up; closing keeps
@@ -184,13 +184,17 @@
   sideways for the opacity. Press and hold a tool's button: its default size. Tap with two fingers
   to undo, with three to redo. On a video the canvas has the timeline at its
   foot: tap the tool in hand to put it down (no fill), then drag the picture or the timeline / the
-  step and marker buttons to another frame, take a tool again and draw there — as many frames as
+  step and marker buttons to another frame — or tap the picture to play and tap again to stop on
+  a frame (the drawings of each frame show as it plays; taking a tool up stops it) — take a tool
+  again and draw there — as many frames as
   you like; *Done* makes them one note (its card shows every frame drawn on). Each note has
   *Reply* (text, pictures, a drawing on its frame, *Mark as In progress / Resolved / Reopen*),
   *Resolve* / *Reopen*, and ⋯ for *Edit text*, *Edit the drawing* (a video note: all its frames),
   *Mark in progress*, *Delete*; × deletes a reply. Tap a timecode to go to that frame, a picture to
-  view it full screen (pinch / double-tap to zoom; ← or a sideways swipe goes back; at full size a
-  swipe up / down shows the next / previous note; the pencil draws a reply on it). Settings (⚙ on
+  view it full screen (pinch / double-tap to zoom; at full size a swipe left / right — or ← / → —
+  shows the note's other frames, the caption telling which frame each is and "2 / 3"; a swipe up /
+  down shows the next / previous note; the round ← Back button leaves — no swipe does; the pencil
+  draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on
   the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
   and the notes share it. The eye hides the drawings on the picture. (The file's review state —
   Needs review / Changes requested / Approved — is set in Sight; the app keeps and exports it.)
@@ -201,7 +205,8 @@
   left to uncover the bin (tap it to delete the review), right to uncover the eye (tap it to hide
   the review for now — until the app is closed, or *Show* under the list); press and hold a review
   and drag it up / down to move it in the list (the order is kept; new reviews come first); let go
-  without moving for its menu. Scrolled down, the two open buttons shrink into icons next to ⚙.
+  without moving for its menu. The two big open buttons show only while there is no review yet;
+  after that they are the two small icons next to ⚙.
   Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
   see it. The app remembers the file you picked (it keeps a copy on the device — a web app
   gets no lasting access to a picked file) and opens the review with it next time; ⋯ → *Forget the

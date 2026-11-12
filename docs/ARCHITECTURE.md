@@ -279,11 +279,14 @@ x = opacity), one undo step. Sizes are per tool (`SIZE0` defaults), saved with t
 down and up within 400 ms, none moved 14 px → undo / redo, the view restored to before (`tap`).
 `SightReviewDraw.pinch(g, a, b)` is the two-finger zoom / turn rule, shared with the phone player. A tap on the tool in hand puts it down (`pen.tool = null`, never saved;
 each open starts with the last real tool): one finger then calls `o.onScrub({phase, dx, dt, fine})`
-if given, else pans. Video sessions: `o.frameKey` + `o.frames {key: items}` make it multi-frame —
+if given, else pans; such a finger that comes up within 500 ms having moved ≤ 10 px calls
+`o.onTap()` (the phone: play / pause). `o.onTool(tool)` hears a tool taken up / put down;
+`handle.live(node)` puts a host node (`.dlive`) in the picture's place (`.dbox.live` hides the
+img), `live(null)` takes it out. Video sessions: `o.frameKey` + `o.frames {key: items}` make it multi-frame —
 `store` keeps each other frame's `{items, undo, redo}`, `handle.setFrame(key, src, pending)` swaps
 them (and the picture, dimmed while pending), `o.onFrames(keys)` reports frames holding drawings,
 `o.footer` sits above the tools, `o.onKey(e)` lets the host take keys; Done → `onDone(items,
-[{key, items}])`. `open()` returns `{setFrame, close, frameKey}`.
+[{key, items}])`. `open()` returns `{setFrame, close, live, frameKey}`.
 
 **Visibility on the desktop** (annotate.js) — `ctxShown(it)` is the base rule (ctx on screen,
 reply not hidden / deleted, its note still exists — a drawing of a deleted note never shows);
@@ -441,6 +444,9 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   The root never scrolls (a scroll listener resets it); the list scrolls inside `.plist`.
   Themes: `html[data-theme=light|dark]` (Settings, `sight-review:theme`), none = system; the
   stage, overlays (`--ov*`) and the canvas (`--rd-*`) follow it.
+- **Home open buttons**: the big `.opens` pair only while there is no review at all; otherwise the
+  two small icons in the bar (`.mini`). One set is removed once the list is in (no scroll
+  switching). Labels carry `pick-media` / `pick-file` (tests use them).
 - **Home list**: `reviewRow` — swipe left / right uncovers the bin / eye (`.sw`), hold + drag
   reorders (`sight-review:order` in localStorage, new reviews first), hide for now =
   `sight-review:hidden` in sessionStorage. While dragging, the DOM is not reordered (that drops the
@@ -457,13 +463,18 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   latest wanted time next (`R.want`, `pumpSeek`); `settle` when it lands and nothing is dragged
   (`R.dragging`). `posNow()` = the pending / shown time, so quick steps add up. The timeline
   (`makeTransport`, `.tl`) puts markers, cache bar and playhead in the same track percent; a tap
-  within 10 px of a marker lands on it. `markerList()` = notes (by state), drawings on other frames,
-  and the frames of the open drawing session / new-note draft. A sideways drag on the stage scrubs
+  within 10 px of a marker lands on it. `markerList()` = notes (by state: red / yellow / green ticks),
+  drawings on other frames (grey dots), and the frames of the open drawing session / new-note draft
+  (accent dots) — while a session (`R.drawS`) or a new note (`R.newOpen`) is open, *only* its own
+  frames (a clean timeline; marker jumps and the timeline snap follow it). `paintNewBar` repaints
+  the markers. A sideways drag on the stage scrubs
   from the current position (`scrubStep`: ¼ frame per px, up to ×12 with finger speed, Shift ¼;
   starts after 6 px of mostly-horizontal movement; the click right after a mouse scrub is
   swallowed); a swipe up on the stage opens the panel. No play button in the transport (tap the
   picture / Space; the big one shows until first play). `togglePlay` first sends the pending /
-  in-flight target (`R.want` / `R.scrubT`) to the player, so play starts on the frame on screen;
+  in-flight target (`R.want` / `R.scrubT`) to the player, so play starts on the frame on screen —
+  but not when the player already stands on / is seeking to that frame (`currentTime` reads the
+  target while seeking): setting it again restarts the decoder's seek from the keyframe;
   `.scrubimg` has `pointer-events: none` (it hides as its seek lands, often mid-tap). The player's time is
   the truth; the frame on screen is `floor(t/fd)`; stepping lands on `(frame + n + 0.01)·fd`
   and a new note / drawing ctx is `{t: frameStart(t), hold: 0}` = `(frame + 0.01)·fd` to 3 dp, so it
@@ -488,16 +499,25 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   revoked) with the review / on re-pick. No rVFC (old WebKit): no cache.
 - **Drawing on a video** (`drawVideo`): the canvas opens multi-frame over the paused player with a
   second transport (`makeTransport`) as its footer; `R.drawS {times, moved, settled}` ties it to
-  `seekTo` — `moved(t)` shows that frame's drawings over the cached frame (dimmed), `settled()`
+  `seekTo` — `moved(t)` shows that frame's drawings over the cached frame (not dimmed; dimmed only when no cached picture exists and the old one stays), `settled()`
   grabs the player's exact frame (`frameNow`, cached in `frames` under `frameTag`) and swaps it in.
   Done → `[{frame, items}]`; a draft keeps `{frame, items, more}` (`framesDraw`: earliest first =
   the note's ctx); sending writes each frame's drawings with that frame's ctx. *Edit the drawing*
   on a video note opens all its frames (`M.noteFrameTimes`); a changed drawing is replaced
   (tombstone + new row). Cards show the extra frames small; reports add them before the note's
-  pictures. Replies stay one frame.
-- **Viewer**: no bar — floating `.fab` Back / pencil; at fit, a swipe sideways closes, up / down
-  calls `o.nav(±1)` (note frames: the next note in the list's order with a picture); closing on
-  another note brings it forward (`showNote`).
+  pictures. Replies stay one frame. With no tool, a tap (`onTap`) = `togglePlay`: while playing
+  (`liveStart`) the player is painted into a ≤ 1280 px canvas (`h.live`) every presented frame and
+  `h.setFrame(frameTag(snapT(mediaTime)), null)` follows it (each frame's drawings show); a plain
+  pause (`rv.scrubT` / `rv.want` unset — a seek's own pause is seekTo's business) → `moved` +
+  `settled` on the frame reached; `onTool` (a tool taken up) pauses; Done / Cancel pause and drop
+  the canvas. `frameNow` never grabs while playing or seeking (it would cache a frame under the
+  wrong tag).
+- **Viewer**: no bar — floating `.fab` Back / pencil; no swipe closes it (Back, Esc, system back
+  do). At fit, up / down calls `o.nav(±1)` (note frames: the next note in the list's order with a
+  picture), left / right `o.side(±1)` (a video note's frames, `noteFrameList` = its ctx frame +
+  `M.noteFrameTimes`, by r3; the caption's `.fr` says `time · f N · i / n`). `from0` (where it was
+  opened) travels through nav / side; closing on another note or frame brings it forward
+  (`showNote(n, t)`: seeks there, scrolls the card).
 - **View**: `R.meta.view {rot, mirror}` (saved with the list entry) turns / mirrors the stage
   (`turnEl`: a 90 / 270 element gets the stage's swapped size, centred), the full-screen viewer and
   the canvas (`drawCanvas` passes `view` / `onView`). While a new note is open the stage shows only

@@ -244,6 +244,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .view .cap { position: absolute; z-index: 2; left: 12px; right: 82px; bottom: calc(18px + var(--sb)); display: flex; gap: 8px; align-items: center; padding: 7px 12px; border-radius: 14px; background: var(--ov); color: var(--ov-fg); font-size: 13.5px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: none; }
 .view .cap span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .view .cap .num { flex: none; }
+.view .cap .fr { flex: none; font-variant-numeric: tabular-nums; opacity: .85; }
+.view .cap .fr:last-child { flex: 0 1 auto; }
 .view .cap:empty { display: none; }
 .busy { position: fixed; inset: 0; z-index: 45; background: rgb(0 0 0 / .4); display: grid; place-items: center; }
 .busy div { background: var(--card); border-radius: 14px; padding: 16px 20px; font-size: 14px; min-width: 200px; text-align: center; }

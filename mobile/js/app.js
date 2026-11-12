@@ -351,10 +351,11 @@ async function renderHome(){
   const bar = el("header", "bar"), ttl = el("div", "ttl");
   ttl.appendChild(el("b", "", "Sight Review"));
   ttl.appendChild(el("span", "", "Reviews stay on this device"));
-  // The two open buttons, small, next to Settings — shown once the big ones have scrolled away.
+  // The two open buttons: big ones on an empty home screen, two small icons in the bar next to
+  // Settings once there is a review (renderHome picks one set when the list is in).
   const mini = el("div", "mini");
-  [["photo", "Photo or video", "image/*,video/*"], ["file", "Open a file…", ""]].forEach(([icon, title, accept]) => {
-    const l = el("label", "ib"); l.title = title; l.setAttribute("aria-label", title);
+  [["photo", "Photo or video", "image/*,video/*", "pick-media"], ["file", "Open a file…", "", "pick-file"]].forEach(([icon, title, accept, cls]) => {
+    const l = el("label", "ib " + cls); l.title = title; l.setAttribute("aria-label", title);
     l.innerHTML = ico(icon, 20);
     l.appendChild(picker(accept, false, openAny));
     mini.appendChild(l);
@@ -364,22 +365,14 @@ async function renderHome(){
   root.appendChild(bar);
   const main = el("main");
   const opens = el("div", "opens");
-  const l1 = el("label", "main"), l2 = el("label");
+  const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
   l1.appendChild(el("b", "", "Photo or video")); l1.appendChild(el("small", "", "from the library or camera roll"));
   l1.appendChild(picker("image/*,video/*", false, openAny));
   l2.appendChild(el("b", "", "Open a file…")); l2.appendChild(el("small", "", "Files: media or a .srev review"));
   l2.appendChild(picker("", false, openAny));
   opens.appendChild(l1); opens.appendChild(l2);
+  opens.hidden = true;
   main.appendChild(opens);
-  // Out of sight under the bar (not just off the bottom): the bar's small buttons take over.
-  if (window.IntersectionObserver){
-    const io = new IntersectionObserver((ens) => {
-      const en = ens[ens.length - 1];
-      if (!mini.isConnected){ io.disconnect(); return; }
-      mini.hidden = en.isIntersecting || en.boundingClientRect.top > 0;
-    }, { rootMargin: `-${Math.round(bar.offsetHeight || 56)}px 0px 0px 0px` });
-    requestAnimationFrame(() => { if (opens.isConnected) io.observe(opens); });
-  }
   // Opened over plain HTTP (a custom domain without HTTPS enforced): no service worker there, so no
   // offline use and no updates. Not redirected on its own: the reviews of this address live in its
   // own storage, which the HTTPS address cannot see.
@@ -407,6 +400,10 @@ async function renderHome(){
   main.appendChild(foot);
   root.appendChild(main);
   const all = await DB.all("reviews").catch(() => []);
+  if (!main.isConnected) return;  // another screen took over meanwhile
+  // One set of open buttons in the page: the big ones only while there is no review at all.
+  (all.length ? opens : mini).remove();
+  mini.hidden = opens.hidden = false;
   if (!all.length){ list.appendChild(el("p", "empty", "No reviews yet. Open a picture or a video to start one, or open a .srev file someone sent you.")); return; }
   const hidden = hiddenKeys(), metas = orderReviews(all).filter((m) => !hidden.has(m.key));
   list.appendChild(el("h2", "", "Reviews"));
@@ -826,6 +823,9 @@ function leaveReview(){
 function setPanel(open){
   if (!R || !els) return;
   R.panel = !!open;
+  // The player slides off the screen: a playing clip stops where it is (paused, not rewound — the
+  // list then marks the note on that frame), it must not run on unseen.
+  if (R.panel && R.video && !R.video.paused) R.video.pause();
   root.classList.toggle("open", R.panel);
   paintPanelBar();
 }
@@ -1044,8 +1044,11 @@ async function rebind(file){
 const frameDur = () => 1 / (R.fps || 25);
 const durOf = () => { const v = R && R.video; return (v && Number.isFinite(v.duration) && v.duration) || (R && R.meta.asset.duration) || 0; };
 // Play starts from the frame on screen: a scrub / step whose last seek has not been sent (R.want)
-// or has not landed yet would otherwise be dropped, and the clip played on from the older
-// position the player still stands on.
+// would otherwise be dropped, and the clip played on from the older position the player still
+// stands on. A seek already on its way to that frame (or landed there) is left alone: setting
+// currentTime again restarts it — the decoder goes back to the keyframe and decodes up to the
+// frame once more, which is the lag after a scrub (the scrub cache holds pictures for the screen,
+// not the decoder's state: the player itself must still seek before it can play).
 function togglePlay(){
   const v = R && R.video;
   if (!v) return;
@@ -1054,7 +1057,9 @@ function togglePlay(){
   if (t != null){
     R.want = null;
     if (R.dragging) dragEnd();
-    v.currentTime = R.fpsKnown ? Math.min((frameIdx(t) + 0.25) * frameDur(), durOf() || Infinity) : t;
+    // (While seeking, currentTime already reads the position asked for.)
+    const there = R.fpsKnown ? frameIdx(v.currentTime) === frameIdx(t) : Math.abs(v.currentTime - t) < 1e-3;
+    if (!there) v.currentTime = R.fpsKnown ? Math.min((frameIdx(t) + 0.25) * frameDur(), durOf() || Infinity) : t;
   }
   v.play().catch(() => {});
 }
@@ -1123,10 +1128,15 @@ function step(n){
   if (!R || !R.video) return;
   seekTo((frameIdx(posNow()) + n + 0.01) * frameDur());
 }
-// Markers on the timeline: notes (by state), drawings on other frames, and the frames drawn on in
-// the open drawing session / the new note's draft.
+// Markers on the timeline: notes (by state: red open, yellow in progress, green resolved ticks),
+// drawings on other frames (grey dots), and the frames drawn on in the open drawing session / the
+// new note's draft (accent dots). A new note being written, and a drawing session, show only their
+// own frames: a clean timeline, as the picture is clean (stageDrawings) — the marker jumps and the
+// timeline's snap then go only to those frames too.
 function markerList(){
   const out = [], seen = new Set();
+  const mine = R.drawS ? R.drawS.times() : drawFrames(R.drafts["+new"] && R.drafts["+new"].draw).map((x) => x.frame.ctx && x.frame.ctx.t).filter((t) => t != null);
+  if (R.drawS || R.newOpen) return mine.map((t) => ({ t, cls: "mine" }));
   M.notesSorted(R.rows, "video").forEach((n) => {
     const t = n.data.ctx && n.data.ctx.t;
     if (t == null) return;
@@ -1137,7 +1147,6 @@ function markerList(){
     if (t == null || seen.has(r3(t))) return;
     seen.add(r3(t)); out.push({ t, cls: "dr" });
   });
-  const mine = R.drawS ? R.drawS.times() : drawFrames(R.drafts["+new"] && R.drafts["+new"].draw).map((x) => x.frame.ctx && x.frame.ctx.t).filter((t) => t != null);
   mine.forEach((t) => out.push({ t, cls: "mine" }));
   return out;
 }
@@ -1834,6 +1843,7 @@ function ctxNow(){
 function paintNewBar(){
   const nb = els.nb;
   root.classList.toggle("compose", !!R.newOpen);  // the bar shows over the player too (index.html)
+  paintMarkers();  // a new note: only its own frames on the timeline
   const ae = document.activeElement;
   if (R.newOpen === true && ae && ae.tagName === "TEXTAREA" && nb.contains(ae)) return;  // typing: leave it alone
   nb.textContent = "";
@@ -1886,7 +1896,8 @@ async function currentFrame(){
   if (!v) return null;
   v.pause();
   if (v.readyState < 2) await seek(v, v.currentTime);
-  const t = frameStart(v.currentTime), tag = frameTag(t);
+  if (R !== rv) return null;
+  const t = snapT(v.currentTime), tag = frameTag(t);  // (not past the last frame: an ended clip)
   let f = rv.frames.get(tag);
   if (!f){
     const s = await scaled(v, 1600).catch(() => null);
@@ -1925,11 +1936,14 @@ function framesDraw(list){
 async function frameNow(rv, want){
   const v = rv.video;
   if (!v) return null;
-  if (v.seeking) return null;  // the picture is still the old frame: never cache it under the new time
+  // Still the old frame (seeking), or moving on (playing): never cache it under a wrong time.
+  if (v.seeking || !v.paused) return null;
   if (v.readyState < 2) await seek(v, v.currentTime);
   if (R !== rv || v.seeking) return null;
-  const on = want != null && (rv.fpsKnown ? frameIdx(want) === frameIdx(v.currentTime) : Math.abs(want - v.currentTime) < 1e-3);
-  const t = frameStart(on ? want : v.currentTime), tag = frameTag(t);
+  // snapT: an ended clip reads currentTime = duration, one past its last frame.
+  const cur = snapT(v.currentTime);
+  const on = want != null && (rv.fpsKnown ? frameIdx(want) === frameIdx(cur) : Math.abs(want - cur) < 1e-3);
+  const t = frameStart(on ? want : cur), tag = frameTag(t);
   let f = rv.frames.get(tag);
   if (!f){
     const s = await scaled(v, 1600).catch(() => null);
@@ -1946,7 +1960,9 @@ async function frameNow(rv, want){
 
 // ---- drawing on a video: several frames, one note ---------------------------------------------
 // The canvas over the player with the player's timeline in its foot. Tap the tool in hand to put
-// it down: one finger then scrubs (as on the player), the timeline / steps / marker jumps move to
+// it down: one finger then scrubs (as on the player), a tap plays / pauses (the playing clip is
+// painted into the canvas in the picture's place, each frame showing its own drawings; a pause or
+// a tool taken up stops on the frame reached), the timeline / steps / marker jumps move to
 // another frame, and a tool taken up draws there. Done hands back every frame drawn on —
 // [{frame, items}] — for one note. frames: what the draft / note already holds (kept per frame).
 async function drawVideo({ frames = [], onDone, noPlace }){
@@ -1969,10 +1985,16 @@ async function openDrawVideo(rv, v, frames, onDone, noPlace){
   let h = null, keys = Object.keys(init), capSeq = 0, st = 0, last = fr.ctx.t;
   const S = rv.drawS = {
     times: () => keys.map((k) => Number(k.slice(2))),
-    // The frame wanted shows at once (the cached one, dimmed) with that frame's drawings…
-    // (A step with no exact cached frame: the nearest one, dimmed, rather than the old picture
-    // under the new frame's drawings.)
-    moved: (t) => { last = t; capSeq++; if (h) h.setFrame(frameTag(t), cachedAt(t) || (rv.scrub && rv.scrub.near(t)), true); },
+    // The frame wanted shows at once (the cached one, as it is — dimming it read as a haze over
+    // the video on every scrub) with that frame's drawings… (A step with no exact cached frame:
+    // the nearest one rather than the old picture under the new frame's drawings; with no cached
+    // picture at all the old one stays, dimmed: it is not this frame.)
+    moved: (t) => {
+      last = t; capSeq++;
+      if (!h) return;
+      const pic = cachedAt(t) || (rv.scrub && rv.scrub.near(t));
+      h.setFrame(frameTag(t), pic, !pic);
+    },
     // …and the player's own frame replaces it when the seek has landed.
     settled: async () => {
       const seq = ++capSeq, f = await frameNow(rv, last);
@@ -1980,7 +2002,62 @@ async function openDrawVideo(rv, v, frames, onDone, noPlace){
       h.setFrame(f.tag, f.url, false);
     },
   };
+  // Playing inside the canvas: the player (hidden under it) is painted into a canvas in the
+  // picture's place every frame it presents, and the canvas follows the frame (its drawings).
+  let liveSeq = 0, liveC = null;
+  const liveStart = () => {
+    if (!h || R !== rv || rv.drawS !== S) return;
+    const seq = ++liveSeq;
+    capSeq++;  // a grab still on its way (the tap's own settle) must not swap the frame mid-play
+    if (!liveC){
+      liveC = document.createElement("canvas");
+      const k = Math.min(1, 1280 / Math.max(v.videoWidth || 1, v.videoHeight || 1));
+      liveC.width = Math.max(1, Math.round((v.videoWidth || 16) * k)); liveC.height = Math.max(1, Math.round((v.videoHeight || 9) * k));
+    }
+    const g = liveC.getContext("2d");
+    // The live layer comes up with the first frame presented after play (a play right after a
+    // seek would otherwise paint the frame from before it). A frame's stamp sits on its start, and
+    // millisecond stamps (WebM) a hair below it: the key is taken a quarter into the frame, as seeks
+    // land. rVFC may not fire for a player that is off screen (the panel open; Safari): after
+    // 250 ms without a frame, animation frames take over.
+    let shown = false, last = 0, raf = false;
+    const tick = (_, meta) => {
+      if (seq !== liveSeq || !h || v.paused) return;
+      last = performance.now();
+      try { g.drawImage(v, 0, 0, liveC.width, liveC.height); } catch {}
+      if (!shown){ shown = true; h.live(liveC); }
+      const mt = meta && meta.mediaTime != null ? meta.mediaTime : v.currentTime;
+      h.setFrame(frameTag(snapT(rv.fpsKnown ? mt + 0.25 * frameDur() : mt)), null, false);
+      next();
+    };
+    const next = () => raf || !v.requestVideoFrameCallback ? requestAnimationFrame(() => tick(0, null)) : v.requestVideoFrameCallback(tick);
+    const watch = () => {
+      if (seq !== liveSeq || !h || v.paused || raf) return;
+      if (performance.now() - last > 250){ raf = true; next(); } else setTimeout(watch, 250);
+    };
+    last = performance.now();
+    next();
+    setTimeout(watch, 250);
+  };
+  const liveStop = () => {
+    liveSeq++;
+    if (h) h.live(null);
+  };
+  const onPlay = () => liveStart();
+  // A plain pause (not one a seek made: seekTo has already moved the canvas): the canvas stops on
+  // the frame reached, the player's own picture of it once the frame is grabbed.
+  const onPause = () => {
+    liveStop();
+    if (!h || R !== rv || rv.drawS !== S || rv.scrubT != null || rv.want != null) return;
+    S.moved(snapT(v.currentTime));
+    if (!v.seeking) S.settled();
+  };
+  v.addEventListener("play", onPlay); v.addEventListener("pause", onPause);
   const finish = () => {
+    v.removeEventListener("play", onPlay); v.removeEventListener("pause", onPause);
+    liveStop();
+    if (!v.paused) v.pause();
+    if (liveC){ dropCanvas(liveC); liveC = null; }
     if (rv.drawS === S) rv.drawS = null;
     TPS.delete(T); h = null;
     if (R === rv){ if (R.dragging) dragEnd(); paintMarkers(); paintOverlay(); }  // a drag on its footer ends with it
@@ -1993,6 +2070,9 @@ async function openDrawVideo(rv, v, frames, onDone, noPlace){
       else dragEnd();
     },
     onFrames: (ks) => { keys = ks; paintMarks(T); },
+    // A tap with no tool: play / pause, as on the player. A tool taken up stops the clip there.
+    onTap: () => { if (R === rv && rv.drawS === S) togglePlay(); },
+    onTool: (t) => { if (t && !v.paused) v.pause(); },
     onKey: (e) => runHotkeys(e, [["Comma", () => step(-1)], ["Period", () => step(1)], ["ArrowLeft", () => step(-1)], ["ArrowRight", () => step(1)],
       ["Shift+ArrowLeft", () => jumpNote(-1)], ["Shift+ArrowRight", () => jumpNote(1)]]),
     onCancel: finish,
@@ -2006,7 +2086,7 @@ async function openDrawVideo(rv, v, frames, onDone, noPlace){
       }
       if (R === rv) onDone(list);
     } });
-  paintMarks(T);
+  paintMarks(T); paintMarkers();
 }
 
 // The drawing canvas, opened turned / mirrored as the review's view; its turn / mirror buttons
@@ -2035,8 +2115,11 @@ function playerPlace(){
 // ---- full-screen viewer ------------------------------------------------------------------------
 // A picture with its drawings, no bar: a round Back button and (when it can be drawn on) a pencil
 // float over it. Pinch / double-tap / wheel zoom, drag to pan while zoomed. At fit, a swipe up /
-// down goes to the next / previous note (o.nav) and a sideways swipe goes back to the player.
-// o: {url, vb, rows, view, onDraw(), note (caption), nav(dir) → Promise<o | null>, onClose(o)}
+// down goes to the next / previous note (o.nav), a swipe left / right to the next / previous
+// picture of the same note (o.side: a video note's frames). Only the Back button (or the system's
+// back / Esc) leaves — no swipe closes it.
+// o: {url, vb, rows, view, onDraw(), note, label (caption: which frame), nav(dir) / side(dir) →
+// Promise<o | null>, onClose(o)}
 function viewer(o){
   const v = el("div", "view"), cap = el("div", "cap");
   const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
@@ -2060,9 +2143,10 @@ function viewer(o){
     cap.className = "cap" + (o.note ? " " + M.noteState(o.note) : "");
     if (o.note){
       cap.appendChild(el("span", "num", String(NUM.get(o.note.id) || "")));
-      const c = o.note.data.ctx;
-      cap.appendChild(el("span", "", [c && c.t != null && R ? fmtTime(c.t, R.fps) : "", o.note.data.text || ""].filter(Boolean).join(" · ") || "Note"));
-    }
+      const c = o.note.data.ctx, lab = o.label || (c && c.t != null && R ? fmtTime(c.t, R.fps) : "");
+      if (lab) cap.appendChild(el("span", "fr", lab));
+      if (o.note.data.text || !lab) cap.appendChild(el("span", "", o.note.data.text || "Note"));
+    } else if (o.label) cap.appendChild(el("span", "fr", o.label));
     off = [0, 0];
     fit();
   }
@@ -2081,14 +2165,24 @@ function viewer(o){
     box.style.transform = `translate(${V.x + off[0]}px,${V.y + off[1]}px) scale(${V.z})`;
   };
   const zoomAt = (x, y, z) => { z = RC.clamp(z, 1, 12); const lx = (x - V.x) / V.z, ly = (y - V.y) / V.z; V = { z, x: x - lx * z, y: y - ly * z }; if (z === 1) fit(); else apply(); };
-  // Swipes at fit: the picture follows the finger along the axis it set off on.
-  async function navigate(dir){
+  // Swipes at fit: the picture follows the finger along the axis it set off on; up / down walks
+  // the notes (o.nav), sideways the note's own pictures (o.side).
+  async function navigate(dir, axis = "y"){
     if (busyNav) return;
-    const next = o.nav ? await (busyNav = true, o.nav(dir)).finally(() => { busyNav = false; }) : null;
-    if (!v.isConnected) return;
-    if (!next){ off = [0, 0]; apply(true); toast(dir > 0 ? "No later note" : "No earlier note", 1500); return; }
-    off = [0, dir > 0 ? -innerHeight : innerHeight]; apply(true);
-    setTimeout(() => { if (!v.isConnected) return; show(next); off = [0, dir > 0 ? innerHeight * 0.4 : -innerHeight * 0.4]; apply(); requestAnimationFrame(() => { off = [0, 0]; apply(true); }); }, 170);
+    const fn = axis === "x" ? o.side : o.nav;
+    // Busy until the next picture is shown: a second swipe (or Back) in between would act on the old one.
+    const next = fn ? await (busyNav = true, fn(dir)).catch(() => null) : null;
+    if (!v.isConnected){ busyNav = false; return; }
+    if (!next){
+      busyNav = false;
+      off = [0, 0]; apply(true);
+      if (axis === "y") toast(dir > 0 ? "No later note" : "No earlier note", 1500);
+      else if (o.side) toast(dir > 0 ? "The note's last frame" : "The note's first frame", 1500);
+      return;
+    }
+    const W = axis === "x" ? innerWidth : innerHeight, at = (k) => axis === "x" ? [k, 0] : [0, k];
+    off = at(dir > 0 ? -W : W); apply(true);
+    setTimeout(() => { busyNav = false; if (!v.isConnected) return; show(next); off = at(dir > 0 ? W * 0.4 : -W * 0.4); apply(); requestAnimationFrame(() => { off = [0, 0]; apply(true); }); }, 170);
   }
   const pts = new Map();
   let g = null, lastTap = 0, sw = null;
@@ -2130,7 +2224,7 @@ function viewer(o){
     if (sw && sw.axis && e.type === "pointerup"){
       const dx = q.x - sw.x, dy = q.y - sw.y;
       sw = null;
-      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy)){ close(); return; }
+      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy)){ navigate(dx < 0 ? 1 : -1, "x"); start(); return; }
       if (Math.abs(dy) > 70) { navigate(dy < 0 ? 1 : -1); start(); return; }
       off = [0, 0]; apply(true);
     } else if (sw && sw.axis){ sw = null; off = [0, 0]; apply(true); }
@@ -2146,7 +2240,7 @@ function viewer(o){
   v.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
   function onKey(e){
     if (sheets[sheets.length - 1] !== close) return;
-    runHotkeys(e, [["ArrowDown", () => navigate(1)], ["ArrowUp", () => navigate(-1)], ["ArrowLeft", close], ["ArrowRight", close]]);
+    runHotkeys(e, [["ArrowDown", () => navigate(1)], ["ArrowUp", () => navigate(-1)], ["ArrowLeft", () => navigate(-1, "x")], ["ArrowRight", () => navigate(1, "x")]]);
   }
   document.addEventListener("keydown", onKey, true);
   window.addEventListener("resize", fit);
@@ -2160,10 +2254,22 @@ async function openPicture(){
   viewer({ url, vb: [0, 0, docW() || 1, docH() || 1], rows: stageDrawings(), view: viewOf(), onDraw: () => drawNew(true) });
 }
 // A note's picture, full screen; swiping up / down walks the notes in the list's order (the
-// filter on), and the list / player follow the note it was left on.
-function noteView(n, f, rid){
-  const rv = R;
-  return { url: f.url, vb: f.vb, view: viewOf(), note: n, rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f),
+// filter on), sideways the frames a video note was drawn on (in time order; the caption says
+// which frame each is, "2 / 3"); the list / player follow the note and frame it was left on.
+// from: where the viewer was opened ({id, t}), carried along so the close can tell.
+function noteFrameList(n){
+  const c = n.data.ctx;
+  if (kindNow() !== "video" || !c || c.t == null) return [];
+  const by = new Map();
+  [c.t, ...M.noteFrameTimes(R.rows, n)].forEach((t) => { if (!by.has(r3(t))) by.set(r3(t), t); });
+  return [...by.values()].sort((a, b) => a - b);
+}
+function noteView(n, f, rid, from){
+  const rv = R, ts = rid ? [] : noteFrameList(n), t0 = f.at ? f.at.t : null;
+  const i0 = t0 == null ? -1 : ts.findIndex((t) => r3(t) === r3(t0));
+  const from0 = from || { id: n.id, t: t0 };
+  const label = t0 != null ? `${fmtTime(t0, R.fps)} · f ${Math.round(t0 * R.fps)}` + (ts.length > 1 && i0 >= 0 ? ` · ${i0 + 1} / ${ts.length}` : "") : "";
+  return { url: f.url, vb: f.vb, view: viewOf(), note: n, label, at: f.at, rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f),
     onDraw: () => { if (R !== rv) return; setPanel(true); R.openReply[n.id] = true; renderNotes();
       const box = document.querySelector(`.cmp[data-key="${n.id}"]`);
       if (box) box.querySelector(".pen").click(); },
@@ -2173,17 +2279,30 @@ function noteView(n, f, rid){
       for (let i = list.findIndex((x) => x.id === n.id) + dir; i >= 0 && i < list.length; i += dir){
         const f2 = await noteFrame(list[i]);
         if (R !== rv) return null;
-        if (f2) return noteView(list[i], f2);
+        if (f2) return noteView(list[i], f2, null, from0);
       }
       return null;
     },
-    onClose: (last) => { if (R === rv && last.note && last.note.id !== n.id) showNote(last.note); } };
+    side: ts.length > 1 && i0 >= 0 ? async (dir) => {
+      for (let i = i0 + dir; i >= 0 && i < ts.length; i += dir){
+        const fr = await getFrame(ts[i], rv);
+        if (R !== rv) return null;
+        if (fr) return noteView(n, { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t: ts[i], hold: 0 }, at: { t: ts[i], fps: R.fps } }, null, from0);
+      }
+      return null;
+    } : null,
+    onClose: (last) => {
+      if (R !== rv || !last.note) return;
+      const t = last.at ? last.at.t : null;
+      if (last.note.id !== from0.id || (t != null && from0.t != null && r3(t) !== r3(from0.t))) showNote(last.note, t);
+    } };
 }
 function openFrame(n, f, rid){ viewer(noteView(n, f, rid)); }
-// Brings a note forward: its card into view in the list, the player onto its frame.
-function showNote(n){
-  const c = n.data.ctx;
-  if (R.video && c && c.t != null) seekTo(c.t);
+// Brings a note forward: its card into view in the list, the player onto its frame (or the frame
+// of it given: one of its other frames).
+function showNote(n, at){
+  const c = n.data.ctx, t = at != null ? at : c && c.t;
+  if (R.video && t != null) seekTo(t);
   const card = els && els.notes.querySelector(`.note[data-id="${n.id}"]`);
   if (card) card.scrollIntoView({ block: "nearest" });
 }

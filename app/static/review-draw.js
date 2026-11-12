@@ -14,7 +14,10 @@
 //   footer (an element shown above the tools: the host's timeline), onScrub({phase, dx, dt, fine})
 //   (one finger with no tool), onFrames(keys) (the frames that hold drawings), onKey(e) → true if
 //   the host took it; handle.setFrame(key, src, pending) switches the frame (its drawings, undo).
-//   onDone then gets every frame's drawings: [{key, items}].
+//   onDone then gets every frame's drawings: [{key, items}]. onTap() — a tap with no tool in hand
+//   (the phone plays / pauses); onTool(tool) — a tool taken up (or put down: null); handle.live(node)
+//   shows a node (the host's canvas with the playing video) in the picture's place, live(null) the
+//   picture again.
 //   Placed as the host shows it (the phone's player): fitBox() → a viewport rect {left, top,
 //   width, height} the picture is fitted into (no padding, the floating bars ignored; null: the
 //   whole screen), nav {z, r, o: [dx, dy]} the host's own zoom / extra turn (degrees) / offset from
@@ -52,6 +55,8 @@ var SightReviewDraw = (function(){
     ".draw .dbox { position: absolute; left: 0; top: 0; transform-origin: 0 0; }",
     ".draw .dbox img, .draw .dbox svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; pointer-events: none; }",
     ".draw .dbox img { -webkit-user-drag: none; transition: opacity .12s; }",
+    ".draw .dbox .dlive { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; pointer-events: none; }",
+    ".draw .dbox.live > img { visibility: hidden; }",
     ".draw .tb { width: 38px; height: 38px; border-radius: 11px; border: 0; background: none; color: inherit; opacity: .9; display: grid; place-items: center; cursor: pointer; padding: 0; }",
     ".draw .tb.on { background: #0a84ff; color: #fff; opacity: 1; }",
     ".draw .tb[disabled] { opacity: .3; cursor: default; }",
@@ -176,13 +181,15 @@ var SightReviewDraw = (function(){
       });
       ["pointerup", "pointercancel", "pointerleave"].forEach(function(ev){ b.addEventListener(ev, function(){ clearTimeout(ht); }); });
     });
-    function setTool(t){ stopAdj(); if (edit) commitText(); pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); }
+    function setTool(t){ stopAdj(); if (edit) commitText(); pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); if (o.onTool) o.onTool(t); }
     COLORS.forEach(function(c){
       var b = el("button", "swc"); b.type = "button"; b.title = "Colour"; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
       b.onclick = function(){
         if (edit){ pen.color = c; savePen(); paintBar(); edit.it.data.color = c; edit.ta.style.color = c; edit.ta.focus(); return; }  // recolours the text being typed
         if (pen.tool === "select" && sel.length){ recolour(c); return; }
+        var was = pen.tool;
         pen.color = c; if (!pen.tool || pen.tool === "eraser" || pen.tool === "select") pen.tool = "brush"; savePen(); paintBar(); paint();
+        if (pen.tool !== was && o.onTool) o.onTool(pen.tool);
       };
       cols.appendChild(b);
     });
@@ -233,7 +240,7 @@ var SightReviewDraw = (function(){
         stopAdj();
         if (edit) commitText();
         if (stroke) abort();
-        store.set(fkey, { items: items, undo: undo, redo: redo });
+        if (items.length || undo.length || redo.length) store.set(fkey, { items: items, undo: undo, redo: redo });  // (frames played past leave nothing)
         var st = store.get(key) || { items: [], undo: [], redo: [] };
         store.delete(key);
         fkey = key; items = st.items; undo = st.undo; redo = st.redo; sel = [];
@@ -457,8 +464,16 @@ var SightReviewDraw = (function(){
       V = t0.v; fitted = t0.fitted; apply();
       if (t0.n === 2) doUndo(); else doRedo();
     }
-    // No tool in hand: one finger (or the left button) scrubs the video through the host.
-    function endScrub(){ if (!scr) return; var id = scr.id; scr = null; if (o.onScrub) o.onScrub({ phase: "end" }); var q = pts.get(id); if (q) q.nav = true; }
+    // No tool in hand: one finger (or the left button) scrubs the video through the host; one that
+    // comes up again quickly without having moved is a tap (onTap: the phone plays / pauses).
+    function endScrub(e){
+      if (!scr) return;
+      var s0 = scr, id = s0.id;
+      scr = null;
+      if (o.onScrub) o.onScrub({ phase: "end" });
+      var q = pts.get(id); if (q) q.nav = true;
+      if (e && e.type === "pointerup" && e.pointerId === id && o.onTap && !s0.moved && e.timeStamp - s0.t0 < 500) o.onTap();
+    }
     function gestStart(){
       var ids = [];
       pts.forEach(function(p, id){ if (p.nav) ids.push(id); });
@@ -505,7 +520,7 @@ var SightReviewDraw = (function(){
       // (A finger scrubs too once a pen has been used: with no tool there is nothing to keep it from.)
       if ((drawer || (e.pointerType === "touch" && !pts.size)) && !stroke && !gest && !scr && !pen.tool && !(e.ctrlKey && !e.metaKey) && o.onScrub){
         pts.set(e.pointerId, { x: p[0], y: p[1], nav: false });
-        scr = { id: e.pointerId, x: e.clientX, t: e.timeStamp };
+        scr = { id: e.pointerId, x: e.clientX, t: e.timeStamp, x0: e.clientX, y0: e.clientY, t0: e.timeStamp, moved: false };
         o.onScrub({ phase: "start" });
         return;
       }
@@ -551,6 +566,7 @@ var SightReviewDraw = (function(){
       if (scr && scr.id === e.pointerId){
         var dx = e.clientX - scr.x, dt = e.timeStamp - scr.t;
         scr.x = e.clientX; scr.t = e.timeStamp;
+        if (RC.hyp(e.clientX - scr.x0, e.clientY - scr.y0) > 10) scr.moved = true;
         if (dx) o.onScrub({ phase: "move", dx: dx, dt: dt, fine: e.shiftKey });
         return;
       }
@@ -569,7 +585,7 @@ var SightReviewDraw = (function(){
       if (hold && hold.id === e.pointerId) endHold();
       if (adj && adj.id === e.pointerId){ pts.delete(e.pointerId); adjEnd(e.type === "pointercancel"); return; }
       if (!pts.has(e.pointerId)) return;
-      if (scr && scr.id === e.pointerId) endScrub();
+      if (scr && scr.id === e.pointerId) endScrub(e);
       pts.delete(e.pointerId);
       if (stroke && stroke.id === e.pointerId){
         if (e.type === "pointercancel") abort(); else finish();
@@ -851,7 +867,15 @@ var SightReviewDraw = (function(){
       moved();
     }
     requestAnimationFrame(function(){ if (root.isConnected && fitted && !edit) fit(false); });  // the bars' real size
-    return { setFrame: setFrame, close: close, frameKey: function(){ return fkey; } };
+    // The playing video in the picture's place (the host paints it); null: the picture again.
+    var liveEl = null;
+    function live(node){
+      if (liveEl && liveEl !== node) liveEl.remove();
+      liveEl = node || null;
+      if (liveEl){ liveEl.classList.add("dlive"); if (liveEl.parentNode !== box) box.insertBefore(liveEl, sv); }
+      box.classList.toggle("live", !!liveEl);
+    }
+    return { setFrame: setFrame, close: close, live: live, frameKey: function(){ return fkey; } };
   }
 
   return { open: drawSheet, pinch: pinch, TOOLS: TOOLS, COLORS: COLORS, SIZE: SIZE };

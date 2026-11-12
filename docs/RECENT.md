@@ -14,6 +14,51 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.28.0 — 2026-11-12 — Phone: play inside the drawing canvas, clean timeline for a new note, note frames in the viewer
+- **What:** (phone app; review-draw.js gains host hooks, no change on the HTML page)
+  On a video's drawing canvas with no tool in hand, a tap plays / pauses: the clip plays in the
+  picture's place, each frame's drawings showing as it passes; a pause (or taking up a tool)
+  stops on the frame reached, ready to draw. A new note (being written or drawn) has a clean
+  timeline: only its own frames, no ticks / dots of earlier notes (red / yellow / green ticks are
+  notes by state, grey dots are other frames drawn on). Opening the Notes Panel pauses a playing
+  video where it is. The full-screen note viewer: a swipe left / right walks the note's frames
+  (caption "0:01.05 · f 30 · 2 / 3"), no swipe closes it any more — only Back (and Esc / system
+  back); back in the review the player stands on the frame left on. Home: the big open buttons
+  show only while there is no review; after that the bar's small icons, no scroll switching.
+  Play after a scrub no longer restarts a seek that is already on its way to that frame. A scrub
+  on the canvas no longer dims the picture (it read as a haze over the video): the cached frame
+  shows as it is; only a frame with no cached picture at all keeps the old one, dimmed.
+- **Where:** `mobile/js/app.js` (`openDrawVideo`: `liveStart` / `liveStop` / `onPause`, `onTap`,
+  `onTool`; `frameNow` / `currentFrame` use `snapT`; `togglePlay`; `markerList`; `paintNewBar`
+  repaints markers; `setPanel`; `viewer` `navigate(dir, axis)` + `o.side` / `o.label`;
+  `noteFrameList`, `noteView(n, f, rid, from)`, `showNote(n, at)`; `renderHome` open buttons),
+  `app/static/review-draw.js` (`onTap`, `onTool`, `handle.live`, `.dlive` / `.dbox.live`, empty
+  frames not stored), `mobile/index.html` (`.view .cap .fr`), tests `pwa_touch.cjs` /
+  `test_pwa.py` (play / pause / play-to-end in the canvas, clean markers, panel pause, viewer
+  sideways), `pwa_e2e.cjs` (open buttons by `label.pick-media` / `label.pick-file`).
+- **Notes:** *Why play lags after a scrub although the cache bar is green:* the cache is ≤ 640 px
+  JPEGs for the screen; the `<video>` decoder still has to seek (back to the keyframe, decode up
+  to the frame; phone clips have a keyframe every 1–2 s) and buffer before it plays. Nothing makes
+  that instant; what was fixed is the extra seek — `togglePlay` re-set `currentTime` to the frame
+  the in-flight seek was already going to, which restarts it. While playing in the canvas, the
+  player (hidden under it) is drawn into a ≤ 1280 px canvas per presented frame (rVFC, rAF after
+  250 ms without one — an off-screen player may get none); keys are a quarter into the frame
+  (`snapT(mediaTime + fd/4)`: millisecond WebM stamps sit a hair below a frame's start); the
+  live layer shows from the first frame presented after play (not the pre-seek one); `capSeq` is
+  bumped so the tap's own settle grab cannot swap the picture mid-play. `frameNow` refuses to grab
+  while playing (it would cache under the wrong tag). An ended clip reads `currentTime = duration`,
+  one past the last frame: `frameNow` / `currentFrame` tag with `snapT` (it clamps) — before, the
+  canvas stayed dimmed on a stand-in picture after playing to the end. Space is *not* bound in
+  the canvas (with a tool in hand a playing clip would abort strokes every frame). The viewer's
+  pencil still draws a reply on the note's own frame (replies are one frame), whatever side frame
+  is shown.
+- **Review (fresh agent):** play-to-end left the canvas dimmed under a past-the-end key (fixed,
+  test added); live keys from raw `mediaTime` drew frame k's drawings over k+1 on WebM (quarter
+  offset); a pending settle grab could re-key the canvas mid-play (`capSeq`); the live layer
+  flashed the pre-seek frame (now from the first presented frame); rVFC may not fire off screen
+  (rAF fallback); a second viewer swipe within the 170 ms slide acted on the old picture
+  (`busyNav` held until shown); every frame played past left an empty store entry (not stored).
+
 ## 0.27.0 — 2026-11-12 — Phone: player gestures, panel by pull-down, canvas in place, hold-to-size, finger undo / redo
 - **What:** (phone app; the canvas parts also on the HTML page, same review-draw.js)
   **Fix:** a scrub (or frame steps) followed at once by Play jumped back to an older frame — play
@@ -326,12 +371,3 @@ Add new entries directly below this line.
   - The outside-tap check runs on `click` (bubbling), after the tap's own handler, so a field that very tap opened is skipped via `opening`. It is not done on `pointerdown`: re-rendering there shifts the layout under the finger and the click lands elsewhere.
   - A field with any content stays open on an outside tap — only empty means cancel. Taps on the name dialog or the zoomed picture are ignored.
   - Focus is applied in `requestAnimationFrame` by looking the textarea up by key, because closing another empty field in the same click re-renders the page a second time.
-
-## 0.19.0 — 2026-11-11 — Notes can be *In progress*; reply pictures; HTML page: name gate, pinned filters, chat-style field
-- **What:** a note is open, *in progress* (someone took it) or resolved — a clock button in Sight, orange number / timeline marker, logged in the thread like resolve. Replies can carry pictures. The HTML page asks the reviewer's name before anything else; the sender (*From …*), *You: … ✎* and the *All / Open / In progress / Resolved* filters with count badges are pinned with the title; search hides behind an icon. *Reply* opens one full-width field (paper clip = attach, paper plane in the bottom-right corner = send) with *Mark as In progress / Resolved / Reopen* chips — the state goes with the reply or alone. New notes take pictures too; unsent entries have × to take them back.
-- **Where:** `app/review.py` (HTML template rewritten: `composer()`, `readImage`, gate `#gate`, `paintSeg`, `statusOf` from the last local event, `E.att`; `build_package` packs reply shots; PDF reply pictures + `EVENT_LABEL` + in-progress tag); `app/library.py` (`import_annotations` remaps `replies[].shots`); `app/static/annotate.js` (`ICON.prog`, `data-prog` toggle, `EVENT` / `eventIcon`, `.prog` styles, `img[data-rshot]` in replies, report / copy text carry reply shots and the state).
-- **Notes:**
-  - No format change: `progress` is just another `status` value (merged by `status_at` like done/open) and reply `shots` is an optional field. Sight before 0.19 shows an in-progress note as open-looking and ignores reply pictures. `_OPEN_NOTES_SQL` counts in-progress as open (≠ done), as do carry-over and the report's *Open*.
-  - Page state model changed: `E = {replies, notes, att}` — no separate `E.status`; a note's state on the page is its last unsent event, else the exported one. On download the last event sets `status` and `status_at` (= that event's time). Pages exported by 0.18 keep their own embedded script, so nothing to migrate.
-  - Page pictures are scaled to ≤1600 px JPEG 0.85 in the browser and kept in localStorage (`E.att`) until downloaded; if the quota runs out the page alerts once and asks to download now (edits stay in memory). Enter sends on desktop; on touch screens Enter is a newline.
-  - Sight cannot attach pictures to a reply yet (only show them) — the planned mobile review app is the next step.

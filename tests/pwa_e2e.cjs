@@ -23,7 +23,7 @@ async function page(ctx){
   await p.goto(base);
   await p.evaluate(() => localStorage.setItem("sight-review:name", "Phone Tester"));
   await p.reload();
-  await p.waitForSelector(".opens");
+  await p.waitForSelector("label.pick-media");
   return p;
 }
 // Click by script: the player / the notes may be slid off screen (Notes Panel open or not).
@@ -75,7 +75,7 @@ async function make(){
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
   const p = await page(ctx);
   // ---- picture ----
-  await p.setInputFiles(".opens label.main input", path.join(media, "shot_v001.png"));
+  await p.setInputFiles("label.pick-media input", path.join(media, "shot_v001.png"));
   await p.waitForSelector(".stage img");
   await openPanel(p);
   await p.click(".newbar .add");
@@ -111,8 +111,8 @@ async function make(){
   const clip = path.join(media, "clip_v001.webm");
   if (fs.existsSync(clip)){
     await p.goto(base);
-    await p.waitForSelector(".opens");
-    await p.setInputFiles(".opens label.main input", clip);
+    await p.waitForSelector("label.pick-media");
+    await p.setInputFiles("label.pick-media input", clip);
     await p.waitForSelector(".stage video");
     await p.waitForFunction(() => document.querySelector(".stage video").readyState >= 2);
     for (let i = 0; i < 5; i++) await p.click('button[title="Next frame"]');
@@ -180,7 +180,7 @@ async function merge(){
   const p = await page(ctx);
   // A .srev for a file the app has never seen: a review is made from the package's identity and
   // asks for the file.
-  await p.setInputFiles(".opens label:not(.main) input", srev);
+  await p.setInputFiles("label.pick-file input", srev);
   await p.waitForSelector(".review .note");
   res.toast1 = await p.textContent(".toast");
   res.picker = await p.locator(".stage .none label").count();
@@ -194,8 +194,8 @@ async function merge(){
   await p.click(".newbar .send");
   await p.waitForTimeout(400);
   await p.goto(base);
-  await p.waitForSelector(".opens");
-  await p.setInputFiles(".opens label:not(.main) input", srev);
+  await p.waitForSelector("label.pick-media");
+  await p.setInputFiles("label.pick-file input", srev);
   await p.waitForSelector(".review .note");
   await p.waitForTimeout(300);
   res.toast2 = await p.textContent(".toast");

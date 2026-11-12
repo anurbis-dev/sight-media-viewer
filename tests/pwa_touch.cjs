@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await p.goto(base);
   await p.evaluate(() => { localStorage.setItem("sight-review:name", "Touch Tester"); localStorage.removeItem("sight-review:pen"); });
   await p.reload();
-  await p.waitForSelector(".opens");
+  await p.waitForSelector("label.pick-media");
   const cdp = await ctx.newCDPSession(p);
   const touch = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map((q, i) => ({ x: q[0], y: q[1], id: i })) });
   async function drag(from, to, steps = 10, dt = 16){
@@ -40,7 +40,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const R = "window.__sightReview.R";
   const val = (expr) => p.evaluate(expr);
 
-  await p.setInputFiles(".opens label.main input", clip);
+  await p.setInputFiles("label.pick-media input", clip);
   await p.waitForSelector(".stage video");
   await p.waitForFunction(() => document.querySelector(".stage video").readyState >= 2);
   await sleep(500);
@@ -109,6 +109,32 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await touch("touchStart", [[bb.x + bb.width / 2, bb.y + bb.height / 2]]); await sleep(700); await touch("touchEnd", []);
   await sleep(50);
   out.brushReset = await ev(() => [window.SightReviewDraw.SIZE.brush, document.querySelector('.draw button[title="Brush"]').classList.contains("on")]);
+  // No tool in hand (a tap on the tool held puts it down): a tap plays inside the canvas (the clip
+  // painted in the picture's place), another pauses there; a stroke then goes on the frame reached.
+  await ev(() => { const x = document.querySelector('.draw button[title="Brush"]'); delete x.dataset.held; x.click(); });
+  out.toolOff = await ev(() => !document.querySelector(".draw .tb.on"));
+  const t0 = await val(`${R}.video.currentTime`);
+  await tapN([[cx, cy]]);
+  await p.waitForFunction(() => !window.__sightReview.R.video.paused, null, { timeout: 3000 }).catch(() => {});
+  await sleep(150);
+  out.livePlay = [await val(`!${R}.video.paused`), await ev(() => !!document.querySelector(".draw .dbox.live canvas"))];
+  await sleep(400);
+  await tapN([[cx, cy]]);
+  await sleep(400);
+  out.livePause = [await val(`${R}.video.paused`), await ev(() => !!document.querySelector(".draw .dbox.live")), (await val(`${R}.video.currentTime`)) - t0];
+  await ev(() => document.querySelector('.draw button[title="Brush"]').click());
+  await drag([cx - 60, cy - 60], [cx + 60, cy - 50], 8, 10);
+  await sleep(100);
+  out.drawnFrames = await val(`${R}.drawS.times().length`);
+  // Played to its end inside the canvas: it stops on the last frame, that frame's own picture (not
+  // a dimmed stand-in under a key past the end).
+  await ev(() => { const x = document.querySelector('.draw button[title="Brush"]'); delete x.dataset.held; x.click(); });
+  await val(`new Promise((ok) => { const v = ${R}.video; v.addEventListener("seeked", ok, { once: true }); v.currentTime = Math.max(0, v.duration - 0.3); })`);
+  await sleep(200);
+  await tapN([[cx, cy]]);
+  await p.waitForFunction(() => window.__sightReview.R.video.ended, null, { timeout: 4000 }).catch(() => {});
+  await sleep(800);
+  out.atEnd = await ev(() => { const i = document.querySelector(".draw .dbox > img"); return [window.__sightReview.R.video.ended, i.style.opacity, !!document.querySelector(".draw .dbox.live")]; });
   await ev(() => [...document.querySelectorAll(".draw .btn")].find((x) => x.textContent === "Done").click());
   await sleep(300);
   out.pvBack = await val(`${R}.pv`);
@@ -117,19 +143,50 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await p.click(".newbar .send");
   await sleep(300);
   out.stroke = await val(`${R}.rows.filter((r) => r.kind === "stroke").map((r) => r.data.opacity)`);
+  // A new drawing session: a clean timeline (not the note just made).
+  out.markersPlayer = await ev(() => document.querySelectorAll(".player .tl .mk").length);
+  await ev(() => document.querySelector('button[title="Draw a note on this picture / frame"]').click());
+  await p.waitForSelector(".draw");
+  await sleep(300);
+  out.markersCanvas = await ev(() => document.querySelectorAll(".draw .tl .mk").length);
+  await ev(() => [...document.querySelectorAll(".draw .btn")].find((x) => x.textContent === "Cancel").click());
+  await sleep(200);
+  // Playing, then the Notes Panel opens: the clip pauses where it was.
+  await val(`${R}.video.play()`);
+  await sleep(200);
 
   // Swipe up: the Notes Panel and "+ Note"; pull the list down: back to the player.
   await ev(() => { window.__sightReview.R.pv = { z: 1, r: 0, o: [0, 0] }; });
   await drag([cx, cy + 80], [cx, cy - 80], 8, 16);
   await sleep(400);
   out.panel = [await val(`${R}.panel`), await ev(() => getComputedStyle(document.querySelector(".newbar")).visibility)];
+  out.panelPaused = await val(`${R}.video.paused`);
+  // "+ Note": the player's timeline is clean while the note is written.
+  await ev(() => document.querySelector(".newbar .add").click());
+  await sleep(100);
+  out.markersCompose = await ev(() => document.querySelectorAll(".player .tl .mk").length);
+  await ev(() => document.querySelector('.newbar button[title="Close"]').click());
+  await sleep(100);
+  // The note's pictures full screen: sideways = its other frame (the caption says which); a swipe
+  // never closes it, only Back does.
+  await p.waitForSelector(".note .fw:not(.wait):not(.sm)", { timeout: 10000 });
+  await ev(() => document.querySelector(".note .fw:not(.wait):not(.sm)").click());
+  await p.waitForSelector(".view");
+  const capNow = () => ev(() => { const c = document.querySelector(".view .cap .fr"); return c ? c.textContent : null; });
+  out.viewer = [await capNow()];
+  await drag([320, 420], [60, 420], 8, 16); await sleep(800);
+  out.viewer.push(await capNow());
+  await drag([320, 420], [60, 420], 8, 16); await sleep(500);
+  out.viewer.push(await capNow());
+  await ev(() => document.querySelector(".view .fab.back").click()); await sleep(300);
+  out.viewer.push(await ev(() => !!document.querySelector(".view")));
   await drag([200, 300], [200, 420], 8, 16);
   await sleep(400);
   out.panel.push(await val(`${R}.panel`));
   // A swipe down on the player: the list of reviews.
   await drag([cx, cy - 60], [cx, cy + 100], 8, 16);
   await sleep(500);
-  out.home = await ev(() => !!document.querySelector(".opens"));
+  out.home = await ev(() => document.getElementById("app").classList.contains("home"));
   // Home: swipe left uncovers the bin, a tap elsewhere covers it; swipe right + the eye hides the
   // review for now (*Show* brings it back).
   await p.waitForSelector(".list .row");
