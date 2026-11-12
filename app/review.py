@@ -692,7 +692,7 @@ body.zoomed { overflow: hidden; }
       cnt.textContent = gal.length > 1 ? (idx + 1) + " / " + gal.length : "";
       db.hidden = !drawTarget(g);
     }
-    function close(){ z.remove(); document.body.classList.remove("zoomed"); document.removeEventListener("keydown", onKey, true); }
+    function close(){ clearTimeout(tapT); z.remove(); document.body.classList.remove("zoomed"); document.removeEventListener("keydown", onKey, true); }
     db.onclick = function(e){ e.stopPropagation(); var t = drawTarget(gal[idx]); close(); if (t) t(); };
     function go(d, fromX){
       var j = idx + d;
@@ -711,10 +711,16 @@ body.zoomed { overflow: hidden; }
       e.preventDefault(); e.stopPropagation();
     }
     var p0 = null, tap = false;
-    z.onclick = function(){ if (tap){ if (zs.z > 1){ zs = { z: 1, x: 0, y: 0 }; paintZ(); } else close(); } tap = false; };
+    // A tap closes (zoomed in: back to fit) — after the double-click interval, so a double-click
+    // can still zoom instead.
+    var tapT = 0;
+    z.onclick = function(){
+      if (tap){ clearTimeout(tapT); tapT = setTimeout(function(){ if (zs.z > 1){ zs = { z: 1, x: 0, y: 0 }; paintZ(); } else close(); }, 280); }
+      tap = false;
+    };
     z.addEventListener("contextmenu", function(e){ e.preventDefault(); });
     z.addEventListener("wheel", function(e){ e.preventDefault(); zoomAt(zs.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016)), e.clientX, e.clientY); }, { passive: false });
-    z.addEventListener("dblclick", function(e){ if (e.target.closest(".zd")) return; e.preventDefault(); zoomAt(zs.z > 1.2 ? 1 : 2.5, e.clientX, e.clientY); });
+    z.addEventListener("dblclick", function(e){ if (e.target.closest(".zd")) return; e.preventDefault(); clearTimeout(tapT); zoomAt(zs.z > 1.2 ? 1 : 2.5, e.clientX, e.clientY); });
     z.addEventListener("pointerdown", function(e){
       if (e.target.closest(".zd")) return;  // the Draw button gets its own click
       try { z.setPointerCapture(e.pointerId); } catch (_){}
@@ -727,7 +733,7 @@ body.zoomed { overflow: hidden; }
     });
     z.addEventListener("pointermove", function(e){
       if (zd && e.pointerId === zd.id){
-        if (zd.mid){ zs.x = zd.px + e.clientX - zd.x; zs.y = zd.py + e.clientY - zd.y; if (zs.z > 1) paintZ(); }
+        if (zd.mid){ if (zs.z > 1){ zs.x = zd.px + e.clientX - zd.x; zs.y = zd.py + e.clientY - zd.y; paintZ(); } }  // nothing to pan at fit
         else zoomAt(zd.z0 * Math.exp((zd.y - e.clientY) * 0.012), zd.x, zd.y);
         return;
       }

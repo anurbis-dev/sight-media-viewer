@@ -599,7 +599,7 @@ function buildStage(){
         if (!aa.duration && Number.isFinite(v.duration)) aa.duration = v.duration;
         paintTime(); paintMarkers(); paintOverlay(); applyStageView();
         const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
-        if (!rv.scrub && d){
+        if (!rv.scrub && d && rv.url && v.src === rv.url){  // not a player whose file was just swapped (rebind)
           rv.scrub = new ScrubCache(rv.url, d, rv.fps, (f) => { if (R === rv && els && els.cacheBar) els.cacheBar.style.width = (f * 100).toFixed(1) + "%"; });
           // After the player's own first frame, so the two do not race for the decoder.
           setTimeout(() => { if (R === rv && rv.scrub) rv.scrub.start(); }, 600);
@@ -638,6 +638,7 @@ async function rebind(file){
   }
   const rv = R;
   if (rv.url) URL.revokeObjectURL(rv.url);
+  rv.url = null;
   if (rv.grab) rv.grab.close();
   if (rv.scrub) rv.scrub.close();
   rv.grab = null; rv.scrub = null;
@@ -686,6 +687,7 @@ function showCached(t){
   const si = els && els.scrubImg, u = R && R.scrub && R.scrub.near(t);
   if (!si) return;
   if (u){ if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
+  else si.hidden = true;
 }
 function hideCached(){ if (els && els.scrubImg) els.scrubImg.hidden = true; }
 function bindScrub(stage, v){
@@ -693,7 +695,11 @@ function bindScrub(stage, v){
   let sd = null, want = null, scrubEnd = -1e9;
   const pump = () => { if (want == null || v.seeking) return; const t = want; want = null; if (Math.abs(t - v.currentTime) > 1e-3) v.currentTime = t; };
   const settle = () => { if (R && R.video === v && R.scrubT != null){ R.scrubT = null; paintTime(); paintOverlay(); } hideCached(); };
-  v.addEventListener("seeked", () => { pump(); if (!sd && want == null) settle(); });
+  v.addEventListener("seeked", () => {
+    pump();
+    if (!sd && want == null) settle();
+    else if (want == null && R && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideCached();  // the player has caught up
+  });
   v.addEventListener("play", hideCached);
   const stop = () => {
     if (sd && sd.on){ scrubEnd = performance.now(); if (want == null && !v.seeking) settle(); }

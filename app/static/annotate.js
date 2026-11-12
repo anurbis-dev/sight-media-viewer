@@ -517,8 +517,10 @@ export function createAnnotator(host){
   function viewMode(){
     if (modeCache) return modeCache;
     const inp = S.ui && !S.ui.hidden ? S.ui.querySelector(".an-input") : null, D = S.drag;
+    // Loose drawings from before (never attached to a note) do not count: only the ones drawn since
+    // this file was opened are a new note in the making.
     const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
-      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && ctxShown(it));
+      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.openedAt && ctxShown(it));
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
     modeCache = { compose, pin: note(S.pinFocus), hover: note(S.focusNote) };
     queueMicrotask(() => { modeCache = null; });
@@ -646,6 +648,10 @@ export function createAnnotator(host){
       g.classList.toggle("ghost", ghost);
       g.classList.toggle("dim", !!focus && vis && it.data.note !== focus);
     }
+    // What the view mode hides must not stay selected: Delete / nudge / copy would act on it unseen.
+    let unsel = false;
+    for (const id of S.sel){ const it = S.items.get(id); if (!it || !visibleNow(it)){ S.sel.delete(id); unsel = true; } }
+    if (unsel && !S.drag){ renderSel(); renderProps(); }
   }
   const visibleDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && visibleNow(it));
 
@@ -1590,10 +1596,10 @@ export function createAnnotator(host){
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.
-  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false };
+  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0 };
   function resetPF(){
     if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); }
-    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false;
+    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++;
   }
   function previewFrame(t){
     const key = Number(t).toFixed(3);
@@ -1607,16 +1613,18 @@ export function createAnnotator(host){
   async function pumpPF(){
     if (PF.busy || !PF.want.length || !PF.aid) return;
     PF.busy = true;
-    const aid = PF.aid;
+    // A reset (another asset, or the same one reopened) ends this run: its generation is gone.
+    const aid = PF.aid, gen = PF.gen;
     try {
       if (!PF.v){
-        const v = document.createElement("video");
-        v.muted = true; v.preload = "auto"; v.playsInline = true; v.src = `/api/file/${aid}`;
-        PF.v = v;
-        await new Promise((ok, no) => { v.addEventListener("loadeddata", ok, { once: true }); v.addEventListener("error", () => no(new Error("video")), { once: true }); });
+        const nv = document.createElement("video");
+        nv.muted = true; nv.preload = "auto"; nv.playsInline = true; nv.src = `/api/file/${aid}`;
+        PF.v = nv;
+        await new Promise((ok, no) => { nv.addEventListener("loadeddata", ok, { once: true }); nv.addEventListener("error", () => no(new Error("video")), { once: true }); });
       }
-      while (PF.want.length && PF.aid === aid){
-        const key = PF.want.shift(), v = PF.v;
+      const v = PF.v;
+      while (PF.want.length && PF.gen === gen){
+        const key = PF.want.shift();
         await new Promise((ok) => {
           let to = 0;
           const done = () => { clearTimeout(to); v.removeEventListener("seeked", done); ok(); };
@@ -1624,7 +1632,7 @@ export function createAnnotator(host){
           to = setTimeout(done, 4000);
           v.currentTime = Number(key);
         });
-        if (PF.aid !== aid || !v.videoWidth) break;
+        if (PF.gen !== gen || !v.videoWidth) break;
         const w = Math.min(480, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
@@ -1634,7 +1642,7 @@ export function createAnnotator(host){
         S.ui?.querySelectorAll(`img[data-ft="${key}"]`).forEach((im) => { im.src = url; im.removeAttribute("data-ft"); });
       }
     } catch (e){ console.warn("note frame", e); }
-    finally { if (PF.aid === aid) PF.busy = false; }
+    finally { if (PF.gen === gen) PF.busy = false; }
   }
   const liveReplies = (n) => (n.data.replies || []).filter((r) => !r.deleted);
   // A note is open, in progress (someone took it) or done. Every change also leaves an entry in
@@ -2068,6 +2076,7 @@ export function createAnnotator(host){
       }
       const r = await uploadCanvas(cv);
       S.pending.push({ id: r.id, url: r.url });
+      modeChanged();  // a screenshot waiting for its note: the clean picture
       S.light?.querySelector(".an-flash")?.classList.remove("go");
       const fl = S.light?.querySelector(".an-flash");
       if (fl){ void fl.offsetWidth; fl.classList.add("go"); }
@@ -2369,6 +2378,7 @@ export function createAnnotator(host){
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.focusNote = S.pinFocus = null; S.hiddenReplies.clear();
+    S.openedAt = Date.now();
     resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
     notesSig = "";

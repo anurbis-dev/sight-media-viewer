@@ -217,7 +217,8 @@ export class ScrubCache {
     let lo = 0, hi = ks.length - 1;
     while (lo < hi){ const m = (lo + hi) >> 1; if (ks[m] < k) lo = m + 1; else hi = m; }
     const best = lo > 0 && Math.abs(ks[lo - 1] - k) <= Math.abs(ks[lo] - k) ? ks[lo - 1] : ks[lo];
-    return this.frames.get(best);
+    // Only a frame close to t: a part of the clip not cached yet shows the player, not a wrong time.
+    return Math.abs(best - k) <= 2 ? this.frames.get(best) : null;
   }
   release(){ if (this.v){ this.v.pause(); this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } if (this.c){ dropCanvas(this.c); this.c = null; } }
   close(){

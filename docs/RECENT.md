@@ -39,7 +39,16 @@ Add new entries directly below this line.
   and the page's cover showing everything at once — both now shown where they belong. The phone
   cache is memory only (≤ 1500 frames ≤ 640 px); scrubbing still seeks the real player and the
   cached picture hides when the seek lands. The canvas's undo keeps item arrays: transforms work on
-  copies, never mutate an object an undo state holds. Review: a fresh-agent review runs on this commit; its fixes follow in the next one.
+  copies, never mutate an object an undo state holds. Review (fresh agent) found and these were fixed: the page viewer's
+  tap-close beat its double-click zoom (the close now waits 280 ms); a middle-drag at fit moved a
+  hidden pan; the canvas's recolour lost the selection; on touch the 22 px handle reach made small
+  objects unmovable (a press on the body > 8 px from a handle moves it); drawings hidden by the view
+  mode stayed selected (Delete / nudge acted unseen — the selection is pruned in paintVisibility); a
+  screenshot did not switch to the clean picture at once; the preview-frame pump raced on reopening
+  the same video (generation token); ScrubCache showed a far-away frame where the clip was not cached
+  yet (only ±2 steps now, and the player takes over once it has caught up); a rebind could start a
+  cache on the revoked URL. Design change from it: only drawings made since the file was opened
+  (data.created ≥ S.openedAt) start the compose mode, so old loose drawings never hide every note's.
 
 ## 0.23.1 — 2026-11-12 — Video frame stepping and note times land on the frame on screen (Sight + phone app)
 - **What:** in Sight's video lightbox `,` / `.` stepped from the *nearest* frame boundary, so a step taken after a pause or a scrub late in a frame skipped a frame forward (or stayed put backwards); a note / drawing made while paused late in frame k was stored at the raw time and showed on frame k+1. Now a step goes from the frame on screen and a new note / drawing is stored at that frame's start (+0.01 frame, where stepping lands). Without annotating, stepping used 25 fps on every clip (the rate was only read when annotation mode came on); it is now read when a video opens. Found by the fresh-agent review of the phone app (0.23.0), which already had the fix.

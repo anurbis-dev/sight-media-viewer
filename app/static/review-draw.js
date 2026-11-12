@@ -166,9 +166,8 @@ var SightReviewDraw = (function(){
     function recolour(c){
       var map = new Map();
       sel.forEach(function(it){ var n = clone(it); n.data.color = c; if (n.data.fill != null) n.data.fill = c; map.set(it, n); });
+      sel = sel.map(function(x){ return map.get(x); });  // before change(): its paint() keeps only what is in items
       change(items.map(function(x){ return map.get(x) || x; }));
-      sel = sel.map(function(x){ return map.get(x); });
-      paint();
     }
 
     // View: the picture fitted into the free area (box BW × BH local px), then zoomed, panned,
@@ -338,7 +337,14 @@ var SightReviewDraw = (function(){
       if (t === "eraser"){ stroke.before = items; eraseAt(p); return; }
       if (t === "text") return;  // the field opens on release (iOS shows the keyboard only then)
       if (t === "select"){
-        var h = sel.length ? RC.xfAt(RC.xfHandles(sel, k, null), p[0], p[1], (fine ? 9 : 22) * k) : null;
+        var hs = sel.length ? RC.xfHandles(sel, k, null) : [], h = RC.xfAt(hs, p[0], p[1], (fine ? 9 : 22) * k);
+        // A finger's wide reach must not turn every press on a small object into a handle: on the
+        // body of a selected object, a press more than 8 px from any handle moves it.
+        if (h && !fine){
+          var near = Math.min.apply(null, hs.map(function(q){ return RC.hyp(q[1] - p[0], q[2] - p[1]); }));
+          var body = itemAt(p, 6 * k);
+          if (near > 8 * k && body && sel.indexOf(body) >= 0) h = null;
+        }
         if (!h){
           var hit = itemAt(p, (fine ? 5 : 12) * k);
           if (!hit){
