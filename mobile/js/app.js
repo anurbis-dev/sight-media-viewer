@@ -357,6 +357,17 @@ async function renderHome(){
   l2.appendChild(picker("", false, openAny));
   opens.appendChild(l1); opens.appendChild(l2);
   main.appendChild(opens);
+  // Opened over plain HTTP (a custom domain without HTTPS enforced): no service worker there, so no
+  // offline use and no updates. Not redirected on its own: the reviews of this address live in its
+  // own storage, which the HTTPS address cannot see.
+  if (location.protocol === "http:" && !/^(localhost|127\.|\[::1\])/.test(location.hostname)){
+    const h = el("div", "hint"), p = el("p"), https = "https:" + location.href.slice(5).replace(/#.*$/, "");
+    p.innerHTML = "<b>This address has no HTTPS</b>, so the app cannot work offline or update itself. Open it over HTTPS and add that to the Home Screen. Reviews made here stay here: export each one (⋯ → Review file for Sight) and open the file in the HTTPS app.";
+    const b = el("a", "btn", "Open over HTTPS"); b.href = https;
+    p.appendChild(el("br")); p.appendChild(b);
+    h.appendChild(p);
+    main.appendChild(h);
+  }
   let hide = false;
   try { hide = localStorage.getItem("sight-review:hint") === "1"; } catch {}
   if (!isStandalone() && !hide){
@@ -1995,7 +2006,7 @@ function initSW(){
   // Only the update the user asked for reloads the page (the first install also changes the
   // controller, via clients.claim, and must not reload a review that is being worked on).
   navigator.serviceWorker.addEventListener("controllerchange", () => { if (!asked || reloading) return; reloading = true; flush().finally(() => location.reload()); });
-  navigator.serviceWorker.register("sw.js").then((r) => {
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => {
     reg = r;
     offer();
     r.addEventListener("updatefound", () => {

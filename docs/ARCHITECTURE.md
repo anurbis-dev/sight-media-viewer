@@ -484,6 +484,14 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   (`pdf.js`, objects: catalog, pages, info, then page / content / image per page). Files are
   offered in a sheet with *Share…* (Web Share with a file — needs a fresh tap, hence the sheet)
   and *Download*.
+- **Address**: the Pages site of `anurbis-dev` has a custom domain, so
+  `https://anurbis-dev.github.io/sight-media-viewer/` answers 301 → `http://pixis.ink/sight-media-viewer/`
+  (Cloudflare in front; HTTPS works but is not enforced). Use **https://pixis.ink/sight-media-viewer/**.
+  A copy installed from github.io never updates (a service-worker script update cannot follow a
+  redirect to another origin); over plain HTTP there is no service worker at all (the home screen
+  says so, with a link to HTTPS — no automatic redirect: each origin has its own IndexedDB).
+  Cloudflare sends JS with `max-age=14400`: the install precaches with `cache: "reload"` and the
+  worker is registered with `updateViaCache: "none"`.
 - **Service worker** (`sw.js`): precaches every file of the build (cache `sight-review-<version>`),
   serves cache-first, navigations get `./`; old caches are dropped on activate, `clients.claim()`.
   A new version waits; the page shows *Reload* and only then sends `{type: "skip"}` and reloads on

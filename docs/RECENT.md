@@ -14,6 +14,19 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.26.2 — 2026-11-12 — Phone app: why updates did not arrive (address), HTTP notice
+- **What:** the app's Pages address redirects to the account's custom domain (github.io → 301 →
+  http://pixis.ink/sight-media-viewer/). A copy installed from the github.io address can never update
+  (the service worker's update check cannot follow a redirect to another origin), and over plain
+  HTTP there is no service worker at all. The home screen now says when it is opened over HTTP, with
+  an *Open over HTTPS* link; the worker is registered with `updateViaCache: "none"`.
+- **Where:** `mobile/js/app.js` (`renderHome` notice, `initSW`), docs/ARCHITECTURE.md (Address).
+- **Notes:** the right address is **https://pixis.ink/sight-media-viewer/**. Not redirected
+  automatically: IndexedDB is per origin, reviews made on another address must be exported (.srev)
+  and opened in the new one. Enforcing HTTPS is an owner setting (GitHub Pages "Enforce HTTPS" of the
+  user site / Cloudflare "Always Use HTTPS"), not something the repo can do. No review agent for this
+  small change.
+
 ## 0.26.1 — 2026-11-12 — Phone: scrub / frame steps no longer jump back before landing
 - **What:** at the end of a scrub, and on every frame step, the picture jumped back a frame and
   then onto the right one. Now it goes straight to the frame.
@@ -260,15 +273,3 @@ Add new entries directly below this line.
   - On the HTML page, toggling back an unsent resolve drops its entry instead of logging a reopen (nothing was sent yet). In Sight every toggle is logged — it is committed immediately.
   - Clearing the review state used to delete the status rows; it now keeps one with `state: null` so the history survives (`_REVIEW_SQL` reads null = no state). Status rows from 0.17.0 have no history — their current state is used as the first entry.
   - History entries set in the same millisecond keep insertion order (stable sort by `at`).
-
-## 0.17.0 — 2026-11-11 — Review round-trips: merge, replies, versions & compare, review state, HTML page for reviewers
-- **What:** importing a `.srev` now merges instead of duplicating; notes have replies; files get a review state (Needs review / Changes / Approved) shown on grid cards and filterable in the sidebar; versions of a file (`_v001`, `_v002` …) are detected, open notes can be copied to the next version, and `K` opens a compare view (multi-layer swipe, tile / row / column, over / difference, synced video with a per-clip first-frame offset); a self-contained HTML page lets people without Sight reply / resolve / add notes and send back a `.srev`.
-- **Where:** `app/library.py` (`import_annotations` rewritten, `merge_replies`, `annotation_tombstones`, `set_review_status`, `asset_versions` / `version_key`, `_REVIEW_SQL` / `_OPEN_NOTES_SQL` in `list_assets` / `_clause` / `review_counts`, annotations re-targeted in `_migrate_asset`); `app/review.py` (`put_shot`, package `deleted`, `build_html` + template, replies in the PDF); `app/server.py` (`/api/assets/{id}/versions`, `/api/assets/{id}/review-status`, `/api/review/export/html`, `review=` on `/api/assets`, import returns `{added, updated, deleted, unchanged}`); new `app/static/compare.js`; `annotate.js` (replies, state row, versions row + carry-over, `gatherReport` shared by PDF / HTML, host hooks `openCompare` / `onReviewChanged`); `index.html` (`cmp` instance, `compareFromContext`, `K`, palette entry, card `.rv` pill, `REVIEW_ROWS` in `renderTypes`, `filter.review`).
-- **Notes:**
-  - Merge rules (see ARCHITECTURE "Review API"): ids are kept; per row the later *content stamp* wins (note: `data.edited_at` / `created`; drawing: `updated_at`) — NOT `updated_at` for notes, because replies and resolving bump it and a reviewer's stale copy would then overwrite newer text or revive a deleted note (found in review). Replies are unioned by id, the open/done state goes by `data.status_at`, tombstones travel in `pkg.deleted`. Clock skew between machines decides ties — accepted. `.srev` stays format version 1 (older Sight ignores `deleted` and gives rows fresh ids, as before). Notes edited before 0.17 have no `edited_at`: on a tie the local copy wins.
-  - The review state is an annotation row (`kind='status'`) so it travels in packages; a merge can leave two status rows on one asset — readers take the newest, and `set_review_status` retires the others when the state is set or cleared. `validItem` in annotate.js skips it.
-  - Independent review fixes also in this version: board shortcuts (canvas.js) are disabled while Compare is open; `K` on a board uses the board selection; a slow-seeking clip in Compare is not re-seeked every frame; an import is one transaction (bad rows → 400, nothing written); versions are looked up in the folder only, not its sub-tree.
-  - Versions are only looked for in the same folder (no `v002/shot.mp4` sub-folder layouts) and only for image / video / PSD. Carry-over scales drawings by the pixel-size ratio of the two versions (asset width/height; unknown → 1).
-  - Compare: no annotations inside it; no per-layer opacity; 3D models are not comparable. Every visible layer is a live `<video>` (tile + Difference adds a reference copy per cell), so many 4K clips will strain the decoder. The playhead is a wall clock — a stalled clip is re-seeked, not waited for.
-  - The HTML page embeds every frame / screenshot as JPEG / PNG data URLs (a picture with one note ≈ 100 KB; long video reviews can be several MB). Reviewer edits live in that browser's localStorage, keyed by asset id + export time, until downloaded. The page shows the file's path (like the PDF).
-  - Also fixed: annotations no longer get lost when a file is moved / renamed (they followed the old asset id).

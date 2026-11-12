@@ -1,6 +1,7 @@
 # The Sight Review phone app (PWA, docs/PLAN-mobile.md stage 3) on GitHub Pages.
 #
 #   push to master that touches the app       -> build + deploy to https://<owner>.github.io/<repo>/
+#                                                (this account's Pages redirect to https://pixis.ink/<repo>/)
 #   push to any other branch that touches it  -> build only (checks it builds)
 #   Actions tab -> "Phone app (Sight Review)" -> Run on master -> build + deploy
 #
