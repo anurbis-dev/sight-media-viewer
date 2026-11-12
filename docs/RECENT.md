@@ -27,6 +27,13 @@ Add new entries directly below this line.
   says so, with *Try again*). The copy is written after the review is on screen; a review deleted
   meanwhile drops it. `meta.keepAsked` is gone (old records keep the harmless field); `meta.noKeep`
   replaces it. Re-picking a file (rebind) replaces the copy.
+- **Review (fresh agent):** the first version put the whole `rv.meta` back after the copy was
+  written, so a review closed and reopened meanwhile (or imported into) lost or regained `kept`
+  against what was stored; "Forget" during a running copy was undone; a failed replace left the old
+  copy bound silently. Now `store.js keepFile / dropFile` patch the stored entry by key in one
+  transaction with the file (no write for a deleted review or one marked noKeep), the open review's
+  meta follows, a failed replace drops the old copy and shows the hint, and `openReview` sets `kept`
+  from what is really in `files`.
 
 ## 0.24.0 — 2026-11-12 — One transform tool everywhere, clean picture for new notes, turn / mirror, phone scrub cache
 - **What:** the select / transform tool (`V`) is now in the shared drawing canvas too (HTML page,

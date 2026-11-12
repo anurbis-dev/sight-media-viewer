@@ -435,7 +435,11 @@ async function openReview(key, file, fromRoute){
   // A file picked before is kept on the device (autoKeep), so the review opens with it; without
   // one the stage asks for the file.
   const picked = !!file;
-  if (!file){ const kept = await DB.get("files", key).catch(() => null); if (kept) file = kept.blob; }
+  if (!file){
+    const kept = await DB.get("files", key).catch(() => null);
+    if (kept) file = kept.blob;
+    meta.kept = !!kept;  // what is really stored wins over the flag (a stale write may have reset it)
+  }
   if (seq !== openSeq) return;
   closeReview();
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
@@ -450,24 +454,37 @@ async function openReview(key, file, fromRoute){
 }
 // Keeps the picked file in the app (IndexedDB "files") so the review opens with it next time — the
 // phone gives a web app no lasting access to a picked file. Not when the user said to forget it
-// (meta.noKeep) or the device is short of room; then the review asks for the file again.
+// (noKeep) or the device is short of room; then the review asks for the file again. The stored
+// entry is changed by key in one transaction (store.js keepFile / dropFile), never by putting a
+// meta object that may be stale; the open review's own meta follows.
+const sameKey = (key) => (R && R.meta.key === key ? R : null);
 async function autoKeep(rv, replace){
-  const m = rv.meta, f = rv.file;
-  if (m.noKeep || !f) return;
-  if (m.kept && !replace){ const cur = await DB.get("files", m.key).catch(() => null); if (cur && cur.blob && cur.blob.size === f.size) return; }
+  const key = rv.meta.key, f = rv.file;
+  if (rv.meta.noKeep || !f) return;
+  let cur = null;
+  if (rv.meta.kept){
+    cur = await DB.get("files", key).catch(() => null);
+    if (cur && cur.blob && cur.blob.size === f.size && !replace) return;
+  }
+  let ok = false, why = null;
   try {
     const e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
-    if (e && e.quota && (e.usage || 0) + f.size > e.quota * 0.9) throw new Error("not enough room on this device");
-    await DB.put("files", { key: m.key, blob: f });
-    if (!await DB.has("reviews", m.key)){ await DB.del("files", m.key); return; }  // deleted meanwhile
-    m.kept = true; rv.keepFailed = null;
-    await DB.put("reviews", m);
-    DB.persist();
+    const used = (e && e.usage || 0) - (cur && cur.blob ? cur.blob.size : 0);  // a replaced copy frees its room
+    if (e && e.quota && used + f.size > e.quota * 0.9) throw new Error("not enough room on this device");
+    ok = await DB.keepFile(key, f);
+    if (ok) DB.persist();
   } catch (e){
     console.warn("keep", e);
-    rv.keepFailed = e.message || String(e);
+    why = e.message || String(e);
+    // A copy that could not be replaced is not the file in use any more: drop it.
+    if (replace) await DB.dropFile(key, false).catch(() => {});
   }
-  if (R === rv && els) paintKeep();
+  const live = sameKey(key);
+  if (live){
+    if (ok){ live.meta.kept = true; live.keepFailed = null; }
+    else if (why){ if (replace) live.meta.kept = false; live.keepFailed = why; }
+    if (els) paintKeep();
+  }
 }
 
 async function bindFile(rv, file){
@@ -868,18 +885,19 @@ function paintKeep(){
 async function keepCopy(){
   const b = busy("Keeping a copy…");
   try {
-    await DB.put("files", { key: R.meta.key, blob: R.file });
-    R.meta.kept = true; R.meta.noKeep = false; R.keepFailed = null;
-    await DB.put("reviews", R.meta);
+    const rv = R;
+    rv.meta.noKeep = false;
+    await DB.put("reviews", rv.meta);
+    if (!await DB.keepFile(rv.meta.key, rv.file)) throw new Error("the review is gone");
+    rv.meta.kept = true; rv.keepFailed = null;
     DB.persist();
     toast("The file is kept on this device");
   } catch (e){ toast("Could not keep the file: " + (e.message || e), 5000); }
   finally { b.done(); paintKeep(); }
 }
 async function dropCopy(){
-  await DB.del("files", R.meta.key);
   R.meta.kept = false; R.meta.noKeep = true;
-  await DB.put("reviews", R.meta);
+  await DB.dropFile(R.meta.key, true);
   toast("The file is forgotten on this device; the review stays. Reopening it asks for the file.", 4000);
 }
 function paintSeg(c){
