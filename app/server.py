@@ -1,4 +1,4 @@
-"""FastAPI app for Sight."""
+"""Sight's HTTP API and UI server (Starlette through app/web.py)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,8 @@ import queue
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+# Starlette with FastAPI's decorator shape (app/web.py): FastAPI + pydantic cost ~0.5 s per start.
+from .web import App, FileResponse, HTTPException, JSONResponse, Request, Response, StaticFiles, StreamingResponse
 
 from .fileinfo import NO_WINDOW
 from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
@@ -353,8 +352,8 @@ def serve_video(request: Request, path: str, cache) -> StreamingResponse | Respo
     )
 
 
-def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = False) -> FastAPI:
-    app = FastAPI(title="Sight", docs_url=None, redoc_url=None)
+def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = False) -> App:
+    app = App()
     app.state.last_heartbeat = time.time()
     settings = settings or SettingsStore(lib.root)
 
@@ -437,9 +436,18 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         lim = max(1, min(limit, 800))
         items = lib.list_assets(q, kind, source, tag, bool(missing), collection, offset, lim, folder, sort, order, review)
         total = lib.count_filtered(q, kind, source, tag, bool(missing), collection, folder, review) if offset == 0 else None
-        # JSONResponse directly: the rows are plain JSON types already, and FastAPI's
+        lib.first_page_served()  # the startup scan waited for this (Library.resume_watchers)
+        # JSONResponse directly: the rows are plain JSON types already, and (under FastAPI) the
         # jsonable_encoder walk of a 400-item page cost ~12 ms more than the dump itself.
         return JSONResponse({"items": items, "offset": offset, "total": total})
+
+    @app.post("/api/assets/by-ids")
+    async def assets_by_ids(request: Request) -> JSONResponse:
+        ids = (await json_body(request)).get("ids") or []
+        if not isinstance(ids, list):
+            raise HTTPException(400, "ids must be a list")
+        items = await asyncio.to_thread(lib.assets_by_ids, ids[:5000])  # off the event loop
+        return JSONResponse({"items": items})
 
     @app.get("/api/assets/{aid}")
     def one(aid: str) -> dict:

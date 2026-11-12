@@ -6,7 +6,8 @@ For "what changed lately" see `RECENT.md`. Update this file only when something 
 
 ```
 Sight.py                 launcher (venv bootstrap, window, port); --dev / SIGHT_DEV=1 = developer mode
-app/server.py            FastAPI app; routes are closures inside build_app(lib, settings, dev)
+app/server.py            HTTP API + UI server; routes are closures inside build_app(lib, settings, dev)
+app/web.py               FastAPI-shaped router on plain Starlette (@app.get on plain functions; see below)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
 app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package,
@@ -22,6 +23,8 @@ app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
 tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node)
+tools/                   archive_changes.py; bench_startup.py / bench_grid.py (benchlib.py: isolated SIGHT_HOME
+                         copy, headless Edge/Chrome/Chromium over a stdlib CDP client — never the live library)
 build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
 build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script gives dist/Sight/Sight
 .github/workflows/release.yml  CI: all four platform builds + headless smoke test; tag v<APP_VERSION> publishes a Release
@@ -95,8 +98,37 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   `fileinfo.py`); the app has no console, so each would otherwise flash a console window.
 - ffmpeg is found in a background thread at startup: read it through `lib.ffmpeg_exe()` (waits for
   the search, retries when none was found), not `lib.ffmpeg`.
-- `thumb_version()` is cached in memory. Code that writes a thumbnail calls
-  `thumb_version(aid, fresh=True)`; code that deletes or invalidates one calls `_forget_thumb(aid)`.
+- `thumb_version()` is cached in memory, a missing file as 0 too (re-checked after 30 s;
+  `prioritize` regenerates a has_thumb asset whose file is gone). Code that writes a thumbnail calls
+  `thumb_version(aid, fresh=True)`; code that finds or writes one marks it with `_mark_thumb(aid)`
+  (never `_have_thumb.add` directly — it also drops a cached 0); code that deletes or invalidates one
+  calls `_forget_thumb(aid)`.
+- PSD and PDF thumbnails render in 2 worker processes (`HeavyWorkers` in library.py, used through
+  `Library._heavy`; module-level `render_psd_thumb` / `render_pdf_thumb`, `_heavy_child`): psd_tools
+  and MuPDF hold the GIL and made the whole server sluggish from the thumbnail threads. Not a
+  ProcessPoolExecutor: its jobs cannot be killed and its exit hook waits for them (a hung PSD kept the
+  process alive). Workers are spawned (never fork), daemonic, started on demand, stopped after 60 s
+  idle; a job that times out (120 s from when a worker takes it) or kills its worker is remembered by
+  path + mtime and skipped for the session — never re-rendered in the server process. Only when
+  processes cannot start at all does a thumbnail render in the thread. `Sight.py` calls
+  `multiprocessing.freeze_support()` first thing (frozen builds start children as the exe itself);
+  nothing at module level in Sight.py or app/library.py may have side effects (a spawned child
+  imports them).
+- No FastAPI / pydantic (they cost ~0.5 s per start): `app/web.py`'s `App` keeps FastAPI's decorator
+  shape. Handler parameters are filled by name from the path, then the query string, else their
+  default; annotations are read as strings and only `Request`, `int`, `float`, `bool` matter (bad
+  value → 422); plain `def` handlers run in the thread pool, `async def` on the loop (keep blocking
+  library calls out of `async` handlers or wrap them in `asyncio.to_thread`); a Response goes out as
+  is, anything else as JSON; `HTTPException` → `{"detail": ...}`.
+- Startup scan: watchers start at once, the catch-up walk of every source waits until the first
+  `GET /api/assets` is served (`Library.first_page_served`) or 3 s, so it does not compete with the
+  first paint.
+- Grid refresh: `pull()` only appends (offset = loaded count); `refreshItems()` (on scan batches and
+  review changes) re-reads by id (`POST /api/assets/by-ids`) only the cards on screen, the inspector's
+  and the lightbox's asset, and marks every other loaded item stale (`staleIds`); a stale card is
+  re-read when it comes on screen (`refreshStaleVisible` from `renderGrid`). `/api/assets` caps
+  `limit` at 800, so never re-read "the first N". Masonry positions are extended, not recomputed,
+  while `pull()` appends to the same array.
 - Launch order in `Sight.py`: bootstrap → `listen_socket()` → browser started in parallel → server
   imports → `server.run(sockets=[sock])`. The browser's first request waits in the socket backlog.
   Keep heavy imports (numpy, psd_tools, pymupdf, usd) out of the startup path: import them inside
@@ -147,7 +179,9 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
   (`fullResUrl`: `/api/file` for browser-decodable rasters, `/api/psd/{id}/preview` for PSD; no SVG/TIFF/HEIC)
   once the shown source width in device px exceeds 1.25× the thumbnail's, and back below 0.8×. State lives in
   `img.dataset` (`res` = thumb/loading/full/failed, `thumbW`, `fullW`); at most 3 decodes at once, nearest the
-  view centre first. The original has the same aspect, so crop maths is unaffected.
+  view centre first. An original more than a screen away from the view goes back to the thumbnail too
+  (panning a zoomed-in board kept every original it passed decoded). The original has the same aspect,
+  so crop maths is unaffected.
 - Shortcuts (canvas.js `KEYMAP`; PureRef-compatible where PureRef has one): F frame selection, A frame
   all, Ctrl+A select all (index.html), Ctrl+arrows align, Ctrl+Alt+arrows normalize
   height/width/size/scale, Ctrl+Alt+Shift+↑/↓ distribute row/column, Ctrl+P arrange optimal,

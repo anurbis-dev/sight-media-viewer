@@ -2,6 +2,14 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.15.3 — 2026-11-10 — Launch: the window opens maximized and focused again
+- **What:** If Sight was maximized when it was closed, it opens maximized again, and the window gets focus on launch. Before, neither happened on this machine. The window came up at its normal size, behind whatever had focus.
+- **Where:** `Sight.py`: new `_process_tree(root)` (Toolhelp32 snapshot through ctypes); `_find_browser_window(pids, user32)` now takes a set of pids; `reveal_when_ready()` passes `_process_tree(proc.pid)`; `close_browser(proc)` terminates the same tree instead of running a PowerShell WMI query by `--user-data-dir` (0.15.2).
+- **Notes:**
+  - Root cause: the Popen'd `msedge.exe` is a launcher. It starts the real browser process and exits within a second with code 0. The window belongs to that child, so looking for a window owned by `proc.pid` never matched. `reveal_when_ready()` then returned after its 3 s search without calling `ShowWindow(SW_MAXIMIZE)` or `SetForegroundWindow`. The page's own `moveIntoView()` still brought the window on screen, which hid the bug.
+  - The tree includes processes whose parent pid is the launcher's, even after the launcher has exited. `close_browser()` terminates the launcher first, so it cannot start the browser after the snapshot.
+  - Checked by launching Sight.py on an isolated `SIGHT_HOME`. With a saved `max: true` the window was maximized and in the foreground (it was neither before the fix). With `max: false` it was not maximized and in the foreground. A start that fails, tested with a `library.db` that cannot be opened, leaves no Edge process behind.
+
 ## 0.15.2 — 2026-11-10 — Faster startup and asset list; folder dialog stays on top
 - **What:** Sight starts faster and the library list loads faster. Measured on this machine with a copy of the real library (1,028 assets): a source launch (Sight.py) shows its window after 1.4 s instead of 3.9 s; server start to the first `/api/health` takes 1.1 s instead of 2.75 s; one `/api/assets` page of 400 takes 7.5 ms instead of ~20 ms. Sight.exe skips the dependency check, so it gains less, roughly 0.7–1 s of ~2 s by the estimate below (not measured, no exe was built). The Add-folder dialog can no longer open behind the Sight window.
 - **Where:**

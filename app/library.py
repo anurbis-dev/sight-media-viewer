@@ -649,12 +649,211 @@ class SlidingVideoCache:
                 fh.close()
 
 
+# ---- heavy thumbnails, rendered in worker processes -------------------------------------------
+# psd_tools' compositing and MuPDF's rendering hold the GIL, so 2-4 thumbnail threads busy with PSD /
+# PDF files made the whole server sluggish (1,000-file import: /api/assets median 61 ms, max 241 ms
+# instead of 1 ms). Library._heavy() runs these in a small process pool. Module-level functions with
+# str arguments, so they pickle into a spawned child.
+
+def render_psd_thumb(path: str, dest: str) -> tuple[int, int] | None:
+    path, dest = Path(path), Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from psd_tools import PSDImage
+
+        psd = PSDImage.open(path)
+        im = psd.composite()
+        if im is None:
+            return None
+        width, height = im.size
+        im.thumbnail((THUMB_SIZE, THUMB_SIZE))
+        _save_thumb_image(im, dest)
+        return width, height
+    except Exception:
+        pass
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            width, height = im.size
+            im.thumbnail((THUMB_SIZE, THUMB_SIZE))
+            _save_thumb_image(im, dest)
+            return width, height
+    except Exception:
+        return None
+
+
+def render_pdf_thumb(path: str, dest: str) -> tuple[int, int] | None:
+    path, dest = Path(path), Path(dest)
+    # ffmpeg has no PDF demuxer in stock builds (confirmed: it just errors on any real
+    # PDF), so rendering the first page needs an actual PDF library — PyMuPDF, no system
+    # poppler/ghostscript install required.
+    try:
+        import pymupdf as fitz
+
+        doc = fitz.open(str(path))
+        if doc.page_count < 1:
+            return None
+        page = doc.load_page(0)
+        scale = THUMB_SIZE / max(page.rect.width, page.rect.height, 1)
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        from PIL import Image
+
+        im = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        im.save(dest, "JPEG", quality=85)
+        return im.size
+    except Exception:
+        return None
+
+
+_HEAVY_FNS = {"psd": render_psd_thumb, "pdf": render_pdf_thumb}
+
+
+def _heavy_child(conn) -> None:
+    """A worker process: renders jobs sent over the pipe until the pipe closes."""
+    while True:
+        try:
+            job = conn.recv()
+        except (EOFError, OSError):
+            return
+        if job is None:
+            return
+        kind, path, dest = job
+        try:
+            res = _HEAVY_FNS[kind](path, dest)
+        except Exception:
+            res = None
+        try:
+            conn.send(res)
+        except (OSError, ValueError):
+            return
+
+
+class _NoWorkers(Exception):
+    """Worker processes cannot be started here: render in the thread instead."""
+
+
+class _JobFailed(Exception):
+    """The job timed out or its worker died: the file is skipped, never re-run in the server."""
+
+
+class HeavyWorkers:
+    """`n` killable worker processes (spawn context — never fork this multi-threaded server) for
+    renderers that hold the GIL. Not a ProcessPoolExecutor on purpose: a running executor job cannot
+    be cancelled or killed, and Python's exit hook waits for it, so one hung PSD kept the process
+    alive after the window closed. Here a timed-out or crashed job kills its worker (a fresh one is
+    started for the next job), workers are daemonic (killed at exit) and `close()` kills them all.
+    The timeout counts from when a worker takes the job, not the wait for a free one. Workers idle
+    for `idle` seconds are stopped (each holds ~100 MB of imports)."""
+
+    def __init__(self, n: int = 2, idle: float = 60.0) -> None:
+        self._slots = [{"proc": None, "conn": None, "busy": False, "last": 0.0} for _ in range(n)]
+        self._free: queue.Queue = queue.Queue()
+        for s in self._slots:
+            self._free.put(s)
+        self._lock = threading.Lock()
+        self._closed = False
+        self._idle = idle
+        self._reaper: threading.Timer | None = None
+
+    def _start(self, slot: dict) -> None:
+        try:
+            import multiprocessing
+
+            ctx = multiprocessing.get_context("spawn")
+            mine, theirs = ctx.Pipe()
+            proc = ctx.Process(target=_heavy_child, args=(theirs,), daemon=True)
+            proc.start()
+            theirs.close()
+        except Exception as e:
+            raise _NoWorkers() from e
+        slot["proc"], slot["conn"] = proc, mine
+
+    @staticmethod
+    def _kill(slot: dict) -> None:
+        proc, conn = slot["proc"], slot["conn"]
+        slot["proc"] = slot["conn"] = None
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.join(2)
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def run(self, kind: str, path: str, dest: str, timeout: float):
+        slot = self._free.get()
+        try:
+            with self._lock:
+                if self._closed:
+                    raise _JobFailed()
+                slot["busy"] = True
+                if slot["proc"] is None or not slot["proc"].is_alive():
+                    self._kill(slot)
+                    self._start(slot)
+                conn = slot["conn"]
+            try:
+                conn.send((kind, path, dest))
+                if conn.poll(timeout):
+                    return conn.recv()
+            except (EOFError, OSError, ValueError):
+                pass  # the worker died on this file (or close() killed it)
+            with self._lock:
+                self._kill(slot)
+            raise _JobFailed()
+        finally:
+            with self._lock:
+                slot["busy"] = False
+                slot["last"] = time.monotonic()
+                self._arm_reaper()
+            self._free.put(slot)
+
+    def _arm_reaper(self, delay: float | None = None) -> None:
+        if self._reaper is None and not self._closed:
+            self._reaper = threading.Timer(self._idle if delay is None else delay, self._reap)
+            self._reaper.daemon = True
+            self._reaper.start()
+
+    def _reap(self) -> None:
+        with self._lock:
+            self._reaper = None
+            now, wait = time.monotonic(), None
+            for s in self._slots:
+                if s["proc"] is None:
+                    continue
+                left = self._idle if s["busy"] else self._idle - (now - s["last"])
+                if left <= 0:
+                    self._kill(s)
+                else:
+                    wait = left if wait is None else min(wait, left)
+            if wait is not None:
+                self._arm_reaper(wait + 0.05)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            if self._reaper:
+                self._reaper.cancel()
+            for s in self._slots:
+                self._kill(s)
+
+
 class Library:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.thumbs = root / "thumbs"
         self.thumbs.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
+        self._first_page = threading.Event()  # set by first_page_served(); gates the startup scan
+        # Worker processes for PSD / PDF thumbnails (_heavy).
+        self._heavy_workers = HeavyWorkers(2)
+        self._heavy_off = False  # worker processes cannot start here: render in the thread
+        self._heavy_failed: set[tuple[str, int]] = set()  # (path, mtime) that timed out / crashed
         self.conn = sqlite3.connect(str(root / "library.db"), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -685,6 +884,7 @@ class Library:
         # files (that was ~80% of /api/assets time on Windows). Re-read whenever a thumbnail is
         # written, dropped by _forget_thumb() whenever one is deleted or invalidated.
         self._thumb_v: dict[str, int] = {}
+        self._thumb_miss: dict[str, float] = {}  # when thumb_version last found no file
         self._info_cache: dict[str, tuple[tuple, list[dict]]] = {}
         self._wake = threading.Condition(self._heap_lock)
         try:
@@ -935,7 +1135,7 @@ class Library:
 
     def _load_thumb_cache(self) -> None:
         for row in self.conn.execute("SELECT id FROM assets WHERE has_thumb=1"):
-            self._have_thumb.add(row["id"])
+            self._mark_thumb(row["id"])
 
     def _load_legacy_thumb_cache(self) -> None:
         """Disk thumbs from older runs whose DB row predates has_thumb. Listing the whole thumbs
@@ -943,12 +1143,34 @@ class Library:
         background instead of delaying startup — anything not yet indexed here just looks
         momentarily unthumbed and gets queued for a (harmless, self-correcting) regen."""
         for p in self.thumbs.glob("*.jpg"):
-            self._have_thumb.add(p.stem)
+            self._mark_thumb(p.stem)
+
+    def _heavy(self, kind: str, path: Path, dest: Path) -> tuple[int, int] | None:
+        """Renders a PSD / PDF thumbnail in a worker process (HeavyWorkers). A file that timed out
+        or crashed its worker is remembered (by path + mtime) and not tried again this session —
+        and never re-rendered in the server process, where the same crash would take Sight down.
+        Only when worker processes cannot be started at all does it render in this thread."""
+        try:
+            key = (str(path), path.stat().st_mtime_ns)
+        except OSError:
+            return None
+        if key in self._heavy_failed:
+            return None
+        if not self._heavy_off:
+            try:
+                return self._heavy_workers.run(kind, str(path), str(dest), timeout=120.0)
+            except _JobFailed:
+                self._heavy_failed.add(key)
+                return None
+            except _NoWorkers:
+                self._heavy_off = True
+        return _HEAVY_FNS[kind](str(path), str(dest))
 
     def close(self) -> None:
         self._stop.set()
         with self._wake:
             self._wake.notify_all()
+        self._heavy_workers.close()
         self.video_cache.close()
         with self.lock:
             self.conn.close()
@@ -1266,7 +1488,7 @@ class Library:
         self.execute("DELETE FROM assets WHERE id=?", (old_id,))
         self._forget_thumb(old_id)
         if moved_thumb:
-            self._have_thumb.add(new_id)
+            self._mark_thumb(new_id)
 
     def _reconcile_moved(self) -> int:
         """Pairs each status='missing' row with a 'ready' row elsewhere in the library that has
@@ -1471,10 +1693,17 @@ class Library:
             return
         with self._wake:
             for aid in ids:
+                if aid in self._have_thumb and self._thumb_v.get(aid) == 0:
+                    # has_thumb=1 but thumb_version found no file (deleted by hand, a cleaner):
+                    # make it again instead of skipping it forever; or the file is there after all.
+                    if self.thumb_path(aid):
+                        self._thumb_v.pop(aid, None)
+                    else:
+                        self._forget_thumb(aid)
                 if aid in self._have_thumb or aid in self._inflight:
                     continue
                 if (self.thumbs / f"{aid}.jpg").exists() or (self.thumbs / f"{aid}.png").exists():
-                    self._have_thumb.add(aid)
+                    self._mark_thumb(aid)
                     continue
                 self._seq += 1
                 heapq.heappush(self._heap, (priority, self._seq, aid))
@@ -1485,7 +1714,7 @@ class Library:
             p = self.thumbs / f"{aid}{ext}"
             if p.exists():
                 if aid not in self._have_thumb:
-                    self._have_thumb.add(aid)
+                    self._mark_thumb(aid)
                     self.execute("UPDATE assets SET has_thumb=1 WHERE id=?", (aid,))
                 return p
         return None
@@ -1547,7 +1776,7 @@ class Library:
             self.execute("UPDATE assets SET animated=? WHERE id=?", (1 if animated else 0, aid))
         thumb_ok = self.thumb_path(aid) is not None
         if thumb_ok:
-            self._have_thumb.add(aid)
+            self._mark_thumb(aid)
             if wh:
                 self.execute(
                     "UPDATE assets SET has_thumb=1, width=?, height=? WHERE id=?",
@@ -1587,7 +1816,7 @@ class Library:
                 other.unlink()
             except OSError:
                 pass
-        self._have_thumb.add(aid)
+        self._mark_thumb(aid)
         self.execute("UPDATE assets SET has_thumb=1 WHERE id=?", (aid,))
         self.bus.publish({
             "type": "thumb", "id": aid, "hasThumb": True, "animated": None,
@@ -1602,7 +1831,9 @@ class Library:
         every code path that writes a thumbnail must ask for."""
         if not fresh:
             v = self._thumb_v.get(aid)
-            if v is not None:
+            # A cached "no file" is re-checked after 30 s: a listing that stat'ed just before a
+            # write could otherwise store its 0 after the writer's fresh=True, for good.
+            if v or (v == 0 and time.monotonic() - self._thumb_miss.get(aid, 0.0) < 30.0):
                 return v
         v = 0
         for ext in (".jpg", ".png"):
@@ -1611,11 +1842,18 @@ class Library:
                 break
             except OSError:
                 continue
-        if v:
-            self._thumb_v[aid] = v
-        else:
-            self._thumb_v.pop(aid, None)
+        # 0 (no file — e.g. has_thumb=1 rows whose file was deleted) is cached too, so listing
+        # them does not stat two files per row each time; _mark_thumb() drops it when one appears.
+        self._thumb_v[aid] = v
+        if not v:
+            self._thumb_miss[aid] = time.monotonic()
         return v
+
+    def _mark_thumb(self, aid: str) -> None:
+        """The asset has a thumbnail file (found or just written)."""
+        self._have_thumb.add(aid)
+        if self._thumb_v.get(aid) == 0:
+            self._thumb_v.pop(aid, None)
 
     def _forget_thumb(self, aid: str) -> None:
         """The asset's thumbnail is gone or stale: drop what is known about it in memory."""
@@ -1686,30 +1924,7 @@ class Library:
         return None
 
     def _thumb_psd(self, path: Path, dest: Path) -> tuple[int, int] | None:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            from psd_tools import PSDImage
-
-            psd = PSDImage.open(path)
-            im = psd.composite()
-            if im is None:
-                return None
-            width, height = im.size
-            im.thumbnail((THUMB_SIZE, THUMB_SIZE))
-            _save_thumb_image(im, dest)
-            return width, height
-        except Exception:
-            pass
-        try:
-            from PIL import Image
-
-            with Image.open(path) as im:
-                width, height = im.size
-                im.thumbnail((THUMB_SIZE, THUMB_SIZE))
-                _save_thumb_image(im, dest)
-                return width, height
-        except Exception:
-            return None
+        return self._heavy("psd", path, dest)
 
     def psd_layers(self, aid: str) -> list[dict] | None:
         a = self.get_asset(aid)
@@ -1814,26 +2029,7 @@ class Library:
         return p
 
     def _thumb_pdf(self, path: Path, dest: Path) -> tuple[int, int] | None:
-        # ffmpeg has no PDF demuxer in stock builds (confirmed: it just errors on any real
-        # PDF), so rendering the first page needs an actual PDF library — PyMuPDF, no system
-        # poppler/ghostscript install required.
-        try:
-            import pymupdf as fitz
-
-            doc = fitz.open(str(path))
-            if doc.page_count < 1:
-                return None
-            page = doc.load_page(0)
-            scale = THUMB_SIZE / max(page.rect.width, page.rect.height, 1)
-            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-            from PIL import Image
-
-            im = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            im.save(dest, "JPEG", quality=85)
-            return im.size
-        except Exception:
-            return None
+        return self._heavy("pdf", path, dest)
 
     def _thumb_text(self, path: Path, dest: Path) -> tuple[int, int] | None:
         from PIL import Image, ImageDraw
@@ -2302,6 +2498,10 @@ class Library:
             )
         self.bus.publish({"type": "batch", "n": 1, "source": sid})
 
+    def first_page_served(self) -> None:
+        """The UI got its first /api/assets page: the startup scan may begin (resume_watchers)."""
+        self._first_page.set()
+
     def resume_watchers(self) -> None:
         sids = []
         for row in self.query("SELECT id, path FROM sources"):
@@ -2312,6 +2512,10 @@ class Library:
             return
 
         def run_all() -> None:
+            # The catch-up walk of every source competes with the first paint (disk, GIL, the
+            # thumbnail queue), so it waits until the page has its first page of assets — the
+            # server calls first_page_served() — or 3 s at most (a launch without a page).
+            self._first_page.wait(timeout=3.0)
             threads = [threading.Thread(target=self.scan_source, args=(sid,)) for sid in sids]
             for t in threads:
                 t.start()
@@ -2407,26 +2611,38 @@ class Library:
     ) -> list[dict]:
         clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
         order_sql = self._order_by(sort, order)
-        sql = (
-            f"SELECT id, source_id, path, name, ext, kind, size, mtime, width, height, "
-            f"duration, tags, note, rating, status, has_thumb, animated, added_at, "
-            f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes "
-            f"FROM assets WHERE {clause} {order_sql} LIMIT ? OFFSET ?"
-        )
+        sql = f"SELECT {self._LIST_COLS} FROM assets WHERE {clause} {order_sql} LIMIT ? OFFSET ?"
         args.extend([limit, offset])
-        out = []
-        for r in self.query(sql, tuple(args)):
-            item = dict(r)
-            raw_tags = item.get("tags") or "[]"
-            try:
-                item["tags"] = json.loads(raw_tags)
-            except json.JSONDecodeError:
-                item["tags"] = []
-            if item["id"] in self._have_thumb:
-                item["has_thumb"] = 1
-            if item["has_thumb"]:
-                item["thumb_v"] = self.thumb_version(item["id"])
-            out.append(item)
+        return [self._list_item(r) for r in self.query(sql, tuple(args))]
+
+    # The columns a grid card needs (list_assets and assets_by_ids return the same shape).
+    _LIST_COLS = (
+        "id, source_id, path, name, ext, kind, size, mtime, width, height, "
+        "duration, tags, note, rating, status, has_thumb, animated, added_at, "
+        f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes"
+    )
+
+    def _list_item(self, r) -> dict:
+        item = dict(r)
+        try:
+            item["tags"] = json.loads(item.get("tags") or "[]")
+        except json.JSONDecodeError:
+            item["tags"] = []
+        if item["id"] in self._have_thumb:
+            item["has_thumb"] = 1
+        if item["has_thumb"]:
+            item["thumb_v"] = self.thumb_version(item["id"])
+        return item
+
+    def assets_by_ids(self, ids: list[str]) -> list[dict]:
+        """The grid rows of these assets (any order; unknown ids are skipped) — lets the client
+        refresh exactly the cards it shows instead of re-reading the first N of the list."""
+        out: list[dict] = []
+        ids = list(dict.fromkeys(str(i) for i in ids if i))
+        for k in range(0, len(ids), 500):  # well under SQLite's bound-parameter limit
+            chunk = ids[k:k + 500]
+            sql = f"SELECT {self._LIST_COLS} FROM assets WHERE id IN ({','.join('?' * len(chunk))})"
+            out.extend(self._list_item(r) for r in self.query(sql, tuple(chunk)))
         return out
 
     def count_filtered(

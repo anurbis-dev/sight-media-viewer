@@ -1288,13 +1288,19 @@ function layout(){
 let masonryCache = null;
 function computeMasonry(L){
   const n = state.items.length;
-  const sig = n + "|" + L.cols + "|" + L.cell + "|" + L.gap + "|" + L.meta + "|" + L.cardPad;
-  if (masonryCache && masonryCache.sig === sig) return masonryCache;
+  const base = L.cols + "|" + L.cell + "|" + L.gap + "|" + L.meta + "|" + L.cardPad;
+  const c = masonryCache;
+  // Same list object and layout: cached, or — when pull() only appended — extended from where
+  // the columns ended instead of laid out again from item 0 (a 50k library arrives in ~125 pages).
+  // A new list object (pull(true) after a filter / source switch) always starts over, even with
+  // the same count; masonryCache = null forces it after a size change.
+  if (c && c.arr === state.items && c.base === base && c.n === n) return c;
   const cols = L.cols;
-  const colH = new Array(cols).fill(0);
-  const positions = new Array(n);
+  const extend = !!(c && c.arr === state.items && c.base === base && c.n < n);
+  const colH = extend ? c.colH.slice() : new Array(cols).fill(0);
+  const positions = extend ? c.positions : new Array(n);
   const thumbW = Math.max(24, L.cell - 2 * L.cardPad);
-  for (let i = 0; i < n; i++){
+  for (let i = extend ? c.n : 0; i < n; i++){
     const a = state.items[i];
     const ar = a.width && a.height ? a.width / a.height : 1;
     // Clamped so one extreme panorama/strip scan can't blow out a column (and the virtualizer's
@@ -1302,13 +1308,13 @@ function computeMasonry(L){
     const imgH = Math.min(Math.round(thumbW * 2.5), Math.max(Math.round(thumbW * 0.4), Math.round(thumbW / ar)));
     const cardH = 2 * L.cardPad + imgH + L.meta;
     let col = 0;
-    for (let c = 1; c < cols; c++) if (colH[c] < colH[col]) col = c;
+    for (let k = 1; k < cols; k++) if (colH[k] < colH[col]) col = k;
     const y = colH[col];
     positions[i] = { x: col * (L.cell + L.gap), y, h: cardH, imgH };
     colH[col] = y + cardH + L.gap;
   }
   const totalHeight = n ? Math.max(...colH) - L.gap : 0;
-  masonryCache = { sig, positions, totalHeight };
+  masonryCache = { arr: state.items, base, n, colH, positions, totalHeight };
   return masonryCache;
 }
 
@@ -1537,6 +1543,7 @@ function renderGrid(){
     sliceEl.insertBefore(el, node);
   }
   reportVisible(visItems);
+  refreshStaleVisible(visItems);
 }
 
 function reportVisible(items){
@@ -6915,17 +6922,18 @@ async function pull(fromStart){
     while (true){
       const reset = wantReset;
       wantReset = false;
-      if (reset) state.items = [];
+      if (reset){ state.items = []; loadedIds = new Set(); }
       const p = params();
       p.set("offset", String(state.items.length));
       p.set("limit", "400");
       const data = await api("/api/assets?" + p);
       const items = data.items || [];
       if (data.total != null) state.total = data.total;
-      if (reset) state.items = items;
+      if (reset){ state.items = items; loadedIds = new Set(items.map(x => x.id)); staleIds.clear(); }
       else {
-        const have = new Set(state.items.map(x => x.id));
-        for (const a of items) if (!have.has(a.id)) state.items.push(a);
+        // A row already loaded (the order shifted under a scan) is skipped here and keeps its
+        // stale mark, so it is re-read by id when it shows.
+        for (const a of items) if (!loadedIds.has(a.id)){ state.items.push(a); loadedIds.add(a.id); staleIds.delete(a.id); }
       }
       scheduleRender();
       renderStatus();
@@ -6950,27 +6958,48 @@ function resetList(){
 // pull(false) only ever fetches PAST the end of what's already loaded (offset=state.items.length)
 // — it grows the list but never refreshes items already in it. So a status flip on an already-
 // loaded asset (a live-watched file going missing, a reconciled move, a tag edit from elsewhere)
-// never reached the grid on its own; only a full pull(true) (source/filter switch) did. This
-// re-fetches the SAME window (offset 0, same length) and updates each item's fields in place —
-// same array, same objects where possible, so cardPool/scroll position aren't disturbed — and
-// lets renderGrid's next pass pick up the new status/thumb_v/tags on the cards already on screen.
+// would not reach the grid on its own. refreshItems() re-reads the cards on screen plus the
+// selection by id (/api/assets/by-ids) and marks every other loaded item stale; a stale item is
+// re-read when its card comes on screen (refreshStaleVisible from renderGrid). Fields are updated
+// in place — same array, same objects — so cardPool / scroll position aren't disturbed.
+// (It used to re-read offset 0 … items.length, which the server caps at 800 rows: anything past
+// #800 never refreshed.)
 let refreshItemsT = 0;
+const staleIds = new Set();
+let loadedIds = new Set();  // ids in state.items (pull() is the only writer of the list)
 function scheduleRefreshItems(){
   clearTimeout(refreshItemsT);
   refreshItemsT = setTimeout(refreshItems, 150);
 }
 async function refreshItems(){
   if (!state.items.length) return;
+  for (const x of state.items) staleIds.add(x.id);
   const p = params();
   p.set("offset", "0");
-  p.set("limit", String(state.items.length));
+  p.set("limit", "1");
+  const total = api("/api/assets?" + p).then((d) => { if (d.total != null){ state.total = d.total; renderStatus(); } }).catch(() => {});
+  // What is on screen now: the cards, the inspector's item and the lightbox's. The rest of the
+  // selection (Ctrl+A can select tens of thousands) stays stale until its cards show.
+  const now = [...cardPool.keys(), state.selected, light?.id].filter(Boolean);
+  await Promise.all([refreshIds([...new Set(now)]), total]);
+}
+async function refreshIds(ids){
+  // At most 2000 per request (the server reads 5000); the rest stays stale for a later pass.
+  ids = ids.filter((id) => staleIds.has(id)).slice(0, 2000);
+  if (!ids.length) return;
+  for (const id of ids) staleIds.delete(id);
   let data;
-  try { data = await api("/api/assets?" + p); } catch { return; }
-  const items = data.items || [];
-  if (data.total != null) state.total = data.total;
-  const byId = new Map(items.map(a => [a.id, a]));
+  try {
+    data = await api("/api/assets/by-ids", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
+  } catch {
+    for (const id of ids) staleIds.add(id);
+    return;
+  }
+  const byId = new Map((data.items || []).map(a => [a.id, a]));
+  let resized = false;
   for (const x of state.items){
     const fresh = byId.get(x.id);
+    if (!fresh) continue;
     // The server only sends thumb_v when has_thumb is true, so a plain Object.assign below
     // would leave a stale thumb_v (and seenThumb entry) in place when a thumbnail is dropped —
     // e.g. a watched file going missing then reappearing with different content, which resets
@@ -6978,15 +7007,22 @@ async function refreshItems(){
     // the OLD ?v= URL, which the browser's immutable HTTP cache happily keeps serving forever.
     // Clearing them here lets the placeholder show and the normal "thumb needed" pickup
     // (reportVisible) request a fresh one under a new, uncached URL.
-    if (fresh && !fresh.has_thumb && (x.has_thumb || x.thumb_v)){
+    if (!fresh.has_thumb && (x.has_thumb || x.thumb_v)){
       seenThumb.delete(x.id);
       delete x.thumb_v;
     }
-    if (fresh) Object.assign(x, fresh);
+    if (fresh.width !== x.width || fresh.height !== x.height) resized = true;
+    Object.assign(x, fresh);
   }
-  masonryCache = null; // widths/heights may have changed — the signature alone won't catch that
+  if (resized) masonryCache = null; // the masonry signature alone won't catch a size change
   scheduleRender();
   renderStatus();
+}
+let staleT = 0;
+function refreshStaleVisible(visItems){
+  if (!staleIds.size || !visItems.some((a) => staleIds.has(a.id))) return;
+  clearTimeout(staleT);
+  staleT = setTimeout(() => refreshIds([...cardPool.keys()]), 120);
 }
 
 function applyThumb(id, hasThumb, animated, v, width, height){
@@ -8013,6 +8049,17 @@ startHeartbeat();
 // later signal than __revealApp().
 moveIntoView(serverSettings?.window);
 window.__signalReady?.();
+// The first 3D open used to wait ~100 ms for three.js + GLTFLoader + OrbitControls. With 3D files
+// in the library, fetch and compile them a few seconds after the grid is up, when the browser is
+// idle (imports are cached per module URL, so boot3d / the loaders get them instantly later).
+if ((state.meta.counts || {}).model3d){
+  setTimeout(() => {
+    const go = () => Promise.all([
+      import("three"), import("three/addons/loaders/GLTFLoader.js"), import("three/addons/controls/OrbitControls.js"),
+    ]).catch(() => {});
+    if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 5000 }); else go();
+  }, 3000);
+}
 </script>
 </body>
 </html>

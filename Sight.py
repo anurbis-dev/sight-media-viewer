@@ -19,7 +19,7 @@ from pathlib import Path
 
 MIN_PY = (3, 10)
 DEPS = [
-    "fastapi>=0.115",
+    "starlette>=0.40",
     "uvicorn[standard]>=0.32",
     "pillow>=10.4",
     "watchdog>=5.0",
@@ -28,7 +28,7 @@ DEPS = [
     "zstandard>=0.22",
     "pymupdf>=1.24",
 ]
-DEP_MODULES = ("fastapi", "uvicorn", "PIL", "watchdog", "imageio_ffmpeg", "psd_tools", "zstandard", "pymupdf")
+DEP_MODULES = ("starlette", "uvicorn", "PIL", "watchdog", "imageio_ffmpeg", "psd_tools", "zstandard", "pymupdf")
 PROBE = "import " + ", ".join(DEP_MODULES)
 ROOT = Path(__file__).resolve().parent
 
@@ -258,7 +258,7 @@ def bundle_root() -> Path:
     return ROOT
 
 
-def start_splash() -> subprocess.Popen | None:
+def start_splash(show_after_ms: int = 0) -> subprocess.Popen | None:
     """Shows a small native "Sight is loading" indicator the instant Sight launches — purely a
     sign of life while bootstrap/server start happen, not a mask for the real window (that's
     reveal_when_ready() below: the real fix for the browser's own blank/white first frame is to
@@ -274,15 +274,40 @@ def start_splash() -> subprocess.Popen | None:
         return subprocess.Popen(
             [
                 "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-                # ShowAfterMs: a launch that brings its window up within about 1.7 s (PowerShell
-                # itself takes ~0.7 s to start) never shows the splash at all, instead of flashing
-                # it for a fraction of a second over the window that is just appearing.
-                "-File", str(script), "-MaxWaitSeconds", "45", "-ShowAfterMs", "1000",
+                "-File", str(script), "-MaxWaitSeconds", "45", "-ShowAfterMs", str(show_after_ms),
             ],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError:
         return None
+
+
+class LazySplash:
+    """Starts the splash only if the launch is still going after `delay` seconds. PowerShell costs
+    ~0.7 s of CPU to start, which every launch used to pay although a launch that brings its window
+    up within ~1.7 s never showed the splash (it waited ShowAfterMs = 1 s after starting). Now a
+    fast launch starts nothing, and a slow one shows the splash at about the same moment as before
+    (delay + PowerShell's own start). close() is safe from any thread, before or after the start."""
+
+    def __init__(self, delay: float = 1.0) -> None:
+        self._lock = threading.Lock()
+        self._closed = False
+        self.proc: subprocess.Popen | None = None
+        self._timer = threading.Timer(delay, self._start)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _start(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self.proc = start_splash()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._timer.cancel()
+            if self.proc and self.proc.poll() is None:
+                self.proc.terminate()
 
 
 def _process_tree(root: int) -> set[int]:
@@ -411,7 +436,47 @@ def reveal_when_ready(
         return
     if maximized:
         user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
-    user32.SetForegroundWindow(hwnd)
+    _bring_to_front(hwnd, user32)
+
+
+def _bring_to_front(hwnd: int, user32) -> None:
+    """SetForegroundWindow, which Windows' foreground lock refuses unless this process was started
+    by the foreground process (a double-click in Explorer qualifies; a script or a launcher may not).
+    allow_foreground_handoff() at startup covers most of it; if Windows still refuses, attach to
+    the input queue of the window that has the focus — then the call is the focus owner's own."""
+    import ctypes
+
+    try:
+        if user32.SetForegroundWindow(hwnd):
+            return
+        kernel32 = ctypes.windll.kernel32
+        fg = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+        me = kernel32.GetCurrentThreadId()
+        if not fg_thread or fg_thread == me:
+            return
+        if user32.AttachThreadInput(me, fg_thread, True):
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+            finally:
+                user32.AttachThreadInput(me, fg_thread, False)
+    except Exception:  # ctypes.ArgumentError included: focus is a nicety, never a crash
+        pass
+
+
+def allow_foreground_handoff() -> None:
+    """While Sight still holds the right to take the foreground (it was just started by the user),
+    let any process take it — the browser window it opens, the venv re-exec of itself. Must run
+    first thing: the right is gone once the user clicks elsewhere. Windows only; no-op elsewhere."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+    except (OSError, AttributeError):
+        pass
 
 
 def close_browser(proc: subprocess.Popen) -> None:
@@ -455,6 +520,7 @@ def _wait_for_ping(ready_port: int, timeout: float) -> None:
 
 
 def main() -> None:
+    allow_foreground_handoff()
     fix_frozen_streams()
     import argparse
 
@@ -471,7 +537,7 @@ def main() -> None:
     # rewrites app/static/defaults.json. A packaged build never honours it.
     dev = (args.dev or os.environ.get("SIGHT_DEV") == "1") and not getattr(sys, "frozen", False)
 
-    splash_proc: subprocess.Popen | None = None
+    splash: LazySplash | None = None
     # The server once built (its `started` turns True when it serves) and the browser process this
     # launch opened, so a failed start can close a window that would otherwise wait off-screen.
     launched: dict[str, object] = {}
@@ -486,8 +552,8 @@ def main() -> None:
         # packaged build's bootstrap() returns immediately, so this costs it nothing. The splash
         # closes itself once _open() below is done opening the window — the try/finally here is
         # only the fallback for "something went wrong before that ever happened".
-        if not args.no_browser:
-            splash_proc = start_splash()
+        if not args.no_browser and sys.platform == "win32":
+            splash = LazySplash()
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
 
@@ -495,7 +561,7 @@ def main() -> None:
         from app.settings import SettingsStore  # stdlib only, cheap
 
         settings = SettingsStore(home)
-        # Listen before the server is even imported (~0.6 s of fastapi/uvicorn imports and library
+        # Listen before the server is even imported (~0.3 s of starlette/uvicorn imports and library
         # setup), so the browser window can start in parallel with all of that.
         sock = listen_socket(args.port or int(os.environ.get("SIGHT_PORT") or 0))
         port = sock.getsockname()[1]
@@ -510,8 +576,8 @@ def main() -> None:
                 time.sleep(0.02)
 
         def _close_splash() -> None:
-            if splash_proc and splash_proc.poll() is None:
-                splash_proc.terminate()
+            if splash:
+                splash.close()
 
         def _open() -> None:
             # Whichever branch below actually opens the window, the splash always gets closed right
@@ -653,11 +719,16 @@ def main() -> None:
         # Normally _open()'s own finally has already closed the splash — this only catches
         # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
         # it doesn't sit on screen for its full timeout.
-        if splash_proc and splash_proc.poll() is None:
-            splash_proc.terminate()
+        if splash:
+            splash.close()
 
 
 if __name__ == "__main__":
+    # The thumbnail process pool (Library._heavy) spawns children; in a frozen build each child is
+    # this exe started again with multiprocessing's arguments, which freeze_support() runs and exits.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     try:
         main()
     except Exception as exc:

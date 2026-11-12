@@ -22,7 +22,7 @@ if not exist "%PY%" (
 
 echo Sight - build : installing dependencies
 uv pip install --python "%PY%" ^
-  "fastapi>=0.115" ^
+  "starlette>=0.40" ^
   "uvicorn[standard]>=0.32" ^
   "pillow>=10.4" ^
   "watchdog>=5.0" ^
@@ -42,6 +42,9 @@ echo Sight - build : stopping any running Sight from dist
 powershell -NoProfile -Command "Get-Process Sight -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '%~dp0dist\Sight\*' } | Stop-Process -Force; Start-Sleep -Seconds 1"
 
 echo Sight - build : compiling Sight (this can take a minute)
+rem --exclude-module: tkinter is unused; of the USD runtime, app/usdz_convert.py loads only Ar Gf Kind Pcp Plug
+rem Sdf Sdr Tf Trace Ts Usd UsdGeom UsdShade UsdUI Vt Work (UsdShade pulls UsdUI) - the rest are left out (fewer
+rem DLLs for the virus scanner on a fresh build's first start). Keep the lists in both build scripts equal.
 ".buildenv\Scripts\pyinstaller.exe" Sight.py ^
   --name Sight ^
   --onedir ^
@@ -51,6 +54,20 @@ echo Sight - build : compiling Sight (this can take a minute)
   --add-data "%~dp0app\static;app\static" ^
   --add-data "%~dp0app\splash_screen.ps1;app" ^
   --collect-all pxr ^
+  --exclude-module tkinter ^
+  --exclude-module pxr.UsdPhysics ^
+  --exclude-module pxr.UsdVol ^
+  --exclude-module pxr.UsdLod ^
+  --exclude-module pxr.UsdValidation ^
+  --exclude-module pxr.UsdRi ^
+  --exclude-module pxr.UsdHydra ^
+  --exclude-module pxr.UsdProc ^
+  --exclude-module pxr.UsdRender ^
+  --exclude-module pxr.UsdSemantics ^
+  --exclude-module pxr.UsdMedia ^
+  --exclude-module pxr.UsdProfiles ^
+  --exclude-module pxr.UsdSkel ^
+  --exclude-module pxr.UsdLux ^
   --distpath dist ^
   --workpath .buildenv\work ^
   --specpath .buildenv

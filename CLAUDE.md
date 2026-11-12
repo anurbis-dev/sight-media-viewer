@@ -1,6 +1,6 @@
 # Sight — notes for agents
 
-Sight is a local, in-place media library (FastAPI + SQLite backend, one zero-build HTML/JS frontend).
+Sight is a local, in-place media library (Starlette + SQLite backend, one zero-build HTML/JS frontend).
 Read this file first; it is short on purpose. Details live in `docs/`.
 
 ## Read before you touch code
@@ -9,7 +9,7 @@ Read this file first; it is short on purpose. Details live in `docs/`.
 2. `docs/ARCHITECTURE.md` — how the pieces fit (files, DB tables, API, canvas internals, gotchas).
 3. `README.md` / `MANUAL.md` — user-facing behaviour.
 4. `docs/PLAN.md` — queued improvements and known bugs, with the numbers behind them. Take work from here.
-   Bigger tracks: `docs/PLAN-mobile.md` (mobile review app, drawing, ftrack sync) and `docs/PLAN-viewer.md`.
+   Bigger tracks: `docs/PLAN-mobile.md` (local review app on the phone, then trackers, clouds) and `docs/PLAN-viewer.md`.
 5. `docs/FORMAT.md` — the review data contract (rows, `.srev`, merge rules) shared with the HTML page and
    the mobile app. Read it before touching annotations / review code; merge changes go into both
    `Library.import_annotations` and `app/static/review-core.js` (`python -m unittest tests.test_merge_parity`).

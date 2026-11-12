@@ -181,16 +181,19 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       const img = dom.get(item.id)?.querySelector(".citem-thumb img");
       if (!img || !img.dataset.full || !img.naturalWidth || !img.dataset.thumbW) continue;
       const need = shownImageWidth(item, img), thumbW = +img.dataset.thumbW;
+      const r = Math.hypot(item.w, item.h) / 2 * zoom;
+      const cx = vx + (item.x + item.w / 2) * zoom, cy = vy + (item.y + item.h / 2) * zoom;
+      const off = (m) => cx + r < -m * vw || cx - r > vw * (1 + m) || cy + r < -m * vh || cy - r > vh * (1 + m);
       if (img.dataset.res === "full"){
-        if (need < thumbW * DOWNGRADE_AT){ img.dataset.res = "thumb"; img.src = img.dataset.thumb; }
+        // Zoomed out, or panned more than a screen away: back to the thumbnail, so panning around
+        // a zoomed-in board does not keep every original it passed decoded (≈48 MB per 12 MP).
+        if (need < thumbW * DOWNGRADE_AT || off(1)){ img.dataset.res = "thumb"; img.src = img.dataset.thumb; }
         continue;
       }
       if (img.dataset.res !== "thumb" || need < thumbW * UPGRADE_AT) continue;
       const fullW = +img.dataset.fullW;
       if (fullW && fullW <= thumbW * 1.05) continue; // the thumbnail already is the original's size
-      const r = Math.hypot(item.w, item.h) / 2 * zoom;
-      const cx = vx + (item.x + item.w / 2) * zoom, cy = vy + (item.y + item.h / 2) * zoom;
-      if (cx + r < 0 || cx - r > vw || cy + r < 0 || cy - r > vh) continue; // off-screen: not now
+      if (off(0)) continue; // off-screen: not now
       want.push({ img, d: Math.hypot(cx - vw / 2, cy - vh / 2) });
     }
     want.sort((a, b) => a.d - b.d); // nearest the middle of the view first
