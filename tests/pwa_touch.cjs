@@ -216,6 +216,32 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.fly.push(await ev(() => document.querySelectorAll(".draw .dfly:not([hidden]) .swc").length));
   await ev(() => document.querySelector('.draw .dfly .swc[data-c="#ffd60a"]').click()); await sleep(100);
   out.fly.push(await ev(() => [getComputedStyle(document.querySelector(".draw .dtools .dcol i")).backgroundColor, !!document.querySelector(".draw .dbar .swc")]));
+  // The text slot: its row of switches (the bar's own see-through look); Bold and the alignment
+  // go to the pen; a tap on the picture opens a bold, centred field; Italic while typing styles it;
+  // the text put down carries all three.
+  await ev(() => document.querySelector('.draw .dtools button[title="Text"]').click()); await sleep(100);
+  out.textFly = [await ev(() => [document.querySelectorAll(".draw .dfly:not([hidden]) .tb").length, document.querySelector(".draw .dfly").classList.contains("rd-panel")])];
+  await ev(() => document.querySelector('.draw .dfly button[title="Bold"]').click());
+  await ev(() => document.querySelector('.draw .dfly button[title^="Alignment"]').click()); await sleep(50);
+  out.textFly.push(await ev(() => [document.querySelector('.draw .dfly button[title="Bold"]').classList.contains("on"), document.querySelector('.draw .dfly button[title^="Alignment"]').title,
+    JSON.parse(localStorage.getItem("sight-review:pen")).text.bold]));
+  await tapN([[cx, cy - 60]]); await sleep(150);
+  out.textFly.push(await ev(() => { const t = document.querySelector(".draw .dtext"); return t ? [getComputedStyle(t).fontWeight, t.style.textAlign] : null; }));
+  await p.keyboard.type("Hi");
+  await ev(() => document.querySelector('.draw .dtools button[title="Text"]').click()); await sleep(80);
+  await ev(() => document.querySelector('.draw .dfly button[title="Italic"]').click()); await sleep(50);
+  out.textFly.push(await ev(() => { const t = document.querySelector(".draw .dtext"); return t ? getComputedStyle(t).fontStyle : null; }));
+  await tapN([[cx + 120, cy + 120]]); await sleep(150);
+  out.textFly.push(await ev(() => { const g = document.querySelectorAll(".draw .dbox svg > g")[1].querySelector('g[font-weight="700"]');
+    return g ? [g.getAttribute("font-style"), g.getAttribute("text-anchor"), g.textContent] : null; }));
+  await ev(() => { const u = document.querySelector('.draw button[title="Undo"]'); if (!u.disabled) u.click(); });
+  // The pen's switches back to plain (bold, italic off; the alignment round to left), the brush in hand.
+  await ev(() => { document.querySelector('.draw .dtools button[title="Text"]').click(); });
+  await sleep(50);
+  await ev(() => { for (const t of ["Bold", "Italic"]) document.querySelector('.draw .dfly button[title="' + t + '"]').click();
+    for (let i = 0; i < 2; i++) document.querySelector('.draw .dfly button[title^="Alignment"]').click(); });
+  out.textFly.push(await ev(() => JSON.parse(localStorage.getItem("sight-review:pen")).text));
+  await ev(() => document.querySelector('.draw .dtools button[title="Brush"]').click()); await sleep(50);
   out.canvasRot0 = await ev(() => { const m = new DOMMatrix(getComputedStyle(document.querySelector(".draw .dbox")).transform); return Math.round(Math.atan2(m.b, m.a) * 180 / Math.PI); });
   // Pinched smaller than fit and turned a little, let go: back to fit, the turn straight (as the
   // player does).
@@ -248,16 +274,26 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.markersCompose = await ev(() => document.querySelectorAll(".player .tl .mk").length);
   await ev(() => document.querySelector('.newbar button[title="Close"]').click());
   await sleep(100);
+  // A swipe sideways on the list: the next status filter (left), back again (right).
+  const pl = await p.locator(".plist").boundingBox(), py = pl.y + Math.min(200, pl.height / 2);
+  await drag([pl.x + pl.width - 40, py], [pl.x + 40, py], 8, 16); await sleep(250);
+  out.filterSwipe = [await val(`${R}.filter`), await ev(() => document.querySelector(".pbar .seg button.on").textContent.replace(/\d+$/, ""))];
+  await drag([pl.x + 40, py], [pl.x + pl.width - 40, py], 8, 16); await sleep(250);
+  out.filterSwipe.push(await val(`${R}.filter`));
+  // The note's pictures: equal squares in one grid (4 to a row by default).
+  out.pics = await ev(() => { const c = [...document.querySelectorAll(".note .pics > .fw")]; const w = c.map((x) => Math.round(x.getBoundingClientRect().width)), h = c.map((x) => Math.round(x.getBoundingClientRect().height));
+    const g = document.querySelector(".note .pics"); return [c.length, w.every((x, i) => x === w[0] && Math.abs(h[i] - x) <= 1), Math.abs(w[0] * 4 + 12 - g.getBoundingClientRect().width) <= 2]; });
   // The note's pictures full screen: sideways = its other frame (the caption says which); a swipe
   // never closes it, only Back does.
-  await p.waitForSelector(".note .fw:not(.wait):not(.sm)", { timeout: 10000 });
-  await ev(() => document.querySelector(".note .fw:not(.wait):not(.sm)").click());
+  await p.waitForSelector(".note .fw:not(.wait):not(.sm):not(.shot)", { timeout: 10000 });
+  await ev(() => document.querySelector(".note .fw:not(.wait):not(.sm):not(.shot)").click());
   await p.waitForSelector(".view");
   const capNow = () => ev(() => { const c = document.querySelector(".view .cap .fr"); return c ? c.textContent : null; });
   out.viewer = [await capNow()];
   await drag([320, 420], [60, 420], 8, 16);
-  // Cross-fade: both pictures are up for a moment, the old one fading out; then only the new one.
-  out.viewerFade = [await p.waitForFunction(() => document.querySelectorAll(".view .vb").length === 2, null, { timeout: 2000 }).then(() => true, () => false)];
+  // A strip: the old picture goes on to the left, fading, the new one comes in from the right.
+  out.viewerFade = [await p.waitForFunction(() => { const b = document.querySelectorAll(".view .vb"); if (b.length !== 2) return false;
+    const r0 = b[0].getBoundingClientRect(), r1 = b[1].getBoundingClientRect(); return r0.left < r1.left && Number(getComputedStyle(b[0]).opacity) < 1; }, null, { timeout: 2000, polling: 16 }).then(() => true, () => false)];
   await sleep(800);
   out.viewerFade.push(await ev(() => document.querySelectorAll(".view .vb").length));
   out.viewer.push(await capNow());
@@ -297,17 +333,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(300);
   await p.fill(".newbar textarea", "Forgot this frame");
   await p.click(".newbar .send");
-  await p.waitForFunction(() => document.querySelector(".note .rep .shots .fw:not(.wait)"), null, { timeout: 5000 }).catch(() => {});
+  await p.waitForFunction(() => document.querySelector(".note .rep .pics .fw:not(.wait)"), null, { timeout: 5000 }).catch(() => {});
   out.replySent = await ev(`(() => { const R = window.__sightReview.R, n = R.rows.find((r) => r.id === ${JSON.stringify(nid)});
     const rep = (n.data.replies || []).find((x) => x.text === "Forgot this frame");
     const ds = rep ? R.rows.filter((r) => r.data.reply === rep.id) : [];
     return [!!rep, ds.length > 0 && ds.every((r) => Math.abs(r.data.ctx.t - ${newT}) < 1 / R.fps), R.replyTo, R.curNote === n.id,
       document.querySelector('.note[data-id="' + n.id + '"]').classList.contains("cur"), Math.abs(R.video.currentTime - ${newT}) < 1 / R.fps,
-      document.querySelectorAll('.note[data-id="' + n.id + '"] .rep .shots .fw:not(.wait)').length]; })()`);
+      document.querySelectorAll('.note[data-id="' + n.id + '"] .rep .pics .fw:not(.wait)').length]; })()`);
+  // A reply's drawing on the note's own frame stays off the note's picture (only the reply's).
+  out.replyOffNote = await ev(`(() => { const S = window.__sightReview, R = S.R, n = R.rows.find((r) => r.id === ${JSON.stringify(nid)});
+    const rep = n.data.replies.find((x) => x.text === "Forgot this frame"), t = n.data.ctx.t;
+    R.rows.push({ id: "rq" + Date.now(), kind: "stroke", shape_kind: "brush", z_index: 99, created_at: Date.now(), updated_at: Date.now(), deleted_at: null,
+      data: { note: n.id, reply: rep.id, ctx: n.data.ctx, tool: "brush", color: "#fff", width: 4, pts: [1, 1, 0.5, 9, 9, 0.5] } });
+    const f = { at: { t, fps: R.fps } };
+    const r = [S.drawingsOn(f).some((x) => x.data.reply), S.drawingsOn(f, { reply: rep.id }).some((x) => x.data.reply === rep.id)];
+    R.rows.pop(); return r; })()`);
   // The note's viewer walks the whole thread: its two frames, then the reply's frame ("↳ …"); Back
   // leaves the player on the reply's frame.
-  await p.waitForSelector(`.note[data-id="${nid}"] .fw:not(.wait):not(.sm)`, { timeout: 10000 });
-  await ev(`document.querySelector('.note[data-id="${nid}"] .fw:not(.wait):not(.sm)').click()`);
+  await p.waitForSelector(`.note[data-id="${nid}"] .fw:not(.wait):not(.sm):not(.shot)`, { timeout: 10000 });
+  await ev(`document.querySelector('.note[data-id="${nid}"] .fw:not(.wait):not(.sm):not(.shot)').click()`);
   await p.waitForSelector(".view");
   await sleep(300);
   out.thread = [await capNow()];
@@ -342,6 +386,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await drag([cx, cy - 60], [cx, cy + 100], 8, 16);
   await sleep(500);
   out.home = await ev(() => document.getElementById("app").classList.contains("home"));
+  // Right after that swipe back, the first tap on a review's picture opens it (that tap also
+  // takes the page full screen); a tap on the card itself only picks it.
+  await p.waitForSelector(".list .row .th");
+  const th0 = await p.locator(".list .row > .item .th").first().boundingBox();
+  await tapN([[th0.x + 30, th0.y + 30]]);
+  out.reopen = [await p.waitForSelector(".review .stage", { timeout: 4000 }).then(() => true, () => false)];
+  await sleep(600);
+  await drag([cx, cy - 60], [cx, cy + 100], 8, 16);
+  await sleep(500);
+  out.reopen.push(await ev(() => document.getElementById("app").classList.contains("home")));
   // Home: swipe left uncovers the bin, a tap elsewhere covers it; swipe right + the eye hides the
   // review for now (*Show* brings it back).
   await p.waitForSelector(".list .row");
@@ -402,6 +456,41 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ev(() => [...document.querySelectorAll(".sheet .btn")].find((b) => b.textContent === "Done").click()); await sleep(300);
   await tapN([[200, 30]]); await sleep(300);
   out.fullscreen.push(await ev(() => [!!document.fullscreenElement, localStorage.getItem("sight-review:fs")]));
+  // Between groups: two groups (a+b, c+d); a held and dropped on the second group's header moves
+  // there (the first, left with one, dissolves). Taps pick b and c (no review opens); Move to… →
+  // a new group of the two. The group's row sums every state; its picture can be a colour.
+  await ev(async () => {
+    const D = window.__sightReview.DB, t = Date.now();
+    await D.saveReview({ key: "grp-d", asset: { name: "dd.png", kind: "image", size: 1000, width: 10, height: 10 }, counts: { notes: 3, open: 1, progress: 1, done: 1 }, updated: t, opened: t - 3 }, []);
+    const c = await D.get("reviews", "grp-c"); c.counts = { notes: 2, open: 0, progress: 1, done: 1 }; await D.put("reviews", c);
+    localStorage.setItem("sight-review:groups", JSON.stringify([{ id: "g1", name: "One", keys: ["grp-a", "grp-b"], open: true }, { id: "g2", name: "Two", keys: ["grp-c", "grp-d"], open: true }]));
+    localStorage.setItem("sight-review:order", JSON.stringify(["g:g1", "g:g2"]));
+  });
+  await p.reload();
+  await p.waitForSelector('.list .row[data-key="g:g2"]');
+  const ga = await rowBox("grp-a"), g2 = await p.locator('.list .row[data-key="g:g2"] > .item').boundingBox();
+  const fa = [ga.x + 150, ga.y + ga.height / 2], tg = [g2.x + 150, g2.y + g2.height / 2];
+  await touch("touchStart", [fa]); await sleep(600);
+  for (let i = 1; i <= 14; i++){ await touch("touchMove", [[fa[0], fa[1] + (tg[1] - fa[1]) * i / 14]]); await sleep(20); }
+  await sleep(150);
+  out.between = [await ev(() => { const d = document.querySelector(".list .row.drop"); return d ? d.dataset.key : null; })];
+  await touch("touchEnd", []); await sleep(500);
+  const groups = () => ev(() => JSON.parse(localStorage.getItem("sight-review:groups")).map((g) => g.name + ":" + g.keys.join(",")));
+  out.between.push(await groups());
+  out.groupSum = await ev(() => [...document.querySelectorAll('.list .row[data-key="g:g2"] > .item .dot')].map((d) => d.className.replace("dot ", "") + d.textContent));
+  for (const k of ["grp-b", "grp-c"]){ const bx = await rowBox(k); await tapN([[bx.x + bx.width - 40, bx.y + bx.height / 2]]); await sleep(150); }
+  out.pick = [await ev(() => [...document.querySelectorAll(".list .row.sel")].map((r) => r.dataset.key).sort().join(",")), await ev(() => document.getElementById("app").classList.contains("home")),
+    await ev(() => { const b = document.querySelector(".selbar span"); return b ? b.textContent : null; })];
+  await ev(() => [...document.querySelectorAll(".selbar .btn")].find((b) => b.textContent === "Move to…").click()); await sleep(250);
+  await ev(() => [...document.querySelectorAll(".sheet .menu button")].find((b) => b.textContent.startsWith("Into a new group")).click()); await sleep(400);
+  out.pick.push(await groups(), await ev(() => !!document.querySelector(".selbar")));
+  // The new group's picture: a colour.
+  const ng = await ev(() => JSON.parse(localStorage.getItem("sight-review:groups")).find((g) => g.keys.includes("grp-b")).id);
+  const nb = await p.locator(`.list .row[data-key="g:${ng}"] > .item`).boundingBox();
+  await touch("touchStart", [[nb.x + 150, nb.y + nb.height / 2]]); await sleep(600); await touch("touchEnd", []); await sleep(500);
+  await ev(() => [...document.querySelectorAll(".sheet .menu button")].find((b) => b.textContent.startsWith("Picture")).click()); await sleep(300);
+  await ev(() => document.querySelector('.sheet .gcol[data-c="#34c759"]').click()); await sleep(400);
+  out.groupPic = await p.evaluate((id) => { const t = document.querySelector(`.list .row[data-key="g:${id}"] > .item .th`); return [t.classList.contains("tint"), getComputedStyle(t).backgroundColor]; }, ng);
   out.log = log;
   console.log(JSON.stringify(out));
   await b.close();

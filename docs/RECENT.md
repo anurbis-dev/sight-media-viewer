@@ -14,6 +14,59 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.33.0 — 2026-11-12 — Phone: strip viewer, square note pictures, filters by swipe, text switches, home selection and moves between groups
+- **What:** (1) Note viewer: a swipe sends the picture on the way it went, fading out, and the
+  next follows it in like a strip (sideways = the note's pictures, up / down = notes). (2) Notes
+  list: a swipe left / right steps the status filter. (3) A note's / reply's pictures are one grid
+  of equal squares, cut to fill (Settings → *Pictures in a row*, 3–6, default 4). (4) Bug: a
+  reply's drawing showed on the note's own picture — now only on the reply's. (5) Transport:
+  "25 fps", the rate and the speaker a little apart from the timecode. (6) The turn-90° button is
+  gone everywhere (phone header, the canvas on phone + HTML page, Sight's lightbox — Shift+R stays
+  there); the header's view icons sit in the middle, *Fit* at the right end. (7) Canvas: the slot
+  rows have the bars' see-through look; the *Text* slot has switches — bold, italic, underline,
+  box, outline, alignment, font. (8) Home: a tap on a review picks it (tick), its picture opens it;
+  the bar at the foot moves (*Move to…*: a group / a new group / out), hides or deletes the picked
+  ones; any review — also one in a group — dropped onto another group's header or member moves
+  there (picked ones go along); a group's row counts every state; *Picture…* gives a group one of
+  its reviews' pictures / cached frames or a colour. (9) Bug: right after a swipe back from a
+  review, the next tap on a review did not open it — home taps now act on pointerup.
+- **Where:** `mobile/js/app.js` — `viewer` (`show(no, slide)`, `navigate`), `FILTERS` /
+  `stepFilter` / `bindPanelPull`, `picBox` (overlay `cover` = slice), `shotThumbs(…, into)`,
+  `noteCard` / `replyEntry` (`.pics`), `THUMBS` / `setThumbs`, `drawingsOn` (no reply rows for
+  the note), `paintRate` (`<small>fps`), `viewOf` (rot 0), `buildStage` (`.fitb`); home:
+  `homeSel` / `toggleSel` / `paintSelBar`, `moveInto` / `groupKeys` / `takeOut` / `moveMenu`,
+  `groupThumbSheet`, `groupHead`, `rowGestures` (`tapAct`, `st.targets`), `deleteReviews`,
+  `reviewNames`. `mobile/index.html` (`.pics`, `.selbar`, `.gcols` / `.gpics`, `.th.tint`, `.row.sel`,
+  `.th.four` fixed: its pictures were zero-sized). `app/static/review-draw.js` (`TEXT_OPTS`,
+  `textOpt` / `putText` / `paintTextFly` / `styleOf`, `.dfly.rd-panel`, turn button removed,
+  `afterView`). `app/review.py` (stored turn dropped), `app/static/index.html` (`#turnBtn` gone).
+  Tests: `pwa_touch.cjs` / `test_pwa.py` (`filterSwipe`, `pics`, `replyOffNote`, `viewerFade`
+  strip, `textFly`, `reopen`, `between`, `groupSum`, `pick`, `groupPic`), `pwa_e2e.cjs` opens
+  reviews by their picture.
+- **Notes:** a picked review stays picked across renders until opened / moved / hidden / deleted
+  (pruned when gone). Groups dissolve under two members at the next render, as before (`tidyGroups`).
+  The group picture is stored in the group (localStorage, a ≤ 200 px data URL). The phone and the
+  HTML page drop a quarter turn stored by an older version (mirror kept); a two-finger turn is
+  still the view's own. The PDF / HTML report from the phone still burns every drawing on a
+  note's frame (replies' too), like Sight's report — left as is. A new text's outline is 6 % of
+  its size.
+- **Review (fresh agents):** viewer / notes / turn — no bugs; fixed: the report of an empty
+  picture grid (hidden when nothing loads), the view icons jumping when *Fit* came and went, a
+  test selector that could hit an attached picture. Canvas text — no bugs; fixed: a switch during
+  a selection hold lost its change (stopAdj first), the field lost the focus to the row's buttons
+  (keyboard bouncing; a resize folded the row), the row not repainted after undo, the field's
+  preview of centred / right text, outline and box colour, Impact not in the font cycle, test
+  pen state. Home — fixed: a review dragged while *not* picked took every picked one along; a
+  touch that stopped a fling picked / opened a review (a scroll within 150 ms or the page moved:
+  no tap); the click a pointerup-tap ends with could land on the selection bar it just brought up
+  (*Hide* at once) — eaten once, document-wide (`ghostUntil`, armed only by a pointer tap, not a
+  keyboard click); new groups / *Move to…* use the list's order, not the tap order; *Take out* of
+  several kept their order; an empty *Move to…* sheet (a toast now); a review's own *Move to…*
+  cleared an unrelated selection; the group-picture sheet decoded every cached 1600 px frame
+  (≤ 12 small previews per review now, one at a time); a full localStorage lost group changes
+  silently (toast); a failed delete skipped the re-render. Left: the update banner covers the
+  selection bar while it shows; picked reviews inside a closed group still count.
+
 ## 0.32.2 — 2026-11-12 — Phone: the pencil right after a scrub opens at once, on the right frame
 - **What:** after a scrub, the pencil (draw) used to come up late and sometimes show a stale frame
   until the clip was moved or the pencil tapped again. Now the canvas opens at once on the
@@ -488,12 +541,3 @@ Add new entries directly below this line.
   yet (only ±2 steps now, and the player takes over once it has caught up); a rebind could start a
   cache on the revoked URL. Design change from it: only drawings made since the file was opened
   (data.created ≥ S.openedAt) start the compose mode, so old loose drawings never hide every note's.
-
-## 0.23.1 — 2026-11-12 — Video frame stepping and note times land on the frame on screen (Sight + phone app)
-- **What:** in Sight's video lightbox `,` / `.` stepped from the *nearest* frame boundary, so a step taken after a pause or a scrub late in a frame skipped a frame forward (or stayed put backwards); a note / drawing made while paused late in frame k was stored at the raw time and showed on frame k+1. Now a step goes from the frame on screen and a new note / drawing is stored at that frame's start (+0.01 frame, where stepping lands). Without annotating, stepping used 25 fps on every clip (the rate was only read when annotation mode came on); it is now read when a video opens. Found by the fresh-agent review of the phone app (0.23.0), which already had the fix.
-- **Where:** `app/static/annotate.js` (`frameStart`, `stepFrame`, `ctxNow`, `setAsset` → `loadFps`); `mobile/js/app.js` (`frameStart` keeps the raw time while the rate is a guess, like Sight). Docs: ARCHITECTURE (phone app video), PLAN.md (known bug removed).
-- **Notes:**
-  - The frame on screen at time t is `floor(t · fps)`; stored `t = (frame + 0.01) / fps` to 3 dp. Labels still use `round(t · fps)` — the same frame for every time stored this way, and unchanged for older notes (whose `ctxVisible` window also centres on their raw `t`). Older notes are not moved.
-  - While the rate is unknown (Sight: before `/info` answers; app: WebM before it is measured) the raw time is kept: snapping to a guessed rate could move a note by a frame.
-  - `compare.js` has its own timeline (`snapT` to exact frame starts, no stored times) — checked, not changed.
-  - Checked in Sight (dev server, temp SIGHT_HOME, 24 fps WebM): from 1.03 s `.` → 1.0421 (frame 25), `,` → 1.0004 (frame 24); a note at 2.03 s stored at 2.0 with fps read before annotating. `python -m unittest tests.test_pwa tests.test_merge_parity` passes.

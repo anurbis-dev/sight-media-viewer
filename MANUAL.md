@@ -92,8 +92,8 @@
     change. The grid shows it as a pill on the card together with the number of open
     notes, and the sidebar (under Types) gets *Open notes / Needs review / Changes requested /
     Approved* rows that filter the library.
-  - **Turn / mirror the view** — the ↻ and mirror buttons at the top of the viewer (`Shift+R`,
-    `Shift+M`) turn a picture or video by 90° and mirror it; Sight remembers it per file. Only the
+  - **Turn / mirror the view** — `Shift+R` turns a picture or video by 90°, the mirror button at
+    the top of the viewer (`Shift+M`) mirrors it; Sight remembers it per file. Only the
     view changes: the file and the drawings on it stay as they are.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
@@ -156,19 +156,23 @@
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
   changes it). The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
-  drawings), ↻ / mirror (turn 90° / mirror the view — the full-screen view
-  and the canvas follow; the drawings stay put on the picture) and, when the view is zoomed, *Fit*.
+  drawings) and mirror (the full-screen view and the canvas follow; the drawings stay put on the
+  picture) in the middle of the bar and, when the view is zoomed, *Fit* at its right end.
   Two fingers on the picture pan, zoom and turn it (as on the drawing canvas — on both, letting go
   smaller than the screen, or nearly at fit and straight, goes back to fit with the turn to the
   nearest quarter); a swipe down goes
   back to the list of reviews. Under the picture the thin **Notes Panel** bar: tap it (or swipe up
   on it / on the picture) and the player slides up off the screen and the notes come in; the bar
-  then holds the filters (All / Open / In progress / Resolved); a playing video pauses where it is. Pull the list down when it is at
+  then holds the filters (All / Open / In progress / Resolved) — a swipe left / right on the list
+  steps to the next / previous one; a playing video pauses where it is. A note's pictures (its
+  frames, attached pictures; a reply's too) are equal squares in a row, each cut to fill its
+  square — Settings → *Pictures in a row* (3–6, 4 by default); a reply's drawing shows on the
+  reply's pictures only, not on the note's. Pull the list down when it is at
   its top note to go back to the player. *+ Note* shows only with the panel open. The pencil
   (*Draw a note*) floats at the bottom right of the picture — on a video just above the
   transport — the same place as in the full-screen view, for pictures and videos alike. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
   (notes and frames drawn on), ◀ ▶ one frame back / forward, the timecode and frame number with
-  the frame rate on its left and the sound on its right, and a timeline with the markers. The
+  the frame rate ("25 fps") on its left and the sound on its right, and a timeline with the markers. The
   frame rate (≈ while the app is still measuring it) is also the speed: drag it up / down to play
   faster / slower (the number shows the rate it plays at, in the accent colour when not the
   clip's own), tap it for the nearest common rate (24, 25, 30, 12, 15…), hold it for the clip's own
@@ -189,7 +193,10 @@
   shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
   rectangle, rounded, ellipse, filled rectangle, filled ellipse): tap one to draw with it, or just
   draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
-  down. The colour is the circle at the bar's right end: a tap shows the colours above it. Opened from the player, the picture stays exactly
+  down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
+  alignment (left / centre / right) and font (sans, serif, mono, hand, impact) — they style the
+  text being typed and the next ones; with the select tool and texts selected, a tap on *Text*
+  shows the row for those texts (the tool stays select; `T` takes the text tool). The colour is the circle at the bar's right end: a tap shows the colours above it. Opened from the player, the picture stays exactly
   where and as big as it was (zoom and turn too) — drawing only brings the tools up; closing keeps
   the view. Press and hold with a tool, then drag up / down: that tool's size (a circle on the
   left shows it); with the select tool and a selection, hold and drag up / down for the line width,
@@ -216,7 +223,8 @@
   goes through the whole note: its frames, its attached pictures, then each reply's drawings and
   pictures, the caption telling which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture") with a reply's
   words; a swipe up /
-  down shows the next / previous note — the next picture fades in over the last; the round ← Back button leaves — no swipe does; the pencil
+  down shows the next / previous note — the picture goes on the way you swiped, fading out, and the
+  next one follows it in like a strip; the round ← Back button leaves — no swipe does; the pencil
   draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on
   the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
   and the notes share it — and *Full screen*: Auto (the default — the app goes full screen at the
@@ -226,15 +234,23 @@
   ⋯ menu: *PDF report* and *Web page (HTML)* — the same content as Sight's PDF report (pictures /
   frames with the drawings, every note, reply and picture), plain files anyone can open; *Review
   file for Sight (.srev)* — drag it into Sight to merge everything (Sight finds the file by name and
-  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, swipe a review
+  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, tap a review's
+  picture to open it; a tap on the review itself picks it (a tick on the picture; tap again to drop
+  it) — with reviews picked, the bar at the foot has *Move to…* (into a group, a new group of them,
+  out of their groups), *Hide*, the bin (delete them) and ×. Swipe a review
   left to uncover the bin (tap it to delete the review), right to uncover the eye (tap it to hide
   the review for now — until the app is closed, or *Show* under the list); press and hold a review
   and drag it up / down to move it in the list (the order is kept; new reviews come first); let go
   without moving for its menu. Drag it onto the middle of another review (it lights up) and let
   go: the two make a group (named by what their names start with — hold the group for *Rename…*,
-  *Ungroup*); drop more onto the group's header to add them. Tap a group's header to open / close
+  *Picture…*, *Ungroup*); drop more onto the group's header to add them. A review in a group can
+  be dropped the same way onto another group's header or onto one of its reviews (it moves
+  there), or onto a review on its own (a new group); a picked review takes all the picked ones with
+  it. A group's row counts open / in progress / resolved notes over all its reviews; its picture
+  is its first four reviews', or (*Picture…*) one of its reviews' pictures or cached frames, or a
+  colour. Tap a group's header to open / close
   it; hold and drag it to move the whole group; inside, reviews swipe and move as in the list, and
-  a review's menu has *Take out of the group* (a group of one goes away). The two big open buttons show only while there is no review yet;
+  a review's menu has *Move to…* and *Take out of the group* (a group of one goes away). The two big open buttons show only while there is no review yet;
   after that they are the two small icons next to ⚙.
   Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
   see it. The app remembers the file you picked (it keeps a copy on the device — a web app

@@ -84,11 +84,28 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .list .row.group { overflow: visible; }
 .list .row.group .gm { margin: 8px 0 0 16px; }
 .list .row.group.shut .gm, .list .row.group.folded .gm { display: none; }
-.item .th.four { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; }
+.item .th.four { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; place-items: stretch; gap: 2px; padding: 3px; }
 .item .th.four i { border-radius: 5px; background: var(--card) center / cover no-repeat; }
 .item .chev { flex: none; color: var(--muted); display: grid; transform: rotate(-90deg); transition: transform .2s; }
 .list .row.group.shut .chev { transform: rotate(180deg); }
 .list .row.drop > .item { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+/* Picked reviews (a tap; the picture opens): lit, a tick on the picture; the bar at the foot acts on them. */
+.list .row.sel > .item { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.item .th { position: relative; }
+.list .row.sel > .item .th::after { content: "✓"; position: absolute; right: -4px; top: -4px; width: 20px; height: 20px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; box-shadow: 0 0 0 2px var(--card); }
+.item .th.tint { color: #fff; font-size: 26px; font-weight: 700; }
+.home.selecting main { padding-bottom: calc(96px + var(--sb)); }
+.selbar { position: fixed; z-index: 20; left: 12px; right: 12px; bottom: calc(12px + var(--sb)); max-width: 736px; margin: 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 16px; background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--line); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 10px 34px rgb(0 0 0 / .22); }
+.selbar > span { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.selbar .btn { padding: 7px 12px; font-size: 14px; }
+.selbar .ib { font-size: 20px; }
+.selbar .ib.danger { color: var(--red); }
+/* The group's picture: colours, then each review's pictures / frames. */
+.gcols { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 14px; }
+.gcol { width: 34px; height: 34px; border-radius: 10px; border: 0; cursor: pointer; padding: 0; }
+.gpics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 2px 0 14px; }
+.gpics .gpic { aspect-ratio: 1 / 1; border: 1px solid var(--line); border-radius: 8px; background: var(--chip) center / cover no-repeat; cursor: pointer; padding: 0; }
+.gpics > span { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
 .item.ghost { position: fixed; z-index: 30; margin: 0; pointer-events: none; transform: scale(1.03); box-shadow: 0 14px 40px rgb(0 0 0 / .28); }
 .lnk { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 .empty { color: var(--muted); text-align: center; padding: 30px 10px; font-size: 14px; }
@@ -122,6 +139,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
    review-draw.js: one look for both screens), half see-through. */
 .hdr { position: absolute; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); top: calc(8px + var(--st)); z-index: 3; padding: 2px 4px; }
 .hdr .row { display: flex; align-items: center; gap: 2px; }
+.hdr .row + .row { justify-content: center; position: relative; }  /* the view's icons, in the middle of the bar */
+.hdr .row + .row .fitb { position: absolute; right: 0; top: 0; }  /* Fit comes and goes: the others stay put */
 .hdr .ib { color: inherit; width: 38px; height: 38px; }
 .hdr .ib.on { color: var(--accent); }
 .hdr .ttl { flex: 1; min-width: 0; padding: 0 4px; }
@@ -135,12 +154,13 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .rd-panel .tl .trk { background: color-mix(in srgb, var(--rd-fg) 26%, transparent); }
 .tpi .row { display: flex; align-items: center; gap: 2px; }
 .tpi .ib { color: inherit; width: 38px; height: 36px; }
-.tpi .fps { flex: none; margin-left: auto; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; height: 36px; padding: 0 3px; border-radius: 8px; cursor: ns-resize; opacity: .8; }
+.tpi .fps { flex: none; margin-left: auto; margin-right: 8px; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; height: 36px; padding: 0 3px; border-radius: 8px; cursor: ns-resize; opacity: .8; }
+.tpi .fps small { font-size: 9.5px; margin-left: 2px; opacity: .75; }
 .tpi .fps.on { opacity: 1; color: var(--accent); }
-.tpi .snd { width: 34px; margin-right: auto; -webkit-touch-callout: none; cursor: ns-resize; }
+.tpi .snd { width: 34px; margin-left: 8px; margin-right: auto; -webkit-touch-callout: none; cursor: ns-resize; }
 .tpi .snd.none { opacity: .35; cursor: default; }
 /* Phones up to 400 px: the step / marker buttons give the timecode room. */
-@media (max-width: 400px) { .tpi .ib { width: 30px; } .tpi .snd { width: 28px; } .tpi .fps { min-width: 34px; padding: 0 1px; } .tpi .tc { font-size: 11.5px; } }
+@media (max-width: 400px) { .tpi .ib { width: 30px; } .tpi .snd { width: 28px; margin-left: 4px; } .tpi .fps { min-width: 34px; padding: 0 1px; margin-right: 4px; } .tpi .tc { font-size: 11.5px; } }
 .volbar { position: fixed; z-index: 40; left: 6px; top: 25%; height: 50%; width: 4px; border-radius: 2px; background: rgb(255 255 255 / .25); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); pointer-events: none; opacity: 0; transition: opacity .25s; display: flex; align-items: flex-end; overflow: hidden; }
 .volbar.on { opacity: 1; transition: none; }
 .volbar i { display: block; width: 100%; background: #fff; }
@@ -187,8 +207,13 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .fw svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .fw.sm > img { height: 80px; max-height: none; }
 .fw.wait { width: 100%; height: 120px; display: grid; place-items: center; color: #888; font-size: 12px; cursor: default; }
-.shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-.shots img { height: 80px; max-width: 100%; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
+/* A note's / reply's pictures: equal squares, --thumbs to a row (Settings), each cut to fill its square. */
+.pics { display: grid; grid-template-columns: repeat(var(--thumbs, 4), minmax(0, 1fr)); gap: 4px; margin: 8px 0 2px; }
+.pics > .fw { width: 100%; max-width: none; height: auto; aspect-ratio: 1 / 1; margin: 0; border-radius: 6px; }
+.pics > .fw > img, .pics > .fw.sm > img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
+.pics > .fw.wait { height: auto; font-size: 11px; }
+.pics > .fw.shot { background: var(--chip); }
+.pics:empty { display: none; }  /* every picture failed to load */
 .replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }
 .rep { margin: 6px 0; position: relative; padding-right: 26px; }
 .rep .rh { font-size: 11.5px; color: var(--muted); }
@@ -250,7 +275,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; margin: 8px 0 14px; }
 .kv b { color: var(--muted); font-weight: 500; }
 .sheet .lab { display: block; font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 4px; }
-.sheet .seg.themes, .sheet .seg.fs { margin: 0 0 14px; }
+.sheet .seg.themes, .sheet .seg.fs, .sheet .seg.thumbs { margin: 0 0 14px; }
 .sheet .seg.fs + p { margin-top: -8px; }
 /* Full-screen picture viewer */
 /* Full-screen picture viewer: no bar; round buttons float over the picture. Swipe up / down: the

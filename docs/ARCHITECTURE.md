@@ -258,7 +258,13 @@ ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The bar (`.dtool
 "line") and *Shapes* (`SHAPES`: rect / rounded / ellipse, outlined or filled); `pen.arrow` /
 `pen.shape` (saved with the pen) pick the kind, `pen.tool` stays the drawing tool key (arrow /
 rect / ellipse). A tap on a slot shows its row (`.dfly`, above the bar); a pick, a touch on the
-picture, another slot folds it. `closeFly` hides the row at once and removes it a tick later: the
+picture, another slot folds it. The rows are `.dfly.rd-panel` (the bars' own look). The *Text*
+slot's row is switches (`TEXT_OPTS`: bold, italic, underline, `bgOn`, outline = 6 % of the size,
+align and font cycle) on `pen.text` (saved with the pen, used by a new text); a switch also styles
+the text being typed (`edit.it.data`, restored from `edit.before` on cancel; `commitText` compares
+`styleOf`) or, with select + texts selected, those texts (copies, one undo step). While typing,
+`mousedown` on the slot / row is prevented so the field keeps the focus (the phone keyboard), and a
+resize does not fold the row. `closeFly` hides the row at once and removes it a tick later: the
 picking click is still on its way to the host's document handlers, and a detached target reads as
 "outside the canvas" (the HTML page then closed an empty new-note draft). The colour is the
 `.dcol` circle at the row's end with the colours in its flyout (`useColour`). The trash deletes the selection,
@@ -266,9 +272,10 @@ else every item drawn here (one undo step). Undo keeps whole `items` arrays: a t
 *copies* of the selected objects (`stroke.prev` restores on a tap / cancel), never objects an undo
 state holds. View: `screen = V.o + Rot(V.r)·diag(V.z·V.m, V.z)·(local − box centre)` (`fwd0` /
 `inv` / `pin` keep a local point under a screen point for pinch, wheel, right-drag zoom); two
-fingers zoom + pan + turn (snaps to quarters within 6°), the top bar turns 90° / mirrors / fits
-(fit straightens to the nearest quarter, the box size swaps on 90 / 270). `o.view {rot, mirror}`
-opens it that way, `o.onView` hears the turn / mirror buttons. The text field lives inside the
+fingers zoom + pan + turn (snaps to quarters within 6°), the top bar mirrors / fits (no turn
+button since 0.33; fit straightens to the nearest quarter, the box size swaps on 90 / 270).
+`o.view {rot, mirror}` opens it that way, `o.onView` hears the mirror button (it reports the
+host's quarter `viewR` unchanged; a two-finger turn goes back through `onNav`). The text field lives inside the
 transformed box (box px = doc / (vb.w / BW)), so it turns and zooms with the picture. Text:
 the field opens on pointer *up* (iOS shows the keyboard only from a touch-end gesture), a tap on a
 text drawn in this session edits it, a tap elsewhere / Done / Esc commits, empty text removes it;
@@ -467,10 +474,17 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   held card's pointer capture): other rows slide by transform (by the held row's height), the row
   moves on release. The gestures live in `rowGestures(row, it, o)` (`o.open`, `o.menu`,
   `o.group`), shared by review rows and group headers (`groupHead`, no swipe).
-- **Review groups**: `sight-review:groups` = `[{id, name, keys, open}]` (localStorage); the order
-  list holds a group as `"g:<id>"`. A top-level review held over the middle of another row's
-  `.item` (`.drop`; no slide while over one) and let go → `groupOnto` (new group in the target's
-  slot, or appended to the target group). `tidyGroups` (each render) drops keys of deleted reviews
+- **Home taps / selection**: a tap acts on `pointerup` (`tapAct`; the click after is eaten — a
+  click got lost when the page changed under the finger, e.g. right after a swipe back from a
+  review), a click with no pointer (keyboard) acts on the click. A tap on a card toggles
+  `homeSel` (`.sel`), on its picture (`.th`) opens the review; `.selbar` (Move to… / Hide /
+  Delete) acts on all picked.
+- **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?}]` (localStorage;
+  `thumb` = `{url}` a ≤ 200 px data URL or `{color}`); the order list holds a group as
+  `"g:<id>"`. Any review (on its own or a member) held over the middle of another visible row's
+  `.item` (`st.targets`: not its own group / siblings / the picked ones) and let go →
+  `moveInto(keys, on)` (a review on its own → new group in its slot; a header or a member → into
+  that group); a picked review takes every picked one. `groupKeys` / `takeOut` serve *Move to…*. `tidyGroups` (each render) drops keys of deleted reviews
   and dissolves groups under two members, putting the rest back in the group's slot. Members are
   ordinary rows in `.gm` (reorder among themselves → `g.keys`); a lifted group header is `.folded`.
 - **Full screen** (`enterFS` / `fsUp`): Auto (`sight-review:fs` ≠ "0") requests full screen on the

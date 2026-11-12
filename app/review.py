@@ -866,6 +866,7 @@ body.zoomed { overflow: hidden; }
   function drawSheet(o){
     var v = null;
     try { v = JSON.parse(localStorage.getItem(VIEW_KEY)); } catch (e) {}
+    if (v) v.rot = 0;  // no turn button since 0.33: a turn kept by an older page is dropped
     SightReviewDraw.open(Object.assign({ numOf: numOf, view: v, onView: function(nv){ try { localStorage.setItem(VIEW_KEY, JSON.stringify(nv)); } catch (e) {} } }, o));
   }
 

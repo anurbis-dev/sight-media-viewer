@@ -168,7 +168,7 @@ async function make(){
   await p.goto(base);
   await p.waitForSelector(".item");
   res.listed = await p.locator(".item").count();
-  await p.locator('.item:has-text("shot_v001.png")').click();
+  await p.locator('.item:has-text("shot_v001.png") .th').click();
   await p.waitForSelector(".stage img");
   res.reopenedNotes = await p.locator(".note").count();
   // The picked file was kept on the device: the review opens with it, no picker.
@@ -176,7 +176,7 @@ async function make(){
   res.reopenedPicker = await p.locator(".stage .none").count();
   if (fs.existsSync(clip)){
     await p.goto(base);
-    await p.locator('.item:has-text("clip_v001.webm")').click();
+    await p.locator('.item:has-text("clip_v001.webm") .th').click();
     await p.waitForSelector(".stage video");
     res.reopenedVideo = await p.evaluate(() => !!window.__sightReview.R.file);
   }

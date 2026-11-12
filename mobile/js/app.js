@@ -480,6 +480,9 @@ async function renderHome(){
     const ms = x.g.keys.map((k) => byKey.get(k)).filter((m) => !hidden.has(m.key));
     if (ms.length){ list.appendChild(groupRow(x.g, ms)); shown += ms.length; }
   });
+  // The selection (taps on reviews): only reviews still listed; its bar at the foot.
+  [...homeSel].forEach((k) => { if (!byKey.has(k) || hidden.has(k)) homeSel.delete(k); });
+  paintSelBar();
   const nh = all.length - shown;
   if (nh){
     const f = el("p", "foot");
@@ -525,7 +528,7 @@ function loadGroups(){
   try { g = JSON.parse(localStorage.getItem("sight-review:groups")); } catch {}
   return Array.isArray(g) ? g.filter((x) => x && typeof x.id === "string" && Array.isArray(x.keys)) : [];
 }
-function saveGroups(gs){ try { localStorage.setItem("sight-review:groups", JSON.stringify(gs)); } catch {} }
+function saveGroups(gs){ try { localStorage.setItem("sight-review:groups", JSON.stringify(gs)); } catch { toast("Could not save the groups: this device's storage for the app is full", 4000); } }
 function tidyGroups(keys){
   const have = new Set(keys), seen = new Set(), out = [];
   let changed = false;
@@ -556,43 +559,80 @@ function groupName(a, b){
   p = p.replace(/[\s._-]*(v\d+|\d+)?[\s._-]*$/i, "").trim();
   return p.length >= 2 ? p : "Group";
 }
-// Drops review `key` (a top-level row) onto `on` (a review → a new group in its place; a group →
-// one more in it, last).
-function groupOnto(key, on, names){
-  const gs = loadGroups(), order = loadOrder();
-  if (on.startsWith("g:")){
-    const g = gs.find((x) => "g:" + x.id === on);
-    if (!g) return;
-    g.keys = g.keys.filter((k) => k !== key).concat(key);
-    saveGroups(gs);
-    toast(`Added to “${g.name}”`, 1600);
+const saveOrderKeys = (order) => { try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch { toast("Could not save the list's order: this device's storage for the app is full", 4000); } };
+// The picked reviews in the list's order (a new group is named and ordered by it).
+const pickedInOrder = () => { const ks = [...document.querySelectorAll(".list .row[data-key]")].map((x) => x.dataset.key).filter((k) => homeSel.has(k)); homeSel.forEach((k) => { if (!ks.includes(k)) ks.push(k); }); return ks; };
+// Moves reviews `keys` (on their own or out of their groups) onto `on`: a group ("g:<id>") → into
+// it, last; a review in a group → into that group, after it; a review on its own → a new group of
+// it and them, in its place. Groups left with one review dissolve on the next render (tidyGroups).
+function moveInto(keys, on, names){
+  keys = keys.filter((k) => k !== on);
+  if (!keys.length) return;
+  const gs = loadGroups(), order = loadOrder().filter((k) => !keys.includes(k));
+  gs.forEach((g) => { g.keys = g.keys.filter((k) => !keys.includes(k)); });
+  const tg = on.startsWith("g:") ? gs.find((g) => "g:" + g.id === on) : gs.find((g) => g.keys.includes(on));
+  if (on.startsWith("g:") && !tg) return;
+  if (tg){
+    const i = on.startsWith("g:") ? tg.keys.length : tg.keys.indexOf(on) + 1;
+    tg.keys.splice(i, 0, ...keys);
+    toast(keys.length > 1 ? `${keys.length} reviews moved to “${tg.name}”` : `Moved to “${tg.name}”`, 1800);
   } else {
-    const g = { id: RC.uid(), name: groupName(names.get(on), names.get(key)), keys: [on, key], open: true };
+    const g = { id: RC.uid(), name: groupName(names.get(on), names.get(keys[0])), keys: [on, ...keys], open: true };
     gs.push(g);
-    saveGroups(gs);
     const i = order.indexOf(on);
     if (i >= 0) order[i] = "g:" + g.id; else order.unshift("g:" + g.id);
-    try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch {}
     toast(`Grouped as “${g.name}” — hold it to rename`, 2200);
   }
-  const at = order.indexOf(key);
-  if (at >= 0){ order.splice(at, 1); try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch {} }
+  saveGroups(gs); saveOrderKeys(order);
 }
-function ungroupOne(key){
-  const gs = loadGroups(), g = gs.find((x) => x.keys.includes(key));
-  if (!g) return;
-  g.keys = g.keys.filter((k) => k !== key);
-  saveGroups(gs);
-  // Back in the list right after the group.
-  const order = loadOrder(), i = order.indexOf("g:" + g.id);
-  const o2 = order.filter((k) => k !== key);
-  o2.splice(i >= 0 ? Math.min(i + 1, o2.length) : 0, 0, key);
-  try { localStorage.setItem("sight-review:order", JSON.stringify(o2)); } catch {}
+// A new group of `keys` (at least two), in the first one's place in the list.
+function groupKeys(keys, names){
+  const gs = loadGroups(), order = loadOrder();
+  const first = keys[0], fg = gs.find((g) => g.keys.includes(first));
+  let at = fg ? order.indexOf("g:" + fg.id) + 1 : order.indexOf(first);
+  gs.forEach((g) => { g.keys = g.keys.filter((k) => !keys.includes(k)); });
+  const o2 = order.filter((k, i) => { if (keys.includes(k)){ if (i < at) at--; return false; } return true; });
+  const g = { id: RC.uid(), name: groupName(names.get(keys[0]), names.get(keys[1])), keys: keys.slice(), open: true };
+  gs.push(g);
+  o2.splice(at >= 0 ? Math.min(at, o2.length) : 0, 0, "g:" + g.id);
+  saveGroups(gs); saveOrderKeys(o2);
+  toast(`Grouped as “${g.name}” — hold it to rename`, 2200);
+}
+// Out of their groups: back in the list right after the group each was in.
+function takeOut(keys){
+  const gs = loadGroups(), after = new Map();  // how many went in after each group so far (their order kept)
+  let order = loadOrder();
+  keys.forEach((key) => {
+    const g = gs.find((x) => x.keys.includes(key));
+    if (!g) return;
+    g.keys = g.keys.filter((k) => k !== key);
+    order = order.filter((k) => k !== key);
+    const i = order.indexOf("g:" + g.id), n = after.get(g.id) || 0;
+    order.splice(i >= 0 ? Math.min(i + 1 + n, order.length) : n, 0, key);
+    after.set(g.id, n + 1);
+  });
+  saveGroups(gs); saveOrderKeys(order);
+}
+const ungroupOne = (key) => takeOut([key]);
+// Where reviews can go: each group they are not all in already, a new group of them, out of their groups.
+// fromSel: the picked reviews (the selection is done with afterwards), else one review's own menu.
+function moveMenu(keys, fromSel){
+  const gs = loadGroups(), names = reviewNames(), inG = keys.filter((k) => gs.some((g) => g.keys.includes(k)));
+  const what = keys.length > 1 ? `${keys.length} reviews` : names.get(keys[0]) || "Review";
+  const done = () => { if (fromSel) homeSel.clear(); renderHome(); };
+  const items = [
+    ...gs.filter((g) => !keys.every((k) => g.keys.includes(k))).map((g) => ({ label: `Into “${g.name}”`, note: `${g.keys.length} review${g.keys.length > 1 ? "s" : ""}`, fn: () => { moveInto(keys, "g:" + g.id, names); done(); } })),
+    keys.length > 1 ? { label: "Into a new group", fn: () => { groupKeys(keys, names); done(); } } : null,
+    inG.length ? { label: inG.length > 1 ? "Out of their groups" : "Out of the group", fn: () => { takeOut(inG); done(); } } : null,
+  ].filter(Boolean);
+  if (!items.length){ toast("No group to move it to yet — drop it onto another review to make one", 2600); return; }
+  menu("Move " + what, items);
 }
 function groupMenu(g){
   menu(g.name, [
     { label: g.open ? "Close the group" : "Open the group", fn: () => setGroup(g.id, { open: !g.open }) },
     { label: "Rename…", fn: async () => { const v = await askText({ title: "Group name", value: g.name }); if (v != null && v.trim()) setGroup(g.id, { name: v.trim() }); } },
+    { label: "Picture…", note: "a frame, a picture or a colour", fn: () => groupThumbSheet(g) },
     { label: "Ungroup", fn: () => {
       const all = loadGroups(), cur = all.find((x) => x.id === g.id) || g, gs = all.filter((x) => x.id !== g.id), order = loadOrder(), i = order.indexOf("g:" + g.id);
       if (i >= 0) order.splice(i, 1, ...cur.keys); else order.unshift(...cur.keys);
@@ -601,6 +641,52 @@ function groupMenu(g){
       renderHome();
     } },
   ]);
+}
+// The group's picture: one of its reviews' pictures / frames kept on the device (a ≤ 200 px copy
+// is stored with the group), a plain colour, or Auto (its first four reviews').
+const GROUP_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff2d55", "#8e8e93"];
+async function groupThumbSheet(g){
+  const all = await DB.all("reviews").catch(() => []), byKey = new Map(all.map((m) => [m.key, m]));
+  const ms = g.keys.map((k) => byKey.get(k)).filter(Boolean), urls = [];
+  sheet((sh, close) => {
+    sh.appendChild(el("h2", "", "Group picture"));
+    const pick = async (blobOrUrl) => {
+      close();
+      try {
+        let url = blobOrUrl;
+        if (typeof url !== "string"){ const im = await decode(blobOrUrl), sc = await scaled(im, 200, 0.8); if (im.close) im.close(); url = await blobToDataUrl(sc.blob); }
+        setGroup(g.id, { thumb: { url } });
+      } catch { toast("Could not use that picture"); }
+    };
+    const cols = el("div", "gcols");
+    GROUP_COLORS.forEach((c) => { const b = btn("gcol", null, () => { close(); setGroup(g.id, { thumb: { color: c } }); }, "Colour " + c); b.style.background = c; b.dataset.c = c; cols.appendChild(b); });
+    sh.appendChild(el("b", "lab", "Colour"));
+    sh.appendChild(cols);
+    ms.forEach((m) => {
+      sh.appendChild(el("b", "lab", m.asset.name || "Review"));
+      const row = el("div", "gpics");
+      if (m.thumb){ const b = btn("gpic", null, () => pick(m.thumb), "Its picture"); b.style.backgroundImage = `url("${m.thumb}")`; row.appendChild(b); }
+      // Its frames / picture cached on the device (the frames its notes are on, among them).
+      // (Small previews made one at a time: the cached frames are up to 1600 px each.)
+      DB.framesOf(m.key).then(async (fs) => {
+        fs.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+        for (const f of fs.slice(0, 12)){
+          if (!row.isConnected) return;
+          const b = btn("gpic", null, () => pick(f.blob), "This frame"); b.dataset.frame = f.id; row.appendChild(b);
+          try { const im = await decode(f.blob), sc = await scaled(im, 160, 0.75); if (im.close) im.close(); const u = URL.createObjectURL(sc.blob); urls.push(u); b.style.backgroundImage = `url("${u}")`; }
+          catch { b.remove(); }
+        }
+        if (row.isConnected && !row.children.length) row.appendChild(el("span", "", "No pictures on this device yet"));
+      }).catch(() => {});
+      sh.appendChild(row);
+    });
+    const a = el("div", "acts");
+    a.appendChild(btn("btn", "Auto", () => { close(); setGroup(g.id, { thumb: null }); }));
+    a.appendChild(btn("btn primary", "Cancel", close));
+    sh.appendChild(a);
+  });
+  // The frames' blob URLs go with the sheet.
+  const watch = setInterval(() => { if (!document.querySelector(".sheet .gpics")){ clearInterval(watch); urls.forEach((u) => URL.revokeObjectURL(u)); } }, 1000);
 }
 function setGroup(id, ch, quiet){
   const gs = loadGroups(), g = gs.find((x) => x.id === id);
@@ -628,6 +714,12 @@ const TRASH = '<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>';
 // of another one (or a group's header), goes into a group with it when let go there.
 // grp: {g, ms} — this is a group's header row instead (no swipe; a tap opens / closes it).
 let openRow = null;
+// A home tap acts on pointerup; the click it ends with may land on whatever is there by then (the
+// selection bar it just brought up, the review it opened): eaten, once, within ghostUntil.
+let ghostUntil = 0, lastListScroll = -1e9;
+window.addEventListener("scroll", () => { lastListScroll = performance.now(); }, { passive: true, capture: true });
+document.addEventListener("click", (e) => { if (performance.now() < ghostUntil){ ghostUntil = 0; e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+document.addEventListener("pointerdown", () => { ghostUntil = 0; }, true);  // a new press: its own click counts
 function closeOpenRow(except){ if (openRow && openRow !== except){ openRow.shut(); } }
 function reviewRow(m, grp){
   if (grp) return groupHead(grp);
@@ -638,6 +730,8 @@ function reviewRow(m, grp){
   delB.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TRASH}</svg>`;
   row.appendChild(hideB); row.appendChild(delB); row.appendChild(it);
   row.dataset.key = m.key;
+  row.classList.toggle("sel", homeSel.has(m.key));
+  th.title = "Open"; th.setAttribute("aria-label", "Open " + (m.asset.name || "the review"));
   if (m.thumb) th.style.backgroundImage = `url("${m.thumb}")`; else th.textContent = m.asset.kind === "video" ? "VIDEO" : "IMAGE";
   tx.appendChild(el("b", "", m.asset.name || "(no name)"));
   const c = m.counts || {}, info = el("span");
@@ -649,17 +743,44 @@ function reviewRow(m, grp){
   tx.appendChild(info);
   tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : " picture")));
   it.appendChild(th); it.appendChild(tx);
-  return rowGestures(row, it, { open: () => openReview(m.key, null), menu: () => reviewMenu(m), name: m.asset.name });
+  return rowGestures(row, it, { open: () => toggleSel(m.key, row), thumb: () => { homeSel.clear(); openReview(m.key, null); }, menu: () => reviewMenu(m), name: m.asset.name });
+}
+// Reviews picked on the home screen (a tap on a review; its picture opens it): the bar at the
+// foot moves / hides / deletes them all at once; held and dragged, a picked review takes the others.
+const homeSel = new Set();
+function toggleSel(key, row){
+  if (homeSel.has(key)) homeSel.delete(key); else homeSel.add(key);
+  if (row) row.classList.toggle("sel", homeSel.has(key));
+  paintSelBar();
+}
+function paintSelBar(){
+  let bar = root.querySelector(":scope > .selbar");
+  if (!homeSel.size || !root.classList.contains("home")){ if (bar) bar.remove(); root.classList.remove("selecting"); return; }
+  if (!bar){ bar = el("div", "selbar"); root.appendChild(bar); }
+  root.classList.add("selecting");
+  bar.textContent = "";
+  const keys = () => pickedInOrder();
+  bar.appendChild(btn("ib", "×", () => { homeSel.clear(); document.querySelectorAll(".list .row.sel").forEach((r) => r.classList.remove("sel")); paintSelBar(); }, "Clear the selection"));
+  bar.appendChild(el("span", "", `${homeSel.size} selected`));
+  bar.appendChild(btn("btn primary", "Move to…", () => moveMenu(pickedInOrder(), true)));
+  bar.appendChild(btn("btn", "Hide", () => { const h = hiddenKeys(); keys().forEach((k) => h.add(k)); setHidden(h); homeSel.clear(); renderHome(); toast("Hidden for now — Show under the list brings them back", 2400); }));
+  const del = btn("ib danger", null, async () => { const all = await DB.all("reviews").catch(() => []); deleteReviews(all.filter((m) => homeSel.has(m.key))); }, "Delete the selected reviews");
+  del.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TRASH}</svg>`;
+  bar.appendChild(del);
 }
 // A group's header: up to four of its pictures, the name, how many reviews and their notes.
 function groupHead({ g, ms }){
   const row = el("div", "row group" + (g.open ? "" : " shut")), it = btn("item", null, null), th = el("span", "th four"), tx = el("span", "tx");
   row.dataset.key = "g:" + g.id;
-  ms.slice(0, 4).forEach((m) => { const q = el("i"); if (m.thumb) q.style.backgroundImage = `url("${m.thumb}")`; th.appendChild(q); });
+  const tb = g.thumb;
+  if (tb && tb.url){ th.className = "th"; th.style.backgroundImage = `url("${tb.url}")`; }
+  else if (tb && tb.color){ th.className = "th tint"; th.style.background = tb.color; th.textContent = (g.name || "G").trim().charAt(0).toUpperCase(); }
+  else ms.slice(0, 4).forEach((m) => { const q = el("i"); if (m.thumb) q.style.backgroundImage = `url("${m.thumb}")`; th.appendChild(q); });
   tx.appendChild(el("b", "", g.name));
-  const n = ms.reduce((a, m) => a + ((m.counts && m.counts.notes) || 0), 0), open = ms.reduce((a, m) => a + ((m.counts && m.counts.open) || 0), 0);
+  // Every state over all its reviews' notes, as a review's row shows them.
+  const sum = (k) => ms.reduce((a, m) => a + ((m.counts && m.counts[k]) || 0), 0), n = sum("notes");
   const info = el("span");
-  if (open) info.appendChild(el("i", "dot open", String(open)));
+  [["open", sum("open")], ["progress", sum("progress")], ["done", sum("done")]].forEach(([k, v]) => { if (v) info.appendChild(el("i", "dot " + k, String(v))); });
   info.appendChild(document.createTextNode(` ${ms.length} review${ms.length > 1 ? "s" : ""} · ${n ? n + " note" + (n > 1 ? "s" : "") : "no notes"}`));
   tx.appendChild(info);
   const chev = el("span", "chev"); chev.innerHTML = ico("back", 18);
@@ -708,8 +829,13 @@ function rowGestures(row, it, o){
     st.mids = st.rows.map((x) => { const b = x.getBoundingClientRect(); return b.top + scrollY + b.height / 2; });
     st.H = row.offsetHeight + 8;  // the others slide by the held row's height (+ the gap)
     st.to = st.idx;
-    // A review on its own in the list can go onto another row (a group with it / into that group).
-    st.canDrop = !o.group && !!row.parentNode && row.parentNode.classList.contains("list");
+    // A review (on its own or in a group) can go onto another row: a review on its own → a group
+    // with it, a group's header or one of its reviews → into that group. Not onto its own group, nor
+    // onto reviews picked with it (they all go together).
+    const ownG = row.parentNode && row.parentNode.classList.contains("gm") ? row.parentNode.parentNode : null;
+    const going = homeSel.has(row.dataset.key) ? homeSel : new Set([row.dataset.key]);
+    st.targets = o.group ? [] : [...document.querySelectorAll(".list .row[data-key]")].filter((x) => x !== row && x !== ownG && !(ownG && x.parentNode === ownG.querySelector(":scope > .gm")) &&
+      !going.has(x.dataset.key) && x.offsetParent !== null);
   };
   // While moving: the place the ghost's middle has reached; the rows between slide by one; near
   // the screen's top / bottom the page scrolls.
@@ -719,8 +845,7 @@ function rowGestures(row, it, o){
     // Over the middle part of another row (where it is drawn now): that row is the drop target, the
     // rows stay where they are.
     let drop = null;
-    if (st.canDrop) st.rows.forEach((x) => {
-      if (x === row) return;
+    st.targets.forEach((x) => {
       const b = (x.querySelector(":scope > .item") || x).getBoundingClientRect(), c = b.top + scrollY + b.height / 2;
       if (Math.abs(c - mid) < b.height * 0.26) drop = x;
     });
@@ -755,7 +880,13 @@ function rowGestures(row, it, o){
       row.classList.remove("lifted", "folded");
       if (mode) eatUntil = performance.now() + 600;
       st = null; mode = null;
-      if (keep && on && key){ groupOnto(key, on, rowNames()); renderHome(); }
+      if (keep && on && key){
+        // A picked review takes the others picked with it (in the list's order).
+        const keys = homeSel.has(key) ? pickedInOrder() : [key];
+        moveInto(keys, on, reviewNames());
+        if (homeSel.has(key)) homeSel.clear();
+        renderHome();
+      }
       return false;
     }
     if (st && st.rows){
@@ -771,9 +902,26 @@ function rowGestures(row, it, o){
     st = null; mode = null;
     return movedRow;
   };
+  // A plain tap acts as the finger lifts (not on the click after it: a click can get lost when the
+  // page changes under the finger — after a swipe back from a review, or going full screen on that
+  // tap); the click that follows is eaten.
+  const tapAct = (onThumb) => {
+    if (off){ shut(); return; }
+    if (onThumb && o.thumb) o.thumb(); else o.open();
+  };
   const onUp = (e) => {
     if (!st || e.pointerId !== st.id) return;
     const m0 = mode, moved = st.moved;
+    if (!m0 && e.type === "pointerup" && (!st.mouse || e.button === 0)){
+      // A touch that stopped a fling (the list was scrolling just before, or moved under it) is no tap.
+      const th = st.thumb, fling = !st.mouse && (st.downAt - lastListScroll < 150 || Math.abs(scrollY - st.sy) > 2);
+      end(false);
+      eatUntil = performance.now() + 700;
+      ghostUntil = performance.now() + 500;  // the click this tap ends with: eaten wherever it lands
+      if (fling) return;
+      tapAct(th);
+      return;
+    }
     if (m0 === "swipe"){
       const x = off;
       end();
@@ -806,7 +954,7 @@ function rowGestures(row, it, o){
     if (st || (e.pointerType === "mouse" && e.button !== 0)) return;  // a second finger: ignored
     eatUntil = 0;
     closeOpenRow(ctl);
-    st = { id: e.pointerId, x: e.clientX, y: e.clientY, off, moved: false, mouse: e.pointerType === "mouse", buttons: e.buttons };
+    st = { id: e.pointerId, x: e.clientX, y: e.clientY, off, moved: false, mouse: e.pointerType === "mouse", buttons: e.buttons, thumb: !!(e.target.closest && e.target.closest(".th")), sy: scrollY, downAt: performance.now() };
     window.addEventListener("pointerup", onUp); window.addEventListener("pointercancel", onCancel);
     lp = setTimeout(lift, 420);
   });
@@ -834,12 +982,13 @@ function rowGestures(row, it, o){
   });
   // A lifted / swiped card does not scroll the page under the finger.
   it.addEventListener("touchmove", (e) => { if (mode) e.preventDefault(); }, { passive: false });
-  // A tap opens the review — or, on a card swiped open, closes it.
+  // A tap picks the review (its picture: opens it; a group's header: opens / closes the group) — or,
+  // on a card swiped open, closes it. Acted on as the finger lifts (tapAct); a click with no
+  // pointer before it (the keyboard) acts here.
   it.addEventListener("click", (e) => {
     if (menuT){ clearTimeout(menuT); menuT = null; e.preventDefault(); o.menu(); return; }
     if (performance.now() < eatUntil){ e.stopImmediatePropagation(); e.preventDefault(); eatUntil = 0; return; }
-    if (off){ shut(); return; }
-    o.open();
+    tapAct(!!(e.target.closest && e.target.closest(".th")));
   });
   // Right click / the menu key: the menu. A touch's long press is the lift above, not a menu.
   it.addEventListener("contextmenu", (e) => {
@@ -848,6 +997,12 @@ function rowGestures(row, it, o){
     o.menu();
   });
   return row;
+}
+// Every review's name by key, the ones in closed groups too (from the rows' titles).
+function reviewNames(){
+  const out = rowNames();
+  loadGroups().forEach((g) => g.keys.forEach((k) => { if (!out.has(k)){ const r = document.querySelector(`.list .row[data-key="${k}"] .tx b`); if (r) out.set(k, r.textContent); } }));
+  return out;
 }
 // Each row's review name by key (a new group is named after the two).
 function rowNames(){
@@ -858,6 +1013,8 @@ function rowNames(){
 function reviewMenu(m){
   const inG = loadGroups().some((g) => g.keys.includes(m.key));
   menu(m.asset.name, [{ label: "Open", fn: () => openReview(m.key, null) },
+    { label: homeSel.has(m.key) ? "Unselect" : "Select", fn: () => toggleSel(m.key, document.querySelector(`.list .row[data-key="${m.key}"]`)) },
+    { label: "Move to…", fn: () => moveMenu([m.key], false) },
     inG ? { label: "Take out of the group", fn: () => { ungroupOne(m.key); renderHome(); } } : null,
     { label: "Hide for now", fn: () => { const h = hiddenKeys(); h.add(m.key); setHidden(h); renderHome(); } },
     { label: "Delete this review…", danger: true, fn: () => deleteReview(m) }]);
@@ -868,17 +1025,24 @@ document.addEventListener("pointerdown", (e) => {
   if (e.target.closest(".row .sw") || e.target.closest(".row") === openRow.row) return;
   closeOpenRow();
 }, true);
-async function deleteReview(m){
-  if (!await ask({ title: "Delete this review?", text: `“${m.asset.name}”: its notes, replies, drawings and pictures on this device. Export a .srev first to keep them.`, ok: "Delete", danger: true })) return;
+const deleteReview = (m) => deleteReviews([m]);
+async function deleteReviews(ms){
+  if (!ms.length) return;
+  const one = ms.length === 1;
+  if (!await ask({ title: one ? "Delete this review?" : `Delete ${ms.length} reviews?`, text: (one ? `“${ms[0].asset.name}”: its` : "Their") + " notes, replies, drawings and pictures on this device. Export a .srev first to keep them.", ok: "Delete", danger: true })) return;
   await flush();
-  const mine = (await DB.get("rows", m.key)) || { rows: [] }, shared = new Set();
-  for (const o of await DB.all("reviews")){
-    if (o.key === m.key) continue;
-    const rr = await DB.get("rows", o.key);
-    if (rr) M.shotIds(rr.rows).forEach((s) => shared.add(s));
-  }
-  await DB.deleteReview(m.key, M.shotIds(mine.rows), shared);
-  if (R && R.meta.key === m.key){ closeReview(); history.replaceState(null, "", location.pathname + location.search); }
+  const gone = new Set(ms.map((m) => m.key));
+  try { for (const m of ms){
+    const mine = (await DB.get("rows", m.key)) || { rows: [] }, shared = new Set();
+    for (const o of await DB.all("reviews")){
+      if (o.key === m.key) continue;
+      const rr = await DB.get("rows", o.key);
+      if (rr) M.shotIds(rr.rows).forEach((s) => shared.add(s));
+    }
+    await DB.deleteReview(m.key, M.shotIds(mine.rows), shared);
+    if (R && R.meta.key === m.key){ closeReview(); history.replaceState(null, "", location.pathname + location.search); }
+  } } catch (e){ toast("Could not delete every review: " + (e.message || e), 4000); }
+  gone.forEach((k) => homeSel.delete(k));
   renderHome();
 }
 
@@ -897,6 +1061,11 @@ async function settings(){
     Object.entries(THEMES).forEach(([k, label]) => { const b = btn("", label, () => { setTheme(k); paintTh(); }); b.dataset.t = k; th.appendChild(b); });
     sh.appendChild(el("b", "lab", "Theme"));
     sh.appendChild(th); paintTh();
+    sh.appendChild(el("b", "lab", "Pictures in a row"));
+    const tr = el("div", "seg thumbs");
+    const paintTr = () => tr.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === thumbsRow));
+    THUMBS.forEach((n) => { const b = btn("", String(n), () => { setThumbs(n); paintTr(); }); b.dataset.n = String(n); tr.appendChild(b); });
+    sh.appendChild(tr); paintTr();
     sh.appendChild(el("b", "lab", "Full screen"));
     if (fsCan()){
       const fs = el("div", "seg fs");
@@ -1100,15 +1269,39 @@ function bindPanelBar(pb){
   pb.addEventListener("pointermove", (e) => { if (y0 != null && y0 - e.clientY > 24){ y0 = null; setPanel(true); } });
   pb.addEventListener("click", (e) => { if (R && !R.panel && !e.target.closest("button")) setPanel(true); });
 }
+// The status filters in the panel's order; a swipe sideways on the list (or the filter bar) steps
+// through them: left = the next one (All → Open → In progress → Resolved), right = back.
+const FILTERS = ["all", "open", "progress", "done"];
+function stepFilter(dir){
+  const i = FILTERS.indexOf(R.filter), j = RC.clamp(i + dir, 0, FILTERS.length - 1);
+  if (j === i) return;
+  R.filter = FILTERS[j];
+  paintReview();
+  const n = els && els.notes;
+  if (n && n.animate) n.animate([{ transform: `translateX(${dir * 40}px)`, opacity: 0.3 }, { transform: "none", opacity: 1 }], { duration: 200, easing: "ease-out" });
+}
 // Back to the player: pulling the list down when it is already at its top note (a finger that
 // started there, so a fling that just reached the top does not close it), on the list or on the
 // filter bar; with a mouse / trackpad, scrolling up on at the top.
 function bindPanelPull(plist, pb){
-  let s = null;
-  const startAt = (e, top) => { s = R && R.panel && e.touches.length === 1 && top ? { y: e.touches[0].clientY, x: e.touches[0].clientX } : null; };
+  let s = null, side = null;
+  const startAt = (e, top) => {
+    s = R && R.panel && e.touches.length === 1 && top ? { y: e.touches[0].clientY, x: e.touches[0].clientX } : null;
+    // Sideways: the filters (not from a text field, where a finger selects text).
+    const tg = e.target && e.target.closest ? e.target : null;
+    side = R && R.panel && e.touches.length === 1 && !(tg && tg.closest("textarea, input, .cmp")) ? { y: e.touches[0].clientY, x: e.touches[0].clientX } : null;
+  };
   plist.addEventListener("touchstart", (e) => startAt(e, plist.scrollTop <= 0), { passive: true });
   pb.addEventListener("touchstart", (e) => startAt(e, true), { passive: true });
   const move = (e) => {
+    if (side){
+      if (e.touches.length !== 1){ side = null; }
+      else {
+        const dx = e.touches[0].clientX - side.x, dy = e.touches[0].clientY - side.y;
+        if (Math.abs(dy) > 24 && Math.abs(dy) > Math.abs(dx)) side = null;  // scrolling
+        else if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2){ side = null; s = null; stepFilter(dx < 0 ? 1 : -1); return; }
+      }
+    }
     if (!s) return;
     if (e.touches.length !== 1 || plist.scrollTop > 0){ s = null; return; }
     const dy = e.touches[0].clientY - s.y, dx = e.touches[0].clientX - s.x;
@@ -1117,7 +1310,7 @@ function bindPanelPull(plist, pb){
   };
   plist.addEventListener("touchmove", move, { passive: true });
   pb.addEventListener("touchmove", move, { passive: true });
-  const end = () => { s = null; };
+  const end = () => { s = null; side = null; };
   ["touchend", "touchcancel"].forEach((ev) => { plist.addEventListener(ev, end); pb.addEventListener(ev, end); });
   let lastScroll = 0, pull = 0;
   plist.addEventListener("scroll", () => { lastScroll = performance.now(); pull = 0; }, { passive: true });
@@ -1132,7 +1325,8 @@ function bindPanelPull(plist, pb){
 function overlay(vb, list, cls){
   const s = document.createElementNS(SVGNS, "svg");
   s.setAttribute("viewBox", vb.join(" "));
-  s.setAttribute("preserveAspectRatio", cls === "stage" ? "xMidYMid meet" : "none");
+  // cover: a thumbnail cut to fill its box (the picture is object-fit: cover, cut the same way).
+  s.setAttribute("preserveAspectRatio", cls === "stage" ? "xMidYMid meet" : cls === "cover" ? "xMidYMid slice" : "none");
   s.innerHTML = RC.svgMarkup(list, numOf);
   return s;
 }
@@ -1162,7 +1356,9 @@ function paintOverlay(){
 // The view's turn (0 / 90 / 180 / 270°) and mirror, kept with the review (R.meta.view): the stage,
 // the full-screen viewer and the drawing canvas show the picture that way. View only — drawings
 // stay in the picture's own pixels.
-const viewOf = () => R.meta.view || { rot: 0, mirror: false };
+// No turn button since 0.33 (a two-finger turn is the player's own view, not kept): a quarter turn
+// stored by an older version is dropped, the mirror kept.
+const viewOf = () => ({ rot: 0, mirror: !!(R.meta.view && R.meta.view.mirror) });
 // Places an element showing the whole picture (object-fit: contain) turned / mirrored in a W × H box.
 function turnEl(n, W, H, vw){
   const side = vw.rot % 180 !== 0, tf = (vw.rot ? `rotate(${vw.rot}deg) ` : "") + (vw.mirror ? "scaleX(-1)" : "");
@@ -1278,12 +1474,12 @@ function buildStage(){
   const eye = ibtn(R.hide ? "eyeoff" : "eye", "Show / hide drawings", () => { R.hide = !R.hide; eye.innerHTML = ico(R.hide ? "eyeoff" : "eye"); eye.classList.toggle("on", R.hide); paintOverlay(); });
   eye.classList.toggle("on", R.hide);
   tools.appendChild(eye);
-  tools.appendChild(ibtn("turn", "Turn the view 90°", () => setView({ rot: viewOf().rot + 90, mirror: viewOf().mirror })));
   const mirB = ibtn("mirror", "Mirror the view", () => setView({ rot: viewOf().rot, mirror: !viewOf().mirror }));
   mirB.classList.toggle("on", viewOf().mirror);
   els.mirB = mirB;
   tools.appendChild(mirB);
   const fitB = ibtn("fit", "Fit to screen", fitPlayer);
+  fitB.classList.add("fitb");
   els.fitB = fitB;
   tools.appendChild(fitB);
   if (!stageRO){ stageRO = new ResizeObserver(() => applyStageView()); }
@@ -1554,8 +1750,10 @@ const fmtFps = (f) => Math.abs(f - Math.round(f)) < 0.005 ? String(Math.round(f)
 function paintRate(T){
   if (!T.fps || !R) return;
   const r = rateNow(), txt = (R.fpsKnown ? "" : "≈") + fmtFps(R.fps * r);
-  if (T.fps.textContent === txt) return;
+  if (T.fps.dataset.v === txt) return;
+  T.fps.dataset.v = txt;
   T.fps.textContent = txt;
+  T.fps.appendChild(el("small", "", "fps"));
   T.fps.classList.toggle("on", r !== 1);
   T.fps.title = (r !== 1 ? `×${Math.round(r * 100) / 100} · ` : "") + "Playback speed: drag up / down · tap: the nearest common rate · hold: the clip's own";
 }
@@ -1922,18 +2120,19 @@ async function noteFrame(n){
   return null;
 }
 // Drawings on a note's picture: pictures — that note's drawings; video — what shows at its time.
+// Replies' drawings only on the reply's own pictures (opts.reply), never on the note's.
 function drawingsOn(f, opts = {}){
-  return M.drawings(R.rows).filter((r) => opts.reply ? r.data.reply === opts.reply && (!f.at || RC.ctxVisible(r.data.ctx, f.at)) : f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at));
+  return M.drawings(R.rows).filter((r) => opts.reply ? r.data.reply === opts.reply && (!f.at || RC.ctxVisible(r.data.ctx, f.at)) : !r.data.reply && (f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at)));
 }
 function picBox(f, list, cls){
   const w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img");
   i.src = f.url; i.alt = ""; i.draggable = false; w.appendChild(i);
-  if (list.length) w.appendChild(overlay(f.vb, list));
+  if (list.length) w.appendChild(overlay(f.vb, list, "cover"));
   return w;
 }
 // Fills a placeholder with a note's picture once it is there (cached, or taken from the video).
 function asyncPic(n, list, cls, onTap){
-  const ph = el("div", "fw wait" + (cls ? " " + cls : ""), "Loading the frame…");
+  const ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
   noteFrame(n).then((f) => {
     if (!f){ ph.remove(); return; }
     const box = picBox(f, list(f), cls);
@@ -1954,16 +2153,22 @@ function asyncFrameAt(n, t, rid){
   });
   return ph;
 }
-// Attached pictures; a tap opens them in note n's thread (rid: a reply's).
-function shotThumbs(ids, n, rid){
-  const sh = el("div", "shots");
+// Attached pictures, into a picture grid; a tap opens them in note n's thread (rid: a reply's).
+function shotThumbs(ids, n, rid, into){
   (ids || []).forEach((sid) => {
-    const i = el("img"); i.alt = "";
-    shotUrl(String(sid)).then((u) => { if (u){ i.src = u; i.onclick = () => n ? openThread(n, rid ? { kind: "shot", id: String(sid), rid } : { kind: "shot", id: String(sid) }) : openShot(u); } else i.remove(); });
-    sh.appendChild(i);
+    const w = el("div", "fw shot"), i = el("img"); i.alt = ""; i.draggable = false; w.appendChild(i);
+    shotUrl(String(sid)).then((u) => { if (u){ i.src = u; w.onclick = () => n ? openThread(n, rid ? { kind: "shot", id: String(sid), rid } : { kind: "shot", id: String(sid) }) : openShot(u); } else w.remove(); });
+    into.appendChild(w);
   });
-  return (ids || []).length ? sh : null;
 }
+// A note's / reply's pictures: one grid of equal squares (Settings → Pictures in a row), each
+// picture cut to fill its square (fitted by its short side).
+const THUMBS_KEY = "sight-review:thumbs", THUMBS = [3, 4, 5, 6];
+let thumbsRow = 4;
+try { const x = Number(localStorage.getItem(THUMBS_KEY)); if (THUMBS.includes(x)) thumbsRow = x; } catch {}
+const applyThumbs = () => document.documentElement.style.setProperty("--thumbs", String(thumbsRow));
+applyThumbs();
+function setThumbs(n){ thumbsRow = n; try { localStorage.setItem(THUMBS_KEY, String(n)); } catch {} applyThumbs(); }
 
 function noteCard(n){
   const id = n.id, st = M.noteState(n), c = n.data.ctx, kind = kindNow();
@@ -1981,28 +2186,23 @@ function noteCard(n){
   h.appendChild(ibtn("more", "Note actions", () => noteMenu(n), 18));
   card.appendChild(h);
   if (n.data.text) card.appendChild(el("div", "text", n.data.text));
-  // Its picture: the video frame with everything drawn there; a picture note only when it has drawings.
-  const own = M.drawings(R.rows).filter((r) => r.data.note === id);
+  // Its pictures in one grid: the video frame with what is drawn there (a picture note: only when
+  // it has drawings), the other frames it was drawn on (time order), then its attached pictures.
+  const pics = el("div", "pics");
+  const own = M.drawings(R.rows).filter((r) => r.data.note === id && !r.data.reply);
   if (kind === "video" ? (c && c.t != null) : own.length){
     const mf = kind === "video" ? memFrame(c.t) : null;
     if (mf){
       const f = { url: mf.url, vb: [0, 0, docW(), docH()], ctx: c, at: { t: c.t, fps: R.fps } };
       const box = picBox(f, drawingsOn(f), "");
       box.onclick = () => openThread(n, { kind: "frame", t: c.t });
-      card.appendChild(box);
-    } else card.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
+      pics.appendChild(box);
+    } else pics.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
   }
-  // A video note drawn on more frames: those frames too, small, in time order.
-  if (kind === "video" && c && c.t != null){
-    const extra = M.noteFrameTimes(R.rows, n).filter((t) => frameKey(t) !== frameKey(c.t));
-    if (extra.length){
-      const row = el("div", "shots");
-      extra.forEach((t) => row.appendChild(asyncFrameAt(n, t)));
-      card.appendChild(row);
-    }
-  }
-  const sh = shotThumbs(n.data.shots, n);
-  if (sh) card.appendChild(sh);
+  if (kind === "video" && c && c.t != null)
+    M.noteFrameTimes(R.rows, n).filter((t) => frameKey(t) !== frameKey(c.t)).forEach((t) => pics.appendChild(asyncFrameAt(n, t)));
+  shotThumbs(n.data.shots, n, null, pics);
+  if (pics.children.length) card.appendChild(pics);
   const reps = (n.data.replies || []).filter((r) => r && !r.deleted);
   if (reps.length){
     const rb = el("div", "replies");
@@ -2094,15 +2294,14 @@ function replyEntry(n, r){
   const d = el("div", "rep");
   d.appendChild(el("div", "rh", [r.author, fmtDate(r.created)].filter(Boolean).join(" · ")));
   if (r.text) d.appendChild(el("div", "rt", r.text));
-  const rt = replyFrameTimes(n, r.id), c = n.data.ctx;
+  const rt = replyFrameTimes(n, r.id), c = n.data.ctx, pics = el("div", "pics");
   if (rt){
     // A video reply drawn on several frames: each of them (the note's own frame through noteFrame).
-    const row = rt.length > 1 || (rt.length && !(c && c.t != null && frameKey(rt[0]) === frameKey(c.t))) ? el("div", "shots") : null;
-    if (row){ rt.forEach((t) => row.appendChild(asyncFrameAt(n, t, r.id))); d.appendChild(row); }
-    else d.appendChild(asyncPic(n, (f) => drawingsOn(f, { reply: r.id }), "sm", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t, rid: r.id } : { kind: "frame", rid: r.id })));
+    if (rt.length > 1 || (rt.length && !(c && c.t != null && frameKey(rt[0]) === frameKey(c.t)))) rt.forEach((t) => pics.appendChild(asyncFrameAt(n, t, r.id)));
+    else pics.appendChild(asyncPic(n, (f) => drawingsOn(f, { reply: r.id }), "sm", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t, rid: r.id } : { kind: "frame", rid: r.id })));
   }
-  const sh = shotThumbs(r.shots, n, r.id);
-  if (sh) d.appendChild(sh);
+  shotThumbs(r.shots, n, r.id, pics);
+  if (pics.children.length) d.appendChild(pics);
   if (r.edited) d.firstChild.textContent += " · edited";
   const mb = ibtn("more", "Reply actions", () => replyMenu(n, r), 16); mb.classList.add("x");
   d.appendChild(mb);
@@ -2715,7 +2914,10 @@ function playerPlace(){
 // back / Esc) leaves — no swipe closes it.
 // o: {url, vb, rows, view, onDraw(), note, label (caption: which frame), nav(dir) / side(dir) →
 // Promise<o | null>, onClose(o)}
-const FADE_MS = 260, FADE_WAIT = 600;
+// The next picture comes in like a strip: the swiped one goes on the way the finger sent it,
+// fading out, the next follows it in from that side, one screen behind (decoded first, at most
+// FADE_WAIT ms, so it never comes in blank).
+const FADE_MS = 300, FADE_WAIT = 600;
 function viewer(o){
   const v = el("div", "view"), cap = el("div", "cap");
   const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
@@ -2727,17 +2929,17 @@ function viewer(o){
     const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1);
     if (o.onClose) o.onClose(o);
   };
-  // fade: the next picture comes up in place of the old one, which fades out (no slide, no blank
-  // frame: the new image is decoded first, at most FADE_WAIT ms).
-  async function show(no, fade){
+  // slide {axis: "x" | "y", dir: 1 (next: comes from the right / bottom) | -1}: the old picture goes
+  // on from where the finger left it, fading out; the new one follows it in, a screen behind.
+  async function show(no, slide){
     const nb = el("div", "vb");
     const img = el("img"); img.src = no.url; img.alt = ""; img.draggable = false; nb.appendChild(img);
     if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows));
-    if (fade){
+    if (slide){
       await Promise.race([img.decode ? img.decode().catch(() => {}) : Promise.resolve(), new Promise((r) => setTimeout(r, FADE_WAIT))]);
       if (!v.isConnected) return;
     }
-    const was = box;
+    const was = box, wasV = V, wasOff = off;
     o = no; box = nb;
     v.insertBefore(box, cap);
     pen.hidden = !o.onDraw;
@@ -2753,11 +2955,14 @@ function viewer(o){
     off = [0, 0];
     fit();
     if (!was) return;
-    if (!fade || !was.animate){ was.remove(); return; }
-    // The new one comes up quickly on top; the old one holds, then goes, so the pair never lets the
-    // background show through mid-way (it only shows where the new picture is narrower).
-    box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: "ease-out" });
-    was.animate([{ opacity: 1 }, { opacity: 1, offset: 0.45 }, { opacity: 0 }], { duration: FADE_MS, fill: "forwards" }).onfinish = () => was.remove();
+    if (!slide || !was.animate){ was.remove(); return; }
+    // Along the swipe's axis: the old one from where it was let go to a screen away, the new one
+    // from a screen (minus that) behind it to its place — the two move as one strip.
+    const ax = slide.axis === "x", D = (ax ? innerWidth : innerHeight) * slide.dir, k = ax ? 0 : 1;
+    const at = (vv, o2, d) => `translate(${vv.x + o2[0] + (ax ? d : 0)}px,${vv.y + o2[1] + (ax ? 0 : d)}px) scale(${vv.z})`;
+    const ease = "cubic-bezier(.25,.8,.3,1)";
+    box.animate([{ transform: at(V, [0, 0], D + wasOff[k]) }, { transform: at(V, [0, 0], 0) }], { duration: FADE_MS, easing: ease });
+    was.animate([{ transform: at(wasV, wasOff, 0), opacity: 1 }, { transform: at(wasV, [0, 0], -D), opacity: 0 }], { duration: FADE_MS, easing: ease, fill: "forwards" }).onfinish = () => was.remove();
     setTimeout(() => was.remove(), FADE_MS + 200);  // onfinish never comes for a node already gone
   }
   function fit(){
@@ -2776,23 +2981,23 @@ function viewer(o){
   };
   const zoomAt = (x, y, z) => { z = RC.clamp(z, 1, 12); const lx = (x - V.x) / V.z, ly = (y - V.y) / V.z; V = { z, x: x - lx * z, y: y - ly * z }; if (z === 1) fit(); else apply(); };
   // Swipes at fit: the picture follows the finger along the axis it set off on; up / down walks
-  // the notes (o.nav), sideways the note's own pictures (o.side). The next one cross-fades in.
+  // the notes (o.nav), sideways the note's own pictures (o.side). The next one slides in behind it.
   async function navigate(dir, axis = "y"){
     if (busyNav){ off = [0, 0]; apply(true); return; }
     const fn = axis === "x" ? o.side : o.nav;
     // Busy until the next picture is shown: a second swipe (or Back) in between would act on the old one.
-    // The swiped picture goes back to its place while the next one loads: the two fade in one spot.
-    off = [0, 0]; apply(true);
+    // The swiped picture waits where it was let go while the next one loads, then both slide.
     const next = fn ? await (busyNav = true, fn(dir)).catch(() => null) : null;
     if (!v.isConnected){ busyNav = false; return; }
     if (!next){
       busyNav = false;
+      off = [0, 0]; apply(true);
       if (axis === "y") toast(dir > 0 ? "No later note" : "No earlier note", 1500);
       else if (o.side) toast(dir > 0 ? "The note's last picture" : "The note's first picture", 1500);
       return;
     }
-    await show(next, true);
-    setTimeout(() => { busyNav = false; }, FADE_MS);  // a swipe mid-fade would stack two fades
+    await show(next, { axis, dir });
+    setTimeout(() => { busyNav = false; }, FADE_MS);  // a swipe mid-slide would stack two
   }
   const pts = new Map();
   let g = null, lastTap = 0, sw = null;
@@ -3111,4 +3316,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile };
+window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn };

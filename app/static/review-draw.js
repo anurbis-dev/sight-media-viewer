@@ -70,7 +70,8 @@ var SightReviewDraw = (function(){
     ".draw .dbar > .dtools { position: relative; padding-right: 42px; }",
     ".draw .dtools .dcol { position: absolute; right: 0; top: 0; width: 38px; height: 38px; border: 0; background: none; display: grid; place-items: center; cursor: pointer; padding: 0; }",
     ".draw .dtools .dcol i { display: block; width: 24px; height: 24px; border-radius: 12px; border: 2px solid var(--rd-fg, #fff); box-shadow: 0 0 0 1px rgb(0 0 0 / .3); }",
-    ".draw .dfly { position: absolute; z-index: 3; display: flex; gap: 2px; padding: 4px; border-radius: 14px; background: var(--rd-pop, rgb(28 28 32 / .86)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgb(0 0 0 / .28); }",
+    // A slot's row: the bar's own look (.rd-panel), only placed here.
+    ".draw .dfly { position: absolute; z-index: 3; display: flex; gap: 2px; padding: 4px; border-radius: 14px; }",
     ".draw .dfly .swc { margin: 5px; }",
     ".draw .swc { width: 28px; height: 28px; margin: 3px 4px; border-radius: 14px; border: 2px solid var(--rd-line, rgb(255 255 255 / .3)); cursor: pointer; padding: 0; }",
     ".draw .swc.on { border-color: var(--rd-fg, #fff); box-shadow: 0 0 0 2px #0a84ff; }",
@@ -96,7 +97,7 @@ var SightReviewDraw = (function(){
   // hold a tool's button: that tool's size and opacity back to their defaults. Once a pen has touched it, the
   // pen draws and one finger pans too. Mouse: left draws, wheel / right-drag zoom (the pen's side
   // button too), middle drags. Top
-  // bar: turn 90°, mirror, back to fit. Items are FORMAT.md drawings in the doc units of `vb`;
+  // bar: mirror, back to fit. Items are FORMAT.md drawings in the doc units of `vb`;
   // sizes are screen pixels at the moment of drawing, turned into doc units by the zoom.
   function ico(p){ return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + p + "</svg>"; }
   var TOOLS = [
@@ -127,6 +128,21 @@ var SightReviewDraw = (function(){
     { k: "rectf", label: "Filled rectangle", tool: "rect", fill: true, ico: '<rect x="4" y="6" width="16" height="12" rx="1" fill="currentColor" fill-opacity=".35"/>' },
     { k: "ellipsef", label: "Filled ellipse", tool: "ellipse", fill: true, ico: '<ellipse cx="12" cy="12" rx="8.5" ry="6.5" fill="currentColor" fill-opacity=".35"/>' },
   ];
+  // The text slot's row: switches for the text being typed (or the selected texts, with the
+  // transform tool), kept with the pen for the next text. Their FORMAT.md fields: bold, italic,
+  // underline, bgOn (the box behind it), outline (a width; on = 6 % of the size), align, font.
+  var TXT = "font-size=\"16\" fill=\"currentColor\" stroke=\"none\" text-anchor=\"middle\"";
+  var TEXT_OPTS = [
+    { k: "bold", label: "Bold", ico: '<text x="12" y="17.5" ' + TXT + ' font-weight="800" font-family="system-ui, sans-serif">B</text>' },
+    { k: "italic", label: "Italic", ico: '<text x="12" y="17.5" ' + TXT + ' font-style="italic" font-family="Georgia, serif">I</text>' },
+    { k: "underline", label: "Underline", ico: '<text x="12" y="15.5" ' + TXT + ' font-family="system-ui, sans-serif">U</text><path d="M6.5 20h11"/>' },
+    { k: "bgOn", label: "Box behind the text", ico: '<rect x="3" y="4.5" width="18" height="15" rx="3.5" fill="currentColor" fill-opacity=".3"/><path d="M8.5 9h7M12 9v6.5"/>' },
+    { k: "outline", label: "Outline", ico: '<path d="M6 19.5 12 4.5l6 15M8.4 13.5h7.2" stroke-width="4" stroke-opacity=".35"/><path d="M6 19.5 12 4.5l6 15M8.4 13.5h7.2"/>' },
+    { k: "align", label: "Alignment", cycle: ["left", "center", "right"], icos: {
+      left: '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>', center: '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>', right: '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>' } },
+    { k: "font", label: "Font", cycle: ["sans", "serif", "mono", "hand", "impact"] },
+  ];
+  var TEXT0 = { bold: false, italic: false, underline: false, bgOn: true, outline: false, align: "left", font: "sans" };
   var SLOTS = ["select", "brush", "marker", "arrows", "shapes", "text", "eraser"];
   var slotOf = function(t){ return t === "arrow" ? "arrows" : t === "rect" || t === "ellipse" ? "shapes" : t; };
   // Sizes in screen px at the moment of drawing (turned into doc units by the zoom), per tool; a
@@ -137,7 +153,7 @@ var SightReviewDraw = (function(){
   // Opacity per tool (0.05…1), set by the hold's sideways drag, kept with the pen. The eraser has none.
   var OPAC0 = { brush: 1, marker: 0.4, arrow: 1, rect: 1, ellipse: 1, text: 1 };
   var OPAC = clone(OPAC0);
-  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0 }, lastTool = "brush";  // tool null: none (tap the active one)
+  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
     if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
@@ -147,8 +163,9 @@ var SightReviewDraw = (function(){
     if (ps && (ps.tool === "rect" || ps.tool === "ellipse") && SHAPES[pen.shape].tool !== ps.tool) pen.shape = ps.tool === "rect" ? 0 : 2;
     if (ps && ps.sizes) Object.keys(SIZE0).forEach(function(k){ var v = Number(ps.sizes[k]); if (v >= SIZE_RANGE[k][0] && v <= SIZE_RANGE[k][1]) SIZE[k] = v; });
     if (ps && ps.opac) Object.keys(OPAC0).forEach(function(k){ var v = Number(ps.opac[k]); if (v >= 0.05 && v <= 1) OPAC[k] = v; });
+    if (ps && ps.text) TEXT_OPTS.forEach(function(x){ var v = ps.text[x.k]; if (x.cycle ? x.cycle.indexOf(v) >= 0 : typeof v === "boolean") pen.text[x.k] = v; });
   } catch (e) {}
-  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape })); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, text: pen.text })); } catch (e) {} }
   // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
   // pinch (g: {z, r, d, a}); a quarter turn snaps within 6°.
   function pinch(g, a, b, zmin, zmax){
@@ -195,12 +212,11 @@ var SightReviewDraw = (function(){
     var ub = tbtn("Undo", ico('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), doUndo);
     var rb = tbtn("Redo", ico('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'), doRedo);
     var clr = tbtn("Clear all drawings", ico('<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>'), clearOrDelete);
-    var turnB = tbtn("Turn 90°", ico('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'), function(){ V.r = Math.round(V.r / 90) * 90 + 90; afterView(); });
     var mirB = tbtn("Mirror", ico('<path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/>'), function(){ V.m = -V.m; afterView(); });
     var fitB = tbtn("Fit to screen", ico('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'), function(){ fit(true); });
     var done = el("button", "btn primary", "Done"); done.type = "button";
     done.onclick = function(){ if (stroke) finish(); if (edit) commitText(); endScrub(); close(); o.onDone(items, multi ? allFrames() : null); };
-    [cancel, ub, rb, clr, el("span", "sp"), turnB, mirB, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
+    [cancel, ub, rb, clr, el("span", "sp"), mirB, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
     top.addEventListener("pointerdown", function(){ closeFly(); });  // undo / turn / fit…: the row folds
     var tools = el("div", "dtools");
     // The flyout of a slot (or of the colour): {el, slot}.
@@ -210,7 +226,8 @@ var SightReviewDraw = (function(){
     function closeFly(){ if (fly){ var f = fly.el; fly = null; f.hidden = true; setTimeout(function(){ f.remove(); }, 0); } }
     function openFly(slot, anchor, entries){
       closeFly();
-      var f = el("div", "dfly");
+      var f = el("div", "dfly rd-panel");
+      f.addEventListener("mousedown", keepField);
       entries.forEach(function(x){ f.appendChild(x); });
       root.appendChild(f);
       var r = root.getBoundingClientRect(), a = anchor.getBoundingClientRect(), b = bar.getBoundingClientRect(), w = f.offsetWidth;
@@ -229,6 +246,19 @@ var SightReviewDraw = (function(){
       var b = tbtn(title, ico(slotIco(s)), function(){
         if (b.dataset.held){ delete b.dataset.held; return; }
         var on = slotOf(pen.tool) === s;
+        if (s === "text"){
+          // Its row of switches; with the transform tool and texts selected it styles those (the
+          // tool stays); while typing, the text being typed.
+          if (fly && fly.slot === "text"){ closeFly(); if (on) setTool(null); return; }
+          if (!on && !selTexts().length) setTool("text");
+          openFly("text", b, TEXT_OPTS.map(function(x){
+            var tb2 = tbtn(x.label, "", function(){ textOpt(x); });
+            tb2.dataset.k = x.k;
+            return tb2;
+          }));
+          paintTextFly();
+          return;
+        }
         if (!grp){ closeFly(); setTool(on ? null : s); return; }
         if (on && fly && fly.slot === s){ closeFly(); setTool(null); return; }
         if (!on) setTool(slotTool(s));
@@ -242,6 +272,7 @@ var SightReviewDraw = (function(){
         }));
       });
       b.dataset.t = s; tools.appendChild(b);
+      if (s === "text") b.addEventListener("mousedown", keepField);
       // Press and hold: the tool in hand, at its default size and opacity (the preview shows it).
       var ht = null;
       b.addEventListener("pointerdown", function(){
@@ -272,6 +303,53 @@ var SightReviewDraw = (function(){
       var was = pen.tool;
       pen.color = c; if (!pen.tool || pen.tool === "eraser" || pen.tool === "select") pen.tool = "brush"; savePen(); paintBar(); paint();
       if (pen.tool !== was && o.onTool) o.onTool(pen.tool);
+    }
+    // The text slot's switches: what they show (the text being typed, else the first selected
+    // text, else the pen's), and a tap — the next value for the text being typed / the selected
+    // texts, and for the pen (the next text).
+    var isText = function(it){ return RC.typeOf(it) === "text"; };
+    // While typing, a tap on the text slot / its row must not take the focus from the field (the
+    // phone's keyboard would drop and come back on every switch).
+    function keepField(e){ if (edit) e.preventDefault(); }
+    function selTexts(){ return pen.tool === "select" ? sel.filter(isText) : []; }
+    function textNow(){
+      var d = edit ? edit.it.data : selTexts().length ? selTexts()[0].data : null;
+      if (!d) return pen.text;
+      return { bold: !!d.bold, italic: !!d.italic, underline: !!d.underline, bgOn: !!d.bgOn, outline: !!d.outline, align: d.align || "left", font: d.font || "sans" };
+    }
+    function fontIco(f){ return '<text x="12" y="16.5" font-size="13" fill="currentColor" stroke="none" text-anchor="middle" font-family="' + RC.esc(RC.fontStack(f)) + '">Aa</text>'; }
+    function paintTextFly(){
+      if (!fly || fly.slot !== "text") return;
+      var cur = textNow();
+      fly.el.querySelectorAll(".tb").forEach(function(b){
+        var x = TEXT_OPTS.find(function(y){ return y.k === b.dataset.k; }), v = cur[x.k];
+        var ic = x.k === "font" ? fontIco(v) : x.icos ? x.icos[v] : x.ico;
+        if (b.dataset.ico !== ic){ b.innerHTML = ico(ic); b.dataset.ico = ic; }
+        b.classList.toggle("on", !x.cycle && !!v);
+        if (x.cycle){ b.title = x.label + ": " + v; b.setAttribute("aria-label", b.title); }
+      });
+    }
+    function putText(d, k, v){
+      if (k === "outline"){ d.outline = v ? RC.r2(d.size * 0.06) : 0; if (v && !d.outlineColor) d.outlineColor = "#000000"; }
+      else { d[k] = v; if (k === "bgOn" && v && !d.bg){ d.bg = "#000000"; d.bgOpacity = 0.6; } }
+    }
+    function textOpt(x){
+      stopAdj();  // a selection hold under way: back to its state first (its copies leave items)
+      var cur = textNow(), v = x.cycle ? x.cycle[(x.cycle.indexOf(cur[x.k]) + 1) % x.cycle.length] : !cur[x.k];
+      pen.text[x.k] = v; savePen();
+      if (edit){
+        putText(edit.it.data, x.k, v); textField();
+        try { edit.ta.focus({ preventScroll: true }); } catch (_){ edit.ta.focus(); }
+      } else {
+        var ts = selTexts();
+        if (ts.length){
+          var map = new Map();
+          ts.forEach(function(it){ var n = clone(it); putText(n.data, x.k, v); map.set(it, n); });
+          sel = sel.map(function(y){ return map.get(y) || y; });
+          change(items.map(function(y){ return map.get(y) || y; }));
+        }
+      }
+      paintTextFly();
     }
     var colB = el("button", "dcol"); colB.type = "button"; colB.title = "Colour"; colB.setAttribute("aria-label", "Colour");
     colB.appendChild(el("i"));
@@ -308,6 +386,7 @@ var SightReviewDraw = (function(){
         ui += '<rect x="' + Math.min(m[0], m[2]) + '" y="' + Math.min(m[1], m[3]) + '" width="' + Math.abs(m[2] - m[0]) + '" height="' + Math.abs(m[3] - m[1]) + '" fill="rgb(76 154 255 / .12)" stroke="#4c9aff" stroke-width="' + k + '"/>';
       }
       gUi.innerHTML = ui;
+      paintTextFly();
       ub.disabled = !undo.length; rb.disabled = !redo.length;
       clr.disabled = !items.length;
       clr.title = pen.tool === "select" && sel.length ? "Delete the selected drawings" : multi ? "Clear this frame's drawings" : "Clear all drawings";
@@ -450,11 +529,13 @@ var SightReviewDraw = (function(){
     function afterView(){
       if (edit) commitText();
       fit(false);
-      viewR = V.r;
-      if (o.onView) o.onView({ rot: ((Math.round(V.r / 90) * 90) % 360 + 360) % 360, mirror: V.m < 0 });
+      // Only the mirror changes the host's view now (no turn button since 0.33): its quarter turn
+      // (viewR) stays, a two-finger turn goes back to the host as part of the nav (onNav).
+      if (o.onView) o.onView({ rot: ((Math.round(viewR / 90) * 90) % 360 + 360) % 360, mirror: V.m < 0 });
     }
     var refit = false;  // a resize while typing: fit once the text is done
-    function onResize(){ closeFly(); if (edit){ refit = true; return; } if (!stroke && !gest){ if (fitted) fit(false); else apply(); } }
+    function onResize(){ if (edit){ refit = true; return; } closeFly();  // (typing: the keyboard coming and going resizes; the row stays)
+ if (!stroke && !gest){ if (fitted) fit(false); else apply(); } }
     function vpos(e){ var r = view.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
     function toDoc(e){ return docOf(vpos(e)); }
 
@@ -610,8 +691,8 @@ var SightReviewDraw = (function(){
       moved();
     }
     view.addEventListener("pointerdown", function(e){
+      if (edit && e.target === edit.ta) return;  // placing the caret in the text field (a row stays up)
       closeFly();  // drawing (or any touch on the picture) folds a slot's / the colour's row
-      if (edit && e.target === edit.ta) return;  // placing the caret in the text field
       e.preventDefault();
       tapDown(e);
       endHold();  // a second pointer: no hold
@@ -903,8 +984,18 @@ var SightReviewDraw = (function(){
       ta.style.font = RC.textFont(Object.assign({}, d, { size: d.size / kb }));
       ta.style.lineHeight = "1.25";
       ta.style.color = d.color;
+      ta.style.textDecoration = d.underline ? "underline" : "none";
+      ta.style.textAlign = d.align || "left";
+      var bgo = d.bgOpacity != null ? d.bgOpacity : 0.6;
+      ta.style.background = d.bgOn ? "color-mix(in srgb, " + (d.bg || "#000000") + " " + Math.round(bgo * 100) + "%, transparent)" : "transparent";
+      // The outline under the letters, as the picture draws it (twice the width, behind the fill).
+      ta.style.webkitTextStroke = d.outline ? (2 * d.outline / kb) + "px " + (d.outlineColor || "#000") : "";
+      ta.style.paintOrder = d.outline ? "stroke fill" : "";
       ta.style.padding = pad + "px";
-      ta.style.left = ((d.x - vb[0]) / kb - pad - 1) + "px";
+      // The field is 0.6·size wider than the text (room for the caret): centred / right-aligned text
+      // would sit that much to the right of where it lands, so the field starts that much earlier.
+      var room = d.align === "center" ? 0.3 : d.align === "right" ? 0.6 : 0;
+      ta.style.left = ((d.x - vb[0]) / kb - pad - 1 - room * d.size / kb) + "px";
       ta.style.top = ((d.y - vb[1]) / kb - pad - 1) + "px";
       ta.style.width = Math.ceil(L.w / kb + d.size / kb * 0.6) + "px";
       ta.style.height = Math.ceil(L.h / kb) + "px";
@@ -914,7 +1005,8 @@ var SightReviewDraw = (function(){
       var k = S0.k, tol = 4 * k, hit = null;
       for (var i = items.length - 1; i >= 0; i--){ if (RC.typeOf(items[i]) === "text" && RC.hitTest(items[i], S0.x, S0.y, tol)){ hit = items[i]; break; } }
       var it = hit || { kind: "text", shape_kind: null, z: ++zc, data: { text: "", x: RC.r2(S0.x), y: RC.r2(S0.y - SIZE.text * k * 0.6), font: "sans", size: RC.r2(SIZE.text * k),
-        color: pen.color, bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: OPAC.text, rot: 0, created: Date.now() } };
+        color: pen.color, bold: pen.text.bold, italic: pen.text.italic, underline: pen.text.underline, align: pen.text.align, bgOn: pen.text.bgOn, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: OPAC.text, rot: 0, created: Date.now() } };
+      if (!hit){ it.data.font = pen.text.font; if (pen.text.outline) putText(it.data, "outline", true); }
       if (hit) sel = [];
       var ta = el("textarea", "dtext");
       ta.value = it.data.text || ""; ta.rows = 1; ta.spellcheck = false; ta.setAttribute("autocapitalize", "sentences");
@@ -932,7 +1024,7 @@ var SightReviewDraw = (function(){
         if (text){ undo.push(items); redo.length = 0; e0.it.data.text = text; items = items.concat([e0.it]); }
       } else if (!text){
         undo.push(items); redo.length = 0; items = items.filter(function(x){ return x !== e0.it; });
-      } else if (text !== e0.before.text || e0.it.data.color !== e0.before.color){
+      } else if (text !== e0.before.text || styleOf(e0.it.data) !== styleOf(e0.before)){
         // The edited copy replaces the item, so undo gets the untouched one back.
         var nu = Object.assign({}, e0.it, { data: Object.assign({}, e0.it.data, { text: text }) });
         e0.it.data = e0.before;  // older undo states hold this object: give it its data back
@@ -942,6 +1034,7 @@ var SightReviewDraw = (function(){
       } else e0.it.data = e0.before;
       paint(); afterText();
     }
+    function styleOf(d){ return JSON.stringify([d.color, !!d.bold, !!d.italic, !!d.underline, !!d.bgOn, d.outline || 0, d.align || "left", d.font || "sans"]); }
     function dropText(){ var e0 = edit; edit = null; e0.ta.remove(); if (!e0.isNew) e0.it.data = e0.before; paint(); afterText(); }
     function afterText(){ view.scrollLeft = 0; view.scrollTop = 0; if (refit){ refit = false; if (fitted) fit(false); else apply(); } }
     function onKey(e){

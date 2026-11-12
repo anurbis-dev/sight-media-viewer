@@ -298,6 +298,12 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["viewer"][2].endswith("2 / 2"), res["viewer"])
         self.assertFalse(res["viewer"][3])
         self.assertEqual(res["viewerFade"], [True, 1])
+        # Notes list: a swipe left = the next filter (Open), right = back to All.
+        self.assertEqual(res["filterSwipe"], ["open", "Open", "all"])
+        # A note's pictures: equal squares, four to a row filling it.
+        self.assertGreaterEqual(res["pics"][0], 1)
+        self.assertEqual(res["pics"][1:], [True, True])
+        self.assertEqual(res["replyOffNote"], [False, True])
         # Home groups: dropped onto another review → a group of both, named by their common start;
         # its header opens / closes it; taking one out dissolves a group of one.
         self.assertTrue(res["dropLit"])
@@ -311,6 +317,10 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["fly"][3:6], [5, [False, "arrow"], 5])
         self.assertEqual(res["fly"][6], ["rgb(255, 214, 10)", False])
         self.assertEqual(res["flyKey"], [False, "brush"])
+        # The text slot's switches: 7, on the bar's look; Bold / centre on the pen and the new field;
+        # Italic while typing; the text put down is bold, italic and centred.
+        self.assertEqual(res["textFly"], [[7, True], [True, "Alignment: center", True], ["700", "center"], "italic", ["italic", "middle", "Hi"],
+            {"bold": False, "italic": False, "underline": False, "bgOn": True, "outline": False, "align": "left", "font": "sans"}])
         # Speed: dragged up → faster; a tap → a common frame rate; a hold → the clip's own.
         (r1, t1, fps), (r2, t2, _), (r3, t3, _) = res["speed"]
         self.assertGreater(r1, 1.1)
@@ -344,6 +354,16 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["replyPencil"], [True, True])
         self.assertEqual(res["replyGone"], [None, False])
         self.assertTrue(res["home"])
+        # Back by a swipe, the first tap on a review's picture opens it again (bug: it was lost).
+        self.assertEqual(res["reopen"], [True, True])
+        # Between groups: dropped on the other group's header (lit), it moves there; the group of one left goes.
+        self.assertEqual(res["between"], ["g:g2", ["Two:grp-c,grp-d,grp-a"]])
+        self.assertEqual(res["groupSum"], ["open1", "progress2", "done2"])
+        # Taps pick (no review opens); Move to… → a new group of the picked two.
+        self.assertEqual(res["pick"][:3], ["grp-b,grp-c", True, "2 selected"])
+        self.assertEqual(sorted(res["pick"][3]), sorted(["Two:grp-d,grp-a", "Group:grp-b,grp-c"]))
+        self.assertFalse(res["pick"][4])
+        self.assertEqual(res["groupPic"], [True, "rgb(52, 199, 89)"])
         self.assertEqual((res["swipeLeft"], res["covered"]), ("row r", "row"))
         self.assertEqual(res["hidden"], [0, "1 hidden for now · Show"])
 

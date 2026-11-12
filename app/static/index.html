@@ -5217,7 +5217,6 @@ function toggleLight(a){
       <span class="t"></span>
       <span class="light-hint" id="lightHint"></span>
       <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Annotate &amp; review (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg><span class="an-badge" hidden></span></button>
-      <button class="btn ghost" id="turnBtn" type="button" style="width:40px;padding:0" title="Turn the view 90° (Shift+R)" aria-label="Turn 90 degrees" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
       <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
@@ -5267,7 +5266,6 @@ function toggleLight(a){
   light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null };
   annot.mount(wrap);
   wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
-  wrap.querySelector("#turnBtn").onclick = () => light?.turn?.();
   wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
   wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
@@ -5339,7 +5337,7 @@ function showInLight(a){
   light.setZoom = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
   light.turn = light.mirror = null; // set by attachViewer (pictures, PSD, video)
   const flat = a.kind === "image" || a.kind === "video" || a.ext === ".psd";
-  light.el.querySelector("#turnBtn").hidden = light.el.querySelector("#mirBtn").hidden = !flat;
+  light.el.querySelector("#mirBtn").hidden = !flat;
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
   // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
   insp.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch {} });
