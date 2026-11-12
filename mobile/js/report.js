@@ -58,34 +58,37 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
     const d = n.data, c = d.ctx || null;
     let frame = null, cap = "";
     const more = [];
+    // The note's own pictures carry no reply's drawing (as the app shows them): each reply has its own.
+    const noteOnly = all.filter((it) => !it.data.reply);
     if (kind === "image"){
-      const own = all.filter((it) => it.data.note === n.id);
+      const own = noteOnly.filter((it) => it.data.note === n.id);
       // One note on a picture: its frame would just repeat the cover.
       if (notes.length > 1 && own.length) frame = await burn(picture, W, H, own, numOf);
     } else if (kind === "video" && c && c.t != null){
       const f = await src.frameAt(c.t);
-      if (f) frame = await burn(f, W || f.w, H || f.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t: c.t, fps })), numOf);
+      if (f) frame = await burn(f, W || f.w, H || f.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t: c.t, fps })), numOf);
       cap = "Frame " + Math.round(c.t * fps) + " · " + fmtTime(c.t, fps);
       // More frames the note was drawn on: with its pictures, first.
       for (const t of noteFrameTimes(rows, n)){
         if (Math.abs(t - c.t) < 5e-4) continue;
         const g = await src.frameAt(t);
-        if (g) more.push(await burn(g, W || g.w, H || g.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
+        if (g) more.push(await burn(g, W || g.w, H || g.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
       }
     }
-    // A reply drawn on frames the note is not on (one forgotten earlier): those frames with the reply.
-    const known = kind === "video" && c && c.t != null ? [c.t, ...noteFrameTimes(rows, n)] : null;
+    // A reply's drawing: with that reply, on each frame it drew on (the note's own frame too) — only
+    // its own drawings there; on a picture, the picture with them.
     const replies = [];
     for (const r of liveReplies(n)){
-      const pics = [];
-      if (known && !r.event){
-        const ts = [];
-        all.forEach((it) => { const t = it.data.reply === r.id && it.data.ctx ? it.data.ctx.t : null; if (typeof t === "number" && ![...known, ...ts].some((x) => Math.abs(x - t) < 5e-4)) ts.push(t); });
-        for (const t of ts.sort((a, b) => a - b)){
-          const g = await src.frameAt(t);
-          if (g) pics.push(await burn(g, W || g.w, H || g.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
-          known.push(t);  // shown once: a later reply on that frame is in this picture already
-        }
+      const pics = [], mine = all.filter((it) => it.data.reply === r.id);
+      if (mine.length && !r.event){
+        if (kind === "video"){
+          const ts = [];
+          mine.forEach((it) => { const t = it.data.ctx && it.data.ctx.t != null ? it.data.ctx.t : c && c.t; if (typeof t === "number" && !ts.some((x) => Math.abs(x - t) < 5e-4)) ts.push(t); });
+          for (const t of ts.sort((a, b) => a - b)){
+            const g = await src.frameAt(t);
+            if (g) pics.push(await burn(g, W || g.w, H || g.h, mine.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
+          }
+        } else if (kind === "image" && picture) pics.push(await burn(picture, W, H, mine, numOf));
       }
       replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: pics.filter(Boolean).concat(await shotPics(r.shots)) });
     }

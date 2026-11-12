@@ -2,6 +2,42 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.24.0 — 2026-11-12 — One transform tool everywhere, clean picture for new notes, turn / mirror, phone scrub cache
+- **What:** the select / transform tool (`V`) is now in the shared drawing canvas too (HTML page,
+  phone); its rotate knob follows the pointer out from the pivot (longer arm = finer turn), same in
+  Sight. Ctrl held = temporary eraser; a bin clears the drawings on screen (Sight: Shift+Delete).
+  A new note (or reply) is drawn on a clean picture: Sight hides other notes' drawings while you
+  draw / type a new one, a clicked note shows only its own; cards show the note's (and each reply's)
+  drawings over the clean picture / video frame. Sight's panel got the All / Open / In progress /
+  Resolved filter. View turn 90° / mirror: Sight's viewer (Shift+R / Shift+M, per file), the
+  phone (stage, viewer, canvas; saved with the review), the canvas (buttons + two-finger turn).
+  HTML page: the top picture is the original, every card picture is full width, the zoom viewer
+  zooms with right-drag / pen side button / wheel / double-click (the canvas: right-drag too).
+  Phone: a scrub cache of small frames so scrubbing follows the finger at once.
+- **Where:** `app/static/review-core.js` (xf*), `review-draw.js` (rewritten view + select tool),
+  `annotate.js` (viewMode / ctxShown, local() through the turn, previews, filter, clearShown,
+  Ctrl eraser), `index.html` (attachViewer turn / unturn, buttons, keys, hints), `app/review.py`
+  (template), `mobile/js/app.js`, `mobile/js/media.js` (ScrubCache), `mobile/index.html`; new
+  `tests/test_review_page.py` + `tests/page_e2e.cjs` (Sight → page → Sight with a reply picture,
+  a reply drawing, a resolve and a new drawn note).
+- **Notes:** turning / mirroring is view only — doc units (the media's own pixels) never change;
+  exports and screenshots stay unturned. Reports use `ctxShown`, never `visibleNow` (the view mode
+  must not drop drawings from a PDF). "Pictures lost in the merge" (user report): the round trip
+  loses nothing (new test); what looked lost were reply drawings Sight only listed as an eye + count
+  and the page's cover showing everything at once — both now shown where they belong. The phone
+  cache is memory only (≤ 1500 frames ≤ 640 px); scrubbing still seeks the real player and the
+  cached picture hides when the seek lands. The canvas's undo keeps item arrays: transforms work on
+  copies, never mutate an object an undo state holds. Review (fresh agent) found and these were fixed: the page viewer's
+  tap-close beat its double-click zoom (the close now waits 280 ms); a middle-drag at fit moved a
+  hidden pan; the canvas's recolour lost the selection; on touch the 22 px handle reach made small
+  objects unmovable (a press on the body > 8 px from a handle moves it); drawings hidden by the view
+  mode stayed selected (Delete / nudge acted unseen — the selection is pruned in paintVisibility); a
+  screenshot did not switch to the clean picture at once; the preview-frame pump raced on reopening
+  the same video (generation token); ScrubCache showed a far-away frame where the clip was not cached
+  yet (only ±2 steps now, and the player takes over once it has caught up); a rebind could start a
+  cache on the revoked URL. Design change from it: only drawings made since the file was opened
+  (data.created ≥ S.openedAt) start the compose mode, so old loose drawings never hide every note's.
+
 ## 0.23.1 — 2026-11-12 — Video frame stepping and note times land on the frame on screen (Sight + phone app)
 - **What:** in Sight's video lightbox `,` / `.` stepped from the *nearest* frame boundary, so a step taken after a pause or a scrub late in a frame skipped a frame forward (or stayed put backwards); a note / drawing made while paused late in frame k was stored at the raw time and showed on frame k+1. Now a step goes from the frame on screen and a new note / drawing is stored at that frame's start (+0.01 frame, where stepping lands). Without annotating, stepping used 25 fps on every clip (the rate was only read when annotation mode came on); it is now read when a video opens. Found by the fresh-agent review of the phone app (0.23.0), which already had the fix.
 - **Where:** `app/static/annotate.js` (`frameStart`, `stepFrame`, `ctxNow`, `setAsset` → `loadFps`); `mobile/js/app.js` (`frameStart` keeps the raw time while the rate is a guess, like Sight). Docs: ARCHITECTURE (phone app video), PLAN.md (known bug removed).

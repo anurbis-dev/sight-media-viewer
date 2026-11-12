@@ -218,6 +218,10 @@ class RoundTrip(unittest.TestCase):
             doc = pymupdf.open(str(out / "app_video.pdf"))
             self.assertGreaterEqual(len(doc[0].get_images()), 1)
             doc.close()
+            # The report: the note's frame without the reply's drawing, the reply with its own picture
+            # of that frame (only its drawing).
+            vpage = (out / "app_video.html").read_text(encoding="utf-8")
+            self.assertEqual(vpage.count("<img"), 2, vpage.count("<img"))
 
         # Sight answers: a reply on the first note and a new note; the package goes to the phone.
         now = int(time.time() * 1000)

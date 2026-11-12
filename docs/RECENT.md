@@ -14,6 +14,17 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.33.1 — 2026-11-12 — Phone report: replies' drawings on the reply's own pictures
+- **What:** the phone's PDF / HTML report no longer burns a reply's drawing onto the note's frame
+  (nor its extra frames, nor a picture note's picture): each reply that drew gets its own pictures
+  — every frame it drew on, the note's own frame too (a picture review: the picture) — with only
+  its drawings, as the app shows them since 0.33.0.
+- **Where:** `mobile/js/report.js` `gatherReport` (`noteOnly`, the reply loop). Test: the video
+  HTML report has two pictures (the note's frame, the reply's) — `pwa_e2e.cjs` / `test_pwa.py`.
+- **Notes:** the cover of a picture review still shows every drawing. Sight's own PDF / HTML
+  report is unchanged: it has no reply pictures, so it still shows replies' drawings on the note's
+  frame (dropping them there would lose them).
+
 ## 0.33.0 — 2026-11-12 — Phone: strip viewer, square note pictures, filters by swipe, text switches, home selection and moves between groups
 - **What:** (1) Note viewer: a swipe sends the picture on the way it went, fading out, and the
   next follows it in like a strip (sideways = the note's pictures, up / down = notes). (2) Notes
@@ -47,9 +58,7 @@ Add new entries directly below this line.
   (pruned when gone). Groups dissolve under two members at the next render, as before (`tidyGroups`).
   The group picture is stored in the group (localStorage, a ≤ 200 px data URL). The phone and the
   HTML page drop a quarter turn stored by an older version (mirror kept); a two-finger turn is
-  still the view's own. The PDF / HTML report from the phone still burns every drawing on a
-  note's frame (replies' too), like Sight's report — left as is. A new text's outline is 6 % of
-  its size.
+  still the view's own. A new text's outline is 6 % of its size. (The phone report: 0.33.1.)
 - **Review (fresh agents):** viewer / notes / turn — no bugs; fixed: the report of an empty
   picture grid (hidden when nothing loads), the view icons jumping when *Fit* came and went, a
   test selector that could hit an attached picture. Canvas text — no bugs; fixed: a switch during
@@ -505,39 +514,3 @@ Add new entries directly below this line.
   transaction with the file (no write for a deleted review or one marked noKeep), the open review's
   meta follows, a failed replace drops the old copy and shows the hint, and `openReview` sets `kept`
   from what is really in `files`.
-
-## 0.24.0 — 2026-11-12 — One transform tool everywhere, clean picture for new notes, turn / mirror, phone scrub cache
-- **What:** the select / transform tool (`V`) is now in the shared drawing canvas too (HTML page,
-  phone); its rotate knob follows the pointer out from the pivot (longer arm = finer turn), same in
-  Sight. Ctrl held = temporary eraser; a bin clears the drawings on screen (Sight: Shift+Delete).
-  A new note (or reply) is drawn on a clean picture: Sight hides other notes' drawings while you
-  draw / type a new one, a clicked note shows only its own; cards show the note's (and each reply's)
-  drawings over the clean picture / video frame. Sight's panel got the All / Open / In progress /
-  Resolved filter. View turn 90° / mirror: Sight's viewer (Shift+R / Shift+M, per file), the
-  phone (stage, viewer, canvas; saved with the review), the canvas (buttons + two-finger turn).
-  HTML page: the top picture is the original, every card picture is full width, the zoom viewer
-  zooms with right-drag / pen side button / wheel / double-click (the canvas: right-drag too).
-  Phone: a scrub cache of small frames so scrubbing follows the finger at once.
-- **Where:** `app/static/review-core.js` (xf*), `review-draw.js` (rewritten view + select tool),
-  `annotate.js` (viewMode / ctxShown, local() through the turn, previews, filter, clearShown,
-  Ctrl eraser), `index.html` (attachViewer turn / unturn, buttons, keys, hints), `app/review.py`
-  (template), `mobile/js/app.js`, `mobile/js/media.js` (ScrubCache), `mobile/index.html`; new
-  `tests/test_review_page.py` + `tests/page_e2e.cjs` (Sight → page → Sight with a reply picture,
-  a reply drawing, a resolve and a new drawn note).
-- **Notes:** turning / mirroring is view only — doc units (the media's own pixels) never change;
-  exports and screenshots stay unturned. Reports use `ctxShown`, never `visibleNow` (the view mode
-  must not drop drawings from a PDF). "Pictures lost in the merge" (user report): the round trip
-  loses nothing (new test); what looked lost were reply drawings Sight only listed as an eye + count
-  and the page's cover showing everything at once — both now shown where they belong. The phone
-  cache is memory only (≤ 1500 frames ≤ 640 px); scrubbing still seeks the real player and the
-  cached picture hides when the seek lands. The canvas's undo keeps item arrays: transforms work on
-  copies, never mutate an object an undo state holds. Review (fresh agent) found and these were fixed: the page viewer's
-  tap-close beat its double-click zoom (the close now waits 280 ms); a middle-drag at fit moved a
-  hidden pan; the canvas's recolour lost the selection; on touch the 22 px handle reach made small
-  objects unmovable (a press on the body > 8 px from a handle moves it); drawings hidden by the view
-  mode stayed selected (Delete / nudge acted unseen — the selection is pruned in paintVisibility); a
-  screenshot did not switch to the clean picture at once; the preview-frame pump raced on reopening
-  the same video (generation token); ScrubCache showed a far-away frame where the clip was not cached
-  yet (only ±2 steps now, and the player takes over once it has caught up); a rebind could start a
-  cache on the revoked URL. Design change from it: only drawings made since the file was opened
-  (data.created ≥ S.openedAt) start the compose mode, so old loose drawings never hide every note's.

@@ -163,6 +163,7 @@ async function make(){
     res.videoRows = await rowsOf(p);
     res.videoSrev = await save(p, "Review file for Sight", path.join(out, "app_video.srev"));
     res.videoPdf = await save(p, "PDF report", path.join(out, "app_video.pdf"));
+    res.videoHtml = await save(p, "Web page", path.join(out, "app_video.html"));
   }
   // ---- persistence: reload, the reviews open with the files kept on the device ----
   await p.goto(base);

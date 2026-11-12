@@ -600,8 +600,9 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   the file is bound its probed size wins — rotation applied — over a stored one).
 - **Exports** (`report.js`): `gatherReport` = Sight's `gatherReport(false)` content (cover with
   every drawing for pictures; a picture note's own frame only when there are several notes and it
-  has drawings; video: the frame at the note's time with everything visible there; replies,
-  pictures). HTML: one file, data-URL images, no script. PDF: A4 laid out in points, each page
+  has drawings; video: the frame at the note's time with everything visible there except replies'
+  drawings; each reply that drew: its frames — the note's own too — / the picture with only its
+  drawings; replies, pictures). HTML: one file, data-URL images, no script. PDF: A4 laid out in points, each page
   drawn on a canvas at 2 px/pt with the device's fonts (any script) and stored as one JPEG per page
   (`pdf.js`, objects: catalog, pages, info, then page / content / image per page). Files are
   offered in a sheet with *Share…* (Web Share with a file — needs a fresh tap, hence the sheet)
