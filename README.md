@@ -68,7 +68,7 @@ on GitHub's runners with the same two scripts, starts each packaged app headless
 `mobile/` is a small web app for reviewing pictures and videos on a phone or tablet, offline —
 notes, replies, states, drawings, PDF / HTML reports, and `.srev` files that merge in Sight (see
 [MANUAL.md](MANUAL.md) → *Phone app*). It is published to GitHub Pages by
-`.github/workflows/pages.yml` on every push to `master` that touches it (one-time setup: repository
+`.github/workflows/phone-app.yml` on every push to `master` that touches it (one-time setup: repository
 Settings → Pages → Source: *GitHub Actions*); clients open the link and *Add to Home Screen*.
 
 - Build / try locally: `python tools/build_pwa.py --serve 8800` → http://127.0.0.1:8800/

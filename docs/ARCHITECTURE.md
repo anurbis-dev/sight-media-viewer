@@ -30,8 +30,8 @@ tools/                   archive_changes.py; build_pwa.py (phone app → dist/pw
                          copy, headless Edge/Chrome/Chromium over a stdlib CDP client — never the live library)
 build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
 build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script gives dist/Sight/Sight
-.github/workflows/release.yml  CI: all four platform builds + headless smoke test; tag v<APP_VERSION> publishes a Release
-.github/workflows/pages.yml    CI: phone app unit tests + build on every branch; deploys to GitHub Pages from master
+.github/workflows/release.yml   CI: all four platform builds + headless smoke test; tag v<APP_VERSION> publishes a Release
+.github/workflows/phone-app.yml CI: phone app unit tests + build on every branch; deploys to GitHub Pages from master
 ```
 
 `SIGHT_HOME` defaults to `~/.sight` (library.db, settings.json, thumbnails, review_shots/, private venv).

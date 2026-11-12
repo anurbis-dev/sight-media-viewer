@@ -1,6 +1,6 @@
 // Unit tests for the phone app's logic (mobile/js) that needs no browser: the review model (rows,
 // replies, states, tombstones, review state, the .srev package and its merge), the MP4 frame-rate
-// reader and the PDF writer. Run: node tests/pwa_unit.cjs  (CI: .github/workflows/pages.yml).
+// reader and the PDF writer. Run: node tests/pwa_unit.cjs  (CI: .github/workflows/phone-app.yml).
 // tests/test_pwa.py also runs it, and checks the PDF it writes with PyMuPDF.
 "use strict";
 const fs = require("fs");

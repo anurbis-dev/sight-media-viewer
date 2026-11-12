@@ -2,10 +2,10 @@
 #
 #   push to master that touches the app       -> build + deploy to https://<owner>.github.io/<repo>/
 #   push to any other branch that touches it  -> build only (checks it builds)
-#   Actions tab -> "Phone app (GitHub Pages)" -> Run on master -> build + deploy
+#   Actions tab -> "Phone app (Sight Review)" -> Run on master -> build + deploy
 #
 # One-time repository setting: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-name: Phone app (GitHub Pages)
+name: Phone app (Sight Review)
 
 on:
   push:
@@ -18,7 +18,7 @@ on:
       - "app/static/favicon.svg"
       - "app/version.py"
       - "tools/build_pwa.py"
-      - ".github/workflows/pages.yml"
+      - ".github/workflows/phone-app.yml"
   workflow_dispatch:
 
 permissions:
