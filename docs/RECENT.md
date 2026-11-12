@@ -14,6 +14,26 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.26.1 — 2026-11-12 — Phone: scrub / frame steps no longer jump back before landing
+- **What:** at the end of a scrub, and on every frame step, the picture jumped back a frame and
+  then onto the right one. Now it goes straight to the frame.
+- **Where:** `mobile/js/media.js` (`ScrubCache` rewritten: frames by media time, `fill`, `exact`),
+  `mobile/js/app.js` (`cachedAt`, `showCached`, `hideWhenShown`, `settle`).
+- **Notes:** two causes. (1) The cached picture was hidden on `seeked`, but the player paints the
+  new frame a moment later (Safari especially), so the old frame flashed up: now it is hidden after
+  rVFC reports a presented frame (250 ms fallback); a new cached picture cancels a pending hide.
+  (2) The cache was keyed on a grid of the guessed 25 fps (WebM until played), so at 29.97 fps one
+  frame in six was never cached and `near()` showed the frame before; steps now use `exact()` only
+  (else the player's current frame stays until the seek lands), drags keep `near()`, and the cache
+  is keyed by real media times with a gap-filling second pass.
+- **Review (fresh agent):** `exact()` first picked the frame by round(mt / fd), which differs from
+  what the player shows at (n + 0.25)·fd when stamps jitter (phone VFR clips) — now it takes the
+  last cached frame starting at or before that point, only if none is missing in between; the cache
+  bar ran backwards while `fill()` added early frames (progress only goes forward); "ended" could
+  start a second `fill()` (once-guard, never seek to the very end); frame 0 was never cached (the
+  start is a hole too); in a drawing session a step with no exact frame left the old picture under
+  the new frame's drawings (falls back to `near()`, dimmed).
+
 ## 0.26.0 — 2026-11-12 — Phone app: full-screen player, Notes Panel, multi-frame notes, themes; multi-frame / multi-view notes in Sight
 - **What:** the review is a full-screen player: every control in a header over the picture, the
   transport (marker / frame steps, timecode, timeline) over its foot, a thin *Notes Panel* bar that
@@ -252,8 +272,3 @@ Add new entries directly below this line.
   - Compare: no annotations inside it; no per-layer opacity; 3D models are not comparable. Every visible layer is a live `<video>` (tile + Difference adds a reference copy per cell), so many 4K clips will strain the decoder. The playhead is a wall clock — a stalled clip is re-seeked, not waited for.
   - The HTML page embeds every frame / screenshot as JPEG / PNG data URLs (a picture with one note ≈ 100 KB; long video reviews can be several MB). Reviewer edits live in that browser's localStorage, keyed by asset id + export time, until downloaded. The page shows the file's path (like the PDF).
   - Also fixed: annotations no longer get lost when a file is moved / renamed (they followed the old asset id).
-
-## 0.16.2 — 2026-11-11 — Review files use the short `.srev` extension
-- **What:** *Export → Review file* now saves `<name> review.srev` instead of `.sightreview`. Old `.sightreview` files still import (file picker, palette, drag-and-drop).
-- **Where:** `app/review.py` (`PACKAGE_EXT`), `app/server.py` (`export_review_package`), `app/static/annotate.js` (Export menu label, file input `accept`), `app/static/index.html` (palette label, `pickReviewFile`, window drop regex), MANUAL / ARCHITECTURE.
-- **Notes:** only the extension changed — the JSON inside is identical (`format: "sight-review"`, version 1), so no migration. Keep accepting `.sightreview` on import; files from 0.16.0–0.16.1 are already out there. Import checks the JSON `format`, not the extension, so the extension list only matters for the picker filter and drop detection.

@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.16.2 — 2026-11-11 — Review files use the short `.srev` extension
+- **What:** *Export → Review file* now saves `<name> review.srev` instead of `.sightreview`. Old `.sightreview` files still import (file picker, palette, drag-and-drop).
+- **Where:** `app/review.py` (`PACKAGE_EXT`), `app/server.py` (`export_review_package`), `app/static/annotate.js` (Export menu label, file input `accept`), `app/static/index.html` (palette label, `pickReviewFile`, window drop regex), MANUAL / ARCHITECTURE.
+- **Notes:** only the extension changed — the JSON inside is identical (`format: "sight-review"`, version 1), so no migration. Keep accepting `.sightreview` on import; files from 0.16.0–0.16.1 are already out there. Import checks the JSON `format`, not the extension, so the extension list only matters for the picker filter and drop detection.
+
 ## 0.16.1 — 2026-11-10 — Release builds for all platforms on GitHub Actions
 - **What:** a tag `v<APP_VERSION>` — or a manual run (Actions → Release builds) with *Publish a GitHub Release* ticked, which creates that tag itself — builds Windows x64, macOS arm64, macOS x64 and Linux x64 on GitHub, smoke-tests each packaged app and publishes them as a GitHub Release. Manual runs (Actions → Release builds) and pushes that touch the build pipeline build without releasing.
 - **Where:** new `.github/workflows/release.yml`; `build_exe.bat` (`if not defined CI pause`); `build_app_macos.sh` (Linux-aware closing message); README "Release builds on GitHub".

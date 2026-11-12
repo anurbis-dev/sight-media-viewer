@@ -158,16 +158,20 @@ export function fmtBytes(n){
 }
 
 // The scrub cache: small JPEG frames of the whole clip, kept in memory while the review is open, so
-// a scrub on the phone shows the frame under the finger at once (like Sight's RAM cache) while the
+// a scrub or a frame step on the phone shows the frame at once (like Sight's RAM cache) while the
 // player is still decoding its seek. A hidden player runs through the clip muted (faster than real
-// time for long clips) and keeps the frame of every step it presents (requestVideoFrameCallback);
-// at most MAX frames, so a long clip keeps one frame every few. near(t) gives the closest frame.
+// time for long clips) and keeps every frame it presents (requestVideoFrameCallback), by the frame's
+// own media time — not on a grid of a guessed frame rate (a WebM's rate is unknown until played).
+// At most MAX frames: a long clip keeps one every d / MAX s. Frames the pass skipped are sought one
+// by one afterwards (fill). near(t): the closest frame; exact(t, fd, n): frame n or nothing.
 export class ScrubCache {
   static MAX = 1500;
   constructor(url, duration, fps, onProgress){
     this.url = url; this.d = duration || 0; this.onProgress = onProgress || (() => {});
-    this.step = Math.max(1 / (fps || 25), this.d / ScrubCache.MAX);
-    this.frames = new Map(); this.keys = null; this.v = null; this.c = null; this.closed = false; this.done = false;
+    this.gap = this.d / ScrubCache.MAX;  // the closest two kept frames may be
+    this.mts = [];             // media times of the frames taken, sorted
+    this.urls = new Map();     // ms of the media time → blob URL (null while it is being encoded)
+    this.v = null; this.c = null; this.closed = false; this.done = false; this.filling = false; this.prog = 0;
   }
   start(){
     if (this.v || this.closed || !this.d) return;
@@ -185,46 +189,99 @@ export class ScrubCache {
     };
     v.addEventListener("loadeddata", () => {
       if (this.closed) return;
-      // A pass of at most ~20 s; a short clip plays at its own speed and gives every frame.
+      // A pass of at most ~20 s; a short clip plays at its own speed and gives (nearly) every frame.
       v.playbackRate = Math.min(4, Math.max(1, this.d / 20));
       v.requestVideoFrameCallback(tick);
       v.play().catch(() => {});
     }, { once: true });
-    v.addEventListener("ended", () => { this.done = true; this.onProgress(1); this.release(); });
+    // Once: fill() may seek near the end, and a seek there can fire "ended" again.
+    v.addEventListener("ended", () => {
+      if (this.filling || this.done) return;
+      this.filling = true;
+      this.fill().finally(() => { if (this.closed) return; this.done = true; this.report(1); this.release(); });
+    });
+  }
+  at(t){  // index of the first frame at or after t
+    const m = this.mts;
+    let lo = 0, hi = m.length;
+    while (lo < hi){ const k = (lo + hi) >> 1; if (m[k] < t) lo = k + 1; else hi = k; }
+    return lo;
   }
   keep(t){
-    const k = Math.round(t / this.step);
-    if (this.frames.has(k) || !this.v || !this.v.videoWidth) return;
-    const v = this.v, w = Math.min(640, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
+    const key = Math.round(t * 1000), v = this.v;
+    if (this.urls.has(key) || !v || !v.videoWidth) return;
+    const i = this.at(t), m = this.mts;
+    if (this.gap > 0 && ((i < m.length && m[i] - t < this.gap) || (i > 0 && t - m[i - 1] < this.gap))) return;
+    const w = Math.min(640, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
     if (!this.c){ this.c = document.createElement("canvas"); this.c.width = w; this.c.height = h; }
     this.c.getContext("2d").drawImage(v, 0, 0, w, h);
-    this.frames.set(k, null);  // taken; the JPEG follows
+    this.urls.set(key, null);  // taken; the JPEG follows
+    m.splice(i, 0, t);
     this.c.toBlob((b) => {
-      if (this.closed || !b){ this.frames.delete(k); return; }
-      this.frames.set(k, URL.createObjectURL(b));
-      this.keys = null;
-      this.onProgress(Math.min(1, t / this.d));
+      if (this.closed) return;
+      if (!b){ this.urls.delete(key); const j = this.mts.indexOf(t); if (j >= 0) this.mts.splice(j, 1); return; }
+      this.urls.set(key, URL.createObjectURL(b));
+      this.report(t / this.d);
     }, "image/jpeg", 0.75);
   }
-  // The cached frame closest to t (null while there is none).
+  report(f){ f = Math.min(1, f); if (f > this.prog){ this.prog = f; this.onProgress(f); } }  // only forward (fill adds early frames)
+  pic(i){ return i >= 0 && i < this.mts.length ? this.urls.get(Math.round(this.mts[i] * 1000)) || null : null; }
+  // The cached frame closest to t, if one is close (a part not cached yet shows the player instead).
   near(t){
-    if (!this.frames.size) return null;
-    const k = Math.round(t / this.step), hit = this.frames.get(k);
-    if (hit) return hit;
-    if (!this.keys) this.keys = [...this.frames.keys()].filter((x) => this.frames.get(x)).sort((a, b) => a - b);
-    const ks = this.keys;
-    if (!ks.length) return null;
-    let lo = 0, hi = ks.length - 1;
-    while (lo < hi){ const m = (lo + hi) >> 1; if (ks[m] < k) lo = m + 1; else hi = m; }
-    const best = lo > 0 && Math.abs(ks[lo - 1] - k) <= Math.abs(ks[lo] - k) ? ks[lo - 1] : ks[lo];
-    // Only a frame close to t: a part of the clip not cached yet shows the player, not a wrong time.
-    return Math.abs(best - k) <= 2 ? this.frames.get(best) : null;
+    const i = this.at(t), tol = Math.max(0.1, this.gap * 2.5);
+    let best = null, bd = Infinity;
+    for (const j of [i - 1, i, i - 2, i + 1]){
+      const u = this.pic(j);
+      if (u && Math.abs(this.mts[j] - t) < bd){ bd = Math.abs(this.mts[j] - t); best = u; }
+    }
+    return bd <= tol ? best : null;
+  }
+  // The frame the player will show for frame n (it is sent to (n + 0.25)·fd and shows the last
+  // frame starting at or before that), or null — a step must not show a neighbour first. Only when
+  // that frame is cached and nothing is missing in between (it starts within a frame of the bound),
+  // so jittery stamps (phone clips) or an offset start give the same frame as the player.
+  exact(t, fd, n){
+    const b = Math.min((n + 0.25) * fd, this.d || Infinity) + 1e-4, i = this.at(b) - 1;
+    if (i < 0) return null;
+    return b - this.mts[i] <= fd + 2e-4 ? this.pic(i) : null;
+  }
+  // The pass skips frames when the device is busy: each gap wider than the usual step is sought
+  // afterwards, one frame at a time (at most 600 seeks).
+  async fill(){
+    const v = this.v, m = this.mts;
+    if (!v || m.length < 3) return;
+    const gaps = [];
+    for (let i = 1; i < Math.min(m.length, 400); i++) gaps.push(m[i] - m[i - 1]);
+    const st = gaps.sort((a, b) => a - b)[gaps.length >> 1];  // the usual step: a frame, or `gap`
+    if (!(st > 0)) return;
+    let left = 600;
+    const holes = [];
+    if (m[0] > st * 0.5) holes.push([-st, m[0]]);  // the first frame(s): on screen before the pass began
+    for (let i = 0; i < m.length; i++){
+      const next = i + 1 < m.length ? m[i + 1] : this.d;
+      if (next - m[i] > st * 1.5) holes.push([m[i], next]);
+    }
+    for (const [from, to] of holes){
+      let prev = from;
+      while (to - prev > st * 1.5 && left-- > 0 && !this.closed && this.v === v){
+        const mt = await new Promise((ok) => {
+          let tm = 0;
+          const done = (_, meta) => { clearTimeout(tm); ok(meta ? meta.mediaTime : null); };
+          v.requestVideoFrameCallback(done);
+          tm = setTimeout(() => done(0, null), 600);
+          v.currentTime = Math.max(0, Math.min(this.d - st * 0.5, prev + st * 1.25));
+        });
+        if (mt == null || mt <= prev + st * 0.5) break;  // no frame there (end of the clip, a stall)
+        this.keep(mt);
+        prev = mt;
+      }
+    }
   }
   release(){ if (this.v){ this.v.pause(); this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } if (this.c){ dropCanvas(this.c); this.c = null; } }
   close(){
     this.closed = true;
     this.release();
-    this.frames.forEach((u) => { if (u) URL.revokeObjectURL(u); });
-    this.frames.clear();
+    this.urls.forEach((u) => { if (u) URL.revokeObjectURL(u); });
+    this.urls.clear(); this.mts = [];
   }
 }

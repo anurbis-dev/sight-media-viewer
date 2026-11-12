@@ -802,7 +802,7 @@ function buildStage(){
         if (!R || R.video !== v) return;
         pumpSeek(v);
         if (R.want == null && !R.dragging && !v.seeking) settle(v);
-        else if (R.want == null && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideCached();  // the player has caught up
+        else if (R.want == null && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideWhenShown(v);  // the player has caught up
         if (R.newOpen && els.where) els.where();
       });
       // The big play button only until the clip is first played or moved: it would cover the frame.
@@ -906,7 +906,7 @@ function pumpSeek(v){
 function settle(v){
   if (!R || R.video !== v) return;
   R.scrubT = null;
-  hideCached();
+  hideWhenShown(v);
   paintTime(); paintOverlay(); paintCurrent();
   if (R.drawS) R.drawS.settled();
 }
@@ -1011,13 +1011,34 @@ function paintTime(){ if (R && R.video) TPS.forEach(paintTransport); }
 function paintMarkers(){ if (R && R.video) TPS.forEach(paintMarks); }
 // The scrub cache (ScrubCache) puts the frame wanted up at once; the player's own picture takes
 // over when its last seek has landed.
+function cachedAt(t){
+  const sc = R && R.scrub;
+  if (!sc) return null;
+  // Dragging: the nearest picture keeps up with the finger. A step / jump: only that very frame —
+  // a neighbour first would show the picture going back and then forward.
+  return R.dragging ? sc.near(t) : R.fpsKnown ? sc.exact(t, frameDur(), frameIdx(t)) : null;
+}
 function showCached(t){
-  const si = els && els.scrubImg, u = R && R.scrub && R.scrub.near(t);
+  const si = els && els.scrubImg, u = cachedAt(t);
   if (!si) return;
+  hideSeq++;
   if (u){ if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
   else si.hidden = true;
 }
 function hideCached(){ if (els && els.scrubImg) els.scrubImg.hidden = true; }
+// The player says "seeked" before it has painted the new frame (Safari above all): the cached
+// picture goes only once a frame of the new position is on screen (rVFC; at most 250 ms), or the
+// old frame flashes up in between.
+function hideWhenShown(v){
+  const seq = ++hideSeq;
+  const go = () => { if (seq === hideSeq && R && R.video === v && R.want == null && !v.seeking) hideCached(); };
+  if (v.requestVideoFrameCallback){
+    let done = false;
+    v.requestVideoFrameCallback(() => { done = true; go(); });
+    setTimeout(() => { if (!done) go(); }, 250);
+  } else requestAnimationFrame(() => requestAnimationFrame(go));
+}
+let hideSeq = 0;
 // Drag left / right on the picture: the clip runs on from where it is, at a fixed pace (a frame per
 // 4 px when slow, faster the faster the finger moves; Shift a quarter of that) — not the screen's
 // width for the whole clip. Nothing happens until the finger has moved sideways a few px, so a tap
@@ -1644,7 +1665,9 @@ async function openDrawVideo(rv, v, frames, onDone){
   const S = rv.drawS = {
     times: () => keys.map((k) => Number(k.slice(2))),
     // The frame wanted shows at once (the cached one, dimmed) with that frame's drawings…
-    moved: (t) => { last = t; capSeq++; if (h) h.setFrame(frameTag(t), rv.scrub && rv.scrub.near(t), true); },
+    // (A step with no exact cached frame: the nearest one, dimmed, rather than the old picture
+    // under the new frame's drawings.)
+    moved: (t) => { last = t; capSeq++; if (h) h.setFrame(frameTag(t), cachedAt(t) || (rv.scrub && rv.scrub.near(t)), true); },
     // …and the player's own frame replaces it when the seek has landed.
     settled: async () => {
       const seq = ++capSeq, f = await frameNow(rv, last);

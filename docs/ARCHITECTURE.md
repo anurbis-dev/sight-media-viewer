@@ -445,11 +445,17 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   Frames for cards, reply drawings and reports come from a second hidden `<video>` (`Grabber`,
   one seek at a time) and are cached in `frames`.
 - **Scrub cache** (`media.js ScrubCache`): after the video opens, a hidden muted player runs
-  through the clip (rate max(1, min(4, duration / 20))) and keeps a ≤ 640 px JPEG per step
-  (`requestVideoFrameCallback`; ≤ 1500 frames, step = max(frame, duration / 1500)) as blob URLs,
-  in memory only. During a scrub (stage drag, position bar) `near(t)` is shown in `.scrubimg` over
-  the player until the last seek has landed (`seeked` with nothing pending) or it plays. Closed
-  (URLs revoked) with the review / on re-pick. No rVFC (old WebKit): no cache.
+  through the clip (rate max(1, min(4, duration / 20))) and keeps a ≤ 640 px JPEG of every frame it
+  presents (`requestVideoFrameCallback`), keyed by the frame's own media time (`mts` sorted, `urls`
+  by ms) — never on a grid of a guessed rate (a WebM's rate is unknown until played; a 25 fps grid
+  lost every sixth frame of a 29.97 clip). Long clips keep frames at least `d / 1500` apart. After
+  the pass, `fill()` seeks into every gap wider than 1.5× the usual step (≤ 600 seeks). In memory
+  only, blob URLs. Shown in `.scrubimg` over the player while a seek is on its way: a drag shows
+  `near(t)` (the closest), a step / jump only `exact(t, fd, n)` (that very frame, by
+  `round(mt / fd)`) — a neighbour would look like a jump back. It is hidden only once the player has
+  *presented* a frame of the new position (`hideWhenShown`: rVFC after `seeked`, ≤ 250 ms) —
+  `seeked` comes before the paint (Safari), and hiding then flashed the old frame. Closed (URLs
+  revoked) with the review / on re-pick. No rVFC (old WebKit): no cache.
 - **Drawing on a video** (`drawVideo`): the canvas opens multi-frame over the paused player with a
   second transport (`makeTransport`) as its footer; `R.drawS {times, moved, settled}` ties it to
   `seekTo` — `moved(t)` shows that frame's drawings over the cached frame (dimmed), `settled()`
