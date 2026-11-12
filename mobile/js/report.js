@@ -73,8 +73,22 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
         if (g) more.push(await burn(g, W || g.w, H || g.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
       }
     }
+    // A reply drawn on frames the note is not on (one forgotten earlier): those frames with the reply.
+    const known = kind === "video" && c && c.t != null ? [c.t, ...noteFrameTimes(rows, n)] : null;
     const replies = [];
-    for (const r of liveReplies(n)) replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: await shotPics(r.shots) });
+    for (const r of liveReplies(n)){
+      const pics = [];
+      if (known && !r.event){
+        const ts = [];
+        all.forEach((it) => { const t = it.data.reply === r.id && it.data.ctx ? it.data.ctx.t : null; if (typeof t === "number" && ![...known, ...ts].some((x) => Math.abs(x - t) < 5e-4)) ts.push(t); });
+        for (const t of ts.sort((a, b) => a - b)){
+          const g = await src.frameAt(t);
+          if (g) pics.push(await burn(g, W || g.w, H || g.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
+          known.push(t);  // shown once: a later reply on that frame is in this picture already
+        }
+      }
+      replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: pics.filter(Boolean).concat(await shotPics(r.shots)) });
+    }
     out.push({ num: i + 1, ctx: c && c.t != null ? fmtTime(c.t, fps) + "  ·  f " + Math.round(c.t * fps) : "", author: d.author || "", date: fmtDate(d.created),
       text: d.text || "", status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots)), replies });
   }

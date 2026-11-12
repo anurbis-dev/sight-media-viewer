@@ -2182,7 +2182,8 @@ export function createAnnotator(host){
         const size = cv ? [cv.width, cv.height] : null;
         // More frames / views the note was drawn on, each with everything shown there:
         // {frame, size, caption, ctx} (the page draws over them by ctx).
-        const more = [], mine = [...S.items.values()].filter((it) => isDrawing(it) && own(it) && !it.data.reply);
+        // (A reply's drawing counts when its reply lives: the phone lets a reply draw on a frame the note missed.)
+        const more = [], mine = [...S.items.values()].filter((it) => isDrawing(it) && own(it) && !replyGone(it));
         if (v && c?.t != null){
           const ts = [];
           mine.forEach((it) => { const t = it.data.ctx?.t; if (t != null && !sameFrame(t, c.t) && !ts.some((x) => sameFrame(x, t))) ts.push(t); });

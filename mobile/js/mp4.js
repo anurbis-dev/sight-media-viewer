@@ -27,10 +27,16 @@ function boxes(dv, start, end){
 }
 const child = (dv, b, type) => boxes(dv, b.start, b.end).find((x) => x.type === type) || null;
 
-// moov payload bytes -> {fps, frames, duration} of the first video track, or null.
+// moov payload bytes -> {fps, frames, duration, audio} of the first video track (audio: the file has
+// a sound track too), or null.
 export function fpsFromMoov(u8){
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-  for (const trak of boxes(dv, 0, u8.byteLength).filter((b) => b.type === "trak")){
+  const traks = boxes(dv, 0, u8.byteLength).filter((b) => b.type === "trak");
+  const audio = traks.some((trak) => {
+    const mdia = child(dv, trak, "mdia"), hdlr = mdia && child(dv, mdia, "hdlr");
+    return !!hdlr && hdlr.end - hdlr.start >= 12 && typeAt(dv, hdlr.start + 8) === "soun";
+  });
+  for (const trak of traks){
     const mdia = child(dv, trak, "mdia");
     if (!mdia) continue;
     const hdlr = child(dv, mdia, "hdlr");
@@ -53,7 +59,7 @@ export function fpsFromMoov(u8){
     if (!frames || !ticks) continue;
     const fps = Math.round(timescale * frames / ticks * 1000) / 1000;
     if (!(fps > 1 && fps < 1000)) continue;
-    return { fps, frames, duration: ticks / timescale };
+    return { fps, frames, duration: ticks / timescale, audio };
   }
   return null;
 }

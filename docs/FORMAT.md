@@ -103,7 +103,10 @@ data = {
 `progress` appeared in 0.19; older Sight shows such a note as open. "Open notes" (counts,
 carry-over, the report's *Open*) means status ≠ `done`.
 
-**Reply**: `{id, text, author, created, edited?, shots?: [shotId]}`. Deleted:
+**Reply**: `{id, text, author, created, edited?, shots?: [shotId]}` — `edited` is stamped on a
+change of its text or pictures (the phone app since 0.32 keeps it past the reply's own stamp); the
+reply merges as one unit (the later `edited` keeps its text *and* pictures), its drawings as rows of
+their own. Deleted:
 `{id, created, deleted: stamp}` — a tombstone that stays in the list so an older copy cannot bring
 the reply back. Reply pictures appeared in 0.19 (older Sight ignores `shots` on a reply).
 
@@ -160,7 +163,10 @@ The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `pri
   (shading, lights, explode, fov) it was written with, restored when the note is opened.
 - A drawing made later on a note's frame (a reply's drawing on the HTML page / in the app) takes
   that note's place: video `{t, hold}` copied from the note, 3D `{vk, cam}` of the note's view; a
-  new note drawn on another note's frame copies that note's whole `ctx`. The rule for whether a
+  new note drawn on another note's frame copies that note's whole `ctx`. **0.29+:** a reply on a
+  video note in the phone app may also draw on frames the note is not on (each drawing keeps its
+  own `{t, hold}`); readers place a reply's drawings by their own ctx, as any drawing, and treat
+  those frames as the note's thread (Sight's export adds them to the note's extra frames). The rule for whether a
   context shows on a frame is `ctxVisible` in `review-core.js`.
 
 ### `status` — the file's review state

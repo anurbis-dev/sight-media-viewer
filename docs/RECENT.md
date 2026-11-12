@@ -14,6 +14,209 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.32.2 — 2026-11-12 — Phone: the pencil right after a scrub opens at once, on the right frame
+- **What:** after a scrub, the pencil (draw) used to come up late and sometimes show a stale frame
+  until the clip was moved or the pencil tapped again. Now the canvas opens at once on the
+  scrubbed frame's cached picture, and the player's own frame replaces it when its seek lands.
+- **Where:** `mobile/js/app.js` — `openDrawVideo` (opens on `rv.frames` / the scrub cache, `early`
+  → `S.settled()`), new `painted(v)` used by `frameNow` / `currentFrame`. Test: `penAfterScrub` in
+  `pwa_touch.cjs`.
+- **Notes:** the root causes: the canvas waited for the last seek (a fast scrub ends on a decode
+  from the keyframe), then grabbed the player right after "seeked" — Safari fires it before the
+  frame is painted, so the grab could be the old frame, and it was cached under the new frame's
+  tag. A grab of a frame not cached yet now waits for a presented frame (rVFC, ≤ 150 ms). Only with
+  no picture at all (nothing cached) does the canvas still wait for the player.
+- **Review (fresh agent):** fixed — the new-note composer's pencil still grabbed the player
+  mid-seek (`currentFrame` now waits for the seek, and grabs again if the player moved while it
+  waited for the paint); `seekTo` moves the canvas before pumping the seek (a same-frame seek
+  settled before the canvas knew the frame); the canvas' own pause on opening a playing clip no
+  longer triggers a second grab (a flicker); the test now opens the canvas while a step's seek is
+  on its way. Left: wrong pictures that older versions cached on a device stay until the review is
+  reopened from a fresh file / deleted; without rVFC (iOS < 15.4) the paint wait is a 60 ms guess.
+
+## 0.32.1 — 2026-11-12 — One floating bar for the player and the canvas, half see-through
+- **What:** the phone player's header and transport now sit on the same floating bar as the
+  drawing canvas' top bar and tool bar (inset 8 px, rounded, blurred, half see-through); the halo
+  around the player's buttons and text is gone. The canvas' bars (phone and HTML page) are more
+  see-through too.
+- **Where:** `app/static/review-draw.js` (`.rd-panel` — the one style; `.draw .dtop` / `.dbar` only
+  place it; `SightReviewDraw.css()` exported), `mobile/js/app.js` (`DRAW.css()` at start, `hdr` /
+  `tp` get `rd-panel`, the pencil sits above the inset transport), `mobile/index.html` (`.hdr` /
+  `.tp` insets, `--halo` and the shadows removed, `--rd-ov` lighter: .66 light / .6 dark; `--rd-pop` for the popups over the picture).
+- **Notes:** change the look in `.rd-panel` only (the host sets `--rd-ov` / `--rd-fg` / `--rd-line`;
+  the HTML page uses the fallbacks). The header and transport now take touches over their whole
+  area (no taps through to the picture between buttons).
+- **Review (fresh agent):** fixed — a pinch that started on a bar zoomed the whole page
+  (`touch-action: none` on `.rd-panel`); on a bright frame in the dark theme the subtitle and the
+  timeline track nearly vanished (they now take the bar's own colour; the bar is a little less
+  see-through); the canvas' tool rows and size label followed the lighter bar (own `--rd-pop`);
+  the bars sat under a landscape notch (safe-area insets, canvas bars too); the timecode lost room
+  on 361–400 px phones (the narrow layout up to 400 px, ellipsis). Kept on purpose: the bars take
+  touches over their whole area (a visible panel; taps between its buttons no longer reach the
+  picture). Left: the pencil / viewer buttons still use the older `--ov` look.
+
+## 0.32.0 — 2026-11-12 — Canvas tool rows and colour circle; the viewer walks the whole thread; replies editable
+- **What:** (1) Drawing canvas (phone + HTML page): *Arrows and lines* and *Shapes* are one slot
+  each; a tap takes the slot and shows its kinds in a row above the bar (arrow, open, double,
+  dashed, line / rectangle, rounded, ellipse, filled rectangle, filled ellipse); a pick or a stroke
+  folds the row. The freed slot is a colour circle at the bar's right end with the colours in its
+  row; the palette under the tools is gone. (2) Phone: the note viewer's sideways swipe goes
+  through the whole note — its frames, its pictures, then each reply's drawings and pictures
+  (caption "↳ Bob · …" with the reply's words). (3) Phone: a reply's ⋯ — *Edit text*, *Edit the
+  drawing* / *Draw on it*, *Add pictures…*, *Remove its pictures*, *Delete reply…*; "edited" shows.
+- **Where:** `app/static/review-draw.js` (`ARROWS`, `SHAPES`, `SLOTS`, `slotOf`, `openFly` /
+  `closeFly`, `.dtools` / `.dcol` / `.dfly`, `useColour`, `begin` kinds, pen `arrow` / `shape`);
+  `mobile/js/app.js` (`threadItems`, `sameItem`, `loadItem`, `threadView`, `openThread`,
+  `shotThumbs(ids, n, rid)`, viewer per-picture `view` / `text`; `replyMenu`,
+  `editNoteDrawing(n, rid)`); `mobile/js/model.js` (`editReply`). Tests: `pwa_touch.cjs` (`fly`,
+  `thread`, `replyEdit`), `pwa_unit.cjs` (edited reply merge), `pwa_e2e.cjs` / `page_e2e.cjs`
+  (picking from a slot's row).
+- **Notes:** the line is shape_kind "line" (review-core draws and hit-tests it; Sight has it).
+  Folding the row on a pick is hidden-now / removed-next-tick on purpose (see ARCHITECTURE: the
+  HTML page's click-away handler). A reply's `edited` is the merge key, so an edit wins over an
+  older copy anywhere (Sight / the page / the app merge by it).
+- **Review (fresh agents):** Tool rows — fixed: a row stayed where it was across a
+  resize / rotation (off screen) — it folds on resize; a tool key, a hold or the top bar left a row
+  up with a stale pick — any tool change and the top bar fold it; Esc with a row up cancelled the
+  canvas — it folds the row first; on narrow screens the wrapped tools hugged the right edge (the
+  colour is now pinned at the row's end); the tests counted a hidden row. Left by design: a tap on
+  the picture that folds a row also draws (the user asked for drawing to fold it); a second tap on
+  an open slot puts the tool down; a filled ellipse hit-tests as its box (review-core, as before). Thread viewer — fixed: Back did not
+  follow the frame when the walk started on, or passed through, an attached picture (a picture
+  now carries the frame looked at before, and opening from one counts any frame as a move);
+  picture reviews: the card and the thread disagreed on the note's main picture, and up / down
+  skipped notes with no drawing — the picture is now always the first item; a picture that does
+  not decode is skipped; frames told apart by frame index everywhere (`noteFrameList`, the card). Reply editing — fixed: editing a reply's drawing re-stamped the
+  reply, so an older copy of its words could beat a newer edit made elsewhere (no stamp now: the
+  drawings merge on their own); `edited` / `deleted` always go past the reply's current stamp (a
+  clock behind the author's lost the edit); the menu writes to the note as it is then (a merge
+  meanwhile replaced the objects); an edit that would leave a reply empty offers to delete it
+  instead; a note's drawing opens on its own frame again (a reply's on its first). Left: removed
+  pictures stay in the device's picture store (freed with the review); a reply is one merge unit,
+  so the words edited in Sight and pictures changed on the phone at the same time — the later
+  edit keeps its copy of both (FORMAT.md).
+
+## 0.31.0 — 2026-11-12 — Phone: speed and sound in the transport; the canvas settles like the player
+- **What:** (1) The transport row is ‹ ◀ **fps** timecode · frame **speaker** ▶ ›. The frame rate
+  number is the speed: drag up / down = faster / slower (shown as the rate it plays at, accent
+  coloured when not the clip's own), tap = the nearest common rate (24, 25, 30, 12…), hold = the
+  clip's own. The speaker: drag up / down = volume (a thin level bar at the screen's left edge,
+  kept per device), tap = full; grey when the clip has no sound. Also on the canvas' transport.
+  No volume gesture on the picture itself (the user's choice: the swipes there stay the panel /
+  the list). (2) Drawing canvas (phone + HTML page): a pinch / pan let go smaller than the screen
+  goes back to fit with the turn to the nearest quarter, nearly at fit and straight snaps to fit
+  (eased), the wheel stops at fit — as the player does.
+- **Where:** `mobile/js/app.js` (`vdrag`, `setRate` / `snapRate` / `paintRate`, `applyVol` /
+  `setVol` / `paintSnd` / `showVolBar`, `setAudio`, transport row, video set-up, `bindFile`);
+  `mobile/js/mp4.js` (`fpsFromMoov` → `audio`); `mobile/index.html` (`.tpi .fps` / `.snd` /
+  `.tc`, `.volbar`); `app/static/review-draw.js` (`settleView`, `unease`, wheel). Tests:
+  `pwa_unit.cjs` (audio flag), `pwa_touch.cjs` (`speed`, `sound`, `canvasSettle`).
+- **Notes:** whether a clip has sound: MP4 / MOV from the container (`soun` track), Safari
+  `audioTracks`, Firefox `mozHasAudio` — final and stored (`meta.audio`); Chrome has no API before
+  decoding, so after a quarter second of unmuted play with nothing decoded it guesses "none"
+  (not stored, taken back as soon as sound decodes; muted play never guesses). iOS ignores a
+  page's volume: the drag there only mutes / unmutes. Speed is kept for the review while open
+  (`R.rate`), not stored.
+- **Review (fresh agents):** canvas settle — fixed: a settle across 0° / 360° spun the picture
+  almost a full turn (fit keeps [0, 360)); the ease stayed on for the next gesture (lag, taps
+  landing off); the box size jumped while the transform eased; a pinch cut short by the pen or
+  a text edit never settled; the wheel refit while typing. Speed / sound — fixed: a sideways slide on a
+  control counted as a tap (snapping the speed / full volume); a WebM's frame rate measured while
+  playing faster than 1× could be stored wrong (frames dropped) — measured at 1× only; a guessed
+  "no sound" did not repaint the icon; after picking another file the old "no sound" stayed (the
+  sound is learnt again on a rebind); the timecode was clipped on 320 px phones (narrow layout) and
+  jittered with a bold rate; a long press could select the number / open a menu; labels rewritten
+  every frame; a second finger on a control. Left: a tap at 1× on a clip whose measured rate is not
+  a common one snaps it (e.g. 29.5 → 29.97); the MP4 sound flag counts any sound track, even an
+  empty one.
+
+## 0.30.0 — 2026-11-12 — Phone: review groups, tool opacity on the hold, auto full screen
+- **What:** (1) Home: a review held, dragged onto the middle of another one (it lights up) and let
+  go makes a group of the two (named by the names' common start, else "Group"); more go onto the
+  group's header. The header opens / closes on a tap, moves the whole group on hold + drag, and
+  its menu has *Open / Close*, *Rename…*, *Ungroup*; a member's menu has *Take out of the group*.
+  (2) Drawing canvas (phone + HTML page): press and hold with a tool, drag sideways = that tool's
+  opacity (up / down is still the size); the preview reads "6 px · 70 %"; a hold on the tool's
+  button resets both. (3) Settings → *Full screen*: Auto (default) / Off — Auto goes full screen
+  at the first tap in a browser tab that can, and again after the user leaves it.
+- **Where:** `mobile/js/app.js` — `loadGroups` / `saveGroups` / `tidyGroups` / `groupName` /
+  `groupOnto` / `ungroupOne` / `groupMenu` / `setGroup` / `groupRow` / `groupHead`, `reviewRow` split
+  into content + `rowGestures(row, it, o)` (drop target `.drop`, group `.folded`), `renderHome`
+  entries (reviews + `"g:<id>"`), `reviewMenu`; full screen `fsCan` / `enterFS` / `exitFS` /
+  `setFsAuto` / `fsTap`, `settings()`; `mobile/index.html` (`.row.group`, `.gm`, `.th.four`,
+  `.chev`, `.drop`, `.seg.fs`); `app/static/review-draw.js` (`OPAC0` / `OPAC`, `adjMove` axis for
+  tools, `showSize` label, new items' opacity, pen `opac`). Tests: `pwa_touch.cjs` (`opac`,
+  `brushReset`, `dropLit` / `group`, `fullscreen`).
+- **Notes:** groups and order are per device (localStorage), like the order; a review is in one
+  group at most; a group needs two existing reviews (`tidyGroups` dissolves the rest each
+  render). Only a review on its own can be dropped (no nesting; a member leaves by its menu). The
+  size hold now waits for 10 px to pick its axis (as the selection hold did). iPhone Safari has no
+  page full screen and iPad Safari limits typing in it, so iOS tabs do not try (the setting says
+  why); the installed app is full screen already; a tap that opens the file picker
+  (`label`, `[data-nofs]`) or a text field never asks.
+- **Review (fresh agents):** opacity hold — no bugs (a redundant save removed; the text field
+  while typing does not show the text opacity, left). Groups — fixed: the saved order
+  missed entries never moved by hand, so a new group (and a review taken out / a dissolved group's
+  last one) landed after them, not in the target's place — the home list now saves its whole
+  order on each render; a group with every member hidden lost its slot on a reorder (`saveOrder`
+  keeps `g:` keys); a member reorder moved hidden members to the end; *Ungroup* used a stale member
+  order; names lost a trailing "v" / stopped mid-word (`groupName`); a sideways mouse drag on a
+  header toggled it; "1 reviews". Left: rows of very different heights (an open group) shift by
+  the held row's height, so near an open group the drop light / slide can feel uneven.
+  Full screen — fixed: the clip button (opens the picker) asked for full screen; a mouse asked on
+  pointerdown (the page resized mid-click); any pointerup asked, also after a scrub, a drag, a hold
+  or with more fingers down (now only a plain one-finger tap); text fields asked (iPad limits
+  typing in full screen: iOS is left out altogether); Android's back leaves full screen first and
+  the next tap went straight back in, so every back press was eaten (now it stays off until the
+  next screen, `fsArm`).
+
+## 0.29.0 — 2026-11-12 — Phone: a reply on a video note is written over the player, on any frame
+- **What:** *Reply* on a video note (and the viewer's pencil on one) closes the Notes Panel and
+  opens the reply in the bar over the player: the player goes to the note's first frame, the
+  note's frames are on the timeline and as chips in the bar (tap = go there), its drawings show
+  on the picture, and the pencil draws on whatever frame is on screen — several frames, e.g. one
+  the note forgot. Sending (or ×) leaves the player on the frame reached and the note lit in the
+  list. A reply's card shows each frame it drew on; its viewer swipes sideways over them. Picture
+  notes keep the inline reply under the card.
+- **Where:** `mobile/js/app.js` — `startReply`, `replyBar`, `closeReply`, `sendReply`,
+  `threadFrames`, `replyFrameTimes`, `composing()` / `composeKey()`, `R.replyTo` / `R.curNote`,
+  `paintCurrent`, `markerList`, `stageDrawings`, `drawingsOn` (reply filtered by frame),
+  `asyncFrameAt(n, t, rid)`, `noteView` (reply frames sideways, pencil); `mobile/index.html`
+  (`.newbar .frs`); `mobile/js/report.js` (frames only a reply drew on go with that reply);
+  `app/static/annotate.js` (Sight's export: live replies' drawings count for a note's extra
+  frames); `app/review.py` (the HTML page's reply thumbnail: only what it drew on that frame);
+  `docs/FORMAT.md` (reply drawings may sit on other frames). Tests: `pwa_touch.cjs` reply steps,
+  `pwa_e2e.cjs` reply through the bar.
+- **Notes:** the reply draft is keyed by the note id (as the inline one), so an inline draft and
+  the bar share it. Starting a reply closes the new-note bar but keeps its draft. A note deleted
+  or merged away while replied to drops the bar (`paintNewBar`). The drawing canvas of a reply is
+  clean (only the reply's own drawings), as before. The HTML page does not list a reply's extra
+  frames (only Sight's export does, via the note's extra frames); its reply thumbnail just no
+  longer piles other frames' drawings onto the note's frame.
+- **Review (fresh agent):** fixed — the bar's "note still there" test read `deleted` (a reply
+  field) instead of the row's `deleted_at`, so a note deleted / merged away kept the bar and took
+  the reply; the player's pencil while replying drew into a hidden new-note draft (it now opens
+  the reply's pencil); a reply drawing on the note's own frame got `{t, hold: 0}` instead of the
+  note's ctx (its hold lost); the "typing, leave it alone" guard kept a stale composer; Reply on the
+  note being replied to sent the player back to the first frame; frames are now told apart by
+  frame index (`frameKey`), and the phone report shows a frame a reply added once. Left: switching
+  to another note's reply keeps the first one's draft without asking (it comes back on its Reply).
+
+## 0.28.1 — 2026-11-12 — Phone viewer: pictures cross-fade instead of sliding
+- **What:** in the full-screen note viewer a swipe (up / down = another note, sideways = the
+  note's other frame) no longer slides the picture off and the next one in from the edge (which
+  blinked: the new image was not loaded yet). The swiped picture settles back, the next one is
+  decoded, then fades in on top while the old one fades out in the same place.
+- **Where:** `mobile/js/app.js` `viewer()` (`show(no, fade)`, `navigate`, `FADE_MS` / `FADE_WAIT`);
+  test `viewerFade` in `tests/pwa_touch.cjs` / `tests/test_pwa.py`.
+- **Notes:** `show` is async but with no `fade` it never awaits, so the first `show(o)` is still
+  synchronous. `o` and `box` switch together only after the decode (capped at 600 ms; a slower
+  image fades in blank and pops in). The old box holds full opacity until 45 % of the fade, so the
+  pair never lets the background show through mid-way. Old boxes are removed by `onfinish` with a
+  timeout fallback. `busyNav` lasts until the fade ends; a swipe while busy just snaps back.
+  Fresh-agent review found no bugs; it flagged the mid-fade dimming of a plain both-ways fade and
+  the old picture sitting off-centre while the next loads; both fixed as above.
+
 ## 0.28.0 — 2026-11-12 — Phone: play inside the drawing canvas, clean timeline for a new note, note frames in the viewer
 - **What:** (phone app; review-draw.js gains host hooks, no change on the HTML page)
   On a video's drawing canvas with no tool in hand, a tap plays / pauses: the clip plays in the
@@ -294,80 +497,3 @@ Add new entries directly below this line.
   - While the rate is unknown (Sight: before `/info` answers; app: WebM before it is measured) the raw time is kept: snapping to a guessed rate could move a note by a frame.
   - `compare.js` has its own timeline (`snapT` to exact frame starts, no stored times) — checked, not changed.
   - Checked in Sight (dev server, temp SIGHT_HOME, 24 fps WebM): from 1.03 s `.` → 1.0421 (frame 25), `,` → 1.0004 (frame 24); a note at 2.03 s stored at 2.0 with fps read before annotating. `python -m unittest tests.test_pwa tests.test_merge_parity` passes.
-
-## 0.23.0 — 2026-11-12 — Phone app "Sight Review" (PWA): local review on the device
-- **What:** stage 3 of `docs/PLAN-mobile.md`. A web app for phones / tablets, installable from Safari (*Add to Home Screen*) / Chrome, fully offline: pick a picture or a video on the device (nothing is uploaded), review it from scratch — notes, replies with pictures, note states, the file's review state, drawings and text on the picture or any video frame (scrub by dragging sideways on the video as in Sight, frame stepping, timecode + frame number, note markers), edit / delete — and export a **PDF** report, a static **HTML** page (both: frames with drawings burned in, notes, replies, pictures) or a **.srev** that merges in Sight (found by name + size); a `.srev` from Sight opens / merges in the app. Reviews live in IndexedDB; the media file can be kept on the device on request. Published to GitHub Pages by a new workflow. The HTML reviewer page's drawing canvas moved into a shared file the app uses as is, and got a **Text** tool (both the page and the app).
-- **Where:** new `mobile/` (`index.html`, `sw.js`, `manifest.webmanifest`, `icons/`, `js/app.js`, `model.js`, `store.js`, `media.js`, `mp4.js`, `report.js`, `pdf.js`); new `app/static/review-draw.js` (`SightReviewDraw.open`, CSS injected, scoped to `.draw`; was `drawSheet` + its CSS in `review._HTML_TEMPLATE`); `app/review.py` (`_inline_js` / `draw_js`, `%%DRAW%%`); `tools/build_pwa.py`; `.github/workflows/phone-app.yml`; tests `tests/test_pwa.py`, `tests/pwa_unit.cjs`, `tests/pwa_e2e.cjs`. Docs: ARCHITECTURE ("Phone app"), MANUAL, README, FORMAT (asset id from the app, `app` value), PLAN-mobile (stage 3 done, open question answered).
-- **Notes:**
-  - Owner's answers (2026-11-12): images + video only for now; the PDF is pages drawn as pictures (canvas + device fonts → one JPEG per page, own ~80-line writer): any script renders, no font shipped, text not selectable.
-  - Identity: `key = sha1(lower(name) + "\n" + size)[:16]`; mtime is left out on purpose (iOS gives the pick time for Photos). The app's package carries `asset.id = key`, `path = name`; Sight matches it by name + size. A review imported from Sight keeps Sight's asset (id / path) for the way back.
-  - Rows are written only through `mobile/js/model.js`, in Sight's shapes (reply tombstones, status events + `status_at`, `edited_at`, drawings' `data.note` / `data.reply` / ctx, `setReviewState` = `Library.set_review_status`); every merge goes through review-core `mergeRows` — a merge rule change still needs only Python + review-core (+ parity fixture).
-  - Owner's requests during the stage: scrub by a sideways drag on the video (same mapping as Sight's click-drag; a tap still plays / pauses, a vertical swipe still scrolls), and a text tool in the canvas (FORMAT.md `text` rows, no format change; Sight's defaults).
-  - review-draw.js obeys review-core's rule: no closing script tag / HTML comment opener in the file (`_inline_js` refuses). Its body class is `rd-open` (the page's zoom viewer keeps `zoomed`).
-  - Video: fps from the MP4 / MOV `stts`, else measured while playing (`requestVideoFrameCallback`), else 25 ("≈25 fps" shown). Stepping and ctx (`{t: 3 dp, hold: 0}`) as Sight. Card / report frames come from a hidden second `<video>` and are cached in IndexedDB (`frames`), so notes stay readable without the file.
-  - Service worker: precache everything, cache-first; a new version waits until the user taps *Reload* (the first install's `clients.claim()` must not reload — found in testing).
-  - GitHub Pages needed a one-time setting by the owner (done 2026-11-12): Settings → Pages → Source: *GitHub Actions*; the app is at https://anurbis-dev.github.io/sight-media-viewer/. Deploys only from `master`; other branches just run the unit tests + build. The workflow is `phone-app.yml` ("Phone app (Sight Review)"; first named `pages.yml`); it is separate from `release.yml` — a desktop release does not deploy the app and the app does not need a release.
-  - Tested here (Linux, headless Chromium at iPhone size): `python -m unittest tests.test_pwa` — build, unit (model, fps parser on synthetic `moov`, PDF writer opened by PyMuPDF), and a round trip: the app reviews a PNG and a VP9 WebM (stepping, 24 fps measured, drawn notes, reply drawing, reply picture, resolve, review state) → `.srev` imported by Sight's own `Library.import_annotations` path (name + size match, every row, shot file, status history, rect in native px) → Sight adds a reply + note → the app merges it into a fresh profile, re-pick by name + size binds the file, re-import reports "already up to date". Offline reload and the update banner checked by hand with Playwright. **Not checked** (no device here): a real iPhone / iPad / Android — see PLAN-mobile stage 3 "Left to check".
-  - Fresh-agent reviews, one per block: (1) moving the canvas out of the page — nothing serious (CSS of all 35 canvas elements compared old vs new: identical); applied: review-core looked up on open (load order), `box-sizing` inside `.draw`, the page test now checks `%%DRAW%%`. (2) the app — fixed: the IndexedDB connection was cached forever (iOS drops it in the background) and a failed save was not retried (now: reconnect + retry once, the pending snapshot stays until written, retried every 3 s); Back (iOS edge swipe / Android) while drawing closed the review under the canvas and Done crashed (now Back closes the viewer / sheet, or is undone while the canvas is open); two quick opens mixed two reviews (fps of one saved into the other) and late frames / thumbnails landed in another or a deleted review (now an open sequence, `rv` everywhere, `putIfAlive`); a JPEG with EXIF rotation from Sight has unrotated width / height while drawings are in the shown size (the file's probed size now wins); double tap on Send sent twice; an edit during an import into the open review was dropped; stepping rounded (skipped a frame from the second half of one) and notes were stored at the raw time (now `frameStart`: floor + 0.01·fd, as Sight's stepping lands — Sight's own copy of the bug is queued in PLAN.md). Not changed: Photos-picker copies (HEIC → JPEG, re-encoded video) do not match Sight's originals by name + size — documented (use Files). (3) text tool + scrub — fixed: the focused text field scrolled the canvas (`overflow: clip`, scroll reset, `preventScroll`), so later fields / zoom anchors were off; a pinch while typing committed and opened a new field (the finger now navigates); wheel / Fit while typing left the field behind (it now follows `apply`); Cancel dropped the typed text even when the discard was declined; Esc during IME composition; a resize while typing never re-fitted; a second finger during a scrub froze the timecode; a mouse released outside the stage left hover scrubbing; a WebM without duration threw; a tap right after a touch scrub was ignored.
-  - Not done (later stages / deliberately): PSD / PDF pages, 3D (stage 4), trackers, clouds; drawing on an attached picture (the web page has it); "mine / others" drawing filters (the app is one person's).
-
-## 0.22.0 — 2026-11-12 — Technical debt from PLAN.md: grid refresh past 800, Starlette, faster start, thumbnails off the GIL
-- **What:** every queued item of `docs/PLAN.md` (owner's decision 15 in PLAN-mobile: no debt before the phone app). Fixed: a status / tag / thumbnail change of an asset past #800 in the grid now shows (it never did); on a zoomed-in board, panning no longer keeps every original it passed decoded. Faster: server start (Linux container: process start → `/api/health` 390 → 181 ms median), the startup scan waits for the first grid page, the Windows splash's PowerShell only starts when a launch is slow, the API stays responsive while PSD / PDF thumbnails are made (1,000 PDF + text files, same container, back-to-back runs: `/api/assets` while thumbnails are made median 81–93 → 13–14 ms, p90 146 → 31 ms, max 275 → 52–75 ms; all thumbnails 27–29 → ~14 s), three.js is prefetched when the library has 3D files, smaller build. New: `tools/bench_startup.py`, `tools/bench_grid.py`. Windows launch focus: `AllowSetForegroundWindow` + an `AttachThreadInput` fallback.
-- **Where:** `app/web.py` (new: FastAPI-shaped router on Starlette); `app/server.py` (imports, `App()`, `POST /api/assets/by-ids`, `first_page_served` in `/api/assets`); `app/library.py` (`_LIST_COLS` / `_list_item` / `assets_by_ids`, `_first_page` gate in `resume_watchers`, `render_psd_thumb` / `render_pdf_thumb`, `HeavyWorkers` + `_heavy`, `thumb_version` caches 0, `_mark_thumb`, `prioritize` regenerates missing files); `app/static/index.html` (`refreshItems` / `refreshIds` / `refreshStaleVisible` / `staleIds`, `loadedIds`, incremental `computeMasonry`, 3D prefetch at the end of boot); `app/static/canvas.js` (`syncResolution` off-screen downgrade); `Sight.py` (starlette dep, `allow_foreground_handoff`, `_bring_to_front`, `LazySplash`, `freeze_support`); `build_exe.bat` / `build_app_macos.sh` (starlette, `--exclude-module` tkinter + 13 pxr bindings); `tools/benchlib.py`, `tools/bench_startup.py`, `tools/bench_grid.py`. Docs: ARCHITECTURE (web.py, grid refresh, heavy pool, scan gate, `_mark_thumb`, canvas), PLAN.md rewritten (what is left to check on Windows), CLAUDE.md (Starlette).
-- **Notes:**
-  - `app/web.py` rules (ARCHITECTURE has them): params by name from path → query → default; only `Request` / `int` / `float` / `bool` annotations matter; plain `def` → thread pool, `async def` → event loop (wrap blocking library calls in `asyncio.to_thread`); Response as is, else JSON with inf / nan → null (FastAPI did the same; a stored `inf` from a PATCH or a `.srev` made `/api/state` a 500 in the first cut); HEAD on a GET route → 405 as under FastAPI. An A/B of ~80 requests against the FastAPI build matched except the 422 message text and `Allow: HEAD, GET`. Existing runtime venvs keep working (starlette came with fastapi); a fresh one installs starlette.
-  - Grid refresh: only what is on screen (+ inspector + lightbox asset) is re-read by id; everything else is marked stale and re-read when its card shows. Never go back to re-reading "offset 0 … N": the server caps `limit` at 800. `pull()` keeps a row it already has stale instead of trusting the duplicate.
-  - Heavy thumbnails: 2 spawned worker processes of our own (`HeavyWorkers`; never fork: SQLite + threads), started on first PSD / PDF, stopped after 60 s idle. A timeout (120 s of work) or a crash kills that worker and skips the file for the session — it is never re-rendered in the server (a file that crashes MuPDF would take Sight down). Only if processes cannot start at all does it render in the thread. Text thumbnails stay in threads (cheap). Measured equal to a ProcessPoolExecutor (300 PDFs: 4.93 vs 4.87 s; threads 10.66 s). In a frozen build the children are the exe itself → `multiprocessing.freeze_support()` first in `if __name__ == "__main__"` — keep Sight.py / library.py free of module-level side effects.
-  - The splash is still PowerShell (a native ctypes window could not be tested here, and a bad window procedure would crash Sight). Build: `--collect-all pxr` still ships the excluded packages' `__init__.py` (harmless, never imported); `pxr.UsdUI` must stay (UsdShade loads it — excluding it printed a USD warning on every conversion). Linux dist 617 → 581 MB, 30 → 17 USD binding modules.
-  - Board originals: also back to the thumbnail when more than a screen away (Playwright, 30 × 12 MP at 4×: 11 originals kept while panning before, ≤ 5 after).
-  - Benches: an isolated copy of a SIGHT_HOME (or a synthetic library), a headless Edge / Chrome / Chromium over a stdlib WebSocket CDP client; `bench_grid` also checks the grid never re-anchors `scrollTop` on its own (0 of 600 frames here). Window placement / focus / splash are not measured (no app window) — PLAN.md lists what to check by hand on Windows.
-  - Not verified here (Linux container): anything Windows-only — focus, splash, `build_exe.bat`, the frozen exe's worker processes, Defender first-start time. PLAN.md "Left to check on Windows".
-  - Fresh-agent reviews, one per block, findings fixed: (1) grid refresh — a Ctrl+A selection of > 5000 was cut by the server but marked fresh (now: on-screen + inspector + lightbox, ≤ 2000 per request, the rest stays stale), duplicates in `pull()` lost their stale mark, the lightbox's asset was not refreshed, `by-ids` ran its query on the event loop; `_bring_to_front` now catches `ctypes.ArgumentError` too. (2) startup — inf / nan → 500 on `/api/state`, `pxr.UsdUI` exclusion warning, HEAD now running GET handlers. (3) thumbnails / grid / canvas / benches — the first cut used a ProcessPoolExecutor: a running job blocked process exit (hung PSD → hidden Sight.exe never exits), a timeout neither cancelled nor killed the job (late writes without DB update, the same file resubmitted until both workers hung), a child that died on a file was re-rendered in the server (crash); replaced by `HeavyWorkers` (tested: hang killed at the timeout, crash → skipped, idle reap, exit with a hung job in flight is immediate, no orphans). A cached 0 could stick (now re-checked after 30 s); has_thumb assets whose file was deleted were never regenerated (pre-existing; now `prioritize` does). Benches: refuse a Python without Sight's deps (the venv re-exec would orphan the server on Windows), stop the server when it never answers.
-  - MemPalace is not available in the cloud session; nothing stored there.
-
-## 0.21.0 — 2026-11-11 — HTML reviewer page: vector drawings shown and drawn on the page
-- **What:** stage 2 of `docs/PLAN-mobile.md`. The web page for reviewers now gets clean pictures and draws the review's drawings itself (vectors, sharp at any zoom), with *My drawings* / *Others' drawings* switches (pencil next to search). Reviewers can draw: the pencil in a reply / new-note field or *✎ Draw* in the full-screen viewer opens a full-screen canvas — brush with pen pressure, highlighter, arrow, rectangle, ellipse, eraser, five colours, undo / redo, two-finger pinch / pan, "pen draws, finger pans" once a stylus was used, wheel zoom on desktop. A drawing on a note's frame goes with a reply (`data.note` + `data.reply`), a new note can be drawn on the cover (pictures) or on any note's frame (video / 3D; the new note takes that frame's ctx). Drawing on an attachment sends a flattened copy of the picture instead. Sight imports it all through the usual merge; reply drawings get the reply's eye toggle there. Also fixed: exporting a PDF / web page while the video was playing lost every drawing on the video frames (the clip ran on after each seek, so the frame was ~1 frame late and `visibleNow` rejected the drawings) — `gatherReport` now pauses and resumes.
-- **Where:** `app/static/annotate.js` (`gatherReport(forPage)`: clean cover / frames + `coverSize`, per-note `size`, reply `id`, `media`; pause during export; `visibleNow` → `frameNow()` + `RC.ctxVisible`). `app/static/review-core.js` (`ctxVisible`, `drawingRow`). `app/server.py` (export/html passes `coverSize`, `media`). `app/review.py` page template: `frameOf` / `vbOf` / `drawingsOf` / `shownOn` / `pic` / `overlay`, `drawSheet` (canvas), `drawFlat`, `editDraw`, `pickFrame`, `drawRows` / `drawCtx`, drafts `draw: {frame, items}`, `E.rows`, viewer entries `{f}` / `{src, note}` with a Draw button (`drawTarget`), `#vwrap` switches. Docs: ARCHITECTURE "HTML reviewer page", FORMAT Context, MANUAL, PLAN-mobile.
-- **Notes:**
-  - No format change: the page writes ordinary `stroke` (brush / marker) and `shape` (arrow / rect / ellipse) rows. A drawing on a reply copies the note's video `{t, hold}` (so it lives exactly as long as the note's own drawings) or 3D `{vk, cam}`; picture → `ctx: null`. Sizes are screen px at draw time / zoom (brush 6, highlighter 24, shapes 4, eraser radius 14), like Sight's tools.
-  - Doc mapping on the page: picture / video frames are the whole media scaled, so the overlay's `viewBox` is `0 0 media.w media.h`; 3D frames use `-500·a -500 1000·a 1000` (a = frame aspect). Checked against Sight: a ring drawn on a GLB cube in Sight sits on the same spot on the page, and a rect drawn on the page sits there in Sight.
-  - The eraser only removes objects drawn in the current canvas session; the page never deletes exported rows (no tombstones from the page).
-  - Gestures: a second finger during a finger stroke cancels that stroke and becomes a pinch; while a pen draws, fingers are ignored; `pointercancel` finishes a stroke. The canvas is a `.draw` overlay that the document click handler ignores (like `.zoom` / `.pick`). The viewer's Draw button is skipped by the overlay's `pointerdown` (else pointer capture would steal its click).
-  - Pages exported before 0.21 keep their own script and burned-in frames. A page with `media` missing (shouldn't happen) falls back to plain frames without drawing.
-  - Tested with Playwright on an isolated `SIGHT_HOME`: image / video / GLB exports via the menu, page rendering, every tool, undo / redo / eraser / Ctrl+Z, wheel zoom + drawing while zoomed, synthetic touch (pinch, stroke cancelled by a 2nd finger) and pen (pressure, then finger pans), frame picker, viewer Draw, flat drawing on an attachment, Cancel confirm, remove unsent reply → its rows go, state change + empty-field close, download → import (`added` / `updated` as expected), Sight showing the imported drawings (image, video at f48, 3D view), PDF frames with drawings again. Not checked: a real iPad / Android device.
-  - Fresh-agent code review (it also drove the page in headless Chrome) found, all fixed: a `pointercancel` (e.g. an iPad palm rejected by the system) kept its stroke — now dropped; a pen landing while a palm / finger stroke or pan was active was ignored — the pen now wins (palm stroke dropped, pan stopped); × on a draft drawing / picture also closed an otherwise empty field (the click reached the outside-tap handler after the button was gone) — `stopPropagation`; `ctxVisible(c, {vk: undefined})` showed everything — now "no view"; a resize mid-pinch reset the zoom. Not changed: a 3D drawing with `ctx: null` shows on every 3D frame on the page (same as Sight's `visibleNow`), while the PDF's 3D frame filter (`ctx.vk === note vk`) leaves it out.
-  - MemPalace was not available in this (cloud) session, so nothing was stored there.
-
-## 0.20.0 — 2026-11-11 — Shared review format (FORMAT.md) and JS core (review-core.js); drawings on replies
-- **What:** stage 1 of `docs/PLAN-mobile.md`. The review data contract is written down in `docs/FORMAT.md` (package, rows, every drawing type, ctx, status rows, shots, tombstones, merge rules). Drawing rendering and the merge rules now live in one plain script, `app/static/review-core.js`, used by Sight and inlined into the HTML reviewer page; the mobile app will use it as is. New field `data.reply` on a drawing: in Sight such a drawing gets an eye toggle with its count on the reply, is hidden while the reply is deleted / toggled off, and is deleted (undoably) together with the reply.
-- **Where:** new `app/static/review-core.js` (geometry/primitives/bounds/hit tests/transforms/`validItem` moved out of annotate.js unchanged; new `mergeRows` / `mergeReplies` / `mergeHistory` / `contentAt` / `stamp` = JS port of `Library.import_annotations` & co.; `drawCanvas`, `svgMarkup`). `app/static/annotate.js` (imports the core, `replyGone`, `S.hiddenReplies`, `rdrawChip` / `[data-rdraw]`, `deleteReply` takes the reply's drawings, `ghostNow` and reports skip them). `app/review.py` (`core_js()`, `build_html` single-pass `%%TITLE|DATA|CORE%%` substitution, page `download()` uses `RC.mergeRows`). New `docs/FORMAT.md`, `tests/test_merge_parity.py`, `tests/merge_js.cjs`, `tests/fixtures/merge_cases.json` (+ `make_merge_cases.py`). ARCHITECTURE, MANUAL, CLAUDE.md, PLAN-mobile.
-- **Notes:**
-  - review-core.js is a classic script on purpose (sets `globalThis.SightReviewCore`, `module.exports` under Node): an ES module could not be inlined into the page's classic script nor `require`d by the Node test. annotate.js does `import "/static/review-core.js"` for the side effect and destructures the global. Never write a closing script tag or an HTML comment opener in that file — `core_js()` raises (the page inlines it verbatim).
-  - Merge parity: `python -m unittest tests.test_merge_parity` (needs `node`) runs Python `import_annotations` on a temp library and JS `mergeRows` on the same 15 fixtures and compares every row, the stats and that inputs were not mutated. Any merge rule change goes into both + a new fixture case. The JS port keeps ids (lower-cased); Python's re-derivation of non-hex ids / ids of another asset is Sight-only. Python truthiness / `or` / `int()` are emulated (`pyTrue`, `pyOr`, `stamp`, `num`) for the values clients write; NaN, `True` vs `1`, float ids are not.
-  - The page's reply file is now `mergeRows(exported rows, local edits)`: replies sorted by `created`, the state by `status_at`, new notes inserted. Exported notes keep their exported `updated_at` (Sight before 0.17 merged notes by it; found in review).
-  - Geometry move checked: old (master) vs core functions on 4 000 random items in Node — identical prims / SVG / bounds / hit tests / transforms (the reviewer repeated it on 44 000). Playwright on an isolated `SIGHT_HOME`: core rendering, reply eye toggle, Delete with a hidden selection, reply delete + undo (server rows too), mouse brush, `S` screenshot, PDF + HTML export via the menu, HTML page reply + resolve → download → import back (`updated: 1`), no console errors.
-  - Fresh-agent code review found three bugs, all fixed: onion skin still ghosted drawings of hidden / deleted replies; hiding a reply's drawings left them selected so Delete removed them unseen; the page's download bumped exported notes' `updated_at`. It also fuzzed the merge (7 500 random cases, no mismatch on client-written values).
-  - Not done (later stages): Sight cannot draw on a reply yet (only show / hide / delete such drawings); the HTML page does not render vectors yet (stage 2 — the core is already inlined there).
-
-## 0.19.3 — 2026-11-11 — HTML page: picture viewer swipes between pictures; no scrolling through it
-- **What:** on the reviewer page, dragging on an enlarged picture no longer scrolls the page behind it. A horizontal swipe (← / → on desktop) goes to the next / previous picture, a vertical swipe, a tap or Esc closes; a counter shows *2 / 5*. Galleries: the cover plus every shown note frame; and per note its attachments together with its replies' pictures — never across notes.
-- **Where:** `app/review.py` HTML template — `zoom(gal, at)`, `frameGal` (rebuilt in `renderList`, cover at 0), `noteGal` (set in `noteCard`, filled by `thumbs`, reset after each card), `.zoom` CSS (`touch-action: none`, `body.zoomed { overflow: hidden }`).
-- **Notes:**
-  - The overlay takes pointer events and cancels `touchmove` (non-passive) — that is what stops the page scroll on iOS; `overflow: hidden` on body alone does not.
-  - A tap closes on `click`, not on `pointerup`, so the click does not land on the page under the overlay (the document click handler that closes empty fields ignores `.zoom` targets).
-  - The frame gallery follows the current filter / search (only shown notes). Pages exported before 0.19.3 keep their old viewer.
-
-## 0.19.2 — 2026-11-11 — Merge the lost 0.15.1–0.15.6 fixes (no console windows; grid blink)
-- **What:** Console windows no longer flash on Windows while video/audio thumbnails and waveforms are built, and the library grid no longer blinks / jumps by a row while scrolling or zooming. Both had been fixed in 0.15.1 and 0.15.5, but those commits lived on the side branch `claude/review-and-startup-speed` and never reached master: 0.16.0 (annotations) was branched from 0.15.0, so every build since then shipped without them. This also brings in the rest of that branch: faster startup (0.15.2), maximize/focus on launch (0.15.3), splash closing with the window (0.15.4), `docs/PLAN.md`.
-- **Where:** merge of `claude/review-and-startup-speed` (0.15.1–0.15.6 entries below). Conflicts: `server.py` `/api/assets` keeps 0.17's `review` filter and returns 0.15.2's `JSONResponse`; `version.py`; this file.
-- **Notes:**
-  - Check after a merge that `grep -n "subprocess\." app/*.py` shows `creationflags=NO_WINDOW` (from `fileinfo.py`) on every console program run by the windowless app (ffmpeg, powershell, cmd), and that `.grid` in `index.html` has `overflow-anchor: none`.
-  - Before starting a feature branch, branch from the current master, not an older commit: that is how these fixes were lost.
-
-## 0.19.1 — 2026-11-11 — HTML page: empty fields close on an outside tap; new note behind a + button
-- **What:** on the reviewer page an empty reply field (no text, picture or *Mark as* state) closes when you tap anywhere else (Esc on desktop). The new-note form is no longer always at the end of the feed: the blue *+* in the bottom bar opens it (one at a time — + again just jumps to it; × discards it; empty + outside tap hides it).
-- **Where:** `app/review.py` HTML template — `newOpen` / `opening`, `closeEmpty` on a document `click` listener, `isEmpty`, `focusLater`, `#add` in `.foot`, `.compose h3` close button, composer `data-key`.
-- **Notes:**
-  - The outside-tap check runs on `click` (bubbling), after the tap's own handler, so a field that very tap opened is skipped via `opening`. It is not done on `pointerdown`: re-rendering there shifts the layout under the finger and the click lands elsewhere.
-  - A field with any content stays open on an outside tap — only empty means cancel. Taps on the name dialog or the zoomed picture are ignored.
-  - Focus is applied in `requestAnimationFrame` by looking the textarea up by key, because closing another empty field in the same click re-renders the page a second time.

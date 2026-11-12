@@ -43,7 +43,12 @@ var SightReviewDraw = (function(){
     "body.rd-open { overflow: hidden; }",
     ".draw, .draw * { box-sizing: border-box; }",
     ".draw { position: fixed; inset: 0; z-index: 30; background: var(--rd-bg, #0d0d10); color: var(--rd-fg, #fff); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; font: 14px/1.5 system-ui, -apple-system, \"Segoe UI\", sans-serif; }",
-    ".draw .dtop, .draw .dbar { position: absolute; z-index: 2; left: 8px; right: 8px; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 16px; background: var(--rd-ov, rgb(28 28 32 / .74)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgb(0 0 0 / .22); }",
+    // The floating bar: one look for the canvas' bars and the phone player's header / transport
+    // (SightReviewDraw.css() puts it in the page; the host may set --rd-ov / --rd-fg / --rd-line, and
+    // --rd-pop for the popups over the picture, which stay more solid). touch-action: a pinch that
+    // starts on a bar must not zoom the page.
+    ".rd-panel { touch-action: none; background: var(--rd-ov, rgb(28 28 32 / .6)); color: var(--rd-fg, #fff); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); border-radius: 16px; backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); box-shadow: 0 6px 24px rgb(0 0 0 / .18); }",
+    ".draw .dtop, .draw .dbar { position: absolute; z-index: 2; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); display: flex; align-items: center; gap: 2px; padding: 4px 6px; }",
     ".draw .dtop { top: calc(8px + env(safe-area-inset-top)); }",
     ".draw .dtop .sp { flex: 1; }",
     ".draw .btn { border: 1px solid var(--rd-line, rgb(255 255 255 / .25)); background: none; color: inherit; border-radius: 10px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }",
@@ -61,11 +66,17 @@ var SightReviewDraw = (function(){
     ".draw .tb.on { background: #0a84ff; color: #fff; opacity: 1; }",
     ".draw .tb[disabled] { opacity: .3; cursor: default; }",
     ".draw [hidden] { display: none !important; }",
+    ".draw .dbar > .dtools { flex-wrap: wrap; }",
+    ".draw .dbar > .dtools { position: relative; padding-right: 42px; }",
+    ".draw .dtools .dcol { position: absolute; right: 0; top: 0; width: 38px; height: 38px; border: 0; background: none; display: grid; place-items: center; cursor: pointer; padding: 0; }",
+    ".draw .dtools .dcol i { display: block; width: 24px; height: 24px; border-radius: 12px; border: 2px solid var(--rd-fg, #fff); box-shadow: 0 0 0 1px rgb(0 0 0 / .3); }",
+    ".draw .dfly { position: absolute; z-index: 3; display: flex; gap: 2px; padding: 4px; border-radius: 14px; background: var(--rd-pop, rgb(28 28 32 / .86)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgb(0 0 0 / .28); }",
+    ".draw .dfly .swc { margin: 5px; }",
     ".draw .swc { width: 28px; height: 28px; margin: 3px 4px; border-radius: 14px; border: 2px solid var(--rd-line, rgb(255 255 255 / .3)); cursor: pointer; padding: 0; }",
     ".draw .swc.on { border-color: var(--rd-fg, #fff); box-shadow: 0 0 0 2px #0a84ff; }",
     ".draw .dsize { position: absolute; z-index: 3; left: 18px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }",
     ".draw .dsize i { display: block; border-radius: 50%; box-shadow: 0 0 0 1.5px rgb(255 255 255 / .9), 0 0 0 3px rgb(0 0 0 / .4); }",
-    ".draw .dsize span { font-size: 12px; font-variant-numeric: tabular-nums; padding: 1px 8px; border-radius: 9px; background: var(--rd-ov, rgb(28 28 32 / .74)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); white-space: nowrap; }",
+    ".draw .dsize span { font-size: 12px; font-variant-numeric: tabular-nums; padding: 1px 8px; border-radius: 9px; background: var(--rd-pop, rgb(28 28 32 / .86)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); white-space: nowrap; }",
     ".draw .dtext { position: absolute; z-index: 1; margin: 0; border: 1px dashed #0a84ff; border-radius: 0; outline: none; resize: none; overflow: hidden; white-space: pre; background: rgb(0 0 0 / .6); box-sizing: content-box; min-width: 1em; -webkit-user-select: text; user-select: text; touch-action: auto; }",
   ].join("\n");
   var cssDone = false;
@@ -79,9 +90,10 @@ var SightReviewDraw = (function(){
   // ellipse, text, eraser (whole objects drawn here; Ctrl held = eraser for a moment), five colours,
   // undo / redo, clear. Two fingers pinch-zoom / pan / turn the view; a quick tap of two fingers
   // undoes, of three redoes. Press and hold with a tool, then drag up / down: its size (a preview
-  // circle on the left; the screen's height spans the tool's whole range); with the transform tool
+  // circle on the left; the screen's height spans the tool's whole range), sideways: its opacity
+  // (right = more solid; one axis per hold, set by the first 10 px); with the transform tool
   // and a selection, up / down scales the selection's line width, sideways its opacity. Press and
-  // hold a tool's button: that tool's size back to its default. Once a pen has touched it, the
+  // hold a tool's button: that tool's size and opacity back to their defaults. Once a pen has touched it, the
   // pen draws and one finger pans too. Mouse: left draws, wheel / right-drag zoom (the pen's side
   // button too), middle drags. Top
   // bar: turn 90°, mirror, back to fit. Items are FORMAT.md drawings in the doc units of `vb`;
@@ -98,19 +110,45 @@ var SightReviewDraw = (function(){
     ["eraser", "Eraser — or hold Ctrl", '<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>', "KeyE"],
   ];
   var COLORS = ["#ff3b30", "#ffd60a", "#34c759", "#0a84ff", "#ffffff"];
+  // Two slots of the bar hold several tools each; a tap on the slot shows them in a row above it
+  // (a pick, a stroke on the picture or a tap elsewhere folds it). Arrows: the arrow tool with its
+  // heads / dash, or a plain line; shapes: rectangle / rounded / ellipse, outlined or filled.
+  var ARROWS = [
+    { k: "arrow", label: "Arrow", h0: "none", h1: "triangle", dash: "solid", ico: '<path d="M5 19 14 10"/><path d="M19 5l-1.4 8.6-7.2-7.2z" fill="currentColor"/>' },
+    { k: "open", label: "Open arrow", h0: "none", h1: "open", dash: "solid", ico: '<path d="M5 19 19 5"/><path d="M11 5h8v8"/>' },
+    { k: "double", label: "Double arrow", h0: "triangle", h1: "triangle", dash: "solid", ico: '<path d="M9 15 15 9"/><path d="M19 5l-1 6.6-5.6-5.6z" fill="currentColor"/><path d="M5 19l1-6.6 5.6 5.6z" fill="currentColor"/>' },
+    { k: "dashed", label: "Dashed arrow", h0: "none", h1: "triangle", dash: "dashed", ico: '<path d="M5 19 14 10" stroke-dasharray="3 3"/><path d="M19 5l-1.4 8.6-7.2-7.2z" fill="currentColor"/>' },
+    { k: "line", label: "Line", line: true, h0: "none", h1: "none", dash: "solid", ico: '<path d="M5 19 19 5"/>' },
+  ];
+  var SHAPES = [
+    { k: "rect", label: "Rectangle", tool: "rect", ico: '<rect x="4" y="6" width="16" height="12"/>' },
+    { k: "round", label: "Rounded rectangle", tool: "rect", round: true, ico: '<rect x="4" y="6" width="16" height="12" rx="4"/>' },
+    { k: "ellipse", label: "Ellipse", tool: "ellipse", ico: '<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>' },
+    { k: "rectf", label: "Filled rectangle", tool: "rect", fill: true, ico: '<rect x="4" y="6" width="16" height="12" rx="1" fill="currentColor" fill-opacity=".35"/>' },
+    { k: "ellipsef", label: "Filled ellipse", tool: "ellipse", fill: true, ico: '<ellipse cx="12" cy="12" rx="8.5" ry="6.5" fill="currentColor" fill-opacity=".35"/>' },
+  ];
+  var SLOTS = ["select", "brush", "marker", "arrows", "shapes", "text", "eraser"];
+  var slotOf = function(t){ return t === "arrow" ? "arrows" : t === "rect" || t === "ellipse" ? "shapes" : t; };
   // Sizes in screen px at the moment of drawing (turned into doc units by the zoom), per tool; a
   // press-and-hold drag changes them within SIZE_RANGE, kept with the pen.
   var SIZE0 = { brush: 6, marker: 24, arrow: 4, rect: 4, ellipse: 4, text: 24, eraser: 14 };
   var SIZE_RANGE = { brush: [1, 80], marker: [4, 140], arrow: [1, 40], rect: [1, 40], ellipse: [1, 40], text: [8, 160], eraser: [4, 120] };
   var SIZE = clone(SIZE0);
-  var pen = { tool: "brush", color: COLORS[0] }, lastTool = "brush";  // tool null: none (tap the active one)
+  // Opacity per tool (0.05…1), set by the hold's sideways drag, kept with the pen. The eraser has none.
+  var OPAC0 = { brush: 1, marker: 0.4, arrow: 1, rect: 1, ellipse: 1, text: 1 };
+  var OPAC = clone(OPAC0);
+  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0 }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
     if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
     if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
+    if (ps && ARROWS[ps.arrow]) pen.arrow = ps.arrow;
+    if (ps && SHAPES[ps.shape]) pen.shape = ps.shape;
+    if (ps && (ps.tool === "rect" || ps.tool === "ellipse") && SHAPES[pen.shape].tool !== ps.tool) pen.shape = ps.tool === "rect" ? 0 : 2;
     if (ps && ps.sizes) Object.keys(SIZE0).forEach(function(k){ var v = Number(ps.sizes[k]); if (v >= SIZE_RANGE[k][0] && v <= SIZE_RANGE[k][1]) SIZE[k] = v; });
+    if (ps && ps.opac) Object.keys(OPAC0).forEach(function(k){ var v = Number(ps.opac[k]); if (v >= 0.05 && v <= 1) OPAC[k] = v; });
   } catch (e) {}
-  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE })); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape })); } catch (e) {} }
   // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
   // pinch (g: {z, r, d, a}); a quarter turn snaps within 6°.
   function pinch(g, a, b, zmin, zmax){
@@ -137,7 +175,7 @@ var SightReviewDraw = (function(){
     var vb = o.vb, items = (o.items || []).map(clone), undo = [], redo = [], cur = null, sel = [];
     if (multi && store.has(fkey)){ items = store.get(fkey).items; store.delete(fkey); }
     var zc = items.reduce(function(m, it){ return Math.max(m, it.z || 0); }, 0);
-    var root = el("div", "draw"), top = el("div", "dtop"), view = el("div", "dview"), box = el("div", "dbox"), bar = el("div", "dbar");
+    var root = el("div", "draw"), top = el("div", "dtop rd-panel"), view = el("div", "dview"), box = el("div", "dbox"), bar = el("div", "dbar rd-panel");
     var img = el("img"); img.src = o.src; img.alt = ""; img.draggable = false;
     var sv = document.createElementNS(SVGNS, "svg"); sv.setAttribute("viewBox", vb.join(" ")); sv.setAttribute("preserveAspectRatio", "none");
     var gBase = document.createElementNS(SVGNS, "g"), gMine = document.createElementNS(SVGNS, "g"), gUi = document.createElementNS(SVGNS, "g");
@@ -163,43 +201,100 @@ var SightReviewDraw = (function(){
     var done = el("button", "btn primary", "Done"); done.type = "button";
     done.onclick = function(){ if (stroke) finish(); if (edit) commitText(); endScrub(); close(); o.onDone(items, multi ? allFrames() : null); };
     [cancel, ub, rb, clr, el("span", "sp"), turnB, mirB, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
-    var tools = el("div"), cols = el("div");
-    // A tap on the tool in hand puts it down: then one finger scrubs the video (onScrub) or pans.
-    TOOLS.forEach(function(t){
-      var b = tbtn(t[1], ico(t[2]), function(){ if (b.dataset.held){ delete b.dataset.held; return; } setTool(t[0] === pen.tool ? null : t[0]); });
-      b.dataset.t = t[0]; tools.appendChild(b);
-      // Press and hold: the tool in hand, at its default size (the preview shows it).
+    top.addEventListener("pointerdown", function(){ closeFly(); });  // undo / turn / fit…: the row folds
+    var tools = el("div", "dtools");
+    // The flyout of a slot (or of the colour): {el, slot}.
+    var fly = null;
+    // Hidden at once, removed a moment later: the tap that picked from it is still going up to the
+    // host's document handlers, which must see it inside the canvas (a detached target is "outside").
+    function closeFly(){ if (fly){ var f = fly.el; fly = null; f.hidden = true; setTimeout(function(){ f.remove(); }, 0); } }
+    function openFly(slot, anchor, entries){
+      closeFly();
+      var f = el("div", "dfly");
+      entries.forEach(function(x){ f.appendChild(x); });
+      root.appendChild(f);
+      var r = root.getBoundingClientRect(), a = anchor.getBoundingClientRect(), b = bar.getBoundingClientRect(), w = f.offsetWidth;
+      f.style.left = Math.max(8, Math.min(r.width - w - 8, a.left - r.left + a.width / 2 - w / 2)) + "px";
+      f.style.bottom = (r.bottom - b.top + 6) + "px";
+      fly = { el: f, slot: slot };
+    }
+    function slotIco(s){ return s === "arrows" ? ARROWS[pen.arrow].ico : s === "shapes" ? SHAPES[pen.shape].ico : TOOLS.find(function(t){ return t[0] === s; })[2]; }
+    function slotTool(s){ return s === "arrows" ? "arrow" : s === "shapes" ? SHAPES[pen.shape].tool : s; }
+    // A tap on a plain tool takes it (on the one in hand: puts it down — then one finger scrubs the
+    // video, onScrub, or pans); on a slot with variants: takes it and shows them (again with them
+    // shown: puts it down).
+    SLOTS.forEach(function(s){
+      var grp = s === "arrows" ? ARROWS : s === "shapes" ? SHAPES : null;
+      var title = s === "arrows" ? "Arrows and lines" : s === "shapes" ? "Shapes" : TOOLS.find(function(t){ return t[0] === s; })[1];
+      var b = tbtn(title, ico(slotIco(s)), function(){
+        if (b.dataset.held){ delete b.dataset.held; return; }
+        var on = slotOf(pen.tool) === s;
+        if (!grp){ closeFly(); setTool(on ? null : s); return; }
+        if (on && fly && fly.slot === s){ closeFly(); setTool(null); return; }
+        if (!on) setTool(slotTool(s));
+        openFly(s, b, grp.map(function(v, i){
+          var vb = tbtn(v.label, ico(v.ico), function(){
+            if (s === "arrows") pen.arrow = i; else pen.shape = i;
+            closeFly(); setTool(slotTool(s));
+          });
+          vb.classList.toggle("on", i === (s === "arrows" ? pen.arrow : pen.shape));
+          return vb;
+        }));
+      });
+      b.dataset.t = s; tools.appendChild(b);
+      // Press and hold: the tool in hand, at its default size and opacity (the preview shows it).
       var ht = null;
       b.addEventListener("pointerdown", function(){
         clearTimeout(ht); delete b.dataset.held;
         ht = setTimeout(function(){
+          var t = slotTool(s);
           b.dataset.held = "1";
-          if (SIZE0[t[0]] != null) SIZE[t[0]] = SIZE0[t[0]];
-          setTool(t[0]);
-          if (SIZE0[t[0]] != null){ showSize(t[0]); hideSize(); }
+          closeFly();
+          if (SIZE0[t] != null) SIZE[t] = SIZE0[t];
+          if (OPAC0[t] != null) OPAC[t] = OPAC0[t];
+          setTool(t);
+          if (SIZE0[t] != null){ showSize(t); hideSize(); }
         }, 550);
       });
       ["pointerup", "pointercancel", "pointerleave"].forEach(function(ev){ b.addEventListener(ev, function(){ clearTimeout(ht); }); });
     });
-    function setTool(t){ stopAdj(); if (edit) commitText(); pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); if (o.onTool) o.onTool(t); }
-    COLORS.forEach(function(c){
-      var b = el("button", "swc"); b.type = "button"; b.title = "Colour"; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
-      b.onclick = function(){
-        if (edit){ pen.color = c; savePen(); paintBar(); edit.it.data.color = c; edit.ta.style.color = c; edit.ta.focus(); return; }  // recolours the text being typed
-        if (pen.tool === "select" && sel.length){ recolour(c); return; }
-        var was = pen.tool;
-        pen.color = c; if (!pen.tool || pen.tool === "eraser" || pen.tool === "select") pen.tool = "brush"; savePen(); paintBar(); paint();
-        if (pen.tool !== was && o.onTool) o.onTool(pen.tool);
-      };
-      cols.appendChild(b);
-    });
+    function setTool(t){
+      closeFly();  // a tool from elsewhere (a key, a hold): the row would show a stale pick
+      stopAdj(); if (edit) commitText();
+      // A rectangle / ellipse asked by name (a key): the shapes slot shows that one.
+      if ((t === "rect" || t === "ellipse") && SHAPES[pen.shape].tool !== t) pen.shape = t === "rect" ? 0 : 2;
+      pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); if (o.onTool) o.onTool(t);
+    }
+    // The colour, at the bar's right end: a tap shows the colours above it.
+    function useColour(c){
+      if (edit){ pen.color = c; savePen(); paintBar(); edit.it.data.color = c; edit.ta.style.color = c; edit.ta.focus(); return; }  // recolours the text being typed
+      if (pen.tool === "select" && sel.length){ pen.color = c; savePen(); paintBar(); recolour(c); return; }
+      var was = pen.tool;
+      pen.color = c; if (!pen.tool || pen.tool === "eraser" || pen.tool === "select") pen.tool = "brush"; savePen(); paintBar(); paint();
+      if (pen.tool !== was && o.onTool) o.onTool(pen.tool);
+    }
+    var colB = el("button", "dcol"); colB.type = "button"; colB.title = "Colour"; colB.setAttribute("aria-label", "Colour");
+    colB.appendChild(el("i"));
+    colB.onclick = function(){
+      if (fly && fly.slot === "colour"){ closeFly(); return; }
+      openFly("colour", colB, COLORS.map(function(c){
+        var b = el("button", "swc" + (c === pen.color ? " on" : "")); b.type = "button"; b.title = "Colour " + c; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
+        b.onclick = function(){ closeFly(); useColour(c); };
+        return b;
+      }));
+    };
+    tools.appendChild(colB);
     if (o.footer){ var foot = el("div", "dfoot"); foot.appendChild(o.footer); bar.appendChild(foot); }
-    bar.appendChild(tools); bar.appendChild(cols);
+    bar.appendChild(tools);
     root.appendChild(top); root.appendChild(view); root.appendChild(bar);
     var ctrlHeld = false;
     function paintBar(){
-      tools.querySelectorAll(".tb").forEach(function(b){ b.classList.toggle("on", b.dataset.t === pen.tool); });
-      cols.querySelectorAll(".swc").forEach(function(b){ b.classList.toggle("on", b.dataset.c === pen.color && pen.tool !== "eraser" && pen.tool !== "select"); });
+      tools.querySelectorAll(".tb").forEach(function(b){
+        b.classList.toggle("on", b.dataset.t === slotOf(pen.tool));
+        var ic = slotIco(b.dataset.t);
+        if (b.dataset.ico !== ic){ b.innerHTML = ico(ic); b.dataset.ico = ic; }
+      });
+      colB.firstChild.style.background = pen.color;
       view.style.cursor = pen.tool === "eraser" || ctrlHeld ? "cell" : !pen.tool ? (o.onScrub ? "ew-resize" : "grab") : pen.tool === "select" ? "default" : "crosshair";
     }
     function paint(){
@@ -332,7 +427,26 @@ var SightReviewDraw = (function(){
       fitB.hidden = fitted; mirB.classList.toggle("on", V.m < 0);
       paint();
     }
-    function moved(){ fitted = false; apply(); }
+    function moved(){ unease(); fitted = false; apply(); }
+    // The player's rule when a pinch / pan / zoom drag ends: zoomed out past fit — back to the whole
+    // picture, the turn to the nearest quarter; near fit and straight — exactly fit. Eased (.2 s).
+    var easeT = null;
+    function unease(){ if (easeT){ clearTimeout(easeT); easeT = null; box.style.transition = ""; } }
+    function settleView(){
+      if (edit || stroke || adj || scr) return;
+      var q90 = Math.round(V.r / 90) * 90;
+      if (!(V.z < 1 || (V.z < 1.04 && Math.abs(V.r - q90) < 1e-6 && RC.hyp(V.o[0] - fitC[0], V.o[1] - fitC[1]) < 24))) return;
+      // fit keeps the turn in [0, 360): start from the same look at the angle nearest that target,
+      // so -50° eases to -90° (shown as 270°) instead of spinning round.
+      var to = ((q90 % 360) + 360) % 360;
+      unease();
+      V.r = to + ((V.r - to) % 360 + 540) % 360 - 180;
+      apply();
+      void box.offsetWidth;  // that start, drawn without easing
+      box.style.transition = "transform .2s ease-out, width .2s ease-out, height .2s ease-out";
+      fit(false);
+      easeT = setTimeout(function(){ easeT = null; box.style.transition = ""; }, 230);
+    }
     function afterView(){
       if (edit) commitText();
       fit(false);
@@ -340,7 +454,7 @@ var SightReviewDraw = (function(){
       if (o.onView) o.onView({ rot: ((Math.round(V.r / 90) * 90) % 360 + 360) % 360, mirror: V.m < 0 });
     }
     var refit = false;  // a resize while typing: fit once the text is done
-    function onResize(){ if (edit){ refit = true; return; } if (!stroke && !gest){ if (fitted) fit(false); else apply(); } }
+    function onResize(){ closeFly(); if (edit){ refit = true; return; } if (!stroke && !gest){ if (fitted) fit(false); else apply(); } }
     function vpos(e){ var r = view.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
     function toDoc(e){ return docOf(vpos(e)); }
 
@@ -354,7 +468,8 @@ var SightReviewDraw = (function(){
     function showSize(t, info){
       clearTimeout(sizeT);
       if (!sizeEl){ sizeEl = el("div", "dsize"); var ring = el("i"); ring.appendChild(el("b")); sizeEl.appendChild(ring); sizeEl.appendChild(el("span")); root.appendChild(sizeEl); }
-      if (t) info = { d: SIZE[t] * (t === "eraser" ? 2 : 1), color: t === "eraser" ? "transparent" : pen.color, op: t === "marker" ? 0.4 : 1, label: (Math.round(SIZE[t] * 10) / 10) + " px" };
+      if (t) info = { d: SIZE[t] * (t === "eraser" ? 2 : 1), color: t === "eraser" ? "transparent" : pen.color, op: OPAC[t] != null ? OPAC[t] : 1,
+        label: (Math.round(SIZE[t] * 10) / 10) + " px" + (OPAC[t] != null ? " · " + Math.round(OPAC[t] * 100) + " %" : "") };
       var ring2 = sizeEl.firstChild, fill = ring2.firstChild, dd = Math.max(2, Math.min(240, info.d));
       ring2.style.width = ring2.style.height = dd + "px";
       fill.style.cssText = "display:block;width:100%;height:100%;border-radius:50%;background:" + info.color + ";opacity:" + info.op;
@@ -394,7 +509,7 @@ var SightReviewDraw = (function(){
         sel = sel.map(function(x){ return map.get(x); });
         showSelSize();
       } else if (SIZE0[tool] != null){
-        adj = { id: h.id, x: h.x, y: h.y, tool: tool, s0: SIZE[tool] };
+        adj = { id: h.id, x: h.x, y: h.y, tool: tool, s0: SIZE[tool], o0: OPAC[tool], axis: null };
         showSize(tool);
       }
       paint();
@@ -410,15 +525,16 @@ var SightReviewDraw = (function(){
     // big ones), from the size it had; up = bigger.
     function adjMove(e){
       var r = view.getBoundingClientRect(), dy = e.clientY - adj.y, dx = e.clientX - adj.x;
+      // One axis per hold (up / down the size / width, sideways the opacity), set by the first 10 px
+      // (a tool without an opacity, the eraser: always the size).
+      if (!adj.axis){ if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return; adj.axis = Math.abs(dy) >= Math.abs(dx) || (adj.tool && adj.o0 == null) ? "y" : "x"; }
       if (adj.tool){
         var rg = SIZE_RANGE[adj.tool];
-        SIZE[adj.tool] = Math.round(RC.clamp(adj.s0 * Math.pow(rg[1] / rg[0], -dy / Math.max(1, r.height)), rg[0], rg[1]) * 10) / 10;
+        if (adj.axis === "y") SIZE[adj.tool] = Math.round(RC.clamp(adj.s0 * Math.pow(rg[1] / rg[0], -dy / Math.max(1, r.height)), rg[0], rg[1]) * 10) / 10;
+        else OPAC[adj.tool] = Math.round(RC.clamp(adj.o0 + dx / Math.max(1, r.width * 0.8), 0.05, 1) * 100) / 100;
         showSize(adj.tool);
         return;
       }
-      // The selection: one axis per hold (up / down the width, sideways the opacity), set by the
-      // first 10 px.
-      if (!adj.axis){ if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return; adj.axis = Math.abs(dy) >= Math.abs(dx) ? "y" : "x"; }
       var k = kNow(), f = Math.pow(16, -dy / Math.max(1, r.height)), dOp = dx / Math.max(1, r.width * 0.8);
       sel.forEach(function(it, i){
         var b = adj.base[i], d = it.data, key = WKEY[it.kind];
@@ -432,7 +548,7 @@ var SightReviewDraw = (function(){
     function adjEnd(cancel){
       var a = adj;
       adj = null;
-      if (a.tool){ if (cancel) SIZE[a.tool] = a.s0; else savePen(); }
+      if (a.tool){ if (cancel){ SIZE[a.tool] = a.s0; if (a.o0 != null) OPAC[a.tool] = a.o0; } else savePen(); }
       else if (a.changed && !cancel){ sel.forEach(roundItem); undo.push(a.prev); redo.length = 0; }
       else { items = a.prev; sel = a.prevSel; }
       hideSize(); paint();
@@ -494,6 +610,7 @@ var SightReviewDraw = (function(){
       moved();
     }
     view.addEventListener("pointerdown", function(e){
+      closeFly();  // drawing (or any touch on the picture) folds a slot's / the colour's row
       if (edit && e.target === edit.ta) return;  // placing the caret in the text field
       e.preventDefault();
       tapDown(e);
@@ -581,7 +698,7 @@ var SightReviewDraw = (function(){
       if (t0) tapAct(t0);
     }
     function up0(e){
-      if (zdrag && e.pointerId === zdrag.id){ zdrag = null; return; }
+      if (zdrag && e.pointerId === zdrag.id){ zdrag = null; settleView(); return; }
       if (hold && hold.id === e.pointerId) endHold();
       if (adj && adj.id === e.pointerId){ pts.delete(e.pointerId); adjEnd(e.type === "pointercancel"); return; }
       if (!pts.has(e.pointerId)) return;
@@ -590,17 +707,20 @@ var SightReviewDraw = (function(){
       if (stroke && stroke.id === e.pointerId){
         if (e.type === "pointercancel") abort(); else finish();
         gestStart();  // fingers still down (after a pen stroke) pan from here
+        if (!gest && !pts.size) settleView();  // a pinch the pen cut short
         return;
       }
-      if (gest && gest.ids.indexOf(e.pointerId) >= 0) gestStart();
+      if (gest && gest.ids.indexOf(e.pointerId) >= 0){ gestStart(); if (!gest) settleView(); }
     }
     view.addEventListener("pointerup", up);
     view.addEventListener("pointercancel", up);
     view.addEventListener("wheel", function(e){
       e.preventDefault();
       var p = vpos(e), q = inv(p);
-      V.z = RC.clamp(V.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), 0.5, 16);
-      pin(q, p);
+      V.z = RC.clamp(V.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), 1, 16);
+      // As the player's wheel: no smaller than fit, and at fit the picture is centred again.
+      if (V.z <= 1.0001){ V.z = 1; V.o = fitC.slice(); if (!edit && Math.abs(V.r - Math.round(V.r / 90) * 90) < 1e-6){ unease(); fit(false); return; } }
+      else pin(q, p);
       moved();
     }, { passive: false });
     view.addEventListener("contextmenu", function(e){ e.preventDefault(); });
@@ -664,13 +784,15 @@ var SightReviewDraw = (function(){
       var d;
       if (t === "brush" || t === "marker"){
         var pr = isPen ? RC.clamp(e.pressure || 0.5, 0, 1) : 0.5;
-        d = { color: c, size: RC.r2(SIZE[t] * k), opacity: t === "marker" ? 0.4 : 1, pressure: true, pen: isPen, pts: [RC.r2(p[0]), RC.r2(p[1]), RC.r2(pr)] };
+        d = { color: c, size: RC.r2(SIZE[t] * k), opacity: OPAC[t], pressure: true, pen: isPen, pts: [RC.r2(p[0]), RC.r2(p[1]), RC.r2(pr)] };
         cur = { kind: "stroke", shape_kind: t, z: ++zc, data: d };
       } else if (t === "arrow"){
-        d = { color: c, width: RC.r2(SIZE.arrow * k), opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
-        cur = { kind: "shape", shape_kind: "arrow", z: ++zc, data: d };
+        var av = ARROWS[pen.arrow];
+        d = { color: c, width: RC.r2(SIZE.arrow * k), opacity: OPAC.arrow, dash: av.dash, head0: av.h0, head1: av.h1, body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
+        cur = { kind: "shape", shape_kind: av.line ? "line" : "arrow", z: ++zc, data: d };
       } else {
-        d = { color: c, strokeOn: true, width: RC.r2(SIZE[t] * k), dash: "solid", fillOn: false, fill: c, fillOpacity: 0.2, radius: 0, opacity: 1, x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
+        var sv0 = SHAPES[pen.shape].tool === t ? SHAPES[pen.shape] : {};
+        d = { color: c, strokeOn: true, width: RC.r2(SIZE[t] * k), dash: "solid", fillOn: !!sv0.fill, fill: c, fillOpacity: sv0.fill ? 0.3 : 0.2, radius: sv0.round ? RC.r2(14 * k) : 0, opacity: OPAC[t], x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
         cur = { kind: "shape", shape_kind: t, z: ++zc, data: d };
       }
       d.created = Date.now();
@@ -792,7 +914,7 @@ var SightReviewDraw = (function(){
       var k = S0.k, tol = 4 * k, hit = null;
       for (var i = items.length - 1; i >= 0; i--){ if (RC.typeOf(items[i]) === "text" && RC.hitTest(items[i], S0.x, S0.y, tol)){ hit = items[i]; break; } }
       var it = hit || { kind: "text", shape_kind: null, z: ++zc, data: { text: "", x: RC.r2(S0.x), y: RC.r2(S0.y - SIZE.text * k * 0.6), font: "sans", size: RC.r2(SIZE.text * k),
-        color: pen.color, bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1, rot: 0, created: Date.now() } };
+        color: pen.color, bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: OPAC.text, rot: 0, created: Date.now() } };
       if (hit) sel = [];
       var ta = el("textarea", "dtext");
       ta.value = it.data.text || ""; ta.rows = 1; ta.spellcheck = false; ta.setAttribute("autocapitalize", "sentences");
@@ -829,6 +951,7 @@ var SightReviewDraw = (function(){
         return;
       }
       if (e.key === "Control" && !ctrlHeld){ ctrlHeld = true; paintBar(); return; }
+      if (fly && e.key === "Escape" && !mod && !e.altKey && !e.shiftKey){ closeFly(); e.preventDefault(); e.stopPropagation(); return; }  // a row up: Esc folds it first
       stopAdj();
       if (o.onKey && !stroke && o.onKey(e)){ e.preventDefault(); e.stopPropagation(); return; }
       if (e.key === "Escape" && !mod && !e.altKey && !e.shiftKey){ if (pen.tool === "select" && sel.length){ sel = []; paint(); } else cancel.onclick(); }
@@ -878,6 +1001,6 @@ var SightReviewDraw = (function(){
     return { setFrame: setFrame, close: close, live: live, frameKey: function(){ return fkey; } };
   }
 
-  return { open: drawSheet, pinch: pinch, TOOLS: TOOLS, COLORS: COLORS, SIZE: SIZE };
+  return { open: drawSheet, pinch: pinch, css: css, TOOLS: TOOLS, COLORS: COLORS, SIZE: SIZE, OPAC: OPAC };
 })();
 if (typeof globalThis !== "undefined") globalThis.SightReviewDraw = SightReviewDraw;

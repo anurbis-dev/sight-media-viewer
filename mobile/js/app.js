@@ -13,6 +13,7 @@ import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
+if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
 const VERSION = window.SIGHT_REVIEW_VERSION && !window.SIGHT_REVIEW_VERSION.includes("%%") ? window.SIGHT_REVIEW_VERSION : "dev";
 const APP_VER = VERSION.split("-")[0];
 const APP_LABEL = "Sight Review " + APP_VER;
@@ -29,6 +30,8 @@ const ICONS = {
   gear: '<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   play: '<path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/>', pause: '<path d="M7 4.5h3.5v15H7zM13.5 4.5H17v15h-3.5z" fill="currentColor"/>',
   prev: '<path d="M14 6 8 12l6 6"/>', next: '<path d="m10 6 6 6-6 6"/>',
+  snd: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6"/><path d="M18.4 6.6a7.6 7.6 0 0 1 0 10.8"/>',
+  sndoff: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
   stepb: '<path d="M6 5v14"/><path d="M18 6 10 12l8 6z" fill="currentColor"/>', stepf: '<path d="M18 5v14"/><path d="m6 6 8 6-8 6z" fill="currentColor"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeoff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
@@ -157,9 +160,13 @@ const ensureName = async () => !!who || setName();
 
 // ---- current review ----------------------------------------------------------------------------
 // R: {meta (the reviews record), rows, file, url, video, grab, fps, frames: Map(tag → {blob, w, h,
-// url}), shotUrls, drafts, openReply, newOpen, filter, hide}
+// url}), shotUrls, drafts, openReply, newOpen, replyTo, curNote, filter, hide}
 let R = null;
 const kindNow = () => R && R.meta.asset.kind;
+// The bar over the player is writing something: a new note (newOpen) or a reply on a video note
+// over the player (replyTo = its id). Drafts are keyed by "+new" / the note's id.
+const composing = () => !!(R && (R.newOpen || R.replyTo));
+const composeKey = () => R.replyTo || "+new";
 const docW = () => R.meta.asset.width || 0, docH = () => R.meta.asset.height || 0;
 function numMap(){
   const m = new Map();
@@ -342,7 +349,60 @@ window.addEventListener("popstate", route);
 function isStandalone(){ return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
 const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+// ---- full screen ---------------------------------------------------------------------------------
+// Auto (Settings, on by default): the first tap goes full screen in a browser tab that can (Android
+// Chrome, desktop browsers). Not on iOS: iPhone Safari has no page full screen, iPad Safari limits
+// typing in it — the installed app is full screen anyway. Only a plain one-finger tap asks (not a
+// scrub, a drag, a hold, a pinch: the page would resize under it), never one that opens the file
+// picker (the picker would close it again) or goes into a text field. Left by the user (Android's
+// back leaves full screen first, Esc, the system's swipe): it stays off until the next screen (a
+// review opened / closed), so a second back press is not eaten too.
+
+const FS_KEY = "sight-review:fs", docEl = document.documentElement;
+const fsReq = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
+const fsCan = () => !!fsReq && !isStandalone() && !isIOS() && !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+const fsOn = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+let fsAuto = true, fsArmed = true, fsLeaving = false;
+try { fsAuto = localStorage.getItem(FS_KEY) !== "0"; } catch {}
+const fsArm = () => { fsArmed = true; };
+["fullscreenchange", "webkitfullscreenchange"].forEach((ev) => document.addEventListener(ev, () => {
+  if (fsOn()) return;
+  if (!fsLeaving) fsArmed = false;  // the user left it: not again until the next screen
+  fsLeaving = false;
+}));
+function enterFS(){
+  if (!fsCan() || fsOn()) return;
+  fsArmed = true;
+  try { const pr = fsReq.call(docEl, { navigationUI: "hide" }); if (pr && pr.catch) pr.catch(() => {}); } catch {}
+}
+function exitFS(){
+  if (!fsOn()) return;
+  fsLeaving = true;
+  try { const pr = (document.exitFullscreen || document.webkitExitFullscreen).call(document); if (pr && pr.catch) pr.catch(() => {}); } catch {}
+}
+function setFsAuto(on){
+  fsAuto = on;
+  try { localStorage.setItem(FS_KEY, on ? "1" : "0"); } catch {}
+  if (on) enterFS(); else exitFS();
+}
+// Asked on pointerup (the press's activation still holds then, for a mouse too, and the page does
+// not resize between press and release).
+const fsDown = new Map();
+let fsMulti = false;
+document.addEventListener("pointerdown", (e) => { if (!fsDown.size) fsMulti = false; else fsMulti = true; fsDown.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp }); }, true);
+const fsUp = (e) => {
+  const d = fsDown.get(e.pointerId);
+  fsDown.delete(e.pointerId);
+  if (e.type !== "pointerup" || !d || fsMulti || fsDown.size || !fsAuto || !fsArmed || fsOn() || !fsCan()) return;
+  if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 12 || e.timeStamp - d.t > 600) return;  // a drag / a hold
+  if (e.target.closest && e.target.closest("label, input, textarea, select, [contenteditable], a[href], .sheet, [data-nofs]")) return;
+  enterFS();
+};
+document.addEventListener("pointerup", fsUp, true);
+document.addEventListener("pointercancel", fsUp, true);
+
 async function renderHome(){
+  fsArm();  // a new screen: auto full screen may ask again
   document.title = "Sight Review";
   openRow = null;
   document.querySelectorAll("body > .item.ghost").forEach((g) => g.remove());  // a drag cut short by this render
@@ -405,10 +465,22 @@ async function renderHome(){
   (all.length ? opens : mini).remove();
   mini.hidden = opens.hidden = false;
   if (!all.length){ list.appendChild(el("p", "empty", "No reviews yet. Open a picture or a video to start one, or open a .srev file someone sent you.")); return; }
-  const hidden = hiddenKeys(), metas = orderReviews(all).filter((m) => !hidden.has(m.key));
+  const hidden = hiddenKeys(), groups = tidyGroups(all.map((m) => m.key)), byKey = new Map(all.map((m) => [m.key, m]));
+  const inGroup = new Set(groups.flatMap((g) => g.keys));
+  // The list's entries: reviews on their own and groups (each placed as one, "g:<id>").
+  const entries = all.filter((m) => !inGroup.has(m.key)).map((m) => ({ key: m.key, opened: m.opened, m }))
+    .concat(groups.map((g) => ({ key: "g:" + g.id, opened: Math.max(...g.keys.map((k) => byKey.get(k).opened || 0)), g })));
   list.appendChild(el("h2", "", "Reviews"));
-  metas.forEach((m) => list.appendChild(reviewRow(m)));
-  const nh = all.length - metas.length;
+  let shown = 0;
+  const ordered = orderReviews(entries);
+  // Saved as shown, every entry in its slot: group changes splice into the real places.
+  try { localStorage.setItem("sight-review:order", JSON.stringify(ordered.map((x) => x.key))); } catch {}
+  ordered.forEach((x) => {
+    if (x.m){ if (!hidden.has(x.key)){ list.appendChild(reviewRow(x.m)); shown++; } return; }
+    const ms = x.g.keys.map((k) => byKey.get(k)).filter((m) => !hidden.has(m.key));
+    if (ms.length){ list.appendChild(groupRow(x.g, ms)); shown += ms.length; }
+  });
+  const nh = all.length - shown;
   if (nh){
     const f = el("p", "foot");
     f.appendChild(document.createTextNode(`${nh} hidden for now · `));
@@ -416,8 +488,8 @@ async function renderHome(){
     list.appendChild(f);
   }
 }
-// The list's order is the user's (press, hold, drag): `sight-review:order` keeps the keys in order;
-// reviews not in it yet (new ones) come first, newest opened first.
+// The list's order is the user's (press, hold, drag): `sight-review:order` keeps the keys in order
+// (a group as "g:<id>"); reviews not in it yet (new ones) come first, newest opened first.
 function loadOrder(){
   let order = [];
   try { order = JSON.parse(localStorage.getItem("sight-review:order")); } catch {}
@@ -438,27 +510,131 @@ function saveOrder(shown){
   const prev = loadOrder(), vis = new Set(shown), hid = hiddenKeys(), q = shown.slice(), out = [];
   const fresh = shown.filter((k) => !prev.includes(k)).length;
   for (let i = 0; i < fresh; i++) out.push(q.shift());
-  prev.forEach((k) => { if (vis.has(k)) out.push(q.shift()); else if (hid.has(k)) out.push(k); });
+  prev.forEach((k) => { if (vis.has(k)) out.push(q.shift()); else if (hid.has(k) || k.startsWith("g:")) out.push(k); });
   out.push(...q);
   try { localStorage.setItem("sight-review:order", JSON.stringify(out)); } catch {}
 }
 // "Hide for now": until the app is closed (sessionStorage), or *Show* under the list.
 function hiddenKeys(){ try { return new Set(JSON.parse(sessionStorage.getItem("sight-review:hidden")) || []); } catch { return new Set(); } }
 function setHidden(set){ try { sessionStorage.setItem("sight-review:hidden", JSON.stringify([...set])); } catch {} }
+// Groups of reviews (a review held and let go on another one): `sight-review:groups` =
+// [{id, name, keys (in order), open}]. A review is in one group at most; a group of fewer than two
+// reviews that still exist dissolves (the one left goes back to the list in the group's place).
+function loadGroups(){
+  let g = [];
+  try { g = JSON.parse(localStorage.getItem("sight-review:groups")); } catch {}
+  return Array.isArray(g) ? g.filter((x) => x && typeof x.id === "string" && Array.isArray(x.keys)) : [];
+}
+function saveGroups(gs){ try { localStorage.setItem("sight-review:groups", JSON.stringify(gs)); } catch {} }
+function tidyGroups(keys){
+  const have = new Set(keys), seen = new Set(), out = [];
+  let changed = false;
+  const order = loadOrder();
+  loadGroups().forEach((g) => {
+    const ks = g.keys.filter((k) => typeof k === "string" && have.has(k) && !seen.has(k));
+    if (ks.length !== g.keys.length) changed = true;
+    if (ks.length < 2){
+      changed = true;
+      const i = order.indexOf("g:" + g.id);
+      if (i >= 0) order.splice(i, 1, ...ks);
+      return;
+    }
+    ks.forEach((k) => seen.add(k));
+    out.push(Object.assign({}, g, { keys: ks }));
+  });
+  if (changed){ saveGroups(out); try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch {} }
+  return out;
+}
+// The name a new group gets: what the two names start with (shot_v001 + shot_v002 → "shot"), or "Group".
+function groupName(a, b){
+  a = String(a || ""); b = String(b || "");
+  let i = 0;
+  while (i < a.length && i < b.length && a[i].toLowerCase() === b[i].toLowerCase()) i++;
+  let p = a.slice(0, i);
+  // Cut mid-word ("clip.m" of clip.mp4 / clip.mov, "shot_v00" of shot_v001 / v002): back to the word's start.
+  if (i < a.length && /[a-z]/i.test(a[i]) && /\w$/.test(p)) p = p.replace(/[^\s._-]*$/, "");
+  p = p.replace(/[\s._-]*(v\d+|\d+)?[\s._-]*$/i, "").trim();
+  return p.length >= 2 ? p : "Group";
+}
+// Drops review `key` (a top-level row) onto `on` (a review → a new group in its place; a group →
+// one more in it, last).
+function groupOnto(key, on, names){
+  const gs = loadGroups(), order = loadOrder();
+  if (on.startsWith("g:")){
+    const g = gs.find((x) => "g:" + x.id === on);
+    if (!g) return;
+    g.keys = g.keys.filter((k) => k !== key).concat(key);
+    saveGroups(gs);
+    toast(`Added to “${g.name}”`, 1600);
+  } else {
+    const g = { id: RC.uid(), name: groupName(names.get(on), names.get(key)), keys: [on, key], open: true };
+    gs.push(g);
+    saveGroups(gs);
+    const i = order.indexOf(on);
+    if (i >= 0) order[i] = "g:" + g.id; else order.unshift("g:" + g.id);
+    try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch {}
+    toast(`Grouped as “${g.name}” — hold it to rename`, 2200);
+  }
+  const at = order.indexOf(key);
+  if (at >= 0){ order.splice(at, 1); try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch {} }
+}
+function ungroupOne(key){
+  const gs = loadGroups(), g = gs.find((x) => x.keys.includes(key));
+  if (!g) return;
+  g.keys = g.keys.filter((k) => k !== key);
+  saveGroups(gs);
+  // Back in the list right after the group.
+  const order = loadOrder(), i = order.indexOf("g:" + g.id);
+  const o2 = order.filter((k) => k !== key);
+  o2.splice(i >= 0 ? Math.min(i + 1, o2.length) : 0, 0, key);
+  try { localStorage.setItem("sight-review:order", JSON.stringify(o2)); } catch {}
+}
+function groupMenu(g){
+  menu(g.name, [
+    { label: g.open ? "Close the group" : "Open the group", fn: () => setGroup(g.id, { open: !g.open }) },
+    { label: "Rename…", fn: async () => { const v = await askText({ title: "Group name", value: g.name }); if (v != null && v.trim()) setGroup(g.id, { name: v.trim() }); } },
+    { label: "Ungroup", fn: () => {
+      const all = loadGroups(), cur = all.find((x) => x.id === g.id) || g, gs = all.filter((x) => x.id !== g.id), order = loadOrder(), i = order.indexOf("g:" + g.id);
+      if (i >= 0) order.splice(i, 1, ...cur.keys); else order.unshift(...cur.keys);
+      saveGroups(gs);
+      try { localStorage.setItem("sight-review:order", JSON.stringify(order)); } catch {}
+      renderHome();
+    } },
+  ]);
+}
+function setGroup(id, ch, quiet){
+  const gs = loadGroups(), g = gs.find((x) => x.id === id);
+  if (!g) return;
+  Object.assign(g, ch);
+  saveGroups(gs);
+  if (!quiet) renderHome();
+}
+// A group in the list: its header (a tap opens / closes it; press, hold and drag moves the whole
+// group; a hold let go: its menu) over its reviews, which move among themselves.
+function groupRow(g, ms){
+  const row = reviewRow(null, { g, ms });
+  const gm = el("div", "gm");
+  ms.forEach((m) => gm.appendChild(reviewRow(m)));
+  row.appendChild(gm);
+  return row;
+}
 const TRASH = '<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>';
 // One review in the list: the card over two actions it uncovers — swipe left: the bin (delete),
 // swipe right: the eye (hide for now); a tap on the uncovered action does it, a tap on the card or
 // elsewhere closes it, a drag the other way closes it too. Press and hold, then drag up / down:
 // moves the review in the list (let go without moving: its menu). A mouse: drag sideways = swipe,
 // up / down = move. The pointer's end is heard on window (a mouse may leave the card before the
-// hold lifts it; a re-render may detach it).
+// hold lifts it; a re-render may detach it). A review on its own, moved and held over the middle
+// of another one (or a group's header), goes into a group with it when let go there.
+// grp: {g, ms} — this is a group's header row instead (no swipe; a tap opens / closes it).
 let openRow = null;
 function closeOpenRow(except){ if (openRow && openRow !== except){ openRow.shut(); } }
-function reviewRow(m){
+function reviewRow(m, grp){
+  if (grp) return groupHead(grp);
   const row = el("div", "row"), it = btn("item", null, null), th = el("span", "th"), tx = el("span", "tx");
   const hideB = btn("sw hide", null, () => { const h = hiddenKeys(); h.add(m.key); setHidden(h); openRow = null; renderHome(); toast("Hidden for now — Show under the list brings it back", 2400); }, "Hide for now");
   hideB.innerHTML = ico("eyeoff", 22);
-  const delB = btn("sw del", null, () => { shut(); deleteReview(m); }, "Delete this review");
+  const delB = btn("sw del", null, () => { row._shut(); deleteReview(m); }, "Delete this review");
   delB.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TRASH}</svg>`;
   row.appendChild(hideB); row.appendChild(delB); row.appendChild(it);
   row.dataset.key = m.key;
@@ -473,6 +649,28 @@ function reviewRow(m){
   tx.appendChild(info);
   tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : " picture")));
   it.appendChild(th); it.appendChild(tx);
+  return rowGestures(row, it, { open: () => openReview(m.key, null), menu: () => reviewMenu(m), name: m.asset.name });
+}
+// A group's header: up to four of its pictures, the name, how many reviews and their notes.
+function groupHead({ g, ms }){
+  const row = el("div", "row group" + (g.open ? "" : " shut")), it = btn("item", null, null), th = el("span", "th four"), tx = el("span", "tx");
+  row.dataset.key = "g:" + g.id;
+  ms.slice(0, 4).forEach((m) => { const q = el("i"); if (m.thumb) q.style.backgroundImage = `url("${m.thumb}")`; th.appendChild(q); });
+  tx.appendChild(el("b", "", g.name));
+  const n = ms.reduce((a, m) => a + ((m.counts && m.counts.notes) || 0), 0), open = ms.reduce((a, m) => a + ((m.counts && m.counts.open) || 0), 0);
+  const info = el("span");
+  if (open) info.appendChild(el("i", "dot open", String(open)));
+  info.appendChild(document.createTextNode(` ${ms.length} review${ms.length > 1 ? "s" : ""} · ${n ? n + " note" + (n > 1 ? "s" : "") : "no notes"}`));
+  tx.appendChild(info);
+  const chev = el("span", "chev"); chev.innerHTML = ico("back", 18);
+  it.appendChild(th); it.appendChild(tx); it.appendChild(chev);
+  row.appendChild(it);
+  return rowGestures(row, it, { group: true, name: g.name,
+    open: () => { g.open = !g.open; row.classList.toggle("shut", !g.open); setGroup(g.id, { open: g.open }, true); },
+    menu: () => groupMenu(g) });
+}
+// Swipe / hold-to-move / tap / menu on a list row (a review, or a group's header: o.group).
+function rowGestures(row, it, o){
   const W = 84;  // how far a swiped card stays open
   let off = 0;
   const place = (x, anim) => {
@@ -488,6 +686,7 @@ function reviewRow(m){
   // moment later when none comes) — opened on pointerup, the click would land on the sheet's
   // backdrop and close it at once.
   let st = null, lp = null, mode = null, eatUntil = 0, ghost = null, scrollT = null, menuT = null;
+  row._shut = shut;
   const lift = () => {
     if (!st || mode) return;
     if (st.mouse && st.buttons === 0){ end(); return; }  // the button went up off the card
@@ -500,20 +699,34 @@ function reviewRow(m){
     st.gy = r.top - st.y;
     document.body.appendChild(ghost);
     row.classList.add("lifted");
+    if (o.group) row.classList.add("folded");  // a group moves as its header (its reviews tucked in)
     try { it.setPointerCapture(st.id); } catch {}  // a mouse held still, then moved off the card
     // The rows' places when lifted (page px); while moving, the DOM stays as it is (moving the held
     // card's row would drop its pointer capture) — the other rows slide out of the way instead.
     st.rows = [...row.parentNode.querySelectorAll(":scope > .row")];
     st.idx = st.rows.indexOf(row);
     st.mids = st.rows.map((x) => { const b = x.getBoundingClientRect(); return b.top + scrollY + b.height / 2; });
-    st.H = st.rows.length > 1 ? Math.abs(st.mids[1] - st.mids[0]) : row.offsetHeight + 8;
+    st.H = row.offsetHeight + 8;  // the others slide by the held row's height (+ the gap)
     st.to = st.idx;
+    // A review on its own in the list can go onto another row (a group with it / into that group).
+    st.canDrop = !o.group && !!row.parentNode && row.parentNode.classList.contains("list");
   };
   // While moving: the place the ghost's middle has reached; the rows between slide by one; near
   // the screen's top / bottom the page scrolls.
   const moveTo = (y) => {
     ghost.style.top = y + st.gy + "px";
     const mid = y + st.gy + it.offsetHeight / 2 + scrollY;
+    // Over the middle part of another row (where it is drawn now): that row is the drop target, the
+    // rows stay where they are.
+    let drop = null;
+    if (st.canDrop) st.rows.forEach((x) => {
+      if (x === row) return;
+      const b = (x.querySelector(":scope > .item") || x).getBoundingClientRect(), c = b.top + scrollY + b.height / 2;
+      if (Math.abs(c - mid) < b.height * 0.26) drop = x;
+    });
+    if (st.drop !== drop){ if (st.drop) st.drop.classList.remove("drop"); st.drop = drop; if (drop) drop.classList.add("drop"); }
+    st.lastY = y;
+    if (drop){ clearInterval(scrollT); return; }
     let to = 0;
     st.rows.forEach((x, i) => { if (i !== st.idx && st.mids[i] < mid) to++; });
     st.to = to;
@@ -521,9 +734,8 @@ function reviewRow(m){
       let k = i === st.idx ? to : i < st.idx ? i : i - 1;  // its index among the others
       if (i !== st.idx && k >= to) k++;
       x.style.transition = "transform .15s";
-      x.style.transform = k !== i ? `translateY(${(k - i) * st.H}px)` : "";
+      x.style.transform = i === st.idx || k === i ? "" : `translateY(${k > i ? st.H : -st.H}px)`;
     });
-    st.lastY = y;
     clearInterval(scrollT);
     const edge = y < 90 ? -1 : y > innerHeight - 90 ? 1 : 0;
     if (edge) scrollT = setInterval(() => { if (!st || !ghost){ clearInterval(scrollT); return; } scrollBy(0, edge * 8); moveTo(st.lastY); }, 16);
@@ -535,6 +747,17 @@ function reviewRow(m){
     if (ghost) ghost.remove();
     ghost = null;
     let movedRow = false;
+    if (st && st.drop){
+      // Let go on another row: grouped with it (the list is drawn again).
+      st.drop.classList.remove("drop");
+      const on = st.drop.dataset.key, key = row.dataset.key;
+      st.rows.forEach((x) => { x.style.transition = ""; x.style.transform = ""; });
+      row.classList.remove("lifted", "folded");
+      if (mode) eatUntil = performance.now() + 600;
+      st = null; mode = null;
+      if (keep && on && key){ groupOnto(key, on, rowNames()); renderHome(); }
+      return false;
+    }
     if (st && st.rows){
       st.rows.forEach((x) => { x.style.transition = ""; x.style.transform = ""; });
       const others = st.rows.filter((x) => x !== row), list = row.parentNode;
@@ -543,7 +766,7 @@ function reviewRow(m){
         movedRow = true;
       }
     }
-    row.classList.remove("lifted");
+    row.classList.remove("lifted", "folded");
     if (mode) eatUntil = performance.now() + 600;
     st = null; mode = null;
     return movedRow;
@@ -561,10 +784,20 @@ function reviewRow(m){
     }
     if (m0 === "move" && !moved){
       end(false);
-      menuT = setTimeout(() => { menuT = null; if (row.isConnected) reviewMenu(m); }, 350);
+      menuT = setTimeout(() => { menuT = null; if (row.isConnected) o.menu(); }, 350);
       return;
     }
-    if (end(m0 === "move") && row.parentNode) saveOrder([...row.parentNode.querySelectorAll(":scope > .row")].map((x) => x.dataset.key));
+    if (end(m0 === "move") && row.parentNode){
+      const box = row.parentNode, keys = [...box.querySelectorAll(":scope > .row")].map((x) => x.dataset.key);
+      // Inside a group: the group's own order; else the list's.
+      const gr = box.classList.contains("gm") && box.parentNode.dataset.key;
+      if (gr){
+        // Into the slots the shown members had: hidden ones keep theirs.
+        const id = gr.slice(2), g = loadGroups().find((x) => x.id === id);
+        if (g){ const q = keys.slice(), vis = new Set(keys); setGroup(id, { keys: g.keys.map((k) => vis.has(k) ? q.shift() : k).concat(q) }, true); }
+      }
+      else saveOrder(keys);
+    }
   };
   const onCancel = (e) => { if (!st || e.pointerId !== st.id) return; if (mode === "swipe") shut(); end(false); };
   let lastType = "mouse", downAt = 0;
@@ -584,7 +817,7 @@ function reviewRow(m){
     if (!mode){
       if (!far) return;
       clearTimeout(lp);
-      if (Math.abs(dx) > Math.abs(dy)){ mode = "swipe"; try { it.setPointerCapture(e.pointerId); } catch {} }
+      if (Math.abs(dx) > Math.abs(dy)){ if (o.group){ end(); eatUntil = performance.now() + 350; return; } mode = "swipe"; try { it.setPointerCapture(e.pointerId); } catch {} }
       else if (st.mouse) lift();
       else { end(); return; }  // a finger moving up / down before the hold: the list scrolls
     }
@@ -603,21 +836,29 @@ function reviewRow(m){
   it.addEventListener("touchmove", (e) => { if (mode) e.preventDefault(); }, { passive: false });
   // A tap opens the review — or, on a card swiped open, closes it.
   it.addEventListener("click", (e) => {
-    if (menuT){ clearTimeout(menuT); menuT = null; e.preventDefault(); reviewMenu(m); return; }
+    if (menuT){ clearTimeout(menuT); menuT = null; e.preventDefault(); o.menu(); return; }
     if (performance.now() < eatUntil){ e.stopImmediatePropagation(); e.preventDefault(); eatUntil = 0; return; }
     if (off){ shut(); return; }
-    openReview(m.key, null);
+    o.open();
   });
   // Right click / the menu key: the menu. A touch's long press is the lift above, not a menu.
   it.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     if (st || mode || menuT || (lastType !== "mouse" && e.button !== 2 && performance.now() - downAt < 1500)) return;
-    reviewMenu(m);
+    o.menu();
   });
   return row;
 }
+// Each row's review name by key (a new group is named after the two).
+function rowNames(){
+  const out = new Map();
+  document.querySelectorAll(".list .row[data-key]").forEach((r) => { const b = r.querySelector(":scope > .item .tx b"); if (b) out.set(r.dataset.key, b.textContent); });
+  return out;
+}
 function reviewMenu(m){
+  const inG = loadGroups().some((g) => g.keys.includes(m.key));
   menu(m.asset.name, [{ label: "Open", fn: () => openReview(m.key, null) },
+    inG ? { label: "Take out of the group", fn: () => { ungroupOne(m.key); renderHome(); } } : null,
     { label: "Hide for now", fn: () => { const h = hiddenKeys(); h.add(m.key); setHidden(h); renderHome(); } },
     { label: "Delete this review…", danger: true, fn: () => deleteReview(m) }]);
 }
@@ -656,6 +897,14 @@ async function settings(){
     Object.entries(THEMES).forEach(([k, label]) => { const b = btn("", label, () => { setTheme(k); paintTh(); }); b.dataset.t = k; th.appendChild(b); });
     sh.appendChild(el("b", "lab", "Theme"));
     sh.appendChild(th); paintTh();
+    sh.appendChild(el("b", "lab", "Full screen"));
+    if (fsCan()){
+      const fs = el("div", "seg fs");
+      const paintFs = () => fs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", (b.dataset.v === "1") === fsAuto));
+      [["1", "Auto"], ["0", "Off"]].forEach(([v, label]) => { const b = btn("", label, () => { setFsAuto(v === "1"); paintFs(); }); b.dataset.v = v; fs.appendChild(b); });
+      sh.appendChild(fs); paintFs();
+      sh.appendChild(el("p", "", "Auto: the app goes full screen at your first tap, and again after you leave it."));
+    } else sh.appendChild(el("p", "", isStandalone() ? "The installed app is full screen already." : isIOS() ? "Safari on iPhone / iPad does not keep a page full screen. Add the app to the Home Screen: it then runs full screen." : "This browser cannot show a page full screen. Add the app to the Home Screen: it then runs full screen."));
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
     a.appendChild(btn("btn", "Change name", async () => { close(); await setName(); }));
@@ -686,6 +935,7 @@ function closeReview(){
 let openSeq = 0;
 async function openReview(key, file, fromRoute){
   const seq = ++openSeq;
+  fsArm();
   await flush();
   const meta = await DB.get("reviews", key);
   if (seq !== openSeq) return;
@@ -702,7 +952,7 @@ async function openReview(key, file, fromRoute){
   if (seq !== openSeq) return;
   closeReview();
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
-    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0() };
+    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean" };
   if (file) await bindFile(rv, file);
   if (R !== rv) return;
   meta.opened = now();
@@ -758,9 +1008,10 @@ async function bindFile(rv, file){
     const info = a.kind === "image" ? await probeImage(rv.url) : await probeVideo(rv.url, null);
     if (info.w && info.h){ a.width = info.w; a.height = info.h; }
     if (a.kind === "video") a.duration = a.duration || info.duration || null;
-    if (a.kind === "video" && !rv.fpsKnown){
+    if (a.kind === "video" && (!rv.fpsKnown || rv.meta.audio == null)){
       const f = await videoFps(file);
-      if (f){ rv.fps = f.fps; rv.fpsKnown = true; rv.meta.fps = f.fps; }
+      if (f && !rv.fpsKnown){ rv.fps = f.fps; rv.fpsKnown = true; rv.meta.fps = f.fps; }
+      if (f && typeof f.audio === "boolean" && R === rv) setAudio(f.audio);
     }
   } catch (e){ console.warn(e); }
   if (R !== rv) return;
@@ -778,7 +1029,7 @@ async function bindFile(rv, file){
 
 // ---- review screen -----------------------------------------------------------------------------
 // The player fills the screen, with the review's controls in a header over the picture and the
-// transport over its foot (no fill under either). Under it the thin Notes Panel bar: a tap (or a
+// transport over its foot (on the canvas' floating bar, .rd-panel). Under it the thin Notes Panel bar: a tap (or a
 // swipe up, on it or on the picture) slides the player, same size, up off the screen and the notes
 // in; the bar then holds the status filters, and pulling the list down from its top note goes back
 // to the player (bindPanelPull). The new-note bar shows only with the panel open, or while a new
@@ -790,7 +1041,7 @@ function renderReview(){
   document.title = a.name + " — Sight Review";
   root.textContent = ""; root.className = "review" + (R.panel ? " open" : "");
   const slide = el("div", "slide"), player = el("div", "player"), stage = el("div", "stage");
-  const hdr = el("header", "hdr"), r1 = el("div", "row"), r2 = el("div", "row"), ttl = el("div", "ttl");
+  const hdr = el("header", "hdr rd-panel"), r1 = el("div", "row"), r2 = el("div", "row"), ttl = el("div", "ttl");
   ttl.appendChild(el("b", "", a.name));
   const sub = el("span");
   ttl.appendChild(sub);
@@ -798,7 +1049,7 @@ function renderReview(){
   r1.appendChild(ttl);
   r1.appendChild(ibtn("more", "Export and more", reviewActions));
   hdr.appendChild(r1); hdr.appendChild(r2);
-  const tp = el("div", "tp");
+  const tp = el("div", "tp rd-panel");
   player.appendChild(stage); player.appendChild(hdr); player.appendChild(tp);
   const pbar = el("div", "pbar"), plist = el("div", "plist"), keep = el("div", "keep"), notes = el("div", "notes");
   plist.appendChild(keep); plist.appendChild(notes);
@@ -893,9 +1144,12 @@ function stageDrawings(){
   if (R.hide) return [];
   const v = R.video, at = kindNow() === "video" ? (v ? { t: R.scrubT != null ? R.scrubT : v.currentTime, fps: R.fps } : null) : null;
   if (kindNow() === "video" && !at) return [];
-  if (R.newOpen){
-    const d = R.drafts["+new"];
-    return drawFrames(d && d.draw).filter((x) => !at || RC.ctxVisible(x.frame.ctx, at)).flatMap((x) => x.items);
+  if (R.newOpen || R.replyTo){
+    const d = R.drafts[composeKey()];
+    const mine = drawFrames(d && d.draw).filter((x) => !at || RC.ctxVisible(x.frame.ctx, at)).flatMap((x) => x.items);
+    // A reply: over the note's own drawings (and its earlier replies'), the rest of the review off.
+    const theirs = R.replyTo ? M.drawings(R.rows).filter((r) => r.data.note === R.replyTo && (!at || RC.ctxVisible(r.data.ctx, at))) : [];
+    return theirs.concat(mine);
   }
   const all = M.drawings(R.rows);
   return at ? all.filter((it) => RC.ctxVisible(it.data.ctx, at)) : all;
@@ -919,7 +1173,7 @@ function applyStageView(){
   if (!els || !els.stage) return;
   const st = els.stage, W = st.clientWidth, H = st.clientHeight, vw = viewOf();
   st.querySelectorAll(":scope > .sv > img, :scope > .sv > video, :scope > .sv > svg").forEach((n) => turnEl(n, W, H, vw));
-  if (els.penB) els.penB.style.bottom = ((els.tp && !els.tp.hidden ? els.tp.offsetHeight : 0) + 14) + "px";
+  if (els.penB) els.penB.style.bottom = ((els.tp && !els.tp.hidden ? els.tp.offsetHeight + 8 : 0) + 14) + "px";
   applyPlayerView();
 }
 function setView(vw){
@@ -961,6 +1215,7 @@ function buildStage(){
       const v = el("video");
       v.playsInline = true; v.setAttribute("playsinline", ""); v.preload = "auto"; v.src = R.url;
       R.video = v;
+      applyVol(v); v.playbackRate = v.defaultPlaybackRate = R.rate || 1;
       // A cached frame shown over the player while a seek is on its way (ScrubCache).
       const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
       els.scrubImg = si;
@@ -972,6 +1227,9 @@ function buildStage(){
         const aa = R.meta.asset;
         if (!aa.width && v.videoWidth){ aa.width = v.videoWidth; aa.height = v.videoHeight; }
         if (!aa.duration && Number.isFinite(v.duration)) aa.duration = v.duration;
+        // Sound: Safari lists the tracks, Firefox says; Chrome only once it has decoded some (timeupdate).
+        if (v.audioTracks && typeof v.audioTracks.length === "number") setAudio(v.audioTracks.length > 0);
+        else if (typeof v.mozHasAudio === "boolean") setAudio(v.mozHasAudio);
         paintTime(); paintMarkers(); paintOverlay(); applyStageView();
         const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
         if (!rv.scrub && d && rv.url && v.src === rv.url){  // not a player whose file was just swapped (rebind)
@@ -981,13 +1239,26 @@ function buildStage(){
         }
       });
       v.addEventListener("error", () => toast("This device cannot play this video (format or codec).", 5000));
-      ["timeupdate", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (R && R.newOpen && els.where) els.where(); }));
+      ["timeupdate", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (composing() && els.where) els.where(); }));
+      // Chrome: no sound decoded after a quarter second of (unmuted) play = the clip has none — a
+      // guess, taken back as soon as some sound is decoded after all (the container's word, from
+      // mp4.js / Safari / Firefox, is final: audioSure).
+      let lastT = null;
+      v.addEventListener("timeupdate", () => {
+        if (!R || R.video !== v || R.audioSure || R.hasAudio === true || !("webkitAudioDecodedByteCount" in v)) return;
+        const t = v.currentTime, dt = lastT == null ? 0 : t - lastT;
+        lastT = v.paused ? null : t;
+        if (v.webkitAudioDecodedByteCount > 0){ setAudio(true); return; }
+        if (v.paused || v.muted) return;
+        if (dt > 0 && dt < 0.5) R.playedFor = (R.playedFor || 0) + dt;
+        if (R.playedFor > 0.25 && R.hasAudio == null) setAudio(false, true);
+      });
       v.addEventListener("seeked", () => {
         if (!R || R.video !== v) return;
         pumpSeek(v);
         if (R.want == null && !R.dragging && !v.seeking) settle(v);
         else if (R.want == null && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideWhenShown(v);  // the player has caught up
-        if (R.newOpen && els.where) els.where();
+        if (composing() && els.where) els.where();
       });
       // The big play button only until the clip is first played or moved: it would cover the frame.
       // (A seek still landing keeps the cached picture until its frame is shown: settle on "seeked".)
@@ -1030,6 +1301,8 @@ async function rebind(file){
   if (rv.grab) rv.grab.close();
   if (rv.scrub) rv.scrub.close();
   rv.grab = null; rv.scrub = null; rv.cacheF = 0; rv.want = null; rv.scrubT = null;
+  // Another file: whether it has sound is learnt again.
+  delete rv.meta.audio; rv.hasAudio = null; rv.audioSure = false; rv.playedFor = 0;
   const old = rv.frames.get("img");
   if (old){ URL.revokeObjectURL(old.url); rv.frames.delete("img"); }
   await DB.del("frames", rv.meta.key + "|img").catch(() => {});
@@ -1093,10 +1366,10 @@ function seekTo(t){
   if (!v.paused) v.pause();
   t = snapT(t);
   R.scrubT = t; R.want = t;
+  if (R.drawS) R.drawS.moved(t);  // first: a seek that lands at once (same frame) settles the canvas
   showCached(t);
   pumpSeek(v);
   paintTime(); paintOverlay(); paintCurrent();
-  if (R.drawS) R.drawS.moved(t);
 }
 function pumpSeek(v){
   if (R.want == null || v.seeking) return;
@@ -1135,8 +1408,17 @@ function step(n){
 // timeline's snap then go only to those frames too.
 function markerList(){
   const out = [], seen = new Set();
-  const mine = R.drawS ? R.drawS.times() : drawFrames(R.drafts["+new"] && R.drafts["+new"].draw).map((x) => x.frame.ctx && x.frame.ctx.t).filter((t) => t != null);
+  const d = R.drafts[composeKey()];
+  const mine = R.drawS ? R.drawS.times() : drawFrames(d && d.draw).map((x) => x.frame.ctx && x.frame.ctx.t).filter((t) => t != null);
   if (R.drawS || R.newOpen) return mine.map((t) => ({ t, cls: "mine" }));
+  // A reply over the player: the note's frames (its tick, dots for the frames drawn on) + the reply's.
+  const rn = R.replyTo && R.rows.find((r) => r.id === R.replyTo && r.deleted_at == null);
+  if (rn){
+    const c0 = rn.data.ctx && rn.data.ctx.t;
+    threadFrames(rn).forEach((t) => { seen.add(r3(t)); out.push({ t, cls: c0 != null && r3(t) === r3(c0) ? M.noteState(rn) : "dr" }); });
+    mine.forEach((t) => out.push({ t, cls: "mine" }));
+    return out;
+  }
   M.notesSorted(R.rows, "video").forEach((n) => {
     const t = n.data.ctx && n.data.ctx.t;
     if (t == null) return;
@@ -1163,7 +1445,15 @@ const TPS = new Set();
 function makeTransport(){
   const T = { el: el("div", "tpi") }, row = el("div", "row");
   T.tc = el("span", "tc");
-  [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.tc,
+  // Left of the time: the frame rate it plays at (drag up / down = speed, tap = the nearest common
+  // rate, hold = the clip's own); right of the frame number: the sound (drag = volume, tap = full;
+  // grey when the clip has none).
+  T.fps = btn("fps", null, null, "Playback speed: drag up / down · tap: the nearest common rate · hold: the clip's own");
+  vdrag(T.fps, { begin: () => { T.r0 = rateNow(); }, move: (dy) => setRate(T.r0 * Math.pow(2, -dy / 110)), tap: snapRate, hold: () => setRate(1) });
+  T.snd = btn("ib snd", null, null, "Volume: drag up / down · tap: full");
+  vdrag(T.snd, { begin: () => { T.v0 = volNow(); }, move: (dy) => { if (R && R.hasAudio !== false) setVol(T.v0 - dy / 140); },
+    tap: () => { if (R && R.hasAudio === false) toast("This clip has no sound", 1600); else setVol(1); } });
+  [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.fps, T.tc, T.snd,
     ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next marker", () => jumpNote(1))].forEach((b) => row.appendChild(b));
   const tl = el("div", "tl"), trk = el("div", "trk");
   T.cache = el("i", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
@@ -1205,8 +1495,118 @@ function paintTransport(T){
   const v = R && R.video;
   if (!v) return;
   const t = R.scrubT != null ? R.scrubT : v.currentTime, d = durOf();
-  T.tc.textContent = `${fmtTime(t, R.fps)} · f ${Math.round(t * R.fps)}${R.fpsKnown ? "" : " (≈" + Math.round(R.fps) + " fps)"}`;
+  T.tc.textContent = `${fmtTime(t, R.fps)} · f ${Math.round(t * R.fps)}`;
+  paintRate(T); paintSnd(T);
   T.ph.style.left = (d ? Math.min(100, Math.max(0, t / d * 100)) : 0).toFixed(3) + "%";
+}
+// ---- speed and sound -------------------------------------------------------------------------------
+// A vertical drag control on a small button: begin(), move(dy since the press), tap(), hold() (½ s
+// without moving). It keeps the pointer to itself (the stage / canvas under it do not see it).
+function vdrag(b, o){
+  let st = null;
+  b.style.touchAction = "none";
+  b.addEventListener("contextmenu", (e) => e.preventDefault());  // a long press is the hold, not a menu
+  b.addEventListener("pointerdown", (e) => {
+    if (st || (e.pointerType === "mouse" && e.button !== 0)) return;  // one finger at a time
+    e.preventDefault(); e.stopPropagation();
+    st = { id: e.pointerId, x: e.clientX, y: e.clientY, drag: false, held: false, far: false };
+    try { b.setPointerCapture(e.pointerId); } catch {}
+    st.ht = setTimeout(() => { if (st && !st.drag){ st.held = true; if (o.hold) o.hold(); } }, 500);
+    if (o.begin) o.begin();
+  });
+  b.addEventListener("pointermove", (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    const dy = e.clientY - st.y;
+    if (Math.hypot(e.clientX - st.x, dy) > 8){ st.far = true; if (!st.drag) clearTimeout(st.ht); }  // a slide is no tap / hold
+    if (!st.drag && Math.abs(dy) > 6 && !st.held){ st.drag = true; clearTimeout(st.ht); }
+    if (st.drag) o.move(dy);
+  });
+  const end = (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    clearTimeout(st.ht);
+    const s0 = st; st = null;
+    if (e.type === "pointerup" && !s0.drag && !s0.held && !s0.far && o.tap) o.tap();
+    if (s0.drag && o.end) o.end();
+  };
+  b.addEventListener("pointerup", end); b.addEventListener("pointercancel", end); b.addEventListener("lostpointercapture", end);
+  b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+}
+// Speed: the video's playbackRate (0.1…4), shown as the frame rate it plays at.
+const COMMON_FPS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 12.5, 15, 20, 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 72, 90, 100, 120];
+const rateNow = () => (R && R.video ? R.video.playbackRate : 1) || 1;
+function setRate(r){
+  if (!R || !R.video) return;
+  r = RC.clamp(r, 0.1, 4);
+  if (Math.abs(r - 1) < 0.004) r = 1;
+  R.rate = r;
+  R.video.playbackRate = R.video.defaultPlaybackRate = r;
+  TPS.forEach(paintRate);
+}
+// The common frame rate nearest to the one it plays at now (by ratio), within the speed range.
+function snapRate(){
+  if (!R || !R.video) return;
+  const f = R.fps * rateNow(), ok = COMMON_FPS.filter((c) => c / R.fps >= 0.1 && c / R.fps <= 4);
+  if (!ok.length) return;
+  const best = ok.reduce((a, c) => Math.abs(Math.log(c / f)) < Math.abs(Math.log(a / f)) ? c : a, ok[0]);
+  setRate(Math.abs(best - R.fps) / R.fps < 1e-3 ? 1 : best / R.fps);
+}
+const fmtFps = (f) => Math.abs(f - Math.round(f)) < 0.005 ? String(Math.round(f)) : f < 10 ? f.toFixed(2).replace(/0$/, "") : (Math.round(f * 100) / 100).toString();
+function paintRate(T){
+  if (!T.fps || !R) return;
+  const r = rateNow(), txt = (R.fpsKnown ? "" : "≈") + fmtFps(R.fps * r);
+  if (T.fps.textContent === txt) return;
+  T.fps.textContent = txt;
+  T.fps.classList.toggle("on", r !== 1);
+  T.fps.title = (r !== 1 ? `×${Math.round(r * 100) / 100} · ` : "") + "Playback speed: drag up / down · tap: the nearest common rate · hold: the clip's own";
+}
+// Sound: the level is the device's (localStorage), 0 = muted. iOS ignores a page's volume: there the
+// drag only mutes / unmutes (below / above half).
+const VOL_KEY = "sight-review:vol";
+let volLevel = 1, volWorks = null;
+try { const x = Number(localStorage.getItem(VOL_KEY)); if (localStorage.getItem(VOL_KEY) != null && x >= 0 && x <= 1) volLevel = x; } catch {}
+const volNow = () => volLevel;
+function applyVol(v){
+  if (volWorks == null){ try { v.volume = 0.5; volWorks = Math.abs(v.volume - 0.5) < 0.01; } catch { volWorks = false; } }
+  try { v.volume = volWorks ? volLevel : 1; } catch {}
+  v.muted = volLevel < 0.02;
+}
+function setVol(x){
+  x = RC.clamp(x, 0, 1);
+  if (volWorks === false) x = x < 0.5 ? 0 : 1;
+  volLevel = Math.round(x * 100) / 100;
+  try { localStorage.setItem(VOL_KEY, String(volLevel)); } catch {}
+  if (R && R.video) applyVol(R.video);
+  showVolBar();
+  TPS.forEach(paintSnd);
+}
+function setAudio(has, guess){
+  if (!R) return;
+  if (!guess) R.audioSure = true;
+  if (R.hasAudio === has) return;
+  R.hasAudio = has;
+  TPS.forEach(paintSnd);
+  if (guess) return;  // not stored: a guess is made again next time
+  if (R.meta.audio !== has){ R.meta.audio = has; putIfAlive(R, "reviews", R.meta); }
+  TPS.forEach(paintSnd);
+}
+function paintSnd(T){
+  if (!T.snd || !R) return;
+  const none = R.hasAudio === false, off = !none && volLevel < 0.02;
+  const name = none || off ? "sndoff" : "snd";
+  if (T.snd.dataset.ico !== name){ T.snd.innerHTML = ico(name, 20); T.snd.dataset.ico = name; }
+  if (T.snd.dataset.st === name + none + volLevel) return;
+  T.snd.dataset.st = name + none + volLevel;
+  T.snd.classList.toggle("none", none);
+  T.snd.title = none ? "This clip has no sound" : `Volume ${Math.round(volLevel * 100)} %: drag up / down · tap: full`;
+}
+// The level while it is set: a thin bar at the screen's left edge, gone a moment after.
+let volBar = null, volBarT = null;
+function showVolBar(){
+  if (!volBar){ volBar = el("div", "volbar"); volBar.appendChild(el("i")); document.body.appendChild(volBar); }
+  volBar.firstChild.style.height = (volLevel * 100).toFixed(1) + "%";
+  volBar.classList.add("on");
+  clearTimeout(volBarT);
+  volBarT = setTimeout(() => { if (volBar) volBar.classList.remove("on"); }, 900);
 }
 function paintMarks(T){
   const d = durOf();
@@ -1414,7 +1814,7 @@ function loop(){
   let last = null;
   const tick = (_, meta) => {
     if (!R || R.video !== v || v.paused) return;
-    if (meta && !R.fpsKnown){
+    if (meta && !R.fpsKnown && v.playbackRate === 1){  // faster, frames are dropped: the gaps lie
       if (last && meta.presentedFrames === last.presentedFrames + 1){
         const g = meta.mediaTime - last.mediaTime;
         if (g > 0.004 && g < 0.2) gaps.push(g);
@@ -1501,7 +1901,10 @@ function renderNotes(){
 function paintCurrent(){
   if (!els || !R || !R.video) return;
   const t = R.scrubT != null ? R.scrubT : R.video.currentTime, fd = frameDur();
-  els.notes.querySelectorAll(".note[data-t]").forEach((c) => c.classList.toggle("cur", Math.abs(Number(c.dataset.t) - t) < fd * 0.75));
+  let any = false;
+  els.notes.querySelectorAll(".note[data-t]").forEach((c) => { const on = Math.abs(Number(c.dataset.t) - t) < fd * 0.75; c.classList.toggle("cur", on); any = any || on; });
+  // Off every note's own frame: the note last worked on (replied to, looked at) stays lit.
+  if (!any && R.curNote){ const c = els.notes.querySelector(`.note[data-id="${R.curNote}"]`); if (c) c.classList.add("cur"); }
 }
 
 // A note's picture to show / draw on: {url, vb, ctx, at, note} or null.
@@ -1520,7 +1923,7 @@ async function noteFrame(n){
 }
 // Drawings on a note's picture: pictures — that note's drawings; video — what shows at its time.
 function drawingsOn(f, opts = {}){
-  return M.drawings(R.rows).filter((r) => opts.reply ? r.data.reply === opts.reply : f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at));
+  return M.drawings(R.rows).filter((r) => opts.reply ? r.data.reply === opts.reply && (!f.at || RC.ctxVisible(r.data.ctx, f.at)) : f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at));
 }
 function picBox(f, list, cls){
   const w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img");
@@ -1539,23 +1942,24 @@ function asyncPic(n, list, cls, onTap){
   });
   return ph;
 }
-// One more frame of a video note, filled in once it is there.
-function asyncFrameAt(n, t){
+// One more frame of a video note (or of a reply: rid, its drawings only), filled in once it is there.
+function asyncFrameAt(n, t, rid){
   const rv = R, ph = el("div", "fw sm wait", "…");
   getFrame(t).then((fr) => {
     if (R !== rv || !fr){ ph.remove(); return; }
     const f = { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t, hold: 0 }, at: { t, fps: R.fps } };
-    const box = picBox(f, drawingsOn(f), "sm");
-    box.onclick = () => openFrame(n, f);
+    const box = picBox(f, rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), "sm");
+    box.onclick = () => openThread(n, rid ? { kind: "frame", t, rid } : { kind: "frame", t });
     ph.replaceWith(box);
   });
   return ph;
 }
-function shotThumbs(ids, gal){
+// Attached pictures; a tap opens them in note n's thread (rid: a reply's).
+function shotThumbs(ids, n, rid){
   const sh = el("div", "shots");
   (ids || []).forEach((sid) => {
     const i = el("img"); i.alt = "";
-    shotUrl(String(sid)).then((u) => { if (u){ i.src = u; i.onclick = () => openShot(u); } else i.remove(); });
+    shotUrl(String(sid)).then((u) => { if (u){ i.src = u; i.onclick = () => n ? openThread(n, rid ? { kind: "shot", id: String(sid), rid } : { kind: "shot", id: String(sid) }) : openShot(u); } else i.remove(); });
     sh.appendChild(i);
   });
   return (ids || []).length ? sh : null;
@@ -1584,20 +1988,20 @@ function noteCard(n){
     if (mf){
       const f = { url: mf.url, vb: [0, 0, docW(), docH()], ctx: c, at: { t: c.t, fps: R.fps } };
       const box = picBox(f, drawingsOn(f), "");
-      box.onclick = () => openFrame(n, f);
+      box.onclick = () => openThread(n, { kind: "frame", t: c.t });
       card.appendChild(box);
-    } else card.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openFrame(n, f)));
+    } else card.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
   }
   // A video note drawn on more frames: those frames too, small, in time order.
   if (kind === "video" && c && c.t != null){
-    const extra = M.noteFrameTimes(R.rows, n).filter((t) => r3(t) !== r3(c.t));
+    const extra = M.noteFrameTimes(R.rows, n).filter((t) => frameKey(t) !== frameKey(c.t));
     if (extra.length){
       const row = el("div", "shots");
       extra.forEach((t) => row.appendChild(asyncFrameAt(n, t)));
       card.appendChild(row);
     }
   }
-  const sh = shotThumbs(n.data.shots);
+  const sh = shotThumbs(n.data.shots, n);
   if (sh) card.appendChild(sh);
   const reps = (n.data.replies || []).filter((r) => r && !r.deleted);
   if (reps.length){
@@ -1607,20 +2011,12 @@ function noteCard(n){
   }
   if (R.openReply[id]){
     card.appendChild(composer({ key: id, placeholder: "Reply", status: st, frameFor: () => noteFrame(n).then((f) => f && Object.assign(f, { base: drawingsOn(f) })),
-      onSend: (text, shots, state, draw) => {
-        const t = now();
-        if (text || shots.length || draw){
-          const r = M.addReply(n, { text, author: who, shots }, t);
-          if (draw) R.rows.push(...M.drawingRows(draw.items, { note: id, reply: r.id, ctx: M.drawCtx(c), z: M.maxZ(R.rows) + 1 }, t));
-        }
-        if (state) M.setNoteState(n, state, who, t + 1);
-        delete R.openReply[id];
-        dirty();
-      } }));
+      onSend: (text, shots, state, draw) => { delete R.openReply[id]; sendReply(n, text, shots, state, draw); } }));
     if (R.openReply[id] === "focus"){ R.openReply[id] = true; focusLater(id); }
   } else {
     const acts = el("div", "acts");
-    acts.appendChild(btn("btn", "Reply", () => { R.openReply[id] = "focus"; renderNotes(); }));
+    // A video note: the reply is written over the player, on any frame (one forgotten last time).
+    acts.appendChild(btn("btn", "Reply", () => { if (replyOverPlayer(n)) startReply(n); else { R.openReply[id] = "focus"; renderNotes(); } }));
     if (st !== "done") acts.appendChild(btn("btn", "Resolve", () => quickState(n, "done")));
     else acts.appendChild(btn("btn", "Reopen", () => quickState(n, "open")));
     card.appendChild(acts);
@@ -1632,6 +2028,63 @@ async function quickState(n, s){
   M.setNoteState(n, s, who);
   dirty();
 }
+// Every frame a video note's thread is on: its own frame, the frames it was drawn on and the ones
+// its replies drew on, in time order (one time per frame, by r3).
+// One key per frame (by index when the rate is known: two stored times a hair apart are one frame).
+const frameKey = (t) => R.fpsKnown ? frameIdx(t) : r3(t);
+function threadFrames(n){
+  const c = n.data.ctx, by = new Map();
+  if (c && c.t != null) by.set(frameKey(c.t), c.t);
+  M.drawings(R.rows).forEach((r) => { const t = r.data.note === n.id && r.data.ctx ? r.data.ctx.t : null; if (typeof t === "number" && !by.has(frameKey(t))) by.set(frameKey(t), t); });
+  return [...by.values()].sort((a, b) => a - b);
+}
+// The frames a reply drew on (video, time order), [] for a picture, null with no drawing.
+function replyFrameTimes(n, rid){
+  const own = M.drawings(R.rows).filter((x) => x.data.reply === rid);
+  if (!own.length) return null;
+  if (kindNow() !== "video") return [];
+  const by = new Map(), c = n.data.ctx;
+  own.forEach((x) => { const t = x.data.ctx && x.data.ctx.t != null ? x.data.ctx.t : c && c.t; if (t != null && !by.has(frameKey(t))) by.set(frameKey(t), t); });
+  return [...by.values()].sort((a, b) => a - b);
+}
+const replyOverPlayer = (n) => kindNow() === "video" && !!R.video && !!(n.data.ctx && n.data.ctx.t != null);
+// A reply on a video note, over the player: the panel goes, the player stands on the note's first
+// frame (or the one given), its frames are on the timeline and its drawings on the picture; the
+// pencil draws on whatever frame is on screen, as many as wanted. Leaving keeps the frame reached
+// and the note lit in the list.
+function startReply(n, at){
+  if (!replyOverPlayer(n)) return false;
+  if (R.replyTo === n.id && at == null){ setPanel(false); return true; }  // already: stay on the frame reached
+  if (R.newOpen) R.newOpen = false;  // its draft stays for the next "+ Note"
+  delete R.openReply[n.id];
+  R.replyTo = n.id; R.curNote = n.id;
+  setPanel(false);
+  seekTo(at != null ? at : threadFrames(n)[0]);
+  renderNotes();
+  paintNewBar(); paintOverlay();
+  return true;
+}
+function closeReply(){
+  const id = R.replyTo;
+  R.replyTo = null;
+  paintNewBar(); paintOverlay();
+  const card = id && els.notes.querySelector(`.note[data-id="${id}"]`);
+  if (card) card.scrollIntoView({ block: "nearest" });
+  paintCurrent();
+}
+// A reply with its text, pictures, state change and drawing (each frame drawn on keeps its own
+// drawings: a frame the note was not on yet is added to the thread).
+function sendReply(n, text, shots, state, draw){
+  const t = now(), c = n.data.ctx;
+  // On the note's own frame: the note's ctx (its hold too, FORMAT.md); on another frame its own.
+  const own = (fc) => !fc || fc.t == null || !c || c.t == null || frameKey(fc.t) === frameKey(c.t);
+  if (text || shots.length || draw){
+    const r = M.addReply(n, { text, author: who, shots }, t);
+    drawFrames(draw).forEach((x) => { const fc = x.frame && x.frame.ctx; R.rows.push(...M.drawingRows(x.items, { note: n.id, reply: r.id, ctx: M.drawCtx(own(fc) ? c : fc), z: M.maxZ(R.rows) + 1 }, t)); });
+  }
+  if (state) M.setNoteState(n, state, who, t + 1);
+  dirty();
+}
 function replyEntry(n, r){
   if (r.event){
     const d = el("div", "rep ev " + r.event);
@@ -1641,17 +2094,72 @@ function replyEntry(n, r){
   const d = el("div", "rep");
   d.appendChild(el("div", "rh", [r.author, fmtDate(r.created)].filter(Boolean).join(" · ")));
   if (r.text) d.appendChild(el("div", "rt", r.text));
-  if (M.drawings(R.rows).some((x) => x.data.reply === r.id)){
-    d.appendChild(asyncPic(n, (f) => drawingsOn(f, { reply: r.id }), "sm", (f) => openFrame(n, f, r.id)));
+  const rt = replyFrameTimes(n, r.id), c = n.data.ctx;
+  if (rt){
+    // A video reply drawn on several frames: each of them (the note's own frame through noteFrame).
+    const row = rt.length > 1 || (rt.length && !(c && c.t != null && frameKey(rt[0]) === frameKey(c.t))) ? el("div", "shots") : null;
+    if (row){ rt.forEach((t) => row.appendChild(asyncFrameAt(n, t, r.id))); d.appendChild(row); }
+    else d.appendChild(asyncPic(n, (f) => drawingsOn(f, { reply: r.id }), "sm", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t, rid: r.id } : { kind: "frame", rid: r.id })));
   }
-  const sh = shotThumbs(r.shots);
+  const sh = shotThumbs(r.shots, n, r.id);
   if (sh) d.appendChild(sh);
-  d.appendChild(btn("x", "×", async () => {
-    if (!await ask({ title: "Delete this reply?", text: "Its pictures and drawings go with it. Sight removes it too when it merges this review.", ok: "Delete", danger: true })) return;
-    M.deleteReply(R.rows, n, r.id);
-    dirty();
-  }, "Delete reply"));
+  if (r.edited) d.firstChild.textContent += " · edited";
+  const mb = ibtn("more", "Reply actions", () => replyMenu(n, r), 16); mb.classList.add("x");
+  d.appendChild(mb);
   return d;
+}
+// A reply's menu: its text, its drawing, its pictures, or the reply itself.
+function replyMenu(n, r){
+  const drawn = M.drawings(R.rows).some((x) => x.data.reply === r.id), shots = r.shots || [];
+  // Written to the note as it is then (a merge meanwhile replaces the row objects).
+  const live = () => { const n2 = R && R.rows.find((x) => x.id === n.id && x.deleted_at == null), r2 = n2 && (n2.data.replies || []).find((x) => x.id === r.id && !x.deleted); return r2 ? [n2, r2] : null; };
+  const empty = (r2, patch) => { const x = Object.assign({}, r2, patch); return !(x.text || "").trim() && !(x.shots || []).length && !M.drawings(R.rows).some((d) => d.data.reply === r.id); };
+  const offerDelete = async () => {
+    if (!await ask({ title: "Nothing would be left", text: "A reply needs words, a picture or a drawing. Delete the reply instead?", ok: "Delete", danger: true })) return;
+    const L = live(); if (L){ M.deleteReply(R.rows, L[0], r.id); dirty(); }
+  };
+  menu("Reply" + (r.author ? " by " + r.author : ""), [
+    { label: "Edit text", fn: async () => {
+      const v = await askText({ title: "Edit reply", value: r.text || "", multiline: true });
+      if (v == null || v.trim() === (r.text || "")) return;
+      const L = live(); if (!L) return;
+      if (empty(L[1], { text: v.trim() })){ offerDelete(); return; }
+      M.editReply(L[0], r.id, { text: v.trim() }); dirty();
+    } },
+    { label: drawn ? "Edit the drawing" : "Draw on it", fn: () => editNoteDrawing(n, r.id) },
+    { label: "Add pictures…", fn: () => {
+      const rv = R, p = picker("image/*", true, async (fs) => {
+        const add = [];
+        for (const fl of fs){
+          if (R !== rv) return;  // another review now: nothing stored for this one
+          try {
+            const im = await decode(fl), sc = await scaled(im, 1600, 0.85); if (im.close) im.close();
+            const id = RC.uid();
+            await DB.put("shots", { id, blob: sc.blob });
+            if (R === rv) rv.shotUrls.set(id, URL.createObjectURL(sc.blob));
+            add.push(id);
+          } catch { toast("Could not read that picture"); }
+        }
+        const L = R === rv && add.length ? live() : null;
+        if (!L) return;
+        M.editReply(L[0], r.id, { shots: (L[1].shots || []).concat(add) }); dirty();
+      });
+      document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000);
+    } },
+    shots.length ? { label: shots.length > 1 ? `Remove its ${shots.length} pictures` : "Remove its picture", fn: async () => {
+      const L0 = live();
+      if (L0 && empty(L0[1], { shots: [] })){ offerDelete(); return; }
+      if (!await ask({ title: "Remove the pictures?", text: "The pictures attached to this reply (not its drawing).", ok: "Remove", danger: true })) return;
+      const L = live(); if (!L) return;
+      M.editReply(L[0], r.id, { shots: [] }); dirty();
+    } } : null,
+    { label: "Delete reply…", danger: true, fn: async () => {
+      if (!await ask({ title: "Delete this reply?", text: "Its pictures and drawings go with it. Sight removes it too when it merges this review.", ok: "Delete", danger: true })) return;
+      const L = live(); if (!L) return;
+      M.deleteReply(R.rows, L[0], r.id);
+      dirty();
+    } },
+  ]);
 }
 function noteMenu(n){
   const own = M.drawings(R.rows).filter((r) => r.data.note === n.id && !r.data.reply);
@@ -1674,9 +2182,10 @@ async function editText(n){
 // Opens the canvas with the note's own drawings editable; Done keeps / adds / removes rows (a
 // drawing changed there is replaced: tombstone + a new row, as any merge reads it). A video note
 // opens over the player with every frame it was drawn on.
-async function editNoteDrawing(n){
+// rid: a reply's drawing instead (its rows keep data.reply; on a video, any frame, as when replying).
+async function editNoteDrawing(n, rid){
   if (!await ensureName()) return;
-  const rv = R, own = M.drawings(R.rows).filter((r) => r.data.note === n.id && !r.data.reply);
+  const rv = R, own = M.drawings(R.rows).filter((r) => r.data.note === n.id && (rid ? r.data.reply === rid : !r.data.reply));
   const byId = new Map(own.map((r) => [r.id, r]));
   const asItem = (r) => ({ id: r.id, kind: r.kind, shape_kind: r.shape_kind, z: r.z_index, data: r.data });
   const apply = (list) => {
@@ -1690,14 +2199,19 @@ async function editNoteDrawing(n){
     const gone = own.filter((r) => !kept.has(r.id)).map((r) => r.id);
     if (!gone.length && !fresh.length) return;
     M.deleteRows(R.rows, gone, t);
-    fresh.forEach(({ it, ctx }) => R.rows.push(...M.drawingRows([Object.assign({}, it, { id: undefined })], { note: n.id, ctx: M.drawCtx(ctx), z: M.maxZ(R.rows) + 1 }, t)));
-    dirty();
+    // A reply's new drawing on the note's own frame takes the note's ctx (its hold), as sendReply does.
+    const c0 = n.data.ctx, onNote = (cx) => rid && cx && cx.t != null && c0 && c0.t != null && frameKey(cx.t) === frameKey(c0.t);
+    fresh.forEach(({ it, ctx }) => R.rows.push(...M.drawingRows([Object.assign({}, it, { id: undefined })], Object.assign({ note: n.id, ctx: M.drawCtx(onNote(ctx) ? c0 : ctx), z: M.maxZ(R.rows) + 1 }, rid ? { reply: rid } : {}), t)));
+    dirty();  // (the reply itself is not re-stamped: its drawings merge on their own, and a newer
+              // edit of its words elsewhere must not lose to this copy's older words)
   };
   const c = n.data.ctx;
   if (kindNow() === "video" && rv.video && c && c.t != null){
     const groups = new Map();
     own.forEach((r) => { const tt = frameStart(r.data.ctx && r.data.ctx.t != null ? r.data.ctx.t : c.t), k = frameTag(tt); if (!groups.has(k)) groups.set(k, { frame: { ctx: { t: tt, hold: 0 } }, items: [] }); groups.get(k).items.push(asItem(r)); });
-    seekTo(c.t);
+    // From its first frame (a reply's may not be the note's).
+    const first = rid ? [...groups.values()].map((g) => g.frame.ctx.t).sort((a, b) => a - b)[0] : null;
+    seekTo(first != null ? first : c.t);
     await whenSettled(rv);
     if (R !== rv) return;
     drawVideo({ frames: [...groups.values()], onDone: (list) => apply(list.map((x) => ({ ctx: x.frame.ctx, items: x.items }))) });
@@ -1705,8 +2219,18 @@ async function editNoteDrawing(n){
   }
   const f = await noteFrame(n);
   if (!f){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
-  // On the clean picture: only this note's own drawings, editable.
+  // On the clean picture: only this note's (reply's) own drawings, editable.
   drawCanvas({ src: f.url, vb: f.vb, base: [], items: own.map(asItem), onDone: (items) => apply([{ ctx: n.data.ctx, items }]) });
+}
+// Resolves once the player has (most likely) painted the frame it stands on: its next presented
+// frame (rVFC), at most 150 ms — a paused player that already shows it presents nothing new.
+function painted(v){
+  return new Promise((ok) => {
+    let done = false;
+    const go = () => { if (!done){ done = true; ok(); } };
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(go);
+    setTimeout(go, v.requestVideoFrameCallback ? 150 : 60);
+  });
 }
 // Resolves once the player stands still on the last time asked for.
 function whenSettled(rv){
@@ -1720,6 +2244,7 @@ function whenSettled(rv){
 function goTo(n){
   const c = n.data.ctx, v = R.video;
   if (!v || !c || c.t == null){ if (!v && kindNow() === "video") toast("Pick the video again to play it"); return; }
+  R.curNote = n.id;
   seekTo(c.t);
   setPanel(false);
 }
@@ -1786,7 +2311,9 @@ function composer(opts){
     paintAtts(); paint();
   });
   const clip = btn("clip", null, () => file.click(), "Attach pictures"); clip.innerHTML = ico("clip", 19);
+  clip.dataset.nofs = "1";  // opens the file picker: no full screen on this tap
   const pen = btn("pen", null, async () => {
+    if (opts.here && kindNow() === "video" && R.video) return drawDraft(null);  // the frame on screen now
     if (dr.draw) return drawDraft(dr.draw.frame);
     const fr = await opts.frameFor();
     if (!fr){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
@@ -1804,7 +2331,7 @@ function composer(opts){
     };
     // A new note on a video: drawn over the player, on as many frames as wanted (from the one asked for).
     if (opts.multi && kindNow() === "video" && rv.video){
-      if (fr.ctx && fr.ctx.t != null) seekTo(fr.ctx.t);
+      if (fr && fr.ctx && fr.ctx.t != null) seekTo(fr.ctx.t);
       drawVideo({ frames: drawFrames(dr.draw), onDone: done });
       return;
     }
@@ -1842,11 +2369,16 @@ function ctxNow(){
 }
 function paintNewBar(){
   const nb = els.nb;
-  root.classList.toggle("compose", !!R.newOpen);  // the bar shows over the player too (index.html)
-  paintMarkers();  // a new note: only its own frames on the timeline
+  const rn = R.replyTo && R.rows.find((r) => r.id === R.replyTo && r.deleted_at == null);
+  if (R.replyTo && !rn) R.replyTo = null;  // the note went (deleted, merged away)
+  root.classList.toggle("compose", composing());  // the bar shows over the player too (index.html)
+  paintMarkers();  // a new note: only its own frames on the timeline (a reply: its note's)
   const ae = document.activeElement;
-  if (R.newOpen === true && ae && ae.tagName === "TEXTAREA" && nb.contains(ae)) return;  // typing: leave it alone
+  // Typing in the composer the bar shows: leave it alone.
+  if ((R.newOpen === true || rn) && ae && ae.tagName === "TEXTAREA" && nb.contains(ae) && ae.closest(".cmp").dataset.key === composeKey()) return;
   nb.textContent = "";
+  els.where = null;
+  if (rn){ replyBar(nb, rn); return; }
   const canNote = kindNow() !== "video" || !!R.video;
   if (!R.newOpen){
     const row = el("div", "row");
@@ -1884,6 +2416,41 @@ function paintNewBar(){
   paintOverlay();  // a new note: the clean picture (with only its own drawing)
   if (R.newOpen === "focus"){ R.newOpen = true; focusLater("+new"); }
 }
+// The reply bar over the player: "Reply to note 3 at 0:01.05 · f 30", the note's frames to go to
+// (the frame on screen lit), × to leave (the frame reached stays), and the message field.
+function replyBar(nb, n){
+  const id = n.id, row = el("div", "row"), lab = el("span"), fr = el("div", "frs");
+  const where = () => {
+    const d = R.drafts[id], c = ctxNow(), k = drawFrames(d && d.draw).length;
+    lab.textContent = `Reply to note ${NUM.get(id) || ""}` + (c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : "") + (k ? ` · drawn on ${k} frame${k > 1 ? "s" : ""}` : "");
+    const cur = c && c.t != null ? frameIdx(c.t) : null;
+    fr.querySelectorAll("button").forEach((b) => b.classList.toggle("on", cur != null && frameIdx(Number(b.dataset.t)) === cur));
+  };
+  row.appendChild(lab);
+  row.appendChild(btn("ib", "×", () => {
+    const d = R.drafts[id];
+    const go = () => { delete R.drafts[id]; closeReply(); };
+    if (d && (d.text.trim() || d.shots.length || d.state || d.draw)){ ask({ title: "Discard this reply?", ok: "Discard", danger: true }).then((y) => { if (y && R.replyTo === id) go(); }); return; }
+    go();
+  }, "Close"));
+  nb.appendChild(row);
+  const ts = threadFrames(n);
+  if (ts.length > 1){
+    ts.forEach((t) => { const b = btn("fr", "f " + Math.round(t * R.fps), () => seekTo(t), "Go to this frame"); b.dataset.t = String(t); fr.appendChild(b); });
+    nb.appendChild(fr);
+  }
+  nb.appendChild(composer({ key: id, placeholder: "Reply", status: M.noteState(n), multi: true, here: true, frameFor: currentFrame,
+    onChange: () => { where(); paintOverlay(); paintMarkers(); },
+    onSend: (text, shots, state, draw) => {
+      R.replyTo = null;
+      sendReply(n, text, shots, state, draw);
+      closeReply();
+      if (!R.panel) toast(`Reply added to note ${NUM.get(id) || ""}`, 2000);
+    } }));
+  where();
+  els.where = where;
+  paintOverlay();
+}
 // The picture on screen as a frame to draw a new note on: the picture, or the paused video frame.
 async function currentFrame(){
   const rv = R, vb = [0, 0, docW(), docH()];
@@ -1895,11 +2462,16 @@ async function currentFrame(){
   const v = rv.video;
   if (!v) return null;
   v.pause();
+  await whenSettled(rv);  // a seek on its way (right after a scrub): its frame, not the one before
+  if (R !== rv) return null;
   if (v.readyState < 2) await seek(v, v.currentTime);
   if (R !== rv) return null;
   const t = snapT(v.currentTime), tag = frameTag(t);  // (not past the last frame: an ended clip)
   let f = rv.frames.get(tag);
   if (!f){
+    await painted(v);  // not the frame before the seek (it is cached under this frame's tag)
+    if (R !== rv) return null;
+    if (v.seeking || !v.paused || snapT(v.currentTime) !== t) return currentFrame();  // moved meanwhile: that frame
     const s = await scaled(v, 1600).catch(() => null);
     if (!s || R !== rv) return null;
     f = { blob: s.blob, w: s.w, h: s.h, url: URL.createObjectURL(s.blob) };
@@ -1910,6 +2482,8 @@ async function currentFrame(){
   return { url: f.url, vb, ctx, at: { t, fps: rv.fps }, base: M.drawings(rv.rows).filter((r) => RC.ctxVisible(r.data.ctx, { t, fps: rv.fps })) };
 }
 async function drawNew(fromViewer){
+  // While a reply is written over the player its pencil draws the reply.
+  if (R.replyTo){ const p = document.querySelector(`.newbar .cmp[data-key="${R.replyTo}"] .pen`); if (p){ p.click(); return; } }
   if (!await ensureName()) return;
   const rv = R, d = R.drafts["+new"] = R.drafts["+new"] || newDraft();
   const done = (list) => {
@@ -1942,6 +2516,10 @@ async function frameNow(rv, want){
   if (R !== rv || v.seeking) return null;
   // snapT: an ended clip reads currentTime = duration, one past its last frame.
   const cur = snapT(v.currentTime);
+  if (!rv.frames.get(frameTag(frameStart(cur)))){
+    await painted(v);  // "seeked" comes before the frame is on screen (Safari): grab it after
+    if (R !== rv || v.seeking || !v.paused || snapT(v.currentTime) !== cur) return null;
+  }
   const on = want != null && (rv.fpsKnown ? frameIdx(want) === frameIdx(cur) : Math.abs(want - cur) < 1e-3);
   const t = frameStart(on ? want : cur), tag = frameTag(t);
   let f = rv.frames.get(tag);
@@ -1972,10 +2550,23 @@ async function drawVideo({ frames = [], onDone, noPlace }){
   try { await openDrawVideo(rv, v, frames, onDone, noPlace); } finally { rv.drawOpening = false; }
 }
 async function openDrawVideo(rv, v, frames, onDone, noPlace){
+  let ownPause = !v.paused;  // this pause's event (queued) is not the user's: no second grab
   v.pause();
-  await whenSettled(rv);
-  if (R !== rv) return;
-  const fr = await currentFrame();
+  // Opens at once on the frame on screen: its picture from the frame cache, else the scrub
+  // cache's — the player's own frame replaces it once its seek has landed and it is painted
+  // (S.settled, from settle()). Waiting for the seek first was the lag after a scrub. Only with no
+  // picture at all is the player waited for.
+  let fr = null, early = false;
+  const t0 = snapT(posNow()), vb0 = [0, 0, docW(), docH()];
+  if (vb0[2] && vb0[3]){
+    const kept = rv.frames.get(frameTag(frameStart(t0))), pic = (kept && kept.url) || cachedAt(t0) || (rv.scrub && rv.scrub.near(t0));
+    if (pic){ fr = { url: pic, vb: vb0, ctx: { t: frameStart(t0), hold: 0 }, at: { t: frameStart(t0), fps: rv.fps } }; early = !kept; }
+  }
+  if (!fr){
+    await whenSettled(rv);
+    if (R !== rv) return;
+    fr = await currentFrame();
+  }
   if (!fr || R !== rv){ if (R === rv) toast("Could not take this frame"); return; }
   const init = {};
   frames.forEach((x) => { if (x.frame.ctx && x.frame.ctx.t != null) init[frameTag(frameStart(x.frame.ctx.t))] = x.items; });
@@ -2047,6 +2638,7 @@ async function openDrawVideo(rv, v, frames, onDone, noPlace){
   // A plain pause (not one a seek made: seekTo has already moved the canvas): the canvas stops on
   // the frame reached, the player's own picture of it once the frame is grabbed.
   const onPause = () => {
+    if (ownPause){ ownPause = false; return; }
     liveStop();
     if (!h || R !== rv || rv.drawS !== S || rv.scrubT != null || rv.want != null) return;
     S.moved(snapT(v.currentTime));
@@ -2087,6 +2679,9 @@ async function openDrawVideo(rv, v, frames, onDone, noPlace){
       if (R === rv) onDone(list);
     } });
   paintMarks(T); paintMarkers();
+  // Opened on a cached picture with the player already standing there: its own frame now (on its
+  // way, settle() asks when the seek lands).
+  if (early && rv.want == null && !v.seeking && rv.scrubT == null) S.settled();
 }
 
 // The drawing canvas, opened turned / mirrored as the review's view; its turn / mirror buttons
@@ -2120,6 +2715,7 @@ function playerPlace(){
 // back / Esc) leaves — no swipe closes it.
 // o: {url, vb, rows, view, onDraw(), note, label (caption: which frame), nav(dir) / side(dir) →
 // Promise<o | null>, onClose(o)}
+const FADE_MS = 260, FADE_WAIT = 600;
 function viewer(o){
   const v = el("div", "view"), cap = el("div", "cap");
   const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
@@ -2131,12 +2727,18 @@ function viewer(o){
     const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1);
     if (o.onClose) o.onClose(o);
   };
-  function show(no){
-    o = no;
-    if (box) box.remove();
-    box = el("div", "vb");
-    const img = el("img"); img.src = o.url; img.alt = ""; img.draggable = false; box.appendChild(img);
-    if (o.rows && o.rows.length) box.appendChild(overlay(o.vb, o.rows));
+  // fade: the next picture comes up in place of the old one, which fades out (no slide, no blank
+  // frame: the new image is decoded first, at most FADE_WAIT ms).
+  async function show(no, fade){
+    const nb = el("div", "vb");
+    const img = el("img"); img.src = no.url; img.alt = ""; img.draggable = false; nb.appendChild(img);
+    if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows));
+    if (fade){
+      await Promise.race([img.decode ? img.decode().catch(() => {}) : Promise.resolve(), new Promise((r) => setTimeout(r, FADE_WAIT))]);
+      if (!v.isConnected) return;
+    }
+    const was = box;
+    o = no; box = nb;
     v.insertBefore(box, cap);
     pen.hidden = !o.onDraw;
     cap.textContent = "";
@@ -2145,13 +2747,21 @@ function viewer(o){
       cap.appendChild(el("span", "num", String(NUM.get(o.note.id) || "")));
       const c = o.note.data.ctx, lab = o.label || (c && c.t != null && R ? fmtTime(c.t, R.fps) : "");
       if (lab) cap.appendChild(el("span", "fr", lab));
-      if (o.note.data.text || !lab) cap.appendChild(el("span", "", o.note.data.text || "Note"));
+      const tx = o.text != null ? o.text : o.note.data.text;  // a reply's picture: the reply's words
+      if (tx || !lab) cap.appendChild(el("span", "", tx || "Note"));
     } else if (o.label) cap.appendChild(el("span", "fr", o.label));
     off = [0, 0];
     fit();
+    if (!was) return;
+    if (!fade || !was.animate){ was.remove(); return; }
+    // The new one comes up quickly on top; the old one holds, then goes, so the pair never lets the
+    // background show through mid-way (it only shows where the new picture is narrower).
+    box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: "ease-out" });
+    was.animate([{ opacity: 1 }, { opacity: 1, offset: 0.45 }, { opacity: 0 }], { duration: FADE_MS, fill: "forwards" }).onfinish = () => was.remove();
+    setTimeout(() => was.remove(), FADE_MS + 200);  // onfinish never comes for a node already gone
   }
-  const vw = o.view || { rot: 0, mirror: false };
   function fit(){
+    const vw = o.view || { rot: 0, mirror: false };  // per picture: an attached one is not turned
     const W = innerWidth, H = innerHeight, a = vw.rot % 180 ? o.vb[3] / o.vb[2] : o.vb[2] / o.vb[3];
     let w = W, h = W / a;
     if (h > H){ h = H; w = H * a; }
@@ -2166,23 +2776,23 @@ function viewer(o){
   };
   const zoomAt = (x, y, z) => { z = RC.clamp(z, 1, 12); const lx = (x - V.x) / V.z, ly = (y - V.y) / V.z; V = { z, x: x - lx * z, y: y - ly * z }; if (z === 1) fit(); else apply(); };
   // Swipes at fit: the picture follows the finger along the axis it set off on; up / down walks
-  // the notes (o.nav), sideways the note's own pictures (o.side).
+  // the notes (o.nav), sideways the note's own pictures (o.side). The next one cross-fades in.
   async function navigate(dir, axis = "y"){
-    if (busyNav) return;
+    if (busyNav){ off = [0, 0]; apply(true); return; }
     const fn = axis === "x" ? o.side : o.nav;
     // Busy until the next picture is shown: a second swipe (or Back) in between would act on the old one.
+    // The swiped picture goes back to its place while the next one loads: the two fade in one spot.
+    off = [0, 0]; apply(true);
     const next = fn ? await (busyNav = true, fn(dir)).catch(() => null) : null;
     if (!v.isConnected){ busyNav = false; return; }
     if (!next){
       busyNav = false;
-      off = [0, 0]; apply(true);
       if (axis === "y") toast(dir > 0 ? "No later note" : "No earlier note", 1500);
-      else if (o.side) toast(dir > 0 ? "The note's last frame" : "The note's first frame", 1500);
+      else if (o.side) toast(dir > 0 ? "The note's last picture" : "The note's first picture", 1500);
       return;
     }
-    const W = axis === "x" ? innerWidth : innerHeight, at = (k) => axis === "x" ? [k, 0] : [0, k];
-    off = at(dir > 0 ? -W : W); apply(true);
-    setTimeout(() => { busyNav = false; if (!v.isConnected) return; show(next); off = at(dir > 0 ? W * 0.4 : -W * 0.4); apply(); requestAnimationFrame(() => { off = [0, 0]; apply(true); }); }, 170);
+    await show(next, true);
+    setTimeout(() => { busyNav = false; }, FADE_MS);  // a swipe mid-fade would stack two fades
   }
   const pts = new Map();
   let g = null, lastTap = 0, sw = null;
@@ -2253,55 +2863,114 @@ async function openPicture(){
   if (!url) return;
   viewer({ url, vb: [0, 0, docW() || 1, docH() || 1], rows: stageDrawings(), view: viewOf(), onDraw: () => drawNew(true) });
 }
-// A note's picture, full screen; swiping up / down walks the notes in the list's order (the
-// filter on), sideways the frames a video note was drawn on (in time order; the caption says
-// which frame each is, "2 / 3"); the list / player follow the note and frame it was left on.
-// from: where the viewer was opened ({id, t}), carried along so the close can tell.
+// A note's pictures, full screen. Sideways walks the whole thread in order (threadItems): the
+// note's frames (a video: in time order), its attached pictures, then each reply's drawn frames
+// and attached pictures — the caption says which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture …").
+// Up / down walks the notes in the list's order (the filter on), each from its first picture. The
+// list / player follow the note and frame it was left on. from: where the viewer was opened ({id, t}).
 function noteFrameList(n){
   const c = n.data.ctx;
   if (kindNow() !== "video" || !c || c.t == null) return [];
   const by = new Map();
-  [c.t, ...M.noteFrameTimes(R.rows, n)].forEach((t) => { if (!by.has(r3(t))) by.set(r3(t), t); });
+  [c.t, ...M.noteFrameTimes(R.rows, n)].forEach((t) => { if (!by.has(frameKey(t))) by.set(frameKey(t), t); });
   return [...by.values()].sort((a, b) => a - b);
 }
-function noteView(n, f, rid, from){
-  const rv = R, ts = rid ? [] : noteFrameList(n), t0 = f.at ? f.at.t : null;
-  const i0 = t0 == null ? -1 : ts.findIndex((t) => r3(t) === r3(t0));
+// Items: {kind: "frame", t?, rid?} (t: a video frame; rid: a reply's drawing) | {kind: "shot", id, rid?}.
+function threadItems(n){
+  const out = [], video = kindNow() === "video";
+  // A picture review: the picture with the note's drawings, always (up / down visits every note).
+  if (video) noteFrameList(n).forEach((t) => out.push({ kind: "frame", t }));
+  else out.push({ kind: "frame" });
+  (n.data.shots || []).forEach((id) => out.push({ kind: "shot", id: String(id) }));
+  M.liveReplies(n).forEach((r) => {
+    if (r.event) return;
+    const rt = replyFrameTimes(n, r.id);
+    if (rt) (video ? rt : [null]).forEach((t) => out.push(t == null ? { kind: "frame", rid: r.id } : { kind: "frame", t, rid: r.id }));
+    (r.shots || []).forEach((id) => out.push({ kind: "shot", id: String(id), rid: r.id }));
+  });
+  return out;
+}
+const sameItem = (a, b) => a.kind === b.kind && (a.rid || null) === (b.rid || null) &&
+  (a.kind === "shot" ? a.id === b.id : (a.t == null) === (b.t == null) && (a.t == null || frameKey(a.t) === frameKey(b.t)));
+// One item as a picture: {url, vb, rows, at} or null (not on this device).
+async function loadItem(n, it, rv = R){
+  if (it.kind === "shot"){
+    const url = await shotUrl(it.id);
+    if (!url) return null;
+    const im = new Image(); im.src = url;
+    await (im.decode ? im.decode().catch(() => {}) : new Promise((ok) => { im.onload = im.onerror = ok; }));
+    if (!im.naturalWidth) return null;  // a picture that does not decode: skipped
+    return { url, vb: [0, 0, im.naturalWidth, im.naturalHeight], rows: [], at: null, shot: true };
+  }
+  let f;
+  if (it.t != null){
+    if (!docW() || !docH()) return null;
+    const fr = await getFrame(it.t, rv);
+    if (!fr || R !== rv) return null;
+    f = { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t: it.t, hold: 0 }, at: { t: it.t, fps: rv.fps } };
+  } else {
+    f = await noteFrame(n);
+    if (!f || R !== rv) return null;
+  }
+  return Object.assign(f, { rows: it.rid ? drawingsOn(f, { reply: it.rid }) : drawingsOn(f) });
+}
+// prevAt: the frame looked at before (an attached picture keeps it, so Back still follows it).
+function threadView(n, items, i, f, from, prevAt){
+  const rv = R, it = items[i], t0 = it.t != null ? it.t : f.at ? f.at.t : null;
   const from0 = from || { id: n.id, t: t0 };
-  const label = t0 != null ? `${fmtTime(t0, R.fps)} · f ${Math.round(t0 * R.fps)}` + (ts.length > 1 && i0 >= 0 ? ` · ${i0 + 1} / ${ts.length}` : "") : "";
-  return { url: f.url, vb: f.vb, view: viewOf(), note: n, label, at: f.at, rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f),
-    onDraw: () => { if (R !== rv) return; setPanel(true); R.openReply[n.id] = true; renderNotes();
+  const rep = it.rid ? (n.data.replies || []).find((x) => x.id === it.rid) : null;
+  const where = it.kind === "shot" ? "Picture" : t0 != null ? `${fmtTime(t0, R.fps)} · f ${Math.round(t0 * R.fps)}` : "Drawing";
+  const label = (rep ? `↳ ${rep.author || "Reply"} · ` : "") + where + (items.length > 1 ? ` · ${i + 1} / ${items.length}` : "");
+  return { url: f.url, vb: f.vb, view: f.shot ? null : viewOf(), note: n, label, text: rep ? rep.text || "" : undefined,
+    at: it.kind === "shot" ? prevAt || null : f.at, rows: f.rows,
+    onDraw: f.shot ? null : () => {
+      if (R !== rv) return;
+      // A video note: the reply over the player, drawn on the frame looked at.
+      if (startReply(n, t0)){ const p = document.querySelector(`.newbar .cmp[data-key="${n.id}"] .pen`); if (p) p.click(); return; }
+      setPanel(true); R.openReply[n.id] = true; renderNotes();
       const box = document.querySelector(`.cmp[data-key="${n.id}"]`);
       if (box) box.querySelector(".pen").click(); },
-    nav: rid ? null : async (dir) => {
+    nav: async (dir) => {
       if (R !== rv) return null;
       const list = listedNotes();
-      for (let i = list.findIndex((x) => x.id === n.id) + dir; i >= 0 && i < list.length; i += dir){
-        const f2 = await noteFrame(list[i]);
-        if (R !== rv) return null;
-        if (f2) return noteView(list[i], f2, null, from0);
+      for (let k = list.findIndex((x) => x.id === n.id) + dir; k >= 0 && k < list.length; k += dir){
+        const its = threadItems(list[k]);
+        for (let j = 0; j < its.length; j++){
+          const f2 = await loadItem(list[k], its[j], rv);
+          if (R !== rv) return null;
+          if (f2) return threadView(list[k], its, j, f2, from0, null);
+        }
       }
       return null;
     },
-    side: ts.length > 1 && i0 >= 0 ? async (dir) => {
-      for (let i = i0 + dir; i >= 0 && i < ts.length; i += dir){
-        const fr = await getFrame(ts[i], rv);
+    side: items.length > 1 ? async (dir) => {
+      for (let j = i + dir; j >= 0 && j < items.length; j += dir){
+        const f2 = await loadItem(n, items[j], rv);
         if (R !== rv) return null;
-        if (fr) return noteView(n, { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t: ts[i], hold: 0 }, at: { t: ts[i], fps: R.fps } }, null, from0);
+        if (f2) return threadView(n, items, j, f2, from0, it.kind === "shot" ? prevAt : f.at);
       }
       return null;
     } : null,
     onClose: (last) => {
       if (R !== rv || !last.note) return;
       const t = last.at ? last.at.t : null;
-      if (last.note.id !== from0.id || (t != null && from0.t != null && r3(t) !== r3(from0.t))) showNote(last.note, t);
+      if (last.note.id !== from0.id || (t != null && (from0.t == null || frameKey(t) !== frameKey(from0.t)))) showNote(last.note, t);
     } };
 }
-function openFrame(n, f, rid){ viewer(noteView(n, f, rid)); }
+// Opens note n's thread at item `at` (a frame / picture tapped in its card).
+async function openThread(n, at){
+  const rv = R, items = threadItems(n);
+  let i = items.findIndex((x) => sameItem(x, at));
+  if (i < 0){ items.unshift(at); i = 0; }
+  const f = await loadItem(n, items[i], rv);
+  if (!f || R !== rv){ if (R === rv) toast("That picture is not on this device"); return; }
+  viewer(threadView(n, items, i, f));
+}
 // Brings a note forward: its card into view in the list, the player onto its frame (or the frame
 // of it given: one of its other frames).
 function showNote(n, at){
   const c = n.data.ctx, t = at != null ? at : c && c.t;
+  R.curNote = n.id;
   if (R.video && t != null) seekTo(t);
   const card = els && els.notes.querySelector(`.note[data-id="${n.id}"]`);
   if (card) card.scrollIntoView({ block: "nearest" });

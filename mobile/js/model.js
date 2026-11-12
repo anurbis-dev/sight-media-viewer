@@ -87,10 +87,17 @@ export function editNote(note, patch, now = Date.now()){
   note.data = Object.assign({}, note.data, patch, { edited_at: now });
   note.updated_at = Math.max(now, note.updated_at || 0);
 }
+// A reply's text / pictures changed: `edited` is its merge key (the later edit wins, FORMAT.md) —
+// always past the stamp it has, so a clock behind the reply author's still wins.
+const after = (r, now) => Math.max(now, RC().stamp(r.edited != null ? r.edited : r.created) + 1);
+export function editReply(note, rid, patch, now = Date.now()){
+  note.data = Object.assign({}, note.data, { replies: (note.data.replies || []).map((r) => r && r.id === rid && !r.deleted ? Object.assign({}, r, patch, { edited: after(r, now) }) : r) });
+  note.updated_at = Math.max(now, note.updated_at || 0);
+}
 // Tombstones: a deleted reply stays in the list ({id, created, deleted}) so an older copy cannot
 // bring it back; its drawings go with it, as in Sight.
 export function deleteReply(rows, note, rid, now = Date.now()){
-  note.data = Object.assign({}, note.data, { replies: (note.data.replies || []).map((r) => r && r.id === rid ? { id: r.id, created: r.created, deleted: now } : r) });
+  note.data = Object.assign({}, note.data, { replies: (note.data.replies || []).map((r) => r && r.id === rid ? { id: r.id, created: r.created, deleted: after(r, now) } : r) });
   note.updated_at = Math.max(now, note.updated_at || 0);
   rows.forEach((r) => { if (r.deleted_at == null && r.data && r.data.reply === rid && r.data.note === note.id){ r.deleted_at = now; r.updated_at = now; } });
 }

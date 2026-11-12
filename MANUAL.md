@@ -158,15 +158,23 @@
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
   drawings), ↻ / mirror (turn 90° / mirror the view — the full-screen view
   and the canvas follow; the drawings stay put on the picture) and, when the view is zoomed, *Fit*.
-  Two fingers on the picture pan, zoom and turn it (as on the drawing canvas); a swipe down goes
+  Two fingers on the picture pan, zoom and turn it (as on the drawing canvas — on both, letting go
+  smaller than the screen, or nearly at fit and straight, goes back to fit with the turn to the
+  nearest quarter); a swipe down goes
   back to the list of reviews. Under the picture the thin **Notes Panel** bar: tap it (or swipe up
   on it / on the picture) and the player slides up off the screen and the notes come in; the bar
   then holds the filters (All / Open / In progress / Resolved); a playing video pauses where it is. Pull the list down when it is at
   its top note to go back to the player. *+ Note* shows only with the panel open. The pencil
   (*Draw a note*) floats at the bottom right of the picture — on a video just above the
   transport — the same place as in the full-screen view, for pictures and videos alike. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
-  (notes and frames drawn on), ◀ ▶ one frame back / forward, the timecode and frame number, and a
-  timeline with the markers (tap / drag anywhere; near a marker it lands on it). Drag left / right
+  (notes and frames drawn on), ◀ ▶ one frame back / forward, the timecode and frame number with
+  the frame rate on its left and the sound on its right, and a timeline with the markers. The
+  frame rate (≈ while the app is still measuring it) is also the speed: drag it up / down to play
+  faster / slower (the number shows the rate it plays at, in the accent colour when not the
+  clip's own), tap it for the nearest common rate (24, 25, 30, 12, 15…), hold it for the clip's own
+  speed. The speaker: drag it up / down for the volume (a thin bar at the screen's left edge shows
+  the level; kept on the device), tap it for full volume; grey when the clip has no sound
+  (iPhone / iPad Safari only mutes / unmutes). The canvas' transport has both too. The timeline (tap / drag anywhere; near a marker it lands on it). Drag left / right
   across the picture to scrub from where the clip is (a frame per few pixels, faster when you move
   faster; Shift with a mouse = finer) — the clip's length no longer spreads over the screen's
   width; after opening, the app runs through the clip once and keeps small frames in memory (the
@@ -176,27 +184,44 @@
   the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
   adds a note — on a video at the frame on screen; while it is open the picture is clean (only its
   own drawing) and so is the timeline (only the frames it is drawn on). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
-  highlighter, arrow, rectangle, ellipse, text, eraser, colours, undo / redo, clear, pinch / pan /
-  turn), its buttons floating over the picture. Opened from the player, the picture stays exactly
+  highlighter, arrows and lines, shapes, text, eraser, the colour, undo / redo, clear, pinch / pan /
+  turn), its buttons floating over the picture. A tap on *Arrows and lines* or *Shapes* takes it and
+  shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
+  rectangle, rounded, ellipse, filled rectangle, filled ellipse): tap one to draw with it, or just
+  draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
+  down. The colour is the circle at the bar's right end: a tap shows the colours above it. Opened from the player, the picture stays exactly
   where and as big as it was (zoom and turn too) — drawing only brings the tools up; closing keeps
   the view. Press and hold with a tool, then drag up / down: that tool's size (a circle on the
   left shows it); with the select tool and a selection, hold and drag up / down for the line width,
-  sideways for the opacity. Press and hold a tool's button: its default size. Tap with two fingers
+  sideways for the opacity; hold with a drawing tool and drag sideways: its opacity (right = more
+  solid; the circle and the "px · %" under it show it; kept like the size). Press and hold a
+  tool's button: its default size and opacity. Tap with two fingers
   to undo, with three to redo. On a video the canvas has the timeline at its
   foot: tap the tool in hand to put it down (no fill), then drag the picture or the timeline / the
   step and marker buttons to another frame — or tap the picture to play and tap again to stop on
   a frame (the drawings of each frame show as it plays; taking a tool up stops it) — take a tool
   again and draw there — as many frames as
   you like; *Done* makes them one note (its card shows every frame drawn on). Each note has
-  *Reply* (text, pictures, a drawing on its frame, *Mark as In progress / Resolved / Reopen*),
+  *Reply* (text, pictures, a drawing, *Mark as In progress / Resolved / Reopen*; on a video note
+  the panel goes and the reply is written in the bar over the player, which stands on the note's
+  first frame — its frames are on the timeline and as chips to tap, and the pencil draws on any
+  frame you move to, as many as you like, e.g. one the note forgot; closing it or sending leaves
+  the player on the frame reached and the note lit in the list; a picture note's reply opens under
+  it and draws on its picture),
   *Resolve* / *Reopen*, and ⋯ for *Edit text*, *Edit the drawing* (a video note: all its frames),
-  *Mark in progress*, *Delete*; × deletes a reply. Tap a timecode to go to that frame, a picture to
+  *Mark in progress*, *Delete*; a reply's ⋯ has *Edit text*, *Edit the drawing* (*Draw on it*; on a
+  video over the player, any frames), *Add pictures…*, *Remove its pictures*, *Delete reply…* (an
+  edited reply says so). Tap a timecode to go to that frame, a picture to
   view it full screen (pinch / double-tap to zoom; at full size a swipe left / right — or ← / → —
-  shows the note's other frames, the caption telling which frame each is and "2 / 3"; a swipe up /
-  down shows the next / previous note; the round ← Back button leaves — no swipe does; the pencil
+  goes through the whole note: its frames, its attached pictures, then each reply's drawings and
+  pictures, the caption telling which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture") with a reply's
+  words; a swipe up /
+  down shows the next / previous note — the next picture fades in over the last; the round ← Back button leaves — no swipe does; the pencil
   draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on
   the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
-  and the notes share it. The eye hides the drawings on the picture. (The file's review state —
+  and the notes share it — and *Full screen*: Auto (the default — the app goes full screen at the
+  first tap in a browser tab; left with Back, it comes back on the next screen) or Off. Safari on
+  iPhone / iPad does not do it; the installed app (Add to Home Screen) is full screen anyway. The eye hides the drawings on the picture. (The file's review state —
   Needs review / Changes requested / Approved — is set in Sight; the app keeps and exports it.)
   ⋯ menu: *PDF report* and *Web page (HTML)* — the same content as Sight's PDF report (pictures /
   frames with the drawings, every note, reply and picture), plain files anyone can open; *Review
@@ -205,7 +230,11 @@
   left to uncover the bin (tap it to delete the review), right to uncover the eye (tap it to hide
   the review for now — until the app is closed, or *Show* under the list); press and hold a review
   and drag it up / down to move it in the list (the order is kept; new reviews come first); let go
-  without moving for its menu. The two big open buttons show only while there is no review yet;
+  without moving for its menu. Drag it onto the middle of another review (it lights up) and let
+  go: the two make a group (named by what their names start with — hold the group for *Rename…*,
+  *Ungroup*); drop more onto the group's header to add them. Tap a group's header to open / close
+  it; hold and drag it to move the whole group; inside, reviews swipe and move as in the list, and
+  a review's menu has *Take out of the group* (a group of one goes away). The two big open buttons show only while there is no review yet;
   after that they are the two small icons next to ⚙.
   Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
   see it. The app remembers the file you picked (it keeps a copy on the device — a web app

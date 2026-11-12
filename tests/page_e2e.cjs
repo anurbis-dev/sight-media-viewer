@@ -17,7 +17,13 @@ const [page, out, picture] = process.argv.slice(2);
   const draw = async (tool, a, z) => {
     await p.waitForSelector(".draw");
     res.canvasBase = (res.canvasBase || 0) + await p.evaluate(() => document.querySelector(".draw .dbox svg g").childNodes.length);
-    await p.click(`.draw button[title="${tool}"]`);
+    // Arrows and shapes sit in their slot's row (a tap on the slot shows it).
+    const slot = { Arrow: "Arrows and lines", Rectangle: "Shapes", Ellipse: "Shapes" }[tool];
+    if (slot){
+      await p.click(`.draw .dtools button[title="${slot}"]`);
+      if (!await p.locator(".draw .dfly:not([hidden])").count()) await p.click(`.draw .dtools button[title="${slot}"]`);
+      await p.click(`.draw .dfly button[title="${tool}"]`);
+    } else await p.click(`.draw button[title="${tool}"]`);
     const vb = await p.locator(".draw .dview").boundingBox();
     const cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2;
     await p.mouse.move(cx + a[0], cy + a[1]); await p.mouse.down(); await p.mouse.move(cx + z[0], cy + z[1], { steps: 6 }); await p.mouse.up();

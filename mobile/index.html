@@ -18,15 +18,15 @@
 /* Two themes, one look: the player and the notes share the surface colours (light / dark; Auto
    follows the system — html[data-theme] set from Settings). */
 :root { color-scheme: light; --bg: #f5f5f7; --card: #fff; --fg: #1d1d1f; --muted: #6e6e73; --line: #d9d9de; --accent: #0a84ff; --red: #d0342c; --green: #2f9d5b; --amber: #d98200; --chip: #ececf0;
-  --stage: #e6e6eb; --ov: rgb(250 250 252 / .74); --ov-fg: #1d1d1f; --ov-mut: #5d5d63; --ov-line: rgb(0 0 0 / .1); --trk: rgb(0 0 0 / .16); --halo: rgb(255 255 255 / .75);
-  --rd-bg: #e6e6eb; --rd-ov: rgb(250 250 252 / .8); --rd-fg: #1d1d1f; --rd-line: rgb(0 0 0 / .16);
+  --stage: #e6e6eb; --ov: rgb(250 250 252 / .74); --ov-fg: #1d1d1f; --ov-mut: #5d5d63; --ov-line: rgb(0 0 0 / .1); --trk: rgb(0 0 0 / .16);
+  --rd-bg: #e6e6eb; --rd-ov: rgb(250 250 252 / .66); --rd-pop: rgb(250 250 252 / .9); --rd-fg: #1d1d1f; --rd-line: rgb(0 0 0 / .16);
   --st: env(safe-area-inset-top); --sb: env(safe-area-inset-bottom); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) { color-scheme: dark; --bg: #141416; --card: #1f1f23; --fg: #f2f2f0; --muted: #9a9aa2; --line: #34343a; --accent: #4c9aff; --amber: #f0a020; --chip: #2a2a30;
-  --stage: #0d0d10; --ov: rgb(20 20 24 / .66); --ov-fg: #f2f2f0; --ov-mut: #a8a8b0; --ov-line: rgb(255 255 255 / .12); --trk: rgb(255 255 255 / .24); --halo: rgb(0 0 0 / .7);
-  --rd-bg: #0d0d10; --rd-ov: rgb(22 22 26 / .72); --rd-fg: #f2f2f0; --rd-line: rgb(255 255 255 / .22); } }
+  --stage: #0d0d10; --ov: rgb(20 20 24 / .66); --ov-fg: #f2f2f0; --ov-mut: #a8a8b0; --ov-line: rgb(255 255 255 / .12); --trk: rgb(255 255 255 / .24);
+  --rd-bg: #0d0d10; --rd-ov: rgb(22 22 26 / .6); --rd-pop: rgb(22 22 26 / .88); --rd-fg: #f2f2f0; --rd-line: rgb(255 255 255 / .22); } }
 :root[data-theme=dark] { color-scheme: dark; --bg: #141416; --card: #1f1f23; --fg: #f2f2f0; --muted: #9a9aa2; --line: #34343a; --accent: #4c9aff; --amber: #f0a020; --chip: #2a2a30;
-  --stage: #0d0d10; --ov: rgb(20 20 24 / .66); --ov-fg: #f2f2f0; --ov-mut: #a8a8b0; --ov-line: rgb(255 255 255 / .12); --trk: rgb(255 255 255 / .24); --halo: rgb(0 0 0 / .7);
-  --rd-bg: #0d0d10; --rd-ov: rgb(22 22 26 / .72); --rd-fg: #f2f2f0; --rd-line: rgb(255 255 255 / .22); }
+  --stage: #0d0d10; --ov: rgb(20 20 24 / .66); --ov-fg: #f2f2f0; --ov-mut: #a8a8b0; --ov-line: rgb(255 255 255 / .12); --trk: rgb(255 255 255 / .24);
+  --rd-bg: #0d0d10; --rd-ov: rgb(22 22 26 / .6); --rd-pop: rgb(22 22 26 / .88); --rd-fg: #f2f2f0; --rd-line: rgb(255 255 255 / .22); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 body { min-height: 100vh; overscroll-behavior-y: none; }
@@ -81,6 +81,14 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .list .row .sw.del { right: 0; background: var(--red); }
 .list .row.l .sw.hide, .list .row.r .sw.del { visibility: visible; }
 .list .row.lifted .item { opacity: .35; }
+.list .row.group { overflow: visible; }
+.list .row.group .gm { margin: 8px 0 0 16px; }
+.list .row.group.shut .gm, .list .row.group.folded .gm { display: none; }
+.item .th.four { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; }
+.item .th.four i { border-radius: 5px; background: var(--card) center / cover no-repeat; }
+.item .chev { flex: none; color: var(--muted); display: grid; transform: rotate(-90deg); transition: transform .2s; }
+.list .row.group.shut .chev { transform: rotate(180deg); }
+.list .row.drop > .item { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .item.ghost { position: fixed; z-index: 30; margin: 0; pointer-events: none; transform: scale(1.03); box-shadow: 0 14px 40px rgb(0 0 0 / .28); }
 .lnk { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 .empty { color: var(--muted); text-align: center; padding: 30px 10px; font-size: 14px; }
@@ -110,27 +118,36 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .stage .none input { display: none; }
 .stage .playbig { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 64px; height: 64px; border-radius: 32px; border: 0; background: var(--ov); color: var(--ov-fg); display: grid; place-items: center; cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 /* Pinned header over the picture: every control of the review. */
-/* No fill under the header and the transport: the picture shows through; a halo keeps the icons
-   and text readable on any frame. */
-.hdr { position: absolute; left: 0; right: 0; top: 0; z-index: 3; padding: calc(4px + var(--st)) 6px 4px; color: var(--ov-fg); pointer-events: none; }
-.hdr .row > *, .tp > * { pointer-events: auto; }
-.hdr, .tp { text-shadow: 0 0 3px var(--halo), 0 0 1px var(--halo); }
-.hdr .ib svg, .tpi .ib svg { filter: drop-shadow(0 0 1.5px var(--halo)) drop-shadow(0 0 3px var(--halo)); }
+/* The header and the transport float over the picture on the canvas' bar (.rd-panel, from
+   review-draw.js: one look for both screens), half see-through. */
+.hdr { position: absolute; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); top: calc(8px + var(--st)); z-index: 3; padding: 2px 4px; }
 .hdr .row { display: flex; align-items: center; gap: 2px; }
-.hdr .ib { color: var(--ov-fg); width: 38px; height: 38px; }
+.hdr .ib { color: inherit; width: 38px; height: 38px; }
 .hdr .ib.on { color: var(--accent); }
 .hdr .ttl { flex: 1; min-width: 0; padding: 0 4px; }
 .hdr .ttl b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hdr .ttl span { display: block; font-size: 11.5px; color: var(--ov-mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hdr .sp { flex: 1; }
 /* Transport over the foot of the picture: marker / frame steps, timecode, timeline. */
-.tp { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 2px 6px 4px; color: var(--ov-fg); pointer-events: none; }
+.tp { position: absolute; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); bottom: 8px; z-index: 3; padding: 2px 4px 2px; }
+/* On the bar: the muted text and the track from its own colour (they must read on any frame). */
+.hdr .ttl span { color: var(--rd-fg); opacity: .7; }
+.rd-panel .tl .trk { background: color-mix(in srgb, var(--rd-fg) 26%, transparent); }
 .tpi .row { display: flex; align-items: center; gap: 2px; }
 .tpi .ib { color: inherit; width: 38px; height: 36px; }
-.tpi .tc { font-variant-numeric: tabular-nums; font-size: 12.5px; min-width: 0; flex: 1; text-align: center; white-space: nowrap; overflow: hidden; }
+.tpi .fps { flex: none; margin-left: auto; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; height: 36px; padding: 0 3px; border-radius: 8px; cursor: ns-resize; opacity: .8; }
+.tpi .fps.on { opacity: 1; color: var(--accent); }
+.tpi .snd { width: 34px; margin-right: auto; -webkit-touch-callout: none; cursor: ns-resize; }
+.tpi .snd.none { opacity: .35; cursor: default; }
+/* Phones up to 400 px: the step / marker buttons give the timecode room. */
+@media (max-width: 400px) { .tpi .ib { width: 30px; } .tpi .snd { width: 28px; } .tpi .fps { min-width: 34px; padding: 0 1px; } .tpi .tc { font-size: 11.5px; } }
+.volbar { position: fixed; z-index: 40; left: 6px; top: 25%; height: 50%; width: 4px; border-radius: 2px; background: rgb(255 255 255 / .25); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); pointer-events: none; opacity: 0; transition: opacity .25s; display: flex; align-items: flex-end; overflow: hidden; }
+.volbar.on { opacity: 1; transition: none; }
+.volbar i { display: block; width: 100%; background: #fff; }
+.tpi .tc { font-variant-numeric: tabular-nums; font-size: 12.5px; min-width: 0; flex: 0 1 auto; padding: 0 2px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Timeline: markers, cache and playhead all in the track's own percent, so they line up. */
 .tl { position: relative; height: 30px; margin: 0 10px; touch-action: none; cursor: pointer; }
-.tl .trk { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; background: var(--trk); box-shadow: 0 0 0 1px var(--halo); }
+.tl .trk { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; background: var(--trk); }
 .tl .cache { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: #30d158; opacity: .5; }
 .tl .mk { position: absolute; top: -5px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: #ff453a; pointer-events: none; }
 .tl .mk.done { background: #30d158; } .tl .mk.progress { background: #ffd60a; }
@@ -212,6 +229,9 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .newbar .row { display: flex; align-items: center; gap: 8px; }
 .newbar .row span { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .newbar .cmp { margin-top: 6px; }
+.newbar .frs { display: flex; gap: 6px; margin-top: 6px; overflow-x: auto; scrollbar-width: none; }
+.newbar .frs button { flex: none; border: 0; border-radius: 9px; background: var(--chip); color: var(--fg); padding: 5px 10px; font-size: 12.5px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.newbar .frs button.on { background: var(--accent); color: #fff; }
 .newbar .add { flex: 1; border: 0; border-radius: 12px; background: var(--accent); color: #fff; padding: 11px 14px; font-size: 15px; font-weight: 600; cursor: pointer; }
 /* Sheets */
 .back { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .45); display: flex; align-items: flex-end; justify-content: center; }
@@ -230,7 +250,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; margin: 8px 0 14px; }
 .kv b { color: var(--muted); font-weight: 500; }
 .sheet .lab { display: block; font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 4px; }
-.sheet .seg.themes { margin: 0 0 14px; }
+.sheet .seg.themes, .sheet .seg.fs { margin: 0 0 14px; }
+.sheet .seg.fs + p { margin-top: -8px; }
 /* Full-screen picture viewer */
 /* Full-screen picture viewer: no bar; round buttons float over the picture. Swipe up / down: the
    next / previous note; sideways: back to the player and the list. */

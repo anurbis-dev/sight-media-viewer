@@ -262,11 +262,19 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["fitShown"])
         self.assertLess(res["centreShift"], 2)
         self.assertAlmostEqual(res["canvasScale"], res["pv"]["z"], delta=0.01)
+        # The canvas pinched below fit and turned a bit: back to fit, straight (Fit hidden).
+        self.assertEqual((res["canvasSettle"][0] - round(res["canvasRot0"] / 90) * 90) % 360, 0)  # its nearest quarter
+        self.assertEqual(res["canvasSettle"][2], "")  # the ease is over (no lag on the next gesture)
+        self.assertTrue(res["canvasSettle"][1])
         self.assertTrue(res["preview"][0])
         self.assertGreater(res["brush"][1], res["brush"][0])
         self.assertEqual(res["itemsAfterHold"], 0)  # the hold's dot is dropped
         self.assertEqual(res["undoRedo"], [1, 0, 1])
-        self.assertEqual(res["brushReset"], [6, True])
+        self.assertEqual(res["brushReset"], [6, True, 1])
+        # Hold + drag sideways: the tool's opacity (not its size), shown in the preview; nothing drawn.
+        self.assertEqual(res["opac"][0], 1)
+        self.assertLess(res["opac"][1], 0.9)
+        self.assertEqual(res["opac"][2:], [True, True, 0])
         # Tool down: a tap plays inside the canvas (live layer), a tap pauses on a later frame.
         self.assertTrue(res["toolOff"])
         self.assertEqual(res["livePlay"], [True, True])
@@ -289,6 +297,52 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["viewer"][1].endswith("2 / 2"), res["viewer"])
         self.assertTrue(res["viewer"][2].endswith("2 / 2"), res["viewer"])
         self.assertFalse(res["viewer"][3])
+        self.assertEqual(res["viewerFade"], [True, 1])
+        # Home groups: dropped onto another review → a group of both, named by their common start;
+        # its header opens / closes it; taking one out dissolves a group of one.
+        self.assertTrue(res["dropLit"])
+        # The pencil right after a step / scrub: the canvas is up while the seek is on its way;
+        # the player's own frame of that position then replaces the cached picture.
+        self.assertEqual(res["penAfterScrub"], [True, True, True])  # up mid-seek; then the player's own frame
+        # Tool rows: Shapes → 5, a pick folds it (the slot on, the ellipse in hand) and draws;
+        # Arrows → 5, a touch on the picture folds it (the arrow kept); colour → 5, a pick sets it.
+        self.assertEqual(res["fly"][:2], [5, [False, True, "ellipse"]])
+        self.assertGreaterEqual(res["fly"][2], 1)
+        self.assertEqual(res["fly"][3:6], [5, [False, "arrow"], 5])
+        self.assertEqual(res["fly"][6], ["rgb(255, 214, 10)", False])
+        self.assertEqual(res["flyKey"], [False, "brush"])
+        # Speed: dragged up → faster; a tap → a common frame rate; a hold → the clip's own.
+        (r1, t1, fps), (r2, t2, _), (r3, t3, _) = res["speed"]
+        self.assertGreater(r1, 1.1)
+        common = [1, 2, 3, 4, 5, 6, 8, 10, 12, 12.5, 15, 20, 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 72, 90, 100, 120]
+        self.assertTrue(any(abs(r2 * fps - c) < 1e-6 for c in common), (r2, fps))
+        self.assertEqual(r3, 1)
+        self.assertNotEqual(t1, t3)
+        self.assertEqual(res["sound"], [True, False])
+        self.assertEqual(res["groupPlace"], ["g", "grp-c"])
+        # Auto full screen on a plain tap, not a scrub / drag / hold (again after the reload);
+        # Settings → Off leaves it.
+        self.assertEqual(res["fullscreen"], [False, True, False, True, [False, "0"]])
+        self.assertEqual(res["group"], [["shot", "grp-a,grp-b", False], ["shot", "grp-a,grp-b", True], None, 0])
+        # Reply on a video note: over the player (panel closed, compose bar, 2 frame chips + ticks),
+        # from the note's first frame; a chip goes to its frame; drawn on a new frame, sent, the
+        # player stays there and the note stays lit; the reply's card shows that frame.
+        self.assertEqual(res["reply"], [True, False, True, True, 2, 2, True])
+        self.assertEqual(res["replyChip"], [True, True])
+        self.assertEqual(res["replySent"][:6], [True, True, None, True, True, True])
+        self.assertGreaterEqual(res["replySent"][6], 1)
+        # The viewer walks the whole thread: the note's 2 frames, then the reply's (with its words).
+        th = res["thread"]
+        self.assertTrue(th[0].endswith("1 / 3"), th)
+        self.assertTrue(th[1].endswith("2 / 3") and not th[1].startswith("↳"), th)
+        self.assertTrue(th[5], th)  # Back: the player on the frame left on (the reply's)
+        self.assertTrue(th[2].startswith("↳") and th[2].endswith("3 / 3"), th)
+        self.assertEqual(th[3], th[2])  # the end: stays
+        self.assertEqual(th[4], "Forgot this frame")
+        # Edit text on a reply: the words change, the reply is marked edited (its merge key).
+        self.assertEqual(res["replyEdit"], ["Forgot this frame — and the next", True, True, "Forgot this frame — and the next"])
+        self.assertEqual(res["replyPencil"], [True, True])
+        self.assertEqual(res["replyGone"], [None, False])
         self.assertTrue(res["home"])
         self.assertEqual((res["swipeLeft"], res["covered"]), ("row r", "row"))
         self.assertEqual(res["hidden"], [0, "1 hidden for now · Show"])

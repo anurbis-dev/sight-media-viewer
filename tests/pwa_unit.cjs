@@ -42,7 +42,8 @@ const moovPayload = (...traks) => Buffer.concat(traks);
   // ---- mp4 ----
   t("fps 24 from stts", () => {
     const f = fpsFromMoov(moovPayload(trak("soun", 48000, [[100, 1024]]), trak("vide", 24000, [[96, 1000]])));
-    assert.deepStrictEqual(f, { fps: 24, frames: 96, duration: 4 });
+    assert.deepStrictEqual(f, { fps: 24, frames: 96, duration: 4, audio: true });
+    assert.strictEqual(fpsFromMoov(moovPayload(trak("vide", 24000, [[96, 1000]]))).audio, false);  // no sound track
   });
   t("fps 29.97 (mdhd v1) and variable rate averages", () => {
     assert.strictEqual(fpsFromMoov(moovPayload(trak("vide", 30000, [[300, 1001]], true))).fps, 29.97);
@@ -92,6 +93,25 @@ const moovPayload = (...traks) => Buffer.concat(traks);
     assert.strictEqual(st.length, 1); assert.deepStrictEqual(st[0].data.history.map((h) => h.state), ["changes", "approved"]);
     M.deleteNote(rows, b.id, now + 40);
     assert.deepStrictEqual(M.counts(rows), { notes: 1, open: 0, progress: 0, done: 1 });
+  });
+  t("a reply edited: text / pictures, edited stamp; the later edit wins a merge", () => {
+    const n = M.newNote({ text: "N", author: "A", ctx: null, shots: [] }, 1000);
+    const r = M.addReply(n, { text: "first", author: "B" }, 2000);
+    const other = JSON.parse(JSON.stringify(n.data.replies));
+    M.editReply(n, r.id, { text: "second", shots: ["s1"] }, 3000);
+    const e = n.data.replies.find((x) => x.id === r.id);
+    assert.deepStrictEqual([e.text, e.shots, e.edited], ["second", ["s1"], 3000]);
+    assert.ok(n.updated_at >= 3000);
+    const RC = globalThis.SightReviewCore;
+    assert.strictEqual(RC.mergeReplies(other, n.data.replies).find((x) => x.id === r.id).text, "second");
+    assert.strictEqual(RC.mergeReplies(n.data.replies, other).find((x) => x.id === r.id).text, "second");
+    // A clock behind the reply's stamp still makes a later edit (past it); a tombstone stays one.
+    M.editReply(n, r.id, { text: "third" }, 1500);
+    assert.strictEqual(n.data.replies.find((x) => x.id === r.id).edited, 3001);
+    M.deleteReply([], n, r.id, 1600);
+    assert.strictEqual(n.data.replies.find((x) => x.id === r.id).deleted, 3002);
+    M.editReply(n, r.id, { text: "back?" }, 9000);
+    assert.ok(!n.data.replies.find((x) => x.id === r.id).text);
   });
   t("package round trip and merge both ways", () => {
     const rows = [];

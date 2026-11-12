@@ -638,7 +638,7 @@ body.zoomed { overflow: hidden; }
   // a reply's own drawing is always shown on its thumbnail).
   function drawingsOf(f){
     return exported.concat(E.rows).filter(function(r){
-      return f.reply ? r.data.reply === f.reply : f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at);
+      return f.reply ? r.data.reply === f.reply && (!f.at || RC.ctxVisible(r.data.ctx, f.at)) : f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at);
     });
   }
   function shownOn(f){

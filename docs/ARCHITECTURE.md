@@ -253,7 +253,15 @@ the angle is atan2 about the pivot, so a longer arm turns finer.
 
 **Drawing canvas** (`app/static/review-draw.js`, `SightReviewDraw.open`) — shared by the HTML page
 (inlined) and the phone app. Tools: select / transform (`V`), brush, highlighter, arrow, rect,
-ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The trash deletes the selection,
+ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The bar (`.dtools`) is built from
+`SLOTS`: two slots hold kinds — *Arrows and lines* (`ARROWS`: heads / dash, `line` = shape_kind
+"line") and *Shapes* (`SHAPES`: rect / rounded / ellipse, outlined or filled); `pen.arrow` /
+`pen.shape` (saved with the pen) pick the kind, `pen.tool` stays the drawing tool key (arrow /
+rect / ellipse). A tap on a slot shows its row (`.dfly`, above the bar); a pick, a touch on the
+picture, another slot folds it. `closeFly` hides the row at once and removes it a tick later: the
+picking click is still on its way to the host's document handlers, and a detached target reads as
+"outside the canvas" (the HTML page then closed an empty new-note draft). The colour is the
+`.dcol` circle at the row's end with the colours in its flyout (`useColour`). The trash deletes the selection,
 else every item drawn here (one undo step). Undo keeps whole `items` arrays: a transform drags
 *copies* of the selected objects (`stroke.prev` restores on a tap / cancel), never objects an undo
 state holds. View: `screen = V.o + Rot(V.r)·diag(V.z·V.m, V.z)·(local − box centre)` (`fwd0` /
@@ -271,11 +279,17 @@ else on the whole screen — unless the host passes `o.fitBox()` (a viewport rec
 fitted into it with no padding, bars ignored) and `o.nav {z, r, o}` (its own zoom / extra turn /
 offset from that fit, opened with; `o.onNav` gets the view back on close, relative to the fit
 centre and the quarter turn last reported by `onView`). Gestures: hold (450 ms, touch / pen, ≤ 8 /
-4 px) with a tool → `adj`: the stroke it began is aborted, a vertical drag sets `SIZE[tool]` on a
-log scale (screen height = `SIZE_RANGE` ratio), preview `.dsize` on the left; with select +
+4 px) with a tool → `adj`: the stroke it began is aborted, then one axis per hold (the first
+10 px): a vertical drag sets `SIZE[tool]` on a log scale (screen height = `SIZE_RANGE` ratio), a
+sideways one `OPAC[tool]` (0.05…1, 0.8 × width = full range; none for the eraser, always size; new
+items take `OPAC`), preview `.dsize` on the left ("px · %"); with select +
 a selection, copies are adjusted (one axis per hold: y = width key `WKEY[kind]` ×16 per screen,
-x = opacity), one undo step. Sizes are per tool (`SIZE0` defaults), saved with the pen
-(`sight-review:pen` `sizes`); a hold on a tool button resets that tool's size. Two / three touches
+x = opacity), one undo step. When a pinch / pan / right-drag zoom ends (`settleView`, the
+player's rule): z < 1 → fit with the turn to the nearest quarter, z < 1.04 straight and < 24 px
+from `fitC` → exactly fit; eased .2 s (transform / size), started from the angle nearest the
+target so 0° / 360° never spins round; any move clears the ease (`unease`). The wheel stops at fit
+and recentres there. Sizes are per tool (`SIZE0` defaults), saved with the pen
+(`sight-review:pen` `sizes`, `opac`); a hold on a tool button resets that tool's size and opacity. Two / three touches
 down and up within 400 ms, none moved 14 px → undo / redo, the view restored to before (`tap`).
 `SightReviewDraw.pinch(g, a, b)` is the two-finger zoom / turn rule, shared with the phone player. A tap on the tool in hand puts it down (`pen.tool = null`, never saved;
 each open starts with the last real tool): one finger then calls `o.onScrub({phase, dx, dt, fine})`
@@ -430,9 +444,9 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   slid away (transform + visibility, so it keeps its measured height) unless `.open` or
   `.compose`. Back to the player: pull the list down from its top (`bindPanelPull`: a touch that
   started at scrollTop 0, > 60 px down; wheel up at the top after 300 ms without scrolling). The
-  header (`.hdr`) and transport (`.tp`) are overlays on the player with no fill (`--halo`
-  shadows); their containers are `pointer-events: none`, their children not, so gestures between
-  the buttons reach the stage.
+  header (`.hdr`) and transport (`.tp`) float over the player, inset 8 px, on the canvas' bar style
+  (`.rd-panel` from review-draw.js, put in the page by `DRAW.css()`; one style for both screens,
+  half see-through via `--rd-ov`); they take the touches over their whole area.
 - **Stage gestures** (`bindStage`, once per stage element): one finger — sideways ≥ 6 px scrubs
   (video), up 40 px opens the panel, down 60 px leaves the review, a tap = click (video: play /
   pause; picture: full screen). Two fingers: `R.pv {z, r, o}` (view only, not saved) as a CSS
@@ -450,7 +464,21 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
 - **Home list**: `reviewRow` — swipe left / right uncovers the bin / eye (`.sw`), hold + drag
   reorders (`sight-review:order` in localStorage, new reviews first), hide for now =
   `sight-review:hidden` in sessionStorage. While dragging, the DOM is not reordered (that drops the
-  held card's pointer capture): other rows slide by transform, the row moves on release.
+  held card's pointer capture): other rows slide by transform (by the held row's height), the row
+  moves on release. The gestures live in `rowGestures(row, it, o)` (`o.open`, `o.menu`,
+  `o.group`), shared by review rows and group headers (`groupHead`, no swipe).
+- **Review groups**: `sight-review:groups` = `[{id, name, keys, open}]` (localStorage); the order
+  list holds a group as `"g:<id>"`. A top-level review held over the middle of another row's
+  `.item` (`.drop`; no slide while over one) and let go → `groupOnto` (new group in the target's
+  slot, or appended to the target group). `tidyGroups` (each render) drops keys of deleted reviews
+  and dissolves groups under two members, putting the rest back in the group's slot. Members are
+  ordinary rows in `.gm` (reorder among themselves → `g.keys`); a lifted group header is `.folded`.
+- **Full screen** (`enterFS` / `fsUp`): Auto (`sight-review:fs` ≠ "0") requests full screen on the
+  `pointerup` (capture) of a plain one-finger tap (≤ 12 px, ≤ 600 ms, no other pointer down; not
+  on labels / inputs / text fields / links / sheets / `[data-nofs]` — the file picker), where
+  `fsCan()` (the API exists, not standalone, not iOS). A full-screen exit the app did not ask for
+  (Android back, Esc) disarms it until the next screen (`fsArm` in `renderHome` / `openReview`).
+  Settings: Auto / Off.
 - **Notes order**: by `data.created` for every kind (`notesSorted`, same in annotate.js) — numbers
   match Sight; the frame does not count.
 - **Frame math** (`model.js frameIndex / frameTime`, same rule in annotate.js): a stored time is
@@ -463,11 +491,29 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   latest wanted time next (`R.want`, `pumpSeek`); `settle` when it lands and nothing is dragged
   (`R.dragging`). `posNow()` = the pending / shown time, so quick steps add up. The timeline
   (`makeTransport`, `.tl`) puts markers, cache bar and playhead in the same track percent; a tap
-  within 10 px of a marker lands on it. `markerList()` = notes (by state: red / yellow / green ticks),
+  within 10 px of a marker lands on it. Its row: ‹ ◀ `fps` timecode `snd` ▶ ›. `vdrag(button,
+  {begin, move(dy), tap, hold})` is the small vertical-drag control (pointer captured, stage /
+  canvas never see it). Speed = `video.playbackRate` (0.1…4, `R.rate`; shown as `fps × rate`;
+  tap → `snapRate` to the nearest `COMMON_FPS` by ratio, hold → 1). Volume = `volLevel`
+  (`sight-review:vol`, per device; `applyVol` on each video, 0 = muted; `volWorks` false on iOS
+  → only mute / unmute); `.volbar` at the left edge while set. Sound present: `R.hasAudio`
+  (true / false / null) from mp4.js (`audio`: a `soun` track), Safari `audioTracks`, Firefox
+  `mozHasAudio` — final, stored as `meta.audio` (`audioSure`); Chrome: a guess after 0.25 s of
+  unmuted play with no `webkitAudioDecodedByteCount`, taken back if sound decodes later, not stored. `markerList()` = notes (by state: red / yellow / green ticks),
   drawings on other frames (grey dots), and the frames of the open drawing session / new-note draft
   (accent dots) — while a session (`R.drawS`) or a new note (`R.newOpen`) is open, *only* its own
-  frames (a clean timeline; marker jumps and the timeline snap follow it). `paintNewBar` repaints
-  the markers. A sideways drag on the stage scrubs
+  frames (a clean timeline; marker jumps and the timeline snap follow it); while a reply is
+  written over the player (`R.replyTo`) the note's thread frames (`threadFrames`: its tick, dots
+  for the other frames it / its replies drew on) and the reply draft's. `paintNewBar` repaints
+  the markers.
+- **Reply over the player** (video note, video loaded): `startReply(n, at)` → `R.replyTo` (the bar
+  is `replyBar`: label, frame chips, ×, composer `{key: note id, multi, here}` — the pencil opens
+  `drawVideo` on the frame on screen), panel closed, seek to the thread's first frame. The stage
+  shows the note's drawings + the draft (`stageDrawings`). `sendReply` writes one drawing set per
+  frame drawn on, each with that frame's ctx. `composing()` = `R.newOpen || R.replyTo` (the
+  `.compose` layout, `els.where`); starting a reply closes the new-note bar (its draft stays).
+  `R.curNote` (set by a reply, `goTo`, `showNote`) keeps a card `.cur` while no note is on the
+  frame shown. Picture notes / no video: the inline composer in the card (`R.openReply`). A sideways drag on the stage scrubs
   from the current position (`scrubStep`: ¼ frame per px, up to ×12 with finger speed, Shift ¼;
   starts after 6 px of mostly-horizontal movement; the click right after a mouse scrub is
   swallowed); a swipe up on the stage opens the panel. No play button in the transport (tap the
@@ -517,7 +563,19 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   picture), left / right `o.side(±1)` (a video note's frames, `noteFrameList` = its ctx frame +
   `M.noteFrameTimes`, by r3; the caption's `.fr` says `time · f N · i / n`). `from0` (where it was
   opened) travels through nav / side; closing on another note or frame brings it forward
-  (`showNote(n, t)`: seeks there, scrolls the card).
+  (`showNote(n, t)`: seeks there, scrolls the card). The step is a cross-fade (`show(no, true)`):
+  the next `.vb` is built and its image decoded (≤ `FADE_WAIT`) before `o` / `box` switch, then it
+  fades in on top while the old box holds, fades and is removed; `busyNav` covers load + fade.
+- **Thread viewer**: `threadItems(n)` = `{kind: "frame", t?, rid?}` / `{kind: "shot", id, rid?}`
+  — the note's frames (`noteFrameList`; a picture: one, if it has its own drawings), its shots,
+  then per live reply its drawn frames (`replyFrameTimes`) and shots. `openThread(n, item)` from
+  any thumbnail (`sameItem` by frame key / shot id / reply); `loadItem` → {url, vb, rows, at}
+  (a missing shot is skipped by the swipe); `threadView` → viewer opts (`view` null for shots: not
+  turned; `text` = the reply's words; `onDraw` only on frames). Up / down: the next note's first
+  loadable item.
+- **Reply editing**: `M.editReply(note, rid, patch)` sets `edited` (the reply merge key);
+  `replyMenu` (⋯ on a reply): text, drawing (`editNoteDrawing(n, rid)` — the reply's rows only,
+  any frame on a video, the note's ctx on its own frame), add / remove shots, delete.
 - **View**: `R.meta.view {rot, mirror}` (saved with the list entry) turns / mirrors the stage
   (`turnEl`: a 90 / 270 element gets the stage's swapped size, centred), the full-screen viewer and
   the canvas (`drawCanvas` passes `view` / `onView`). While a new note is open the stage shows only

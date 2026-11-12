@@ -34,7 +34,15 @@ async function openPanel(p){
   if (!await p.evaluate(() => window.__sightReview.R.panel)){ await p.click(".pbar"); await p.waitForTimeout(350); }
 }
 // Takes a tool up (a tap on the tool already in hand would put it down).
+// A tool by its name: a plain one from the bar; an arrow / line or a shape from its slot's row.
+const SLOT_OF = { "Arrow": "Arrows and lines", "Line": "Arrows and lines", "Rectangle": "Shapes", "Ellipse": "Shapes" };
 async function pick(p, tool){
+  if (SLOT_OF[tool]){
+    await p.click(`.draw .dtools button[title="${SLOT_OF[tool]}"]`);
+    if (!await p.locator(".draw .dfly:not([hidden])").count()) await p.click(`.draw .dtools button[title="${SLOT_OF[tool]}"]`);
+    await p.click(`.draw .dfly button[title="${tool}"]`);
+    return;
+  }
   const b = p.locator(`.draw button[title="${tool}"]`);
   if (!await b.evaluate((e) => e.classList.contains("on"))) await b.click();
 }
@@ -138,10 +146,13 @@ async function make(){
     await p.waitForSelector(".note");
     await openPanel(p);
     const n = p.locator(".note").first();
+    // A reply on a video note is written over the player, on the note's frame (the frame on screen).
     await tap(n.locator('button:has-text("Reply")'));
-    await tap(n.locator(".pen"));
+    await p.waitForSelector(".review.compose .newbar .cmp");
+    await p.waitForTimeout(400);
+    await tap(p.locator(".newbar .cmp .pen"));
     await drawOn(p, "Arrow", [-60, 40], [0, 0]);
-    await tap(n.locator(".send"));
+    await tap(p.locator(".newbar .send"));
     await p.waitForFunction(() => window.__sightReview.R.rows.length === 3);
     await p.evaluate(() => { window.__sightReview.R.video.currentTime = 1.0; });
     await p.waitForTimeout(400);
