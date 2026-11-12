@@ -2,6 +2,17 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.16.1 — 2026-11-10 — Release builds for all platforms on GitHub Actions
+- **What:** a tag `v<APP_VERSION>` — or a manual run (Actions → Release builds) with *Publish a GitHub Release* ticked, which creates that tag itself — builds Windows x64, macOS arm64, macOS x64 and Linux x64 on GitHub, smoke-tests each packaged app and publishes them as a GitHub Release. Manual runs (Actions → Release builds) and pushes that touch the build pipeline build without releasing.
+- **Where:** new `.github/workflows/release.yml`; `build_exe.bat` (`if not defined CI pause`); `build_app_macos.sh` (Linux-aware closing message); README "Release builds on GitHub".
+- **Notes:**
+  - CI calls the same build scripts as a developer, so PyInstaller options live in one place per OS. If you add `--add-data` / `--collect-all` to one script, check whether the other needs it.
+  - Smoke test: the packaged binary runs with `--no-browser --port 8799` and a temp `SIGHT_HOME`; it must answer `/api/state` with the version from `app/version.py`. The tag/version check fails the run on a mismatch, so bump `APP_VERSION` before tagging.
+  - Runner labels: `windows-latest`, `macos-15` (Apple Silicon), `macos-15-intel` (GitHub's last Intel image; when it is retired, drop that row), `ubuntu-22.04` (older glibc so the Linux build runs on more distros).
+  - The Linux build and its smoke test (plus a Cyrillic PDF export from the packaged app) were run in this container; the Windows and macOS jobs could not be run here — the first workflow run is their test.
+  - PyMuPDF 2.x has no Intel-Mac wheel and its sdist fails to build (`pymupdf-lite` name mismatch), so both scripts pass `--only-binary pymupdf`: the Intel job gets the newest PyMuPDF that has a wheel, the others are unaffected.
+  - macOS builds are not signed / notarized (no Apple certificate in the repo); release notes tell users the right-click → Open step.
+
 ## 0.16.0 — 2026-11-10 — Lightbox annotations and review sessions (draw, notes, screenshots, PDF / .sightreview)
 - **What:** `A` in the lightbox (`Shift+A` in 3D) turns on annotation mode for images, PSDs, video and 3D models: a compact top toolbar (select, brush with pen pressure, pencil, highlighter, eraser, line, arrow, rect, ellipse, text, numbered pin, screenshot, region screenshot, undo/redo, onion, hide, panel) plus a second row with the current tool's or the selection's settings. All drawings are vector objects, editable later (move / scale / rotate / restyle / bend lines / re-edit text). A right panel collects review notes (text, reviewer, date, screenshots via `S` / `Shift+S`, resolve, delete); a note takes the unattached drawings on screen. Video: drawings and notes sit on a frame, markers on the timeline, `,` `.` frame step, `Shift+,` `Shift+.` marker jumps, hold time, onion skin. 3D: drawings belong to a camera view; notes also save shading/lights/explode/fov and restore them. Export: PDF report, `.sightreview` package (import by drag-drop, panel menu or palette; matched to the same media by path, else name+size), notes as text.
 - **Where:**

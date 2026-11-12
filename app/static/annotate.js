@@ -447,9 +447,22 @@ export function createAnnotator(host){
   // the frame rate not known yet, the raw time is kept rather than snapped to a guessed rate.
   const frameStart = (t) => {
     if (!S.fpsKnown) return Math.round(t * 1000) / 1000;
-    const fd = frameDur();
-    return Math.round((Math.floor(t / fd + 1e-6) + 0.01) * fd * 1000) / 1000;
+    return Math.round((frameIndex(t) + 0.01) * frameDur() * 1000) / 1000;
   };
+  // The frame t falls in. A stored time ((n + 0.01)·fd to 3 dp) can round a hair below n·fd at
+  // 23.976 / 29.97 / 60 fps, so one is recognised and kept on its frame; others are floored (same
+  // rule as mobile/js/model.js frameIndex).
+  function frameIndex(t){
+    const fd = frameDur(), k = Math.round(t / fd - 0.01);
+    // Only a time with exactly 3 decimals can be a stored one (a player's own time never is).
+    if (Math.abs(t * 1000 - Math.round(t * 1000)) < 1e-6 && Math.abs(t - Math.round((k + 0.01) * fd * 1000) / 1000) < 6e-4) return Math.max(0, k);
+    return Math.floor(t / fd + 1e-6);
+  }
+  // Two stored times on the same frame (one may predate the known frame rate).
+  const sameFrame = (a, b) => S.fpsKnown ? frameIndex(a) === frameIndex(b) : Math.abs(a - b) < 5e-4;
+  // Where the player goes to show the frame of a stored time: a quarter into that frame (a stored
+  // 0.100 at 29.97 fps is just before frame 3's start and would show frame 2).
+  const landAt = (t) => S.fpsKnown ? (frameIndex(t) + 0.25) * frameDur() : t;
   function camMatch(a, b){
     if (!a || !b) return false;
     const d = hyp(hyp(a.p[0] - a.t[0], a.p[1] - a.t[1]), a.p[2] - a.t[2]) || 1, tol = d * 0.004;
@@ -520,7 +533,7 @@ export function createAnnotator(host){
     // Loose drawings from before (never attached to a note) do not count: only the ones drawn since
     // this file was opened are a new note in the making.
     const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
-      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.openedAt && ctxShown(it));
+      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.composeSince);
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
     modeCache = { compose, pin: note(S.pinFocus), hover: note(S.focusNote) };
     queueMicrotask(() => { modeCache = null; });
@@ -558,8 +571,9 @@ export function createAnnotator(host){
 
   function notesSorted(){
     const notes = [...S.items.values()].filter((it) => it.kind === "note");
-    if (S.kind === "video") notes.sort((a, b) => (a.data.ctx?.t ?? 0) - (b.data.ctx?.t ?? 0) || (a.data.created || 0) - (b.data.created || 0));
-    else notes.sort((a, b) => (a.data.created || 0) - (b.data.created || 0));
+    // By when they were made, videos too (not by frame): a new note always lands at the end, and
+    // the phone app / HTML page number them the same (mobile/js/model.js notesSorted).
+    notes.sort((a, b) => (a.data.created || 0) - (b.data.created || 0));
     return notes;
   }
   function numOf(it){
@@ -1525,7 +1539,11 @@ export function createAnnotator(host){
     if (show) renderPanel();
   }
   // Drawings a new note picks up: not attached to a note yet and on screen right now.
-  const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note && ctxShown(it));
+  // Drawings waiting for the next note: loose ones shown now, and every loose one drawn since the
+  // file was opened on any frame / view — a note may hold drawings on several frames of a video or
+  // views of a 3D model (each drawing keeps its own ctx).
+  const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note
+    && (ctxShown(it) || (it.data.created || 0) >= S.composeSince));
   function renderPanel(){
     const el = S.ui;
     if (!el || el.hidden) return;
@@ -1572,27 +1590,35 @@ export function createAnnotator(host){
   }
   // ---- note previews: the clean picture / video frame with the note's drawings over it (vector,
   // nothing burned in) ---------------------------------------------------------------------------
+  // A video note drawn on several frames: one preview per frame, the note's own frame first.
   function notePreview(n){
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
-    return previewBox(n, [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply), "");
+    const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
+    if (S.kind !== "video") return previewBox(n, own, "");
+    const t0 = n.data.ctx?.t, ts = [];
+    own.forEach((it) => { const t = it.data.ctx?.t; if (t != null && (t0 == null || !sameFrame(t, t0)) && !ts.some((x) => sameFrame(x, t))) ts.push(t); });
+    ts.sort((a, b) => a - b);
+    return previewBox(n, own.filter((it) => it.data.ctx?.t == null || t0 == null || sameFrame(it.data.ctx.t, t0)), "", t0)
+      + ts.map((t) => previewBox(n, own.filter((it) => it.data.ctx?.t != null && sameFrame(it.data.ctx.t, t)), " sm", t)).join("");
   }
   // A reply's drawings (made on the HTML page or the phone) on the note's picture, under the reply.
   function replyPreview(n, r){
     if (S.hiddenReplies.has(r.id)) return "";
     return previewBox(n, replyDrawings(n.id, r.id), " sm");
   }
-  function previewBox(n, list, cls){
+  function previewBox(n, list, cls, at){
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
     const g = geom();
     if (!list.length || !g?.nw || !g?.nh) return "";
-    let img;
+    let img, pt = "";
     if (S.kind === "video"){
-      const t = n.data.ctx?.t;
+      const t = at ?? n.data.ctx?.t;
+      if (at != null && (n.data.ctx?.t == null || !sameFrame(at, n.data.ctx.t))) pt = ` data-pt="${t}"`;
       if (t == null) return "";
       const url = previewFrame(t);
       img = url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`;
     } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
-    return `<div class="an-nprev${cls}" style="aspect-ratio:${g.nw} / ${g.nh}" title="Show this note's drawings">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="none">${RC.svgMarkup(list, numOf)}</svg></div>`;
+    return `<div class="an-nprev${cls}"${pt} style="aspect-ratio:${g.nw} / ${g.nh}" title="${pt ? "Go to this frame" : "Show this note's drawings"}">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="none">${RC.svgMarkup(list, numOf)}</svg></div>`;
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.
@@ -1630,7 +1656,7 @@ export function createAnnotator(host){
           const done = () => { clearTimeout(to); v.removeEventListener("seeked", done); ok(); };
           v.addEventListener("seeked", done);
           to = setTimeout(done, 4000);
-          v.currentTime = Number(key);
+          v.currentTime = landAt(Number(key));
         });
         if (PF.gen !== gen || !v.videoWidth) break;
         const w = Math.min(480, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
@@ -1738,7 +1764,8 @@ export function createAnnotator(host){
     pend.hidden = !S.pending.length;
     const n = pendingDrawings().length;
     const c = ctxLabel(ctxNow(false));
-    el.querySelector(".an-ctx").textContent = [c, n ? `+${n} drawing${n > 1 ? "s" : ""}` : ""].filter(Boolean).join("  ·  ");
+    const away = pendingDrawings().filter((it) => !ctxShown(it)).length;
+    el.querySelector(".an-ctx").textContent = [c, n ? `+${n} drawing${n > 1 ? "s" : ""}${away ? ` (${away} on other ${S.kind === "model3d" ? "views" : "frames"})` : ""}` : ""].filter(Boolean).join("  ·  ");
   }
   function renderViews(){
     const el = S.ui?.querySelector(".an-views");
@@ -1794,6 +1821,13 @@ export function createAnnotator(host){
       return;
     }
     const card = t.closest(".an-note");
+    // Another frame the note was drawn on: the note picked, the clip on that frame.
+    const pv = e.target.closest?.(".an-nprev[data-pt]");
+    if (card && pv){
+      if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id);
+      const v = video(); if (v){ v.pause(); v.currentTime = landAt(Number(pv.dataset.pt)); }
+      return;
+    }
     if (card) goNote(card.dataset.id);
   }
   function onListDblClick(e){
@@ -1833,7 +1867,7 @@ export function createAnnotator(host){
     S.pinFocus = S.pinFocus === id ? null : id;
     S.focusNote = S.pinFocus;
     const c = n.data.ctx;
-    if (c?.t != null){ const v = video(); if (v){ v.pause(); v.currentTime = c.t; } }
+    if (c?.t != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(c.t); } }
     if (c?.vk) goView(c.vk, c.v3d);
     S.sel = new Set();
     renderSel(); renderProps(); renderPanel(); paintVisibility();
@@ -1868,6 +1902,7 @@ export function createAnnotator(host){
       for (const it of linked) it.data.note = note.id;
     });
     S.pending = [];
+    S.composeSince = Date.now();  // drawings on other frames from here on go into the next note
     // Leave the field so S / Shift+S / tool keys work again straight away.
     if (inp){ inp.value = ""; inp.style.height = ""; inp.blur(); }
     S.sel.clear();
@@ -1893,7 +1928,7 @@ export function createAnnotator(host){
         if (!m) return;
         e.stopPropagation(); e.preventDefault();
         const vid = video();
-        if (vid){ vid.pause(); vid.currentTime = Number(m.dataset.t); }
+        if (vid){ vid.pause(); vid.currentTime = landAt(Number(m.dataset.t)); }
         if (!S.on) toggle(true);
         if (m.dataset.note) goNote(m.dataset.note);
       });
@@ -1936,7 +1971,7 @@ export function createAnnotator(host){
     const t = dir > 0 ? ts.find((x) => x > cur + eps) : [...ts].reverse().find((x) => x < cur - eps);
     if (t == null){ toast(dir > 0 ? "No later marker" : "No earlier marker"); return true; }
     v.pause();
-    v.currentTime = t;
+    v.currentTime = landAt(t);
     return true;
   }
 
@@ -2130,7 +2165,7 @@ export function createAnnotator(host){
           // One note on a picture: its frame would just repeat the cover.
           if (!forPage && notes.length > 1 && [...S.items.values()].some(own)) cv = composeNative(own, 1600);
         } else if (v && c?.t != null){
-          await seekTo(v, c.t);
+          await seekTo(v, landAt(c.t));
           cv = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
           cap = "Frame " + Math.round(c.t * S.fps) + " · " + fmtTime(c.t, S.fps);
         } else if (S.b3 && c?.vk){
@@ -2144,13 +2179,40 @@ export function createAnnotator(host){
           }
         }
         frame = toJpeg(cv);
-        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size: cv ? [cv.width, cv.height] : null, frameCaption: cap, shots: d.shots || [],
+        const size = cv ? [cv.width, cv.height] : null;
+        // More frames / views the note was drawn on, each with everything shown there:
+        // {frame, size, caption, ctx} (the page draws over them by ctx).
+        const more = [], mine = [...S.items.values()].filter((it) => isDrawing(it) && own(it) && !it.data.reply);
+        if (v && c?.t != null){
+          const ts = [];
+          mine.forEach((it) => { const t = it.data.ctx?.t; if (t != null && !sameFrame(t, c.t) && !ts.some((x) => sameFrame(x, t))) ts.push(t); });
+          ts.sort((a, b) => a - b);
+          for (const t of ts){
+            await seekTo(v, landAt(t));
+            const cm = composeNative(pick((it) => ctxShown(it)), 1600);
+            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: "Frame " + Math.round(t * S.fps) + " · " + fmtTime(t, S.fps), ctx: { t, hold: 0 } });
+          }
+        } else if (S.b3 && c?.vk){
+          for (const vk of new Set(mine.map((it) => it.data.ctx?.vk).filter((k) => k && k !== c.vk))){
+            const view = S.views.get(vk);
+            if (!view) continue;
+            const look = view.v3d || keep.v3d;
+            if (look) host.setV3D?.(look);
+            S.b3.setCam(view.cam);
+            S.curVk = vk;
+            await nextFrame(); await nextFrame(); await nextFrame();
+            const cm = composeNative(pick((it) => it.data.ctx?.vk === vk && !replyGone(it)));
+            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: "View " + (viewNumber(vk) || ""), ctx: { vk, cam: view.cam } });
+          }
+        }
+        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size, frameCaption: cap, more, shots: d.shots || [],
           replies: liveReplies(n).map((r) => ({ id: r.id, author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
       }
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
       if (keep.playing) v.play().catch(() => {});
       if (S.b3 && keep.cam){ if (keep.v3d) host.setV3D?.(keep.v3d); S.b3.setCam(keep.cam); }
+      if (S.b3) S.curVk = keep.vk;
       S.hidden = keep.hidden; S.hiddenReplies = keep.hiddenReplies;
       paintVisibility();
     }
@@ -2378,7 +2440,7 @@ export function createAnnotator(host){
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.focusNote = S.pinFocus = null; S.hiddenReplies.clear();
-    S.openedAt = Date.now();
+    S.openedAt = S.composeSince = Date.now();
     resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
     notesSig = "";
@@ -2559,6 +2621,7 @@ function injectStyles(){
 .an-fc.open { background: #ff453a; } .an-fc.progress { background: #ff9f0a; } .an-fc.done { background: #34c759; } .an-fc.zero { opacity: .4; }
 .an-nprev { position: relative; width: 100%; margin: 6px 0 2px; border-radius: 6px; overflow: hidden; background: #000; }
 .an-nprev.sm { margin-top: 4px; }
+.an-nprev[data-pt] { display: inline-block; width: calc(50% - 3px); margin-right: 6px; vertical-align: top; cursor: pointer; }
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 .an-hint { color: var(--subtle); padding: 10px 8px; line-height: 1.5; }

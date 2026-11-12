@@ -3,13 +3,18 @@
 // script). Needs review-core.js (`SightReviewCore`) loaded first. Defines one global,
 // `SightReviewDraw`:
 //
-//   SightReviewDraw.open({ src, vb, base, items, numOf, onDone(items), onCancel() })
+//   SightReviewDraw.open({ src, vb, base, items, numOf, onDone(items, frames), onCancel() }) → handle
 //     src    the picture (URL / data URL / blob URL)
 //     vb     [x, y, w, h] — the doc box the picture covers (FORMAT.md doc units)
 //     base   rows drawn underneath, not editable
 //     items  editable drawings ({kind, shape_kind, z, data}, ids are kept); the eraser only
 //            removes these
 //     numOf  pin number for a drawing (optional)
+//   Video (several frames): frameKey (the frame shown), frames {key: items} (the others'),
+//   footer (an element shown above the tools: the host's timeline), onScrub({phase, dx, dt, fine})
+//   (one finger with no tool), onFrames(keys) (the frames that hold drawings), onKey(e) → true if
+//   the host took it; handle.setFrame(key, src, pending) switches the frame (its drawings, undo).
+//   onDone then gets every frame's drawings: [{key, items}].
 //
 // Same rules as review-core.js: plain script, no imports, and never a closing script tag or an
 // HTML comment opener anywhere in this file (the page inlines it verbatim; review._inline_js refuses
@@ -21,28 +26,30 @@ var SightReviewDraw = (function(){
   var SVGNS = "http://www.w3.org/2000/svg";
   function el(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
   function clone(v){ return JSON.parse(JSON.stringify(v)); }
+  // Everything floats over the picture (no bars taking room). Colours follow the host's theme when
+  // it sets --rd-bg / --rd-ov / --rd-fg / --rd-line (the phone app does), dark otherwise.
   var CSS = [
     "body.rd-open { overflow: hidden; }",
     ".draw, .draw * { box-sizing: border-box; }",
-    ".draw { position: fixed; inset: 0; z-index: 30; background: #0d0d10; color: #fff; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; font: 14px/1.5 system-ui, -apple-system, \"Segoe UI\", sans-serif; }",
-    ".draw .dtop, .draw .dbar { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: #1c1c20; }",
-    ".draw .dtop { padding-top: calc(6px + env(safe-area-inset-top)); }",
+    ".draw { position: fixed; inset: 0; z-index: 30; background: var(--rd-bg, #0d0d10); color: var(--rd-fg, #fff); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; font: 14px/1.5 system-ui, -apple-system, \"Segoe UI\", sans-serif; }",
+    ".draw .dtop, .draw .dbar { position: absolute; z-index: 2; left: 8px; right: 8px; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 16px; background: var(--rd-ov, rgb(28 28 32 / .74)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgb(0 0 0 / .22); }",
+    ".draw .dtop { top: calc(8px + env(safe-area-inset-top)); }",
     ".draw .dtop .sp { flex: 1; }",
-    ".draw .dtop .tb.on { background: rgb(10 132 255 / .35); }",
-    ".draw .btn { border: 1px solid rgb(255 255 255 / .25); background: none; color: #fff; border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }",
-    ".draw .btn.primary { background: #0a84ff; border-color: #0a84ff; }",
-    ".draw .dbar { flex-direction: column; gap: 6px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }",
-    ".draw .dbar > div { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }",
-    ".draw .dview { flex: 1; position: relative; overflow: hidden; overflow: clip; touch-action: none; cursor: crosshair; }",
+    ".draw .btn { border: 1px solid var(--rd-line, rgb(255 255 255 / .25)); background: none; color: inherit; border-radius: 10px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }",
+    ".draw .btn.primary { background: #0a84ff; border-color: #0a84ff; color: #fff; }",
+    ".draw .dbar { bottom: calc(8px + env(safe-area-inset-bottom)); flex-direction: column; gap: 2px; padding: 4px 6px 6px; }",
+    ".draw .dbar > div { display: flex; gap: 2px; justify-content: center; flex-wrap: wrap; width: 100%; }",
+    ".draw .dbar > .dfoot { display: block; }",
+    ".draw .dview { position: absolute; inset: 0; overflow: hidden; overflow: clip; touch-action: none; cursor: crosshair; }",
     ".draw .dbox { position: absolute; left: 0; top: 0; transform-origin: 0 0; }",
     ".draw .dbox img, .draw .dbox svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; pointer-events: none; }",
-    ".draw .dbox img { -webkit-user-drag: none; }",
-    ".draw .tb { width: 40px; height: 40px; border-radius: 10px; border: 0; background: none; color: #d8d8dc; display: grid; place-items: center; cursor: pointer; padding: 0; }",
-    ".draw .tb.on { background: #0a84ff; color: #fff; }",
+    ".draw .dbox img { -webkit-user-drag: none; transition: opacity .12s; }",
+    ".draw .tb { width: 38px; height: 38px; border-radius: 11px; border: 0; background: none; color: inherit; opacity: .9; display: grid; place-items: center; cursor: pointer; padding: 0; }",
+    ".draw .tb.on { background: #0a84ff; color: #fff; opacity: 1; }",
     ".draw .tb[disabled] { opacity: .3; cursor: default; }",
     ".draw [hidden] { display: none !important; }",
-    ".draw .swc { width: 30px; height: 30px; margin: 3px 4px; border-radius: 15px; border: 2px solid rgb(255 255 255 / .3); cursor: pointer; padding: 0; }",
-    ".draw .swc.on { border-color: #fff; box-shadow: 0 0 0 2px #0a84ff; }",
+    ".draw .swc { width: 28px; height: 28px; margin: 3px 4px; border-radius: 14px; border: 2px solid var(--rd-line, rgb(255 255 255 / .3)); cursor: pointer; padding: 0; }",
+    ".draw .swc.on { border-color: var(--rd-fg, #fff); box-shadow: 0 0 0 2px #0a84ff; }",
     ".draw .dtext { position: absolute; z-index: 1; margin: 0; border: 1px dashed #0a84ff; border-radius: 0; outline: none; resize: none; overflow: hidden; white-space: pre; background: rgb(0 0 0 / .6); box-sizing: content-box; min-width: 1em; -webkit-user-select: text; user-select: text; touch-action: auto; }",
   ].join("\n");
   var cssDone = false;
@@ -72,13 +79,13 @@ var SightReviewDraw = (function(){
   ];
   var COLORS = ["#ff3b30", "#ffd60a", "#34c759", "#0a84ff", "#ffffff"];
   var SIZE = { brush: 6, marker: 24, shape: 4, eraser: 14, text: 24 };
-  var pen = { tool: "brush", color: COLORS[0] };
+  var pen = { tool: "brush", color: COLORS[0] }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
-    if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = ps.tool;
+    if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
     if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
   } catch (e) {}
-  function savePen(){ try { localStorage.setItem("sight-review:pen", JSON.stringify(pen)); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color })); } catch (e) {} }
   var penSeen = false;  // a stylus has been used: it draws, fingers only pan / zoom
   // A key with no modifier at all (the exact-match rule of Sight's keys.js, which this plain script
   // cannot import).
@@ -91,7 +98,12 @@ var SightReviewDraw = (function(){
     if (!RC) throw new Error("review-draw.js needs review-core.js (SightReviewCore)");
     css();
     var NUM = o.numOf || function(){ return ""; };
+    if (!pen.tool) pen.tool = lastTool;  // each canvas opens with a tool in hand
+    // Video: the frame on screen (fkey) and the others drawn on in this session (store).
+    var multi = o.frameKey != null, fkey = multi ? String(o.frameKey) : null, store = new Map(), lastSig = null;
+    if (multi) Object.keys(o.frames || {}).forEach(function(k){ store.set(k, { items: o.frames[k].map(clone), undo: [], redo: [] }); });
     var vb = o.vb, items = (o.items || []).map(clone), undo = [], redo = [], cur = null, sel = [];
+    if (multi && store.has(fkey)){ items = store.get(fkey).items; store.delete(fkey); }
     var zc = items.reduce(function(m, it){ return Math.max(m, it.z || 0); }, 0);
     var root = el("div", "draw"), top = el("div", "dtop"), view = el("div", "dview"), box = el("div", "dbox"), bar = el("div", "dbar");
     var img = el("img"); img.src = o.src; img.alt = ""; img.draggable = false;
@@ -104,7 +116,9 @@ var SightReviewDraw = (function(){
     function tbtn(title, html, fn){ var b = el("button", "tb"); b.type = "button"; b.title = title; b.setAttribute("aria-label", title); b.innerHTML = html; b.onclick = fn; return b; }
     var cancel = el("button", "btn", "Cancel"); cancel.type = "button";
     cancel.onclick = function(){
-      if ((undo.length || (edit && edit.ta.value.trim())) && !confirm("Discard this drawing?")) return;
+      var touched = undo.length || (edit && edit.ta.value.trim());
+      store.forEach(function(st){ if (st.undo.length) touched = true; });
+      if (touched && !confirm("Discard this drawing?")) return;
       if (edit) dropText();
       close(); if (o.onCancel) o.onCancel();
     };
@@ -115,27 +129,29 @@ var SightReviewDraw = (function(){
     var mirB = tbtn("Mirror", ico('<path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/>'), function(){ V.m = -V.m; afterView(); });
     var fitB = tbtn("Fit to screen", ico('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'), function(){ fit(true); });
     var done = el("button", "btn primary", "Done"); done.type = "button";
-    done.onclick = function(){ if (stroke) finish(); if (edit) commitText(); close(); o.onDone(items); };
+    done.onclick = function(){ if (stroke) finish(); if (edit) commitText(); endScrub(); close(); o.onDone(items, multi ? allFrames() : null); };
     [cancel, ub, rb, clr, el("span", "sp"), turnB, mirB, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
     var tools = el("div"), cols = el("div");
-    TOOLS.forEach(function(t){ var b = tbtn(t[1], ico(t[2]), function(){ setTool(t[0]); }); b.dataset.t = t[0]; tools.appendChild(b); });
+    // A tap on the tool in hand puts it down: then one finger scrubs the video (onScrub) or pans.
+    TOOLS.forEach(function(t){ var b = tbtn(t[1], ico(t[2]), function(){ setTool(t[0] === pen.tool ? null : t[0]); }); b.dataset.t = t[0]; tools.appendChild(b); });
     function setTool(t){ if (edit) commitText(); pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); }
     COLORS.forEach(function(c){
       var b = el("button", "swc"); b.type = "button"; b.title = "Colour"; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
       b.onclick = function(){
         if (edit){ pen.color = c; savePen(); paintBar(); edit.it.data.color = c; edit.ta.style.color = c; edit.ta.focus(); return; }  // recolours the text being typed
         if (pen.tool === "select" && sel.length){ recolour(c); return; }
-        pen.color = c; if (pen.tool === "eraser" || pen.tool === "select") pen.tool = "brush"; savePen(); paintBar(); paint();
+        pen.color = c; if (!pen.tool || pen.tool === "eraser" || pen.tool === "select") pen.tool = "brush"; savePen(); paintBar(); paint();
       };
       cols.appendChild(b);
     });
+    if (o.footer){ var foot = el("div", "dfoot"); foot.appendChild(o.footer); bar.appendChild(foot); }
     bar.appendChild(tools); bar.appendChild(cols);
     root.appendChild(top); root.appendChild(view); root.appendChild(bar);
     var ctrlHeld = false;
     function paintBar(){
       tools.querySelectorAll(".tb").forEach(function(b){ b.classList.toggle("on", b.dataset.t === pen.tool); });
       cols.querySelectorAll(".swc").forEach(function(b){ b.classList.toggle("on", b.dataset.c === pen.color && pen.tool !== "eraser" && pen.tool !== "select"); });
-      view.style.cursor = pen.tool === "eraser" || ctrlHeld ? "cell" : pen.tool === "select" ? "default" : "crosshair";
+      view.style.cursor = pen.tool === "eraser" || ctrlHeld ? "cell" : !pen.tool ? (o.onScrub ? "ew-resize" : "grab") : pen.tool === "select" ? "default" : "crosshair";
     }
     function paint(){
       sel = sel.filter(function(it){ return items.indexOf(it) >= 0; });
@@ -150,7 +166,38 @@ var SightReviewDraw = (function(){
       gUi.innerHTML = ui;
       ub.disabled = !undo.length; rb.disabled = !redo.length;
       clr.disabled = !items.length;
-      clr.title = pen.tool === "select" && sel.length ? "Delete the selected drawings" : "Clear all drawings";
+      clr.title = pen.tool === "select" && sel.length ? "Delete the selected drawings" : multi ? "Clear this frame's drawings" : "Clear all drawings";
+      if (multi && o.onFrames){
+        var ks = framesDrawn(), sg = ks.join(",");
+        if (sg !== lastSig){ lastSig = sg; o.onFrames(ks); }
+      }
+    }
+    // Video frames: the ones holding drawings, every frame's drawings, switching the frame.
+    function framesDrawn(){
+      var ks = [];
+      store.forEach(function(st, k){ if (st.items.length) ks.push(k); });
+      if (items.length && ks.indexOf(fkey) < 0) ks.push(fkey);
+      return ks.sort();
+    }
+    function allFrames(){
+      var out = [];
+      store.forEach(function(st, k){ if (k !== fkey && st.items.length) out.push({ key: k, items: st.items }); });
+      if (items.length) out.push({ key: fkey, items: items });
+      return out;
+    }
+    function setFrame(key, src, pending){
+      key = String(key);
+      if (key !== fkey){
+        if (edit) commitText();
+        if (stroke) abort();
+        store.set(fkey, { items: items, undo: undo, redo: redo });
+        var st = store.get(key) || { items: [], undo: [], redo: [] };
+        store.delete(key);
+        fkey = key; items = st.items; undo = st.undo; redo = st.redo; sel = [];
+      }
+      if (src && img.getAttribute("src") !== src) img.src = src;
+      img.style.opacity = pending ? ".55" : "";
+      paint();
     }
     var coarse = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
     function doUndo(){ if (edit) commitText(); if (stroke || !undo.length) return; redo.push(items); items = undo.pop(); paint(); }
@@ -196,7 +243,11 @@ var SightReviewDraw = (function(){
       var w = Math.max(1, r.width - pad * 2), h = Math.max(1, r.height - pad * 2), ra = side ? 1 / a : a;
       if (w / h > ra) w = h * ra; else h = w / ra;
       BW = side ? h : w; BH = side ? w : h;
-      V.z = 1; V.o = [r.width / 2, r.height / 2];
+      // The bars float over the picture: one that fits between them sits there, a taller one uses
+      // the whole screen.
+      var t0 = top.getBoundingClientRect().bottom - r.top, b0 = bar.getBoundingClientRect().top - r.top, cy = r.height / 2;
+      if (b0 > t0 && h + pad <= b0 - t0) cy = (t0 + b0) / 2;
+      V.z = 1; V.o = [r.width / 2, cy];
       fitted = true;
       apply();
       if (user && edit) textField();
@@ -220,7 +271,9 @@ var SightReviewDraw = (function(){
 
     // Pointers: one draws (`stroke`), the navigating ones (fingers / middle / right mouse) pan,
     // pinch and turn (`gest`, re-based whenever a finger comes or goes).
-    var pts = new Map(), stroke = null, gest = null, zdrag = null;
+    var pts = new Map(), stroke = null, gest = null, zdrag = null, scr = null;
+    // No tool in hand: one finger (or the left button) scrubs the video through the host.
+    function endScrub(){ if (!scr) return; var id = scr.id; scr = null; if (o.onScrub) o.onScrub({ phase: "end" }); var q = pts.get(id); if (q) q.nav = true; }
     function gestStart(){
       var ids = [];
       pts.forEach(function(p, id){ if (p.nav) ids.push(id); });
@@ -262,7 +315,14 @@ var SightReviewDraw = (function(){
       if (e.pointerType === "pen") penSeen = true;
       var drawer = e.pointerType === "pen" || (e.pointerType === "mouse" && e.button === 0) || (e.pointerType === "touch" && !penSeen);
       try { view.setPointerCapture(e.pointerId); } catch (_){}
-      if (drawer && !stroke && !gest){
+      // (A finger scrubs too once a pen has been used: with no tool there is nothing to keep it from.)
+      if ((drawer || (e.pointerType === "touch" && !pts.size)) && !stroke && !gest && !scr && !pen.tool && !(e.ctrlKey && !e.metaKey) && o.onScrub){
+        pts.set(e.pointerId, { x: p[0], y: p[1], nav: false });
+        scr = { id: e.pointerId, x: e.clientX, t: e.timeStamp };
+        o.onScrub({ phase: "start" });
+        return;
+      }
+      if (drawer && !stroke && !gest && !scr){
         pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e);
         if (!stroke){ pts.get(e.pointerId).nav = true; gestStart(); }  // select tool on empty space: the finger pans
         return;
@@ -279,6 +339,8 @@ var SightReviewDraw = (function(){
       // A second finger while one draws: that was the start of a pinch, not a stroke.
       if (stroke && stroke.type === "touch"){ var sp = pts.get(stroke.id); abort(); if (sp) sp.nav = true; }
       if (stroke) return;  // the pen is drawing; fingers wait
+      if (scr && e.pointerType !== "mouse") endScrub();  // a second finger: a pinch, not a scrub
+      if (scr) return;
       pts.set(e.pointerId, { x: p[0], y: p[1], nav: true });
       gestStart();
     });
@@ -293,6 +355,12 @@ var SightReviewDraw = (function(){
       var q = pts.get(e.pointerId);
       if (!q) return;
       var p = vpos(e); q.x = p[0]; q.y = p[1];
+      if (scr && scr.id === e.pointerId){
+        var dx = e.clientX - scr.x, dt = e.timeStamp - scr.t;
+        scr.x = e.clientX; scr.t = e.timeStamp;
+        if (dx) o.onScrub({ phase: "move", dx: dx, dt: dt, fine: e.shiftKey });
+        return;
+      }
       if (stroke && stroke.id === e.pointerId){ e.preventDefault(); extend(e); return; }
       if (gest && gest.ids.indexOf(e.pointerId) >= 0) gestMove();
     });
@@ -300,6 +368,7 @@ var SightReviewDraw = (function(){
     function up(e){
       if (zdrag && e.pointerId === zdrag.id){ zdrag = null; return; }
       if (!pts.has(e.pointerId)) return;
+      if (scr && scr.id === e.pointerId) endScrub();
       pts.delete(e.pointerId);
       if (stroke && stroke.id === e.pointerId){
         if (e.type === "pointercancel") abort(); else finish();
@@ -332,6 +401,7 @@ var SightReviewDraw = (function(){
     function begin(e){
       var p = toDoc(e), k = kNow(), isPen = e.pointerType === "pen", c = pen.color;
       var t = e.ctrlKey && !e.metaKey ? "eraser" : pen.tool;  // Ctrl held: the eraser for this stroke
+      if (!t){ stroke = null; return; }  // no tool: the finger pans
       var fine = e.pointerType === "mouse";
       stroke = { id: e.pointerId, type: e.pointerType, t: t, k: k, x: p[0], y: p[1], sm: p.slice(), last: null, cx: e.clientX, cy: e.clientY };
       if (t === "eraser"){ stroke.before = items; eraseAt(p); return; }
@@ -541,6 +611,7 @@ var SightReviewDraw = (function(){
         return;
       }
       if (e.key === "Control" && !ctrlHeld){ ctrlHeld = true; paintBar(); return; }
+      if (o.onKey && !stroke && o.onKey(e)){ e.preventDefault(); e.stopPropagation(); return; }
       if (e.key === "Escape" && !mod && !e.altKey && !e.shiftKey){ if (pen.tool === "select" && sel.length){ sel = []; paint(); } else cancel.onclick(); }
       else if (mod && !e.altKey && (e.key === "z" || e.key === "Z")){ if (e.shiftKey) doRedo(); else doUndo(); }
       else if (mod && !e.altKey && !e.shiftKey && e.key === "y") doRedo();
@@ -555,6 +626,7 @@ var SightReviewDraw = (function(){
     function onKeyUp(e){ if (e.key === "Control" && ctrlHeld){ ctrlHeld = false; paintBar(); } }
     function onBlur(){ if (ctrlHeld){ ctrlHeld = false; paintBar(); } }
     function close(){
+      endScrub();
       root.remove(); document.body.classList.remove("rd-open");
       document.removeEventListener("keydown", onKey, true); document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("resize", onResize); window.removeEventListener("blur", onBlur);
@@ -563,6 +635,8 @@ var SightReviewDraw = (function(){
     document.addEventListener("keydown", onKey, true); document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("resize", onResize); window.addEventListener("blur", onBlur);
     paintBar(); fit(false);
+    requestAnimationFrame(function(){ if (root.isConnected && fitted && !edit) fit(false); });  // the bars' real size
+    return { setFrame: setFrame, close: close, frameKey: function(){ return fkey; } };
   }
 
   return { open: drawSheet, TOOLS: TOOLS, COLORS: COLORS, SIZE: SIZE };

@@ -33,7 +33,7 @@ const ICONS = {
   pen: '<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/>',
   clip: '<path d="m20.5 11.5-8.3 8.3a5.2 5.2 0 0 1-7.4-7.4l8.6-8.6a3.5 3.5 0 0 1 4.9 4.9l-8.6 8.6a1.7 1.7 0 0 1-2.5-2.5l7.9-7.9"/>',
   send: '<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor" stroke="none"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', up: '<path d="m6 15 6-6 6 6"/>',
   turn: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>', mirror: '<path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/>',
 };
 function ico(name, size = 20){ return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
@@ -59,6 +59,7 @@ function toast(msg, ms = 2600){
   let t = document.querySelector(".toast");
   if (!t){ t = el("div", "toast"); document.body.appendChild(t); }
   t.textContent = msg; t.hidden = false;
+  t.classList.toggle("hi", root.classList.contains("review"));  // clear of the transport and the note bar
   clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, ms);
 }
 function busy(msg){
@@ -119,6 +120,25 @@ function askText({ title, text, value = "", ok = "Save", multiline, placeholder 
     }, true);
   });
 }
+
+// ---- theme: Auto (the system's) / Light / Dark, one look for the player and the notes ---------
+const THEMES = { auto: "Auto", light: "Light", dark: "Dark" };
+let theme = "auto";
+try { theme = THEMES[localStorage.getItem("sight-review:theme")] ? localStorage.getItem("sight-review:theme") : "auto"; } catch {}
+function applyTheme(){
+  const h = document.documentElement;
+  if (theme === "auto") delete h.dataset.theme; else h.dataset.theme = theme;
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    if (!m.dataset.auto) m.dataset.auto = m.content;
+    m.content = theme === "auto" ? m.dataset.auto : theme === "dark" ? "#141416" : "#f5f5f7";
+  });
+}
+function setTheme(t){
+  theme = THEMES[t] ? t : "auto";
+  try { localStorage.setItem("sight-review:theme", theme); } catch {}
+  applyTheme();
+}
+applyTheme();
 
 // ---- reviewer name -----------------------------------------------------------------------------
 let who = "";
@@ -198,7 +218,9 @@ async function putIfAlive(rv, store, value){
 const frameTag = (t) => "t=" + Number(t).toFixed(3);
 const memFrame = (t) => R.frames.get(frameTag(t)) || null;
 function getFrame(t, rv = R){
-  return cachedFrame(rv, frameTag(t), rv.grab ? () => rv.grab.grab(t, 1600) : null);
+  // Grabbed a quarter into its frame: a stored time can sit a hair before the frame's start.
+  const at = rv.fpsKnown ? (M.frameIndex(t, rv.fps) + 0.25) / rv.fps : t;
+  return cachedFrame(rv, frameTag(t), rv.grab ? () => rv.grab.grab(at, 1600) : null);
 }
 function getPicture(rv = R){
   return cachedFrame(rv, "img", rv.file ? async () => { const im = await decode(rv.file); const s = await scaled(im, 1600); if (im.close) im.close(); return s; } : null);
@@ -346,7 +368,9 @@ async function renderHome(){
   }
   const list = el("section", "list");
   main.appendChild(list);
-  main.appendChild(el("p", "foot", `${APP_LABEL} · nothing leaves this device unless you share it`));
+  const foot = el("p", "foot");
+  foot.appendChild(el("span", "", APP_LABEL)); foot.appendChild(el("br")); foot.appendChild(el("span", "", "Nothing leaves this device unless you share it"));
+  main.appendChild(foot);
   root.appendChild(main);
   const metas = (await DB.all("reviews").catch(() => [])).sort((a, b) => (b.opened || 0) - (a.opened || 0));
   if (!metas.length){ list.appendChild(el("p", "empty", "No reviews yet. Open a picture or a video to start one, or open a .srev file someone sent you.")); return; }
@@ -364,14 +388,80 @@ async function renderHome(){
     tx.appendChild(info);
     tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : " picture")));
     it.appendChild(th); it.appendChild(tx);
-    let lp = null;
-    it.addEventListener("contextmenu", (e) => { e.preventDefault(); reviewMenu(m); });
-    it.addEventListener("pointerdown", () => { lp = setTimeout(() => { lp = "fired"; reviewMenu(m); }, 600); });
-    ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => it.addEventListener(ev, () => { if (lp !== "fired") clearTimeout(lp); }));
-    it.addEventListener("click", (e) => { if (lp === "fired"){ e.stopImmediatePropagation(); lp = null; } }, true);
+    dragToBin(it, m);
     list.appendChild(it);
   });
-  list.appendChild(el("p", "foot", "Press and hold a review to delete it."));
+  list.appendChild(el("p", "foot", "Press and hold a review, then drag it onto the bin to delete it."));
+}
+// Press and hold a review (a mouse may just drag it): it lifts, a bin appears at the bottom, and
+// dropping it there deletes it (after the usual question). Let go without moving: the menu.
+function dragToBin(it, m){
+  let st = null, lp = null, lifted = false, ghost = null, bin = null, over = false, fired = false;
+  const overBin = (x, y) => { if (!bin) return false; const r = bin.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top - 12 && y <= r.bottom; };
+  const lift = () => {
+    if (!st) return;
+    lifted = true; fired = true;
+    if (navigator.vibrate) try { navigator.vibrate(12); } catch {}
+    const r = it.getBoundingClientRect();
+    ghost = it.cloneNode(true); ghost.classList.add("ghost");
+    Object.assign(ghost.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px" });
+    st.gx = r.left - st.x; st.gy = r.top - st.y;
+    document.body.appendChild(ghost);
+    it.classList.add("lifted");
+    try { it.setPointerCapture(st.id); } catch {}  // a mouse held still, then moved off the item
+    bin = el("div", "bin");
+    bin.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/></svg><span>Drop here to delete</span>';
+    document.body.appendChild(bin);
+    requestAnimationFrame(() => bin && bin.classList.add("on"));
+  };
+  const end = () => {
+    clearTimeout(lp); lp = null;
+    if (ghost) ghost.remove();
+    if (bin) bin.remove();
+    ghost = bin = null; lifted = false; over = false; st = null;
+    it.classList.remove("lifted");
+  };
+  let lastType = "mouse", downAt = 0;
+  it.addEventListener("pointerdown", (e) => {
+    lastType = e.pointerType; downAt = performance.now();
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    fired = false;
+    st = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, mouse: e.pointerType === "mouse" };
+    lp = setTimeout(lift, 420);
+  });
+  it.addEventListener("pointermove", (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    const far = Math.abs(e.clientX - st.x) + Math.abs(e.clientY - st.y) > 8;
+    if (!lifted){
+      if (!far) return;
+      clearTimeout(lp);
+      if (st.mouse) lift();
+      else { st = null; return; }  // a finger moving before the hold: the list scrolls
+    }
+    if (far) st.moved = true;
+    ghost.style.left = e.clientX + st.gx + "px"; ghost.style.top = e.clientY + st.gy + "px";
+    over = overBin(e.clientX, e.clientY);
+    bin.classList.toggle("hot", over);
+    ghost.classList.toggle("hot", over);
+  });
+  // A lifted review does not scroll the page under the finger.
+  it.addEventListener("touchmove", (e) => { if (lifted) e.preventDefault(); }, { passive: false });
+  it.addEventListener("pointerup", (e) => {
+    if (!st || e.pointerId !== st.id){ end(); return; }
+    const drop = lifted && over, menuNow = lifted && !st.moved;
+    end();
+    if (drop) deleteReview(m);
+    else if (menuNow) reviewMenu(m);
+  });
+  it.addEventListener("pointercancel", end);
+  it.addEventListener("lostpointercapture", () => { if (lifted) end(); });
+  it.addEventListener("click", (e) => { if (fired){ e.stopImmediatePropagation(); e.preventDefault(); fired = false; } }, true);
+  // Right click / the menu key: the menu. A touch's long press is the lift above, not a menu.
+  it.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (st || lifted || (lastType !== "mouse" && e.button !== 2 && performance.now() - downAt < 1500)) return;
+    reviewMenu(m);
+  });
 }
 function reviewMenu(m){
   menu(m.asset.name, [{ label: "Open", fn: () => openReview(m.key, null) }, { label: "Delete this review…", danger: true, fn: () => deleteReview(m) }]);
@@ -400,6 +490,11 @@ async function settings(){
     if (u) row("Storage", `${fmtBytes(u.used)} used${u.quota ? " of " + fmtBytes(u.quota) : ""}${u.persisted ? " · kept" : ""}`);
     row("Version", VERSION);
     sh.appendChild(kv);
+    const th = el("div", "seg themes");
+    const paintTh = () => th.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === theme));
+    Object.entries(THEMES).forEach(([k, label]) => { const b = btn("", label, () => { setTheme(k); paintTh(); }); b.dataset.t = k; th.appendChild(b); });
+    sh.appendChild(el("b", "lab", "Theme"));
+    sh.appendChild(th); paintTh();
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
     a.appendChild(btn("btn", "Change name", async () => { close(); await setName(); }));
@@ -419,7 +514,10 @@ function closeReview(){
   R.frames.forEach((f) => URL.revokeObjectURL(f.url));
   R.shotUrls.forEach((u) => URL.revokeObjectURL(u));
   R.drafts && Object.values(R.drafts).forEach((d) => d.shots.forEach((s) => URL.revokeObjectURL(s.url)));
+  TPS.clear();
   R = null;
+  els = null;
+  root.style.removeProperty("--nbh");
 }
 
 // Only the latest open counts: a second tap while the first review is still loading wins, and the
@@ -443,7 +541,7 @@ async function openReview(key, file, fromRoute){
   if (seq !== openSeq) return;
   closeReview();
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
-    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, filter: "all", hide: false, scrubT: null };
+    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null };
   if (file) await bindFile(rv, file);
   if (R !== rv) return;
   meta.opened = now();
@@ -518,38 +616,87 @@ async function bindFile(rv, file){
 }
 
 // ---- review screen -----------------------------------------------------------------------------
+// The player fills the screen above the new-note bar, with the review's controls in a header over
+// the picture and the transport over its foot. Under it the thin Notes Panel bar: a tap (or a swipe
+// up, on it or on the picture) slides the player, same size, up off the screen and the notes in;
+// the bar then holds the status filters and an arrow back to the player.
 let els = null;  // the review screen's parts
+let nbRO = null;
 function renderReview(){
   const a = R.meta.asset;
   document.title = a.name + " — Sight Review";
-  root.textContent = ""; root.className = "review";
-  const bar = el("header", "bar"), ttl = el("div", "ttl");
+  root.textContent = ""; root.className = "review" + (R.panel ? " open" : "");
+  const slide = el("div", "slide"), player = el("div", "player"), stage = el("div", "stage");
+  const hdr = el("header", "hdr"), r1 = el("div", "row"), r2 = el("div", "row"), ttl = el("div", "ttl");
   ttl.appendChild(el("b", "", a.name));
   const sub = el("span");
   ttl.appendChild(sub);
-  bar.appendChild(ibtn("back", "All reviews", () => {
-    if (R && R.pushed) history.back();
-    else { closeReview(); history.replaceState(null, "", location.pathname + location.search); renderHome(); }
-  }));
-  bar.appendChild(ttl);
-  bar.appendChild(ibtn("more", "Export and more", reviewActions));
-  root.appendChild(bar);
-  const media = el("div", "media"), stage = el("div", "stage");
-  media.appendChild(stage);
-  const transport = el("div", "transport"), scrub = el("div", "scrub"), tools = el("div", "tools");
-  media.appendChild(transport); media.appendChild(scrub); media.appendChild(tools);
-  root.appendChild(media);
-  const keep = el("div", "keep");
-  root.appendChild(keep);
-  const seg = el("div", "seg"), notes = el("div", "notes");
-  root.appendChild(seg); root.appendChild(notes);
+  r1.appendChild(ibtn("back", "All reviews", leaveReview));
+  r1.appendChild(ttl);
+  r1.appendChild(ibtn("more", "Export and more", reviewActions));
+  hdr.appendChild(r1); hdr.appendChild(r2);
+  const tp = el("div", "tp");
+  player.appendChild(stage); player.appendChild(hdr); player.appendChild(tp);
+  const pbar = el("div", "pbar"), plist = el("div", "plist"), keep = el("div", "keep"), notes = el("div", "notes");
+  plist.appendChild(keep); plist.appendChild(notes);
+  slide.appendChild(player); slide.appendChild(pbar); slide.appendChild(plist);
+  root.appendChild(slide);
   const newbar = el("footer", "newbar"), nb = el("div");
   newbar.appendChild(nb);
   root.appendChild(newbar);
-  els = { sub, stage, transport, scrub, tools, keep, seg, notes, nb, svg: null };
+  els = { sub, stage, tools: r2, tp, pbar, plist, keep, notes, nb, newbar, svg: null, T: null };
+  // The player's height leaves room for the new-note bar, whatever it holds.
+  if (!nbRO) nbRO = new ResizeObserver(() => { if (els && els.newbar.isConnected) root.style.setProperty("--nbh", els.newbar.offsetHeight + "px"); });
+  nbRO.disconnect(); nbRO.observe(newbar);
+  bindPanelBar(pbar);
   buildStage();
   paintReview();
 }
+function leaveReview(){
+  if (R && R.pushed) history.back();
+  else { closeReview(); history.replaceState(null, "", location.pathname + location.search); renderHome(); }
+}
+function setPanel(open){
+  if (!R || !els) return;
+  R.panel = !!open;
+  root.classList.toggle("open", R.panel);
+  paintPanelBar();
+}
+function paintPanelBar(){
+  const pb = els.pbar;
+  pb.textContent = "";
+  if (!R.panel){
+    pb.title = "Show the notes";
+    pb.appendChild(el("i", "grip"));
+    pb.appendChild(el("span", "lbl", "Notes Panel"));
+    return;
+  }
+  pb.title = "";
+  const seg = el("div", "seg");
+  paintSeg(seg, M.counts(R.rows));
+  pb.appendChild(seg);
+  pb.appendChild(ibtn("up", "Back to the player", () => setPanel(false)));
+}
+function bindPanelBar(pb){
+  let y0 = null;
+  pb.addEventListener("pointerdown", (e) => { y0 = R && !R.panel ? e.clientY : null; });
+  pb.addEventListener("pointermove", (e) => { if (y0 != null && y0 - e.clientY > 24){ y0 = null; setPanel(true); } });
+  pb.addEventListener("click", (e) => { if (R && !R.panel && !e.target.closest("button")) setPanel(true); });
+}
+// A swipe up on the picture opens the panel too (sideways belongs to the scrub).
+function bindStageSwipe(stage){
+  let s = null;
+  stage.addEventListener("pointerdown", (e) => { s = e.pointerType === "mouse" ? null : { id: e.pointerId, x: e.clientX, y: e.clientY }; });
+  stage.addEventListener("pointermove", (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x, dy = e.clientY - s.y;
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)){ s = null; return; }
+    if (dy < -40 && -dy > Math.abs(dx) * 1.5){ s = null; stage.dataset.swiped = String(performance.now()); setPanel(true); }
+  });
+  stage.addEventListener("pointerup", () => { s = null; });
+  stage.addEventListener("pointercancel", () => { s = null; });
+}
+const justSwiped = (stage) => performance.now() - Number(stage.dataset.swiped || 0) < 400;
 
 function overlay(vb, list, cls){
   const s = document.createElementNS(SVGNS, "svg");
@@ -558,16 +705,17 @@ function overlay(vb, list, cls){
   s.innerHTML = RC.svgMarkup(list, numOf);
   return s;
 }
+// A draft's drawing: the frame it was made on, plus (video) more frames of the same note.
+const drawFrames = (draw) => draw ? [{ frame: draw.frame, items: draw.items }].concat(draw.more || []) : [];
 // What shows on the main picture right now.
-// While a new note is open the picture is clean: only that note's own drawing shows (on its frame).
+// While a new note is open the picture is clean: only that note's own drawing shows (on its frames).
 function stageDrawings(){
   if (R.hide) return [];
   const v = R.video, at = kindNow() === "video" ? (v ? { t: R.scrubT != null ? R.scrubT : v.currentTime, fps: R.fps } : null) : null;
   if (kindNow() === "video" && !at) return [];
   if (R.newOpen){
     const d = R.drafts["+new"];
-    if (!d || !d.draw) return [];
-    return !at || RC.ctxVisible(d.draw.frame.ctx, at) ? d.draw.items : [];
+    return drawFrames(d && d.draw).filter((x) => !at || RC.ctxVisible(x.frame.ctx, at)).flatMap((x) => x.items);
   }
   const all = M.drawings(R.rows);
   return at ? all.filter((it) => RC.ctxVisible(it.data.ctx, at)) : all;
@@ -601,9 +749,9 @@ function setView(vw){
 
 let stageRO = null;
 function buildStage(){
-  const { stage, transport, scrub, tools } = els, a = R.meta.asset;
-  stage.textContent = ""; transport.textContent = ""; scrub.textContent = ""; tools.textContent = "";
-  transport.hidden = scrub.hidden = true;
+  const { stage, tools, tp } = els, a = R.meta.asset;
+  stage.textContent = ""; tools.textContent = ""; tp.textContent = ""; tp.hidden = true;
+  if (els.T){ TPS.delete(els.T); els.T = null; }
   const svg = document.createElementNS(SVGNS, "svg");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   els.svg = svg;
@@ -615,9 +763,10 @@ function buildStage(){
     l.appendChild(picker(a.kind === "video" ? "video/*" : "image/*", false, (fs) => rebind(fs[0])));
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
+  bindStageSwipe(stage);
   if (a.kind === "image"){
     const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; stage.appendChild(img); stage.appendChild(svg); paintOverlay(); applyStageView();
-      stage.onclick = () => openPicture(); };
+      stage.onclick = () => { if (!justSwiped(stage)) openPicture(); }; };
     if (R.url) show(R.url);
     else {
       getPicture().then((p) => { if (!els || els.stage !== stage) return; if (p) show(p.url); else missing("The picture is not on this device."); });
@@ -628,7 +777,7 @@ function buildStage(){
       const v = el("video");
       v.playsInline = true; v.setAttribute("playsinline", ""); v.preload = "auto"; v.src = R.url;
       R.video = v;
-      // A cached frame shown over the player while a scrub waits for its seek (ScrubCache).
+      // A cached frame shown over the player while a seek is on its way (ScrubCache).
       const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
       els.scrubImg = si;
       stage.appendChild(v); stage.appendChild(si); stage.appendChild(svg);
@@ -642,21 +791,29 @@ function buildStage(){
         paintTime(); paintMarkers(); paintOverlay(); applyStageView();
         const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
         if (!rv.scrub && d && rv.url && v.src === rv.url){  // not a player whose file was just swapped (rebind)
-          rv.scrub = new ScrubCache(rv.url, d, rv.fps, (f) => { if (R === rv && els && els.cacheBar) els.cacheBar.style.width = (f * 100).toFixed(1) + "%"; });
+          rv.scrub = new ScrubCache(rv.url, d, rv.fps, (f) => { if (R === rv){ rv.cacheF = f; TPS.forEach(paintCache); } });
           // After the player's own first frame, so the two do not race for the decoder.
           setTimeout(() => { if (R === rv && rv.scrub) rv.scrub.start(); }, 600);
         }
       });
       v.addEventListener("error", () => toast("This device cannot play this video (format or codec).", 5000));
-      ["timeupdate", "seeked", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (R && R.newOpen && els.where) els.where(); }));
+      ["timeupdate", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (R && R.newOpen && els.where) els.where(); }));
+      v.addEventListener("seeked", () => {
+        if (!R || R.video !== v) return;
+        pumpSeek(v);
+        if (R.want == null && !R.dragging && !v.seeking) settle(v);
+        else if (R.want == null && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideCached();  // the player has caught up
+        if (R.newOpen && els.where) els.where();
+      });
       // The big play button only until the clip is first played or moved: it would cover the frame.
-      v.addEventListener("play", () => { big.remove(); paintTime(); loop(); });
+      v.addEventListener("play", () => { big.remove(); hideCached(); R.scrubT = null; R.want = null; paintTime(); loop(); });
       v.addEventListener("seeking", () => big.remove());
       bindScrub(stage, v);
-      buildTransport();
+      els.T = makeTransport();
+      tp.appendChild(els.T.el); tp.hidden = false;
     }
   }
-  const draw = btn("btn", "✎ Draw a note", () => drawNew(), "Draw on this picture / frame and add a note");
+  const draw = ibtn("pen", "Draw a note on this picture / frame", () => drawNew());
   tools.appendChild(draw);
   const eye = ibtn(R.hide ? "eyeoff" : "eye", "Show / hide drawings", () => { R.hide = !R.hide; eye.innerHTML = ico(R.hide ? "eyeoff" : "eye"); eye.classList.toggle("on", R.hide); paintOverlay(); });
   eye.classList.toggle("on", R.hide);
@@ -683,7 +840,7 @@ async function rebind(file){
   rv.url = null;
   if (rv.grab) rv.grab.close();
   if (rv.scrub) rv.scrub.close();
-  rv.grab = null; rv.scrub = null;
+  rv.grab = null; rv.scrub = null; rv.cacheF = 0; rv.want = null; rv.scrubT = null;
   const old = rv.frames.get("img");
   if (old){ URL.revokeObjectURL(old.url); rv.frames.delete("img"); }
   await DB.del("frames", rv.meta.key + "|img").catch(() => {});
@@ -696,36 +853,164 @@ async function rebind(file){
 
 // ---- video transport ---------------------------------------------------------------------------
 const frameDur = () => 1 / (R.fps || 25);
+const durOf = () => { const v = R && R.video; return (v && Number.isFinite(v.duration) && v.duration) || (R && R.meta.asset.duration) || 0; };
 function togglePlay(){ const v = R && R.video; if (!v) return; if (v.paused) v.play().catch(() => {}); else v.pause(); }
 // The frame on screen at time t is the one that started at or before t; a time inside it is kept as
 // that frame's start + a hair (as Sight's stepping lands), so a note made there shows on exactly
 // that frame (review-core ctxVisible) and Sight numbers it the same. Raw time while the frame rate
 // is still a guess (same rule as annotate.js frameStart).
-function frameStart(t){ if (!R.fpsKnown) return r3(t); const fd = frameDur(); return r3((Math.floor(t / fd + 1e-6) + 0.01) * fd); }
-// ±n frames from the frame on screen.
-function step(n){
+function frameStart(t){ return R.fpsKnown ? M.frameTime(t, R.fps) : r3(t); }
+const frameIdx = (t) => M.frameIndex(t, R.fps);
+// Every move of the playhead (frame steps, marker jumps, the timeline, the scrub on the picture)
+// goes through seekTo: the time is snapped to its frame and shown at once (timecode, playhead,
+// drawings, the cached frame), one seek is in flight and the latest wanted time goes next, so the
+// player never queues up stale seeks; `R.scrubT` is the time on screen until the last one lands.
+const posNow = () => R.want != null ? R.want : R.scrubT != null ? R.scrubT : R.video.currentTime;
+function snapT(t){
+  const d = durOf();
+  t = Math.max(0, d ? Math.min(t, d) : t);
+  if (!R.fpsKnown) return r3(t);
+  let s = frameStart(t);
+  if (d){
+    // Not past the last frame: the clip's frame count (a duration a hair over a whole number of
+    // frames still ends on that number).
+    const fd = frameDur(), x = d / fd, n = Math.abs(x - Math.round(x)) < 0.05 ? Math.round(x) : Math.ceil(x);
+    s = Math.min(s, r3((Math.max(1, n) - 1 + 0.01) * fd));
+  }
+  return s;
+}
+function seekTo(t){
   const v = R && R.video;
   if (!v) return;
-  v.pause();
-  const fd = frameDur();
-  v.currentTime = Math.min(Math.max((Math.floor(v.currentTime / fd + 1e-6) + n) * fd + fd * 0.01, 0), v.duration || 0);
+  if (!v.paused) v.pause();
+  t = snapT(t);
+  R.scrubT = t; R.want = t;
+  showCached(t);
+  pumpSeek(v);
+  paintTime(); paintOverlay(); paintCurrent();
+  if (R.drawS) R.drawS.moved(t);
+}
+function pumpSeek(v){
+  if (R.want == null || v.seeking) return;
+  const t = R.want;
+  R.want = null;
+  // The player is sent a quarter into the frame (well inside it, whatever the container's stamps)
+  // unless it already shows that frame.
+  const same = R.fpsKnown ? frameIdx(v.currentTime) === frameIdx(t) : Math.abs(t - v.currentTime) <= 1e-4;
+  if (!same){
+    const d = durOf();
+    v.currentTime = R.fpsKnown ? Math.min((frameIdx(t) + 0.25) * frameDur(), d || Infinity) : t;
+  } else if (!R.dragging) settle(v);
+}
+// The last seek has landed and nothing is being dragged: the player's own frame is the truth again.
+function settle(v){
+  if (!R || R.video !== v) return;
+  R.scrubT = null;
+  hideCached();
+  paintTime(); paintOverlay(); paintCurrent();
+  if (R.drawS) R.drawS.settled();
+}
+function dragEnd(){
+  R.dragging = false;
+  const v = R.video;
+  if (v && R.want == null && !v.seeking) settle(v);
+}
+// ±n frames from the frame on screen (or the one already on its way: quick taps add up).
+function step(n){
+  if (!R || !R.video) return;
+  seekTo((frameIdx(posNow()) + n + 0.01) * frameDur());
+}
+// Markers on the timeline: notes (by state), drawings on other frames, and the frames drawn on in
+// the open drawing session / the new note's draft.
+function markerList(){
+  const out = [], seen = new Set();
+  M.notesSorted(R.rows, "video").forEach((n) => {
+    const t = n.data.ctx && n.data.ctx.t;
+    if (t == null) return;
+    seen.add(r3(t)); out.push({ t, cls: M.noteState(n) });
+  });
+  M.drawings(R.rows).forEach((r) => {
+    const t = r.data.ctx && r.data.ctx.t;
+    if (t == null || seen.has(r3(t))) return;
+    seen.add(r3(t)); out.push({ t, cls: "dr" });
+  });
+  const mine = R.drawS ? R.drawS.times() : drawFrames(R.drafts["+new"] && R.drafts["+new"].draw).map((x) => x.frame.ctx && x.frame.ctx.t).filter((t) => t != null);
+  mine.forEach((t) => out.push({ t, cls: "mine" }));
+  return out;
 }
 function jumpNote(dir){
+  if (!R || !R.video) return;
+  const ts = [...new Set(markerList().map((m) => r3(m.t)))].sort((a, b) => a - b);
+  const cur = posNow(), eps = frameDur() * 0.5;
+  const t = dir > 0 ? ts.find((x) => x > cur + eps) : ts.reverse().find((x) => x < cur - eps);
+  if (t == null){ toast(dir > 0 ? "No later marker" : "No earlier marker"); return; }
+  seekTo(t);
+}
+// Transports on screen: the player's, and the drawing canvas's while a video is drawn on.
+const TPS = new Set();
+function makeTransport(){
+  const T = { el: el("div", "tpi") }, row = el("div", "row");
+  T.tc = el("span", "tc");
+  [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.tc,
+    ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next marker", () => jumpNote(1))].forEach((b) => row.appendChild(b));
+  const tl = el("div", "tl"), trk = el("div", "trk");
+  T.cache = el("i", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
+  trk.appendChild(T.cache); trk.appendChild(T.marks); trk.appendChild(T.ph);
+  tl.appendChild(trk);
+  T.trk = trk;
+  bindTimeline(tl, T);
+  T.el.appendChild(row); T.el.appendChild(tl);
+  TPS.add(T);
+  paintTransport(T); paintMarks(T); paintCache(T);
+  return T;
+}
+// The timeline: a tap or drag puts the playhead there (within 10 px of a marker: on it).
+function bindTimeline(tl, T){
+  let id = null;
+  const at = (e) => {
+    const r = T.trk.getBoundingClientRect(), d = durOf();
+    if (!d || !r.width) return null;
+    const x = e.clientX - r.left;
+    let best = null, bd = 10;
+    markerList().forEach((m) => { const dx = Math.abs(m.t / d * r.width - x); if (dx < bd){ bd = dx; best = m.t; } });
+    return best != null ? best : RC.clamp(x / r.width, 0, 1) * d;
+  };
+  tl.addEventListener("pointerdown", (e) => {
+    if (!R || !R.video || (e.pointerType === "mouse" && e.button !== 0)) return;
+    const t = at(e);
+    if (t == null) return;
+    e.preventDefault();
+    id = e.pointerId;
+    try { tl.setPointerCapture(id); } catch {}
+    R.dragging = true;
+    seekTo(t);
+  });
+  tl.addEventListener("pointermove", (e) => { if (e.pointerId !== id) return; const t = at(e); if (t != null) seekTo(t); });
+  const end = (e) => { if (e.pointerId !== id) return; id = null; dragEnd(); };
+  tl.addEventListener("pointerup", end); tl.addEventListener("pointercancel", end); tl.addEventListener("lostpointercapture", end);
+}
+function paintTransport(T){
   const v = R && R.video;
   if (!v) return;
-  const ts = [...new Set(M.notesSorted(R.rows, "video").map((n) => n.data.ctx && n.data.ctx.t).filter((t) => t != null))].sort((a, b) => a - b);
-  const cur = v.currentTime, eps = frameDur() * 0.5;
-  const t = dir > 0 ? ts.find((x) => x > cur + eps) : ts.reverse().find((x) => x < cur - eps);
-  if (t == null){ toast(dir > 0 ? "No later note" : "No earlier note"); return; }
-  v.pause(); v.currentTime = t;
+  const t = R.scrubT != null ? R.scrubT : v.currentTime, d = durOf();
+  T.tc.textContent = `${fmtTime(t, R.fps)} · f ${Math.round(t * R.fps)}${R.fpsKnown ? "" : " (≈" + Math.round(R.fps) + " fps)"}`;
+  T.ph.style.left = (d ? Math.min(100, Math.max(0, t / d * 100)) : 0).toFixed(3) + "%";
 }
-// Drag left / right on the picture scrubs, as Sight's click-drag on the video: the stage's width is
-// the whole clip (Shift: a tenth of it). Nothing happens until the finger has moved sideways a few
-// px, so a tap still plays / pauses and an upward / downward swipe still scrolls the page
-// (touch-action: pan-y). Only the latest wanted time is sought; the next seek goes out when the
-// previous one has landed, so a long-GOP clip does not freeze under the finger.
-// The scrub cache (ScrubCache) puts the frame under the finger up at once; the player's own picture
-// takes over when its last seek has landed.
+function paintMarks(T){
+  const d = durOf();
+  T.marks.textContent = "";
+  if (!d) return;
+  markerList().sort((a, b) => (a.cls === "mine") - (b.cls === "mine")).forEach((m) => {
+    const i = el("i", "mk " + m.cls);
+    i.style.left = Math.min(100, m.t / d * 100).toFixed(3) + "%";
+    T.marks.appendChild(i);
+  });
+}
+function paintCache(T){ T.cache.style.width = ((R && R.cacheF || 0) * 100).toFixed(1) + "%"; }
+function paintTime(){ if (R && R.video) TPS.forEach(paintTransport); }
+function paintMarkers(){ if (R && R.video) TPS.forEach(paintMarks); }
+// The scrub cache (ScrubCache) puts the frame wanted up at once; the player's own picture takes
+// over when its last seek has landed.
 function showCached(t){
   const si = els && els.scrubImg, u = R && R.scrub && R.scrub.near(t);
   if (!si) return;
@@ -733,19 +1018,20 @@ function showCached(t){
   else si.hidden = true;
 }
 function hideCached(){ if (els && els.scrubImg) els.scrubImg.hidden = true; }
+// Drag left / right on the picture: the clip runs on from where it is, at a fixed pace (a frame per
+// 4 px when slow, faster the faster the finger moves; Shift a quarter of that) — not the screen's
+// width for the whole clip. Nothing happens until the finger has moved sideways a few px, so a tap
+// still plays / pauses.
+function scrubStep(t, dx, dt, fine){
+  const speed = Math.abs(dx) / Math.max(1, dt);  // px per ms
+  const gain = 0.25 * Math.min(12, 1 + Math.max(0, speed - 0.25) * 5) * (fine ? 0.25 : 1);
+  return RC.clamp(t + dx * gain * frameDur(), 0, durOf() || 0);
+}
 function bindScrub(stage, v){
-  stage.style.touchAction = "pan-y";
-  let sd = null, want = null, scrubEnd = -1e9;
-  const pump = () => { if (want == null || v.seeking) return; const t = want; want = null; if (Math.abs(t - v.currentTime) > 1e-3) v.currentTime = t; };
-  const settle = () => { if (R && R.video === v && R.scrubT != null){ R.scrubT = null; paintTime(); paintOverlay(); } hideCached(); };
-  v.addEventListener("seeked", () => {
-    pump();
-    if (!sd && want == null) settle();
-    else if (want == null && R && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideCached();  // the player has caught up
-  });
-  v.addEventListener("play", hideCached);
+  stage.style.touchAction = "none";
+  let sd = null, scrubEnd = -1e9;
   const stop = () => {
-    if (sd && sd.on){ scrubEnd = performance.now(); if (want == null && !v.seeking) settle(); }
+    if (sd && sd.on){ scrubEnd = performance.now(); dragEnd(); }
     sd = null;
   };
   stage.addEventListener("pointerdown", (e) => {
@@ -753,7 +1039,7 @@ function bindScrub(stage, v){
     sd = null;
     scrubEnd = -1e9;  // a click from here on belongs to this new tap
     if (e.target.closest("button") || (e.pointerType === "mouse" && e.button !== 0)) return;
-    sd = { id: e.pointerId, x: e.clientX, y: e.clientY, t0: 0, on: false, fine: e.shiftKey };
+    sd = { id: e.pointerId, x: e.clientX, y: e.clientY, lx: 0, lt: 0, t: 0, on: false };
   });
   stage.addEventListener("pointermove", (e) => {
     if (!sd || e.pointerId !== sd.id || !R || R.video !== v) return;
@@ -761,65 +1047,25 @@ function bindScrub(stage, v){
     if (!sd.on){
       const dx = e.clientX - sd.x, dy = e.clientY - sd.y;
       if (Math.abs(dx) < 6 || Math.abs(dx) < Math.abs(dy)) return;
-      sd.on = true; sd.x = e.clientX; sd.t0 = v.currentTime;  // rebase here so the picture does not jump
-      R.scrubT = sd.t0;
+      sd.on = true; sd.lx = e.clientX; sd.lt = e.timeStamp; sd.t = posNow();
+      R.dragging = true;
       v.pause();
       try { stage.setPointerCapture(e.pointerId); } catch {}
+      return;
     }
-    if (e.shiftKey !== sd.fine){ sd.fine = e.shiftKey; sd.x = e.clientX; sd.t0 = R.scrubT; }
-    const d = Number.isFinite(v.duration) ? v.duration : (R.meta.asset.duration || 0);  // a recorder's WebM may have none
-    if (!d) return;
-    const t = Math.min(d, Math.max(0, sd.t0 + (e.clientX - sd.x) / Math.max(stage.clientWidth, 1) * d * (sd.fine ? 0.1 : 1)));
-    R.scrubT = t; want = t;
-    showCached(t);
-    pump(); paintTime(); paintOverlay();
+    const dx = e.clientX - sd.lx, dt = e.timeStamp - sd.lt;
+    sd.lx = e.clientX; sd.lt = e.timeStamp;
+    if (!dx || !durOf()) return;  // a recorder's WebM may have no duration
+    sd.t = scrubStep(sd.t, dx, dt, e.shiftKey);
+    seekTo(sd.t);
   });
   const end = (e) => { if (sd && e.pointerId === sd.id) stop(); };
   stage.addEventListener("pointerup", end);
   stage.addEventListener("pointercancel", end);
   stage.addEventListener("click", (e) => {
     // A mouse drag ends with a click (a moved touch does not): only the one right after a scrub is eaten.
-    if (performance.now() - scrubEnd < 350) return;
-    if (e.target === v) togglePlay();
-  });
-}
-function buildTransport(){
-  const { transport, scrub } = els;
-  transport.hidden = scrub.hidden = false;
-  const play = ibtn("play", "Play / pause", togglePlay);
-  els.play = play;
-  const tc = el("span", "tc");
-  els.tc = tc;
-  [play, ibtn("prev", "Previous note", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), tc, ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next note", () => jumpNote(1))].forEach((b) => transport.appendChild(b));
-  const r = el("input"); r.type = "range"; r.min = "0"; r.step = "any"; r.value = "0"; r.setAttribute("aria-label", "Position");
-  r.addEventListener("input", () => { const v = R.video; if (!v) return; if (!v.paused) v.pause(); showCached(Number(r.value)); v.currentTime = Number(r.value); });
-  r.addEventListener("change", () => { const v = R.video; if (v && !v.seeking) hideCached(); });
-  els.range = r;
-  els.marks = el("div");
-  els.cacheBar = el("i", "cachebar"); els.cacheBar.title = "Frames ready for scrubbing";
-  scrub.appendChild(els.cacheBar); scrub.appendChild(els.marks); scrub.appendChild(r);
-}
-function paintTime(){
-  const v = R && R.video;
-  if (!v || !els.tc) return;
-  const t = R.scrubT != null ? R.scrubT : v.currentTime;
-  els.tc.textContent = `${fmtTime(t, R.fps)} · f ${Math.round(t * R.fps)}${R.fpsKnown ? "" : " (≈" + Math.round(R.fps) + " fps)"}`;
-  els.play.innerHTML = ico(v.paused ? "play" : "pause");
-  const d = Number.isFinite(v.duration) ? v.duration : (R.meta.asset.duration || 0);
-  els.range.max = String(d || 0);
-  if (document.activeElement !== els.range) els.range.value = String(t);
-}
-function paintMarkers(){
-  if (!els || !els.marks) return;
-  const v = R.video, d = (v && Number.isFinite(v.duration) && v.duration) || R.meta.asset.duration || 0;
-  els.marks.textContent = "";
-  if (!d) return;
-  M.notesSorted(R.rows, "video").forEach((n) => {
-    const t = n.data.ctx && n.data.ctx.t;
-    if (t == null) return;
-    const m = el("i", "mk " + M.noteState(n));
-    m.style.left = `calc(${Math.min(100, t / d * 100)}% )`;
-    els.marks.appendChild(m);
+    if (performance.now() - scrubEnd < 350 || justSwiped(stage)) return;
+    if (e.target === v || e.target === els.scrubImg) togglePlay();
   });
 }
 // While playing: overlay + time every frame, and the frame rate measured when the container did
@@ -848,7 +1094,7 @@ function loop(){
         paintReview();
       }
     }
-    paintOverlay(); paintTime();
+    paintOverlay(); paintTime(); paintCurrent();
     next();
   };
   const next = () => v.requestVideoFrameCallback ? v.requestVideoFrameCallback(tick) : requestAnimationFrame(() => tick(0, null));
@@ -864,7 +1110,7 @@ function paintReview(){
   const st = M.reviewState(R.rows);
   if (els.rstate){ els.rstate.textContent = M.REVIEW_STATES[st] || "Set state"; els.rstate.className = "rstate " + st; }
   paintKeep();
-  paintSeg(c);
+  paintPanelBar();
   renderNotes();
   paintNewBar();
   paintMarkers(); paintOverlay();
@@ -900,28 +1146,27 @@ async function dropCopy(){
   await DB.dropFile(R.meta.key, true);
   toast("The file is forgotten on this device; the review stays. Reopening it asks for the file.", 4000);
 }
-function paintSeg(c){
-  const seg = els.seg;
-  seg.textContent = "";
+function paintSeg(seg, c){
   [["all", "All", c.notes], ["open", "Open", c.open], ["progress", "In progress", c.progress], ["done", "Resolved", c.done]].forEach(([k, label, n]) => {
     const b = btn(R.filter === k ? "on" : "", label, () => { R.filter = k; paintReview(); });
     b.appendChild(el("i", "", String(n || 0)));
     seg.appendChild(b);
   });
 }
+const listedNotes = () => M.notesSorted(R.rows, kindNow()).filter((n) => R.filter === "all" || M.noteState(n) === R.filter);
 function renderNotes(){
-  const box = els.notes, keepY = window.scrollY;
+  const box = els.notes, keepY = els.plist.scrollTop;
   box.textContent = "";
-  const notes = M.notesSorted(R.rows, kindNow()).filter((n) => R.filter === "all" || M.noteState(n) === R.filter);
+  const notes = listedNotes();
   notes.forEach((n) => box.appendChild(noteCard(n)));
   if (!notes.length) box.appendChild(el("p", "empty", R.filter === "all" ? (kindNow() === "video" ? "No notes yet. Pause on a frame and add a note below, or draw on it." : "No notes yet. Add one below, or draw on the picture.") : "No notes here."));
-  window.scrollTo(0, keepY);
+  els.plist.scrollTop = keepY;
   paintCurrent();
 }
 // The note(s) on the frame now (video).
 function paintCurrent(){
   if (!els || !R || !R.video) return;
-  const t = R.video.currentTime, fd = frameDur();
+  const t = R.scrubT != null ? R.scrubT : R.video.currentTime, fd = frameDur();
   els.notes.querySelectorAll(".note[data-t]").forEach((c) => c.classList.toggle("cur", Math.abs(Number(c.dataset.t) - t) < fd * 0.75));
 }
 
@@ -956,6 +1201,18 @@ function asyncPic(n, list, cls, onTap){
     if (!f){ ph.remove(); return; }
     const box = picBox(f, list(f), cls);
     box.onclick = () => onTap(f);
+    ph.replaceWith(box);
+  });
+  return ph;
+}
+// One more frame of a video note, filled in once it is there.
+function asyncFrameAt(n, t){
+  const rv = R, ph = el("div", "fw sm wait", "…");
+  getFrame(t).then((fr) => {
+    if (R !== rv || !fr){ ph.remove(); return; }
+    const f = { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t, hold: 0 }, at: { t, fps: R.fps } };
+    const box = picBox(f, drawingsOn(f), "sm");
+    box.onclick = () => openFrame(n, f);
     ph.replaceWith(box);
   });
   return ph;
@@ -996,6 +1253,15 @@ function noteCard(n){
       box.onclick = () => openFrame(n, f);
       card.appendChild(box);
     } else card.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openFrame(n, f)));
+  }
+  // A video note drawn on more frames: those frames too, small, in time order.
+  if (kind === "video" && c && c.t != null){
+    const extra = M.noteFrameTimes(R.rows, n).filter((t) => r3(t) !== r3(c.t));
+    if (extra.length){
+      const row = el("div", "shots");
+      extra.forEach((t) => row.appendChild(asyncFrameAt(n, t)));
+      card.appendChild(row);
+    }
   }
   const sh = shotThumbs(n.data.shots);
   if (sh) card.appendChild(sh);
@@ -1071,33 +1337,57 @@ async function editText(n){
   M.editNote(n, { text: v.trim() });
   dirty();
 }
-// Opens the canvas with the note's own drawings editable; Done keeps / adds / removes rows.
+// Opens the canvas with the note's own drawings editable; Done keeps / adds / removes rows (a
+// drawing changed there is replaced: tombstone + a new row, as any merge reads it). A video note
+// opens over the player with every frame it was drawn on.
 async function editNoteDrawing(n){
   if (!await ensureName()) return;
+  const rv = R, own = M.drawings(R.rows).filter((r) => r.data.note === n.id && !r.data.reply);
+  const byId = new Map(own.map((r) => [r.id, r]));
+  const asItem = (r) => ({ id: r.id, kind: r.kind, shape_kind: r.shape_kind, z: r.z_index, data: r.data });
+  const apply = (list) => {
+    if (R !== rv) return;
+    const t = now(), kept = new Set(), fresh = [];
+    list.forEach((x) => x.items.forEach((it) => {
+      const r = it.id && byId.get(it.id);
+      if (r && JSON.stringify(it.data) === JSON.stringify(r.data)) kept.add(r.id);
+      else fresh.push({ it, ctx: r && r.data.ctx ? r.data.ctx : x.ctx });  // an edited drawing keeps its ctx (hold)
+    }));
+    const gone = own.filter((r) => !kept.has(r.id)).map((r) => r.id);
+    if (!gone.length && !fresh.length) return;
+    M.deleteRows(R.rows, gone, t);
+    fresh.forEach(({ it, ctx }) => R.rows.push(...M.drawingRows([Object.assign({}, it, { id: undefined })], { note: n.id, ctx: M.drawCtx(ctx), z: M.maxZ(R.rows) + 1 }, t)));
+    dirty();
+  };
+  const c = n.data.ctx;
+  if (kindNow() === "video" && rv.video && c && c.t != null){
+    const groups = new Map();
+    own.forEach((r) => { const tt = frameStart(r.data.ctx && r.data.ctx.t != null ? r.data.ctx.t : c.t), k = frameTag(tt); if (!groups.has(k)) groups.set(k, { frame: { ctx: { t: tt, hold: 0 } }, items: [] }); groups.get(k).items.push(asItem(r)); });
+    seekTo(c.t);
+    await whenSettled(rv);
+    if (R !== rv) return;
+    drawVideo({ frames: [...groups.values()], onDone: (list) => apply(list.map((x) => ({ ctx: x.frame.ctx, items: x.items }))) });
+    return;
+  }
   const f = await noteFrame(n);
   if (!f){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
-  const rv = R, own = M.drawings(R.rows).filter((r) => r.data.note === n.id && !r.data.reply);
-  const ownIds = new Set(own.map((r) => r.id));
   // On the clean picture: only this note's own drawings, editable.
-  drawCanvas({ src: f.url, vb: f.vb, base: [],
-    items: own.map((r) => ({ id: r.id, kind: r.kind, shape_kind: r.shape_kind, z: r.z_index, data: r.data })),
-    onDone: (items) => {
-      if (R !== rv) return;
-      const kept = new Set(items.filter((it) => it.id && ownIds.has(it.id)).map((it) => it.id));
-      const gone = own.filter((r) => !kept.has(r.id)).map((r) => r.id);
-      const fresh = items.filter((it) => !it.id || !ownIds.has(it.id));
-      if (!gone.length && !fresh.length) return;
-      const t = now();
-      M.deleteRows(R.rows, gone, t);
-      R.rows.push(...M.drawingRows(fresh, { note: n.id, ctx: M.drawCtx(n.data.ctx), z: M.maxZ(R.rows) + 1 }, t));
-      dirty();
-    } });
+  drawCanvas({ src: f.url, vb: f.vb, base: [], items: own.map(asItem), onDone: (items) => apply([{ ctx: n.data.ctx, items }]) });
+}
+// Resolves once the player stands still on the last time asked for.
+function whenSettled(rv){
+  return new Promise((ok) => {
+    const v = rv.video;
+    const check = () => { if (R !== rv || !v || (rv.want == null && !v.seeking)){ if (v) v.removeEventListener("seeked", check); ok(); } };
+    if (v) v.addEventListener("seeked", check);
+    check();
+  });
 }
 function goTo(n){
   const c = n.data.ctx, v = R.video;
   if (!v || !c || c.t == null){ if (!v && kindNow() === "video") toast("Pick the video again to play it"); return; }
-  v.pause(); v.currentTime = c.t;
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  seekTo(c.t);
+  setPanel(false);
 }
 function focusLater(key){
   requestAnimationFrame(() => {
@@ -1133,13 +1423,18 @@ function composer(opts){
   const f = el("div", "field"), atts = el("div", "atts");
   function paintAtts(){
     atts.textContent = ""; atts.hidden = !dr.shots.length && !dr.draw;
-    if (dr.draw){
-      const s0 = el("span"), th = picBox(dr.draw.frame, dr.draw.items, "");
-      th.title = "Edit the drawing"; th.onclick = () => drawDraft(dr.draw.frame);
+    drawFrames(dr.draw).forEach((x) => {
+      const s0 = el("span"), th = picBox(x.frame, x.items, "");
+      th.title = "Edit the drawing"; th.onclick = () => drawDraft(x.frame);
       s0.appendChild(th);
-      s0.appendChild(btn("", "×", (e) => { e.stopPropagation(); dr.draw = null; paintAtts(); paint(); paintPen(); if (opts.onChange) opts.onChange(); }, "Remove the drawing"));
+      s0.appendChild(btn("", "×", (e) => {
+        e.stopPropagation();
+        const left = drawFrames(dr.draw).filter((y) => y.frame !== x.frame);
+        dr.draw = framesDraw(left);
+        paintAtts(); paint(); paintPen(); if (opts.onChange) opts.onChange();
+      }, "Remove the drawing"));
       atts.appendChild(s0);
-    }
+    });
     dr.shots.forEach((a, i) => {
       const s = el("span"), im = el("img"); im.src = a.url; im.alt = ""; s.appendChild(im);
       s.appendChild(btn("", "×", (e) => { e.stopPropagation(); URL.revokeObjectURL(a.url); dr.shots.splice(i, 1); paintAtts(); paint(); }, "Remove picture"));
@@ -1167,13 +1462,20 @@ function composer(opts){
   async function drawDraft(fr){
     const rv = R;
     if (!await ensureName() || R !== rv) return;
-    // A new note or a reply is drawn on the clean picture: the other notes' drawings stay on theirs.
-    drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: dr.draw ? dr.draw.items : [], onDone: (items) => {
+    const done = (list) => {
       if (R !== rv) return;
-      dr.draw = items.length ? { frame: fr, items } : null;
+      dr.draw = framesDraw(list);
       paintAtts(); paint(); paintPen();
       if (opts.onChange) opts.onChange();
-    } });
+    };
+    // A new note on a video: drawn over the player, on as many frames as wanted (from the one asked for).
+    if (opts.multi && kindNow() === "video" && rv.video){
+      if (fr.ctx && fr.ctx.t != null) seekTo(fr.ctx.t);
+      drawVideo({ frames: drawFrames(dr.draw), onDone: done });
+      return;
+    }
+    // A new note or a reply is drawn on the clean picture: the other notes' drawings stay on theirs.
+    drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: dr.draw ? dr.draw.items : [], onDone: (items) => done(items.length ? [{ frame: fr, items }] : []) });
   }
   let sending = false;  // a second tap while the pictures are being stored must not send it twice
   send.onclick = async () => {
@@ -1219,7 +1521,10 @@ function paintNewBar(){
     return;
   }
   const row = el("div", "row"), lab = el("span");
-  const where = () => { const d = R.drafts["+new"]; const c = d && d.draw ? d.draw.frame.ctx : ctxNow(); lab.textContent = "New note" + (c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : ""); };
+  const where = () => {
+    const d = R.drafts["+new"], c = d && d.draw ? d.draw.frame.ctx : ctxNow(), more = d && d.draw && d.draw.more ? d.draw.more.length : 0;
+    lab.textContent = "New note" + (c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : "") + (more ? ` + ${more} more frame${more > 1 ? "s" : ""}` : "");
+  };
   row.appendChild(lab);
   row.appendChild(btn("ib", "×", () => {
     const d = R.drafts["+new"];
@@ -1227,14 +1532,16 @@ function paintNewBar(){
     delete R.drafts["+new"]; R.newOpen = false; paintNewBar();
   }, "Close"));
   nb.appendChild(row);
-  nb.appendChild(composer({ key: "+new", placeholder: "Add a note…", status: null, frameFor: currentFrame, onChange: () => { where(); paintOverlay(); },
+  nb.appendChild(composer({ key: "+new", placeholder: "Add a note…", status: null, multi: true, frameFor: currentFrame, onChange: () => { where(); paintOverlay(); paintMarkers(); },
     onSend: (text, shots, state, draw) => {
       const t = now(), ctx = draw ? draw.frame.ctx : ctxNow();
       const n = M.newNote({ text, author: who, ctx, shots }, t);
       R.rows.push(n);
-      if (draw) R.rows.push(...M.drawingRows(draw.items, { note: n.id, ctx: M.drawCtx(ctx), z: M.maxZ(R.rows) + 1 }, t));
+      // Every frame drawn on goes with the note, each drawing on its own frame.
+      drawFrames(draw).forEach((x) => R.rows.push(...M.drawingRows(x.items, { note: n.id, ctx: M.drawCtx(x.frame.ctx || ctx), z: M.maxZ(R.rows) + 1 }, t)));
       R.newOpen = false;
       dirty();
+      if (!R.panel) toast(`Note ${NUM.get(n.id) || ""} added — in the Notes Panel`, 2000);
     } }));
   where();
   els.where = where;
@@ -1267,61 +1574,190 @@ async function currentFrame(){
 }
 async function drawNew(){
   if (!await ensureName()) return;
+  const rv = R, d = R.drafts["+new"] = R.drafts["+new"] || newDraft();
+  const done = (list) => {
+    if (R !== rv) return;
+    d.draw = framesDraw(list);
+    R.newOpen = d.draw || R.newOpen ? "focus" : R.newOpen;
+    paintNewBar(); paintMarkers();
+  };
+  // A video: drawn over the player on as many frames as wanted, the draft's frames kept.
+  if (kindNow() === "video" && rv.video){ drawVideo({ frames: drawFrames(d.draw), onDone: done }); return; }
   const fr = await currentFrame();
   if (!fr){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
-  const rv = R, d = R.drafts["+new"] = R.drafts["+new"] || newDraft();
   if (d.draw && !(await ask({ title: "Replace the drawing?", text: "The new note already has a drawing.", ok: "Replace" }))) return;
   if (R !== rv) return;
-  drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: [], onDone: (items) => {
-    if (!items.length || R !== rv) return;
-    d.draw = { frame: fr, items };
-    R.newOpen = "focus";
-    paintNewBar();
-  } });
+  drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: [], onDone: (items) => { if (items.length) done([{ frame: fr, items }]); } });
+}
+// [{frame, items}] (any order) → a draft's drawing: the earliest frame first (the note's), the rest in `more`.
+function framesDraw(list){
+  const l = (list || []).filter((x) => x.items && x.items.length).slice().sort((a, b) => ((a.frame.ctx && a.frame.ctx.t) || 0) - ((b.frame.ctx && b.frame.ctx.t) || 0));
+  return l.length ? { frame: l[0].frame, items: l[0].items, more: l.slice(1) } : null;
+}
+// The video frame on screen now, as a picture (cached by its time). `want`: the time a seek asked
+// for, when the player stands on it (its frame's tag, even if the stored time rounds a hair below).
+async function frameNow(rv, want){
+  const v = rv.video;
+  if (!v) return null;
+  if (v.seeking) return null;  // the picture is still the old frame: never cache it under the new time
+  if (v.readyState < 2) await seek(v, v.currentTime);
+  if (R !== rv || v.seeking) return null;
+  const on = want != null && (rv.fpsKnown ? frameIdx(want) === frameIdx(v.currentTime) : Math.abs(want - v.currentTime) < 1e-3);
+  const t = frameStart(on ? want : v.currentTime), tag = frameTag(t);
+  let f = rv.frames.get(tag);
+  if (!f){
+    const s = await scaled(v, 1600).catch(() => null);
+    if (!s || R !== rv) return null;
+    f = rv.frames.get(tag);
+    if (!f){
+      f = { blob: s.blob, w: s.w, h: s.h, url: URL.createObjectURL(s.blob) };
+      rv.frames.set(tag, f);
+      putIfAlive(rv, "frames", { id: rv.meta.key + "|" + tag, review: rv.meta.key, blob: s.blob, w: s.w, h: s.h });
+    }
+  }
+  return { tag, t, url: f.url };
+}
+
+// ---- drawing on a video: several frames, one note ---------------------------------------------
+// The canvas over the player with the player's timeline in its foot. Tap the tool in hand to put
+// it down: one finger then scrubs (as on the player), the timeline / steps / marker jumps move to
+// another frame, and a tool taken up draws there. Done hands back every frame drawn on —
+// [{frame, items}] — for one note. frames: what the draft / note already holds (kept per frame).
+async function drawVideo({ frames = [], onDone }){
+  const rv = R, v = rv.video;
+  if (!v || rv.drawS || rv.drawOpening) return;  // one session at a time (a double tap)
+  rv.drawOpening = true;
+  try { await openDrawVideo(rv, v, frames, onDone); } finally { rv.drawOpening = false; }
+}
+async function openDrawVideo(rv, v, frames, onDone){
+  v.pause();
+  await whenSettled(rv);
+  if (R !== rv) return;
+  const fr = await currentFrame();
+  if (!fr || R !== rv){ if (R === rv) toast("Could not take this frame"); return; }
+  const init = {};
+  frames.forEach((x) => { if (x.frame.ctx && x.frame.ctx.t != null) init[frameTag(frameStart(x.frame.ctx.t))] = x.items; });
+  const k0 = frameTag(fr.ctx.t), others = Object.assign({}, init);
+  delete others[k0];
+  const T = makeTransport();
+  let h = null, keys = Object.keys(init), capSeq = 0, st = 0, last = fr.ctx.t;
+  const S = rv.drawS = {
+    times: () => keys.map((k) => Number(k.slice(2))),
+    // The frame wanted shows at once (the cached one, dimmed) with that frame's drawings…
+    moved: (t) => { last = t; capSeq++; if (h) h.setFrame(frameTag(t), rv.scrub && rv.scrub.near(t), true); },
+    // …and the player's own frame replaces it when the seek has landed.
+    settled: async () => {
+      const seq = ++capSeq, f = await frameNow(rv, last);
+      if (seq !== capSeq || !h || R !== rv || rv.drawS !== S || !f || f.tag !== frameTag(frameStart(last))) return;
+      h.setFrame(f.tag, f.url, false);
+    },
+  };
+  const finish = () => {
+    if (rv.drawS === S) rv.drawS = null;
+    TPS.delete(T); h = null;
+    if (R === rv){ if (R.dragging) dragEnd(); paintMarkers(); paintOverlay(); }  // a drag on its footer ends with it
+  };
+  h = drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: init[k0] || [], frameKey: k0, frames: others, footer: T.el,
+    onScrub: (e) => {
+      if (R !== rv || (e.phase !== "end" && !durOf())) return;  // a WebM with no duration: nothing to scrub
+      if (e.phase === "start"){ st = posNow(); R.dragging = true; }
+      else if (e.phase === "move"){ st = scrubStep(st, e.dx, e.dt, e.fine); seekTo(st); }
+      else dragEnd();
+    },
+    onFrames: (ks) => { keys = ks; paintMarks(T); },
+    onKey: (e) => runHotkeys(e, [["Comma", () => step(-1)], ["Period", () => step(1)], ["ArrowLeft", () => step(-1)], ["ArrowRight", () => step(1)],
+      ["Shift+ArrowLeft", () => jumpNote(-1)], ["Shift+ArrowRight", () => jumpNote(1)]]),
+    onCancel: finish,
+    onDone: async (items, all) => {
+      finish();
+      const list = [];
+      for (const x of all || []){
+        const t = Number(x.key.slice(2)), f = rv.frames.get(x.key) || await getFrame(t, rv);
+        if (!f) continue;
+        list.push({ frame: { url: f.url, vb: fr.vb, ctx: { t, hold: 0 }, at: { t, fps: rv.fps } }, items: x.items });
+      }
+      if (R === rv) onDone(list);
+    } });
+  paintMarks(T);
 }
 
 // The drawing canvas, opened turned / mirrored as the review's view; its turn / mirror buttons
 // change that view.
 function drawCanvas(o){
   const rv = R;
-  DRAW.open(Object.assign({ numOf, view: viewOf(), onView: (vw) => { if (R === rv) setView({ rot: vw.rot, mirror: vw.mirror }); } }, o));
+  return DRAW.open(Object.assign({ numOf, view: viewOf(), onView: (vw) => { if (R === rv) setView({ rot: vw.rot, mirror: vw.mirror }); } }, o));
 }
 
 // ---- full-screen viewer ------------------------------------------------------------------------
-// A picture with its drawings: pinch / double-tap / wheel zoom, drag to pan. o: {url, vb, rows, onDraw}
+// A picture with its drawings, no bar: a round Back button and (when it can be drawn on) a pencil
+// float over it. Pinch / double-tap / wheel zoom, drag to pan while zoomed. At fit, a swipe up /
+// down goes to the next / previous note (o.nav) and a sideways swipe goes back to the player.
+// o: {url, vb, rows, view, onDraw(), note (caption), nav(dir) → Promise<o | null>, onClose(o)}
 function viewer(o){
-  const v = el("div", "view"), box = el("div", "vb"), img = el("img"), top = el("div", "vt");
-  img.src = o.url; img.alt = ""; img.draggable = false; box.appendChild(img);
-  if (o.rows && o.rows.length) box.appendChild(overlay(o.vb, o.rows));
-  const close = () => { v.remove(); window.removeEventListener("resize", fit); const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1); };
-  top.appendChild(btn("btn", "Close", close));
-  top.appendChild(el("span", "sp"));
-  if (o.onDraw) top.appendChild(btn("btn", "✎ Draw", () => { close(); o.onDraw(); }));
-  v.appendChild(box); v.appendChild(top);
-  let V = { z: 1, x: 0, y: 0 }, base = { w: 1, h: 1 };
+  const v = el("div", "view"), cap = el("div", "cap");
+  const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
+  const pen = btn("fab draw", null, () => { const cur = o; close(); cur.onDraw(); }, "Draw on it"); pen.innerHTML = ico("pen", 24);
+  v.appendChild(cap); v.appendChild(back); v.appendChild(pen);
+  let box = null, V = { z: 1, x: 0, y: 0 }, off = [0, 0], busyNav = false;
+  const close = () => {
+    v.remove(); window.removeEventListener("resize", fit); document.removeEventListener("keydown", onKey, true);
+    const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1);
+    if (o.onClose) o.onClose(o);
+  };
+  function show(no){
+    o = no;
+    if (box) box.remove();
+    box = el("div", "vb");
+    const img = el("img"); img.src = o.url; img.alt = ""; img.draggable = false; box.appendChild(img);
+    if (o.rows && o.rows.length) box.appendChild(overlay(o.vb, o.rows));
+    v.insertBefore(box, cap);
+    pen.hidden = !o.onDraw;
+    cap.textContent = "";
+    cap.className = "cap" + (o.note ? " " + M.noteState(o.note) : "");
+    if (o.note){
+      cap.appendChild(el("span", "num", String(NUM.get(o.note.id) || "")));
+      const c = o.note.data.ctx;
+      cap.appendChild(el("span", "", [c && c.t != null && R ? fmtTime(c.t, R.fps) : "", o.note.data.text || ""].filter(Boolean).join(" · ") || "Note"));
+    }
+    off = [0, 0];
+    fit();
+  }
   const vw = o.view || { rot: 0, mirror: false };
   function fit(){
     const W = innerWidth, H = innerHeight, a = vw.rot % 180 ? o.vb[3] / o.vb[2] : o.vb[2] / o.vb[3];
     let w = W, h = W / a;
     if (h > H){ h = H; w = H * a; }
-    base = { w, h };
     box.style.width = w + "px"; box.style.height = h + "px";
     box.querySelectorAll(":scope > img, :scope > svg").forEach((n) => turnEl(n, w, h, vw));
     V = { z: 1, x: (W - w) / 2, y: (H - h) / 2 };
     apply();
   }
-  const apply = () => { box.style.transform = `translate(${V.x}px,${V.y}px) scale(${V.z})`; };
+  const apply = (anim) => {
+    box.style.transition = anim ? "transform .2s ease-out" : "";
+    box.style.transform = `translate(${V.x + off[0]}px,${V.y + off[1]}px) scale(${V.z})`;
+  };
   const zoomAt = (x, y, z) => { z = RC.clamp(z, 1, 12); const lx = (x - V.x) / V.z, ly = (y - V.y) / V.z; V = { z, x: x - lx * z, y: y - ly * z }; if (z === 1) fit(); else apply(); };
+  // Swipes at fit: the picture follows the finger along the axis it set off on.
+  async function navigate(dir){
+    if (busyNav) return;
+    const next = o.nav ? await (busyNav = true, o.nav(dir)).finally(() => { busyNav = false; }) : null;
+    if (!v.isConnected) return;
+    if (!next){ off = [0, 0]; apply(true); toast(dir > 0 ? "No later note" : "No earlier note", 1500); return; }
+    off = [0, dir > 0 ? -innerHeight : innerHeight]; apply(true);
+    setTimeout(() => { if (!v.isConnected) return; show(next); off = [0, dir > 0 ? innerHeight * 0.4 : -innerHeight * 0.4]; apply(); requestAnimationFrame(() => { off = [0, 0]; apply(true); }); }, 170);
+  }
   const pts = new Map();
-  let g = null, lastTap = 0;
+  let g = null, lastTap = 0, sw = null;
   const start = () => {
     const p = [...pts.values()];
     if (!p.length){ g = null; return; }
     const m = p.length > 1 ? [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2] : [p[0].x, p[0].y];
+    if (sw && sw.axis && (off[0] || off[1])){ off = [0, 0]; apply(true); }  // a swipe that became a pinch
     g = { v: { ...V }, m, d: p.length > 1 ? RC.hyp(p[0].x - p[1].x, p[0].y - p[1].y) : 0 };
+    sw = p.length === 1 && V.z <= 1.01 ? { x: p[0].x, y: p[0].y, axis: null } : null;
   };
   v.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".vt")) return;
+    if (e.target.closest(".fab")) return;
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { v.setPointerCapture(e.pointerId); } catch {}
     start();
@@ -1330,6 +1766,12 @@ function viewer(o){
     const q = pts.get(e.pointerId);
     if (!q || !g) return;
     q.x = e.clientX; q.y = e.clientY;
+    if (sw){
+      const dx = q.x - sw.x, dy = q.y - sw.y;
+      if (!sw.axis && Math.abs(dx) + Math.abs(dy) > 10) sw.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      if (sw.axis){ off = sw.axis === "x" ? [dx, 0] : [0, dy]; apply(); }
+      return;
+    }
     const p = [...pts.values()];
     const m = p.length > 1 ? [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2] : [p[0].x, p[0].y];
     const z = p.length > 1 && g.d ? RC.clamp(g.v.z * RC.hyp(p[0].x - p[1].x, p[0].y - p[1].y) / g.d, 1, 12) : g.v.z;
@@ -1341,32 +1783,65 @@ function viewer(o){
     if (!pts.has(e.pointerId)) return;
     const q = pts.get(e.pointerId), moved = g && Math.abs(q.x - g.m[0]) + Math.abs(q.y - g.m[1]) > 10;
     pts.delete(e.pointerId);
+    if (sw && sw.axis && e.type === "pointerup"){
+      const dx = q.x - sw.x, dy = q.y - sw.y;
+      sw = null;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy)){ close(); return; }
+      if (Math.abs(dy) > 70) { navigate(dy < 0 ? 1 : -1); start(); return; }
+      off = [0, 0]; apply(true);
+    } else if (sw && sw.axis){ sw = null; off = [0, 0]; apply(true); }
     if (!pts.size && !moved && e.type === "pointerup"){
       const t = now();
       if (t - lastTap < 320){ zoomAt(e.clientX, e.clientY, V.z > 1.2 ? 1 : 2.5); lastTap = 0; } else lastTap = t;
     }
-    if (V.z <= 1.01) fit();
+    if (V.z <= 1.01 && (off[0] || off[1]) === 0) fit();
     start();
   };
   v.addEventListener("pointerup", up); v.addEventListener("pointercancel", up);
   v.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, V.z * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
   v.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+  function onKey(e){
+    if (sheets[sheets.length - 1] !== close) return;
+    runHotkeys(e, [["ArrowDown", () => navigate(1)], ["ArrowUp", () => navigate(-1)], ["ArrowLeft", close], ["ArrowRight", close]]);
+  }
+  document.addEventListener("keydown", onKey, true);
   window.addEventListener("resize", fit);
   document.body.appendChild(v);
   sheets.push(close);
-  fit();
+  show(o);
 }
 async function openPicture(){
   const url = R.url || (await getPicture() || {}).url;
   if (!url) return;
   viewer({ url, vb: [0, 0, docW() || 1, docH() || 1], rows: stageDrawings(), view: viewOf(), onDraw: drawNew });
 }
-function openFrame(n, f, rid){
-  viewer({ url: f.url, vb: f.vb, view: viewOf(), rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), onDraw: () => {
-    R.openReply[n.id] = true; renderNotes();
-    const box = document.querySelector(`.cmp[data-key="${n.id}"]`);
-    if (box) box.querySelector(".pen").click();
-  } });
+// A note's picture, full screen; swiping up / down walks the notes in the list's order (the
+// filter on), and the list / player follow the note it was left on.
+function noteView(n, f, rid){
+  const rv = R;
+  return { url: f.url, vb: f.vb, view: viewOf(), note: n, rows: rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f),
+    onDraw: () => { if (R !== rv) return; setPanel(true); R.openReply[n.id] = true; renderNotes();
+      const box = document.querySelector(`.cmp[data-key="${n.id}"]`);
+      if (box) box.querySelector(".pen").click(); },
+    nav: rid ? null : async (dir) => {
+      if (R !== rv) return null;
+      const list = listedNotes();
+      for (let i = list.findIndex((x) => x.id === n.id) + dir; i >= 0 && i < list.length; i += dir){
+        const f2 = await noteFrame(list[i]);
+        if (R !== rv) return null;
+        if (f2) return noteView(list[i], f2);
+      }
+      return null;
+    },
+    onClose: (last) => { if (R === rv && last.note && last.note.id !== n.id) showNote(last.note); } };
+}
+function openFrame(n, f, rid){ viewer(noteView(n, f, rid)); }
+// Brings a note forward: its card into view in the list, the player onto its frame.
+function showNote(n){
+  const c = n.data.ctx;
+  if (R.video && c && c.t != null) seekTo(c.t);
+  const card = els && els.notes.querySelector(`.note[data-id="${n.id}"]`);
+  if (card) card.scrollIntoView({ block: "nearest" });
 }
 function openShot(url){
   const im = new Image();
@@ -1395,6 +1870,7 @@ function reviewActions(){
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,
     { label: R.file ? "Use another copy of the file…" : "Pick the file…", fn: () => { const p = picker(kindNow() === "video" ? "video/*" : "image/*", false, (fs) => rebind(fs[0])); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     { label: "Your name: " + (who || "—"), fn: setName },
+    { label: "Settings (theme, storage)…", fn: settings },
     { label: "Delete this review…", danger: true, fn: () => deleteReview(R.meta) },
   ];
   menu(R.meta.asset.name, items);
@@ -1507,6 +1983,9 @@ function initSW(){
   }).catch((e) => console.warn("service worker", e));
 }
 
+// The review screen never scrolls as a whole (the list scrolls inside it); a focus or
+// scrollIntoView must not shift it.
+root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ root.scrollTop = 0; root.scrollLeft = 0; } });
 initSW();
 route();
 // For tests and debugging only.

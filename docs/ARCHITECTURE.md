@@ -265,6 +265,15 @@ transformed box (box px = doc / (vb.w / BW)), so it turns and zooms with the pic
 the field opens on pointer *up* (iOS shows the keyboard only from a touch-end gesture), a tap on a
 text drawn in this session edits it, a tap elsewhere / Done / Esc commits, empty text removes it;
 Sight's text defaults (dark box 0.6, size 24 screen px at the current zoom → doc units).
+The bars float over the picture (`.dtop` / `.dbar`, colours from the host's `--rd-bg / --rd-ov /
+--rd-fg / --rd-line`, dark by default); fit centres the picture between them when it fits there,
+else on the whole screen. A tap on the tool in hand puts it down (`pen.tool = null`, never saved;
+each open starts with the last real tool): one finger then calls `o.onScrub({phase, dx, dt, fine})`
+if given, else pans. Video sessions: `o.frameKey` + `o.frames {key: items}` make it multi-frame —
+`store` keeps each other frame's `{items, undo, redo}`, `handle.setFrame(key, src, pending)` swaps
+them (and the picture, dimmed while pending), `o.onFrames(keys)` reports frames holding drawings,
+`o.footer` sits above the tools, `o.onKey(e)` lets the host take keys; Done → `onDone(items,
+[{key, items}])`. `open()` returns `{setFrame, close, frameKey}`.
 
 **Visibility on the desktop** (annotate.js) — `ctxShown(it)` is the base rule (ctx on screen,
 reply not hidden / deleted, its note still exists — a drawing of a deleted note never shows);
@@ -275,6 +284,11 @@ picture for the new note; **pin** (a note clicked) only that note's; **hover** d
 Hit tests, the eraser, selection and "clear on screen" follow `visibleNow`; reports and exports
 use `ctxShown` (every drawing on that frame). Cards show the note's own drawings (and each reply's)
 over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset).
+A note may hold drawings on several frames / views (each row keeps its own ctx): `pendingDrawings`
+= loose drawings shown now + every loose one created since `S.openedAt` (any frame / view);
+`notePreview` makes one box per frame (`data-pt` on the extra ones: a click goes there);
+`gatherReport` adds `more [{frame, size, caption, ctx}]` per note (review.py: PDF after the
+note's frame; the page's `frameOf("<id>|<i>")`).
 The lightbox view's **turn / mirror** (index.html `attachViewer`: `turn {rot, mir}`, localStorage
 `sight.viewTurn`, newest 500 files) is a CSS prefix about the window centre on the media and on
 annotate's layer root (`geom().turn`); `unturn(x, y)` maps the pointer back, so pan / zoom and
@@ -396,10 +410,31 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   Import = `mergeRows` with the package's `deleted` and a shot-id map (non-hex ids → SHA-1 of the
   bytes, as `review.put_shot`); the target review is the one holding most of the package's row
   ids, else name + size, else a new review from the package's asset (it then asks for the file).
-- **Video**: a sideways drag on the stage scrubs like Sight's click-drag (`bindScrub`: width = whole
-  clip, Shift ×0.1, starts after 6 px of mostly-horizontal movement; stage `touch-action: pan-y` so
-  vertical swipes still scroll; one seek in flight, the latest wanted time next; `R.scrubT` drives
-  the timecode meanwhile; the click right after a mouse scrub is swallowed). The player's time is
+- **Layout**: `#app.review` is fixed full-screen; `.slide` = `.player` (height `--ph` = viewport −
+  `--pbh` 30 px − `--nbh`, the new-note bar's measured height) + `.pbar` (Notes Panel) + `.plist`
+  (the scrolling list). `R.panel` (`setPanel`) adds `.open`: the slide moves up by `--ph`, the bar
+  grows to hold the filters. The header (`.hdr`) and transport (`.tp`) are overlays on the player.
+  The root never scrolls (a scroll listener resets it); the list scrolls inside `.plist`.
+  Themes: `html[data-theme=light|dark]` (Settings, `sight-review:theme`), none = system; the
+  stage, overlays (`--ov*`) and the canvas (`--rd-*`) follow it.
+- **Notes order**: by `data.created` for every kind (`notesSorted`, same in annotate.js) — numbers
+  match Sight; the frame does not count.
+- **Frame math** (`model.js frameIndex / frameTime`, same rule in annotate.js): a stored time is
+  `(n + 0.01)·fd` to 3 dp and may round below `n·fd`; `frameIndex` recognises it (within 0.6 ms)
+  and keeps frame n, other times are floored. Seeks go a quarter into the frame (`pumpSeek`;
+  annotate.js `landAt`), so the player shows frame n whatever the rounding.
+- **Video**: every playhead move goes through `seekTo(t)` (frame steps, marker jumps, the timeline,
+  scrubs): snapped to its frame (`snapT`, never past the clip's last frame), shown at once
+  (`R.scrubT` drives timecode, playhead, overlay; the ScrubCache frame), one seek in flight and the
+  latest wanted time next (`R.want`, `pumpSeek`); `settle` when it lands and nothing is dragged
+  (`R.dragging`). `posNow()` = the pending / shown time, so quick steps add up. The timeline
+  (`makeTransport`, `.tl`) puts markers, cache bar and playhead in the same track percent; a tap
+  within 10 px of a marker lands on it. `markerList()` = notes (by state), drawings on other frames,
+  and the frames of the open drawing session / new-note draft. A sideways drag on the stage scrubs
+  from the current position (`scrubStep`: ¼ frame per px, up to ×12 with finger speed, Shift ¼;
+  starts after 6 px of mostly-horizontal movement; the click right after a mouse scrub is
+  swallowed); a swipe up on the stage opens the panel. No play button in the transport (tap the
+  picture / Space; the big one shows until first play). The player's time is
   the truth; the frame on screen is `floor(t/fd)`; stepping lands on `(frame + n + 0.01)·fd`
   and a new note / drawing ctx is `{t: frameStart(t), hold: 0}` = `(frame + 0.01)·fd` to 3 dp, so it
   shows on exactly that frame (same rule in Sight's annotate.js `frameStart` / `stepFrame`;
@@ -415,6 +450,18 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   in memory only. During a scrub (stage drag, position bar) `near(t)` is shown in `.scrubimg` over
   the player until the last seek has landed (`seeked` with nothing pending) or it plays. Closed
   (URLs revoked) with the review / on re-pick. No rVFC (old WebKit): no cache.
+- **Drawing on a video** (`drawVideo`): the canvas opens multi-frame over the paused player with a
+  second transport (`makeTransport`) as its footer; `R.drawS {times, moved, settled}` ties it to
+  `seekTo` — `moved(t)` shows that frame's drawings over the cached frame (dimmed), `settled()`
+  grabs the player's exact frame (`frameNow`, cached in `frames` under `frameTag`) and swaps it in.
+  Done → `[{frame, items}]`; a draft keeps `{frame, items, more}` (`framesDraw`: earliest first =
+  the note's ctx); sending writes each frame's drawings with that frame's ctx. *Edit the drawing*
+  on a video note opens all its frames (`M.noteFrameTimes`); a changed drawing is replaced
+  (tombstone + new row). Cards show the extra frames small; reports add them before the note's
+  pictures. Replies stay one frame.
+- **Viewer**: no bar — floating `.fab` Back / pencil; at fit, a swipe sideways closes, up / down
+  calls `o.nav(±1)` (note frames: the next note in the list's order with a picture); closing on
+  another note brings it forward (`showNote`).
 - **View**: `R.meta.view {rot, mirror}` (saved with the list entry) turns / mirrors the stage
   (`turnEl`: a 90 / 270 element gets the stage's swapped size, centred), the full-screen viewer and
   the canvas (`drawCanvas` passes `view` / `onView`). While a new note is open the stage shows only

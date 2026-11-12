@@ -69,9 +69,11 @@
     them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
     `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
   - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
-    takes the drawings currently on screen that aren't attached to a note yet (as vector drawings,
-    shown on a picture of the frame in its card), the reviewer name (field at the top), and the
-    date. While a new note is being made — you draw, or type in the field — the picture is clean:
+    takes the drawings currently on screen that aren't attached to a note yet, plus every loose
+    drawing you made since opening the file on other frames of a video or other views of a 3D
+    model — one note can hold pictures of several frames / views (as vector drawings, shown on a
+    picture of each frame in its card; click a smaller one to go to that frame; the PDF / web page
+    show every frame / view), the reviewer name (field at the top), and the date. While a new note is being made — you draw, or type in the field — the picture is clean:
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
@@ -152,27 +154,42 @@
   made in Safari before installing stay in Safari. *Photo or video* picks from the library / camera
   roll, *Open a file…* from Files (pictures, videos, or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
-  changes it). The picture / video stays on top; ↻ and the mirror button next to the eye turn it 90° and
-  mirror it (the full-screen view and the canvas follow; the drawings stay put on the picture). On
-  a video, drag left / right across the picture to
-  scrub (as click-drag in Sight: the picture's width is the whole clip; Shift with a mouse = finer;
-  after opening, the app runs through the clip once and keeps small frames in memory — the green
-  line under the position bar — so the scrub follows the finger at once),
-  tap it to play / pause; below it: play, ◀ ▶ one frame back / forward,
-  ‹ › previous / next note, the timecode and frame number, and a position bar with the notes
-  marked (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for notes). *+ Note* adds a note — on
-  a video at the frame on screen; while it is open the picture is clean (only its own drawing); *✎ Draw a note* (or tapping the picture → *✎ Draw*) opens the
-  same drawing canvas as the web page (select / transform, brush with pen pressure, highlighter,
-  arrow, rectangle, ellipse, text, eraser, colours, undo / redo, clear, pinch / pan / turn) on the picture or the paused frame, and the
-  note goes there. Each note has *Reply* (text, pictures, a drawing on its frame, *Mark as In
-  progress / Resolved / Reopen*), *Resolve* / *Reopen*, and ⋯ for *Edit text*, *Edit the drawing*,
+  changes it). The review is a full-screen player: a header over the picture holds ← (all
+  reviews), the name, ⋯, and a row with the pencil (*Draw a note*), the eye (hide drawings), ↻ /
+  mirror (turn 90° / mirror the view — the full-screen view and the canvas follow; the drawings
+  stay put on the picture) and *Set state*. Under the picture the thin **Notes Panel** bar: tap it
+  (or swipe up on it / on the picture) and the player slides up off the screen and the notes come
+  in; the bar then holds the filters (All / Open / In progress / Resolved) and ⌃ back to the
+  player. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
+  (notes and frames drawn on), ◀ ▶ one frame back / forward, the timecode and frame number, and a
+  timeline with the markers (tap / drag anywhere; near a marker it lands on it). Drag left / right
+  across the picture to scrub from where the clip is (a frame per few pixels, faster when you move
+  faster; Shift with a mouse = finer) — the clip's length no longer spreads over the screen's
+  width; after opening, the app runs through the clip once and keeps small frames in memory (the
+  green line in the timeline), so the picture follows at once. Tap the picture to play / pause
+  (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for markers). Notes are listed and numbered in
+  the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
+  adds a note — on a video at the frame on screen; while it is open the picture is clean (only its
+  own drawing). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
+  highlighter, arrow, rectangle, ellipse, text, eraser, colours, undo / redo, clear, pinch / pan /
+  turn), its buttons floating over the picture. On a video the canvas has the timeline at its
+  foot: tap the tool in hand to put it down (no fill), then drag the picture or the timeline / the
+  step and marker buttons to another frame, take a tool again and draw there — as many frames as
+  you like; *Done* makes them one note (its card shows every frame drawn on). Each note has
+  *Reply* (text, pictures, a drawing on its frame, *Mark as In progress / Resolved / Reopen*),
+  *Resolve* / *Reopen*, and ⋯ for *Edit text*, *Edit the drawing* (a video note: all its frames),
   *Mark in progress*, *Delete*; × deletes a reply. Tap a timecode to go to that frame, a picture to
-  view it full screen (pinch / double-tap to zoom). *Set state* sets the file's review state
+  view it full screen (pinch / double-tap to zoom; ← or a sideways swipe goes back; at full size a
+  swipe up / down shows the next / previous note; the pencil draws a reply on it). Settings (⚙ on
+  the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
+  and the notes share it. *Set state* sets the file's review state
   (Needs review / Changes requested / Approved). The eye hides the drawings on the picture.
   ⋯ menu: *PDF report* and *Web page (HTML)* — the same content as Sight's PDF report (pictures /
   frames with the drawings, every note, reply and picture), plain files anyone can open; *Review
   file for Sight (.srev)* — drag it into Sight to merge everything (Sight finds the file by name and
-  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger.
+  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, press and hold a
+  review and drag it onto the bin that appears at the bottom to delete it (let go without moving
+  for its menu).
   Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
   see it. The app remembers the file you picked (it keeps a copy on the device — a web app
   gets no lasting access to a picked file) and opens the review with it next time; ⋯ → *Forget the

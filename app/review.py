@@ -143,8 +143,8 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
 
 def build_pdf(payload: dict, root: Path, out: Path) -> int:
     """payload: {title, subtitle, meta: [[label, value]], cover, notes: [{num, ctx, author, date,
-    text, status (open|progress|done), frame, shots: [id], frameCaption, replies: [{author, date, text,
-    event, shots: [id]}]}]} — images
+    text, status (open|progress|done), frame, shots: [id], frameCaption, more: [{frame, caption}] (more
+    frames / views the note was drawn on), replies: [{author, date, text, event, shots: [id]}]}]} — images
     are data URLs (cover/frame) or shot ids. Returns the page count."""
     import pymupdf
     from PIL import Image
@@ -218,6 +218,12 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             parts.append(_img_tag(*frame, max_h=300))
             if n.get("frameCaption"):
                 parts.append(f'<p class="cap">{esc(n["frameCaption"])}</p>')
+        for m in n.get("more") or []:
+            pic = put_image(decode_data_url((m or {}).get("frame") or "")) if isinstance(m, dict) else None
+            if pic:
+                parts.append(_img_tag(*pic, max_h=220))
+                if m.get("caption"):
+                    parts.append(f'<p class="cap">{esc(m["caption"])}</p>')
         for sid in n.get("shots") or []:
             shot = put_image(shot_bytes(str(sid)))
             if shot:
@@ -476,13 +482,15 @@ body.zoomed { overflow: hidden; }
 .fw { position: relative; display: block; width: 100%; margin: 8px 0 2px; cursor: zoom-in; }
 .fw > img { display: block; width: 100%; }
 .fw .frame { margin: 0; }
+.fw.more { width: 60%; margin-top: 6px; }
+.fw.more img { display: block; width: 100%; }
 .fw.cover-w { width: 100%; margin: 0 0 4px; }
 .fw.sm { margin: 6px 0 0; }
 .fw.sm > img { border-radius: 8px; border: 1px solid var(--line); }
 .ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
 .field .atts .fw { margin: 0; width: fit-content; }
 .field .atts .fw > img { height: 56px; width: auto; border-radius: 8px; border: 1px solid var(--line); }
-.field .atts .fw::after { content: "\270E"; position: absolute; left: 4px; bottom: 2px; color: #fff; font-size: 12px; text-shadow: 0 0 3px #000; }
+.field .atts .fw::after { content: ""; position: absolute; left: 4px; bottom: 4px; width: 14px; height: 14px; background: #fff; filter: drop-shadow(0 0 2px #000); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z'/%3E%3C/svg%3E") center / contain no-repeat; }
 .field textarea.d { padding-left: 74px; }
 .pen { position: absolute; bottom: 4px; left: 37px; width: 32px; height: 32px; border-radius: 16px; border: 0; display: grid; place-items: center; cursor: pointer; padding: 0; background: none; color: var(--muted); }
 .pen.on { color: var(--accent); }
@@ -491,7 +499,7 @@ body.zoomed { overflow: hidden; }
 .vmenu label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
 .zoom .zw { position: relative; will-change: transform; pointer-events: none; }
 .zoom .zw img { display: block; }
-.zoom .zd { position: absolute; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 1; background: rgb(255 255 255 / .14); border-color: rgb(255 255 255 / .3); color: #fff; padding: 7px 14px; }
+.zoom .zd { display: inline-flex; align-items: center; gap: 4px; position: absolute; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 1; background: rgb(255 255 255 / .14); border-color: rgb(255 255 255 / .3); color: #fff; padding: 7px 14px; }
 /* The full-screen drawing canvas (.draw) styles itself: review-draw.js. */
 .pick { position: fixed; inset: 0; z-index: 25; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
 .pick .sheet { max-width: 560px; max-height: 85vh; overflow: auto; }
@@ -504,7 +512,7 @@ body.zoomed { overflow: hidden; }
 <header class="top"><div class="in">
 <button class="hd" id="hd" type="button" aria-expanded="false" aria-controls="details" title="File and review details"><h1 id="ttl"></h1><span class="chev" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
 <div class="details" id="details" hidden></div>
-<div class="people"><span class="from" id="from"></span><button class="me" id="me" type="button" title="Change your name">You: <b id="myname"></b> ✎</button></div>
+<div class="people"><span class="from" id="from"></span><button class="me" id="me" type="button" title="Change your name">You: <b id="myname"></b> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/></svg></button></div>
 <div class="frow"><div class="seg" id="seg"></div><div class="vwrap" id="vwrap" hidden><button class="ib" id="vbtn" type="button" title="Show / hide drawings" aria-label="Show or hide drawings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button><div class="vmenu" id="vmenu" hidden><label><input type="checkbox" id="vmine"> My drawings</label><label><input type="checkbox" id="voth"> Others' drawings</label></div></div><button class="ib" id="sbtn" type="button" title="Search notes" aria-label="Search notes"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg></button></div>
 <input class="q" id="q" type="search" placeholder="Search notes" hidden>
 </div></header>
@@ -603,6 +611,15 @@ body.zoomed { overflow: hidden; }
   // (pictures), or the video frame / 3D view with everything visible there.
   function frameOf(key){
     if (!VEC) return null;
+    // "<note id>|<i>": the i-th more frame / view that note was drawn on (report n.more).
+    var bar = typeof key === "string" ? key.indexOf("|") : -1;
+    if (bar > 0){
+      var mn = noteById[key.slice(0, bar)], m = mn && mn.more && mn.more[Number(key.slice(bar + 1))], mc = m && m.ctx;
+      if (!m || !m.frame || !mc) return null;
+      if (M.kind === "video" && mc.t != null) return { key: key, src: m.frame, size: m.size, at: { t: mc.t, fps: M.fps || 25 }, ctx: mc };
+      if (M.kind === "model3d" && mc.vk) return { key: key, src: m.frame, size: m.size, at: { vk: mc.vk }, ctx: mc };
+      return null;
+    }
     if (key === "cover") return M.kind === "image" && R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null } : null;
     var n = noteById[key], c = (rows[key] && rows[key].data && rows[key].data.ctx) || null;
     if (!n) return null;
@@ -681,7 +698,8 @@ body.zoomed { overflow: hidden; }
       w.style.transition = "none";
       paintZ();
     }
-    var db = el("button", "btn zd", "✎ Draw"); db.type = "button"; db.title = "Draw on this picture";
+    var db = el("button", "btn zd"); db.type = "button"; db.title = "Draw on this picture";
+    db.appendChild(svg('<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>', 16)); db.appendChild(document.createTextNode(" Draw"));
     w.appendChild(i); z.appendChild(w); z.appendChild(cnt); z.appendChild(db);
     function showAt(){
       var g = gal[idx];
@@ -1005,6 +1023,15 @@ body.zoomed { overflow: hidden; }
       var fi = el("img", "frame"), fk2 = frameGal.push({ src: n.frame }) - 1; fi.src = n.frame; fi.alt = ""; fi.onclick = function(){ zoom(frameGal, fk2); }; c.appendChild(fi);
     }
     if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
+    // More frames / views the note was drawn on, smaller, with everything shown there.
+    if (!local) (n.more || []).forEach(function(m, mi){
+      var mf = frameOf(id + "|" + mi), mw;
+      if (mf){ var mk = frameGal.push({ f: mf }) - 1; mw = pic(mf, shownOn(mf), "more"); mw.onclick = function(){ zoom(frameGal, mk); }; }
+      else if (m && m.frame){ var mk2 = frameGal.push({ src: m.frame }) - 1; mw = el("div", "fw more"); var mi2 = el("img"); mi2.src = m.frame; mi2.alt = ""; mw.appendChild(mi2); mw.onclick = function(){ zoom(frameGal, mk2); }; }
+      if (!mw) return;
+      c.appendChild(mw);
+      if (m.caption) c.appendChild(el("div", "cap", m.caption));
+    });
     var sh = thumbs(n.shots, id); if (sh) c.appendChild(sh);
     var mineL = E.replies[id] || [];
     var reps = (n.replies || []).concat(mineL.map(function(r){ return { id: r.id, author: r.author, date: fmt(r.created), text: r.text, event: r.event, shots: r.shots, mine: true }; }));

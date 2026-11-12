@@ -55,12 +55,23 @@ const moovPayload = (...traks) => Buffer.concat(traks);
 
   // ---- model ----
   const now = 1790000000000;
+  t("frame times are stable at any rate (stepping never sticks)", () => {
+    for (const fps of [23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 120]){
+      for (let n = 0; n < 2000; n++){
+        const t = M.frameTime((n + 0.5) / fps, fps);
+        assert.strictEqual(M.frameIndex(t, fps), n, `fps ${fps} frame ${n}`);
+        assert.strictEqual(M.frameTime(t, fps), t);
+        assert.strictEqual(M.frameIndex(M.frameTime((M.frameIndex(t, fps) + 1 + 0.01) / fps, fps), fps), n + 1);
+      }
+      assert.strictEqual(M.frameIndex(2.5 / fps, fps), 2);  // a raw time: floored
+    }
+  });
   t("note, reply, state, review state, tombstones", () => {
     const rows = [];
     const a = M.newNote({ text: "Sky", author: "Ann", ctx: { t: 1, hold: 0 } }, now);
     const b = M.newNote({ text: "Later", author: "Ann", ctx: { t: 0.5, hold: 0 } }, now + 1);
     rows.push(a, b);
-    assert.deepStrictEqual(M.notesSorted(rows, "video").map((r) => r.id), [b.id, a.id]);
+    assert.deepStrictEqual(M.notesSorted(rows, "video").map((r) => r.id), [a.id, b.id]);  // by when made, not by frame
     assert.deepStrictEqual(M.notesSorted(rows, "image").map((r) => r.id), [a.id, b.id]);
     const r = M.addReply(a, { text: "ok", author: "Bob", shots: ["0123456789abcdef"] }, now + 10);
     const ev = M.setNoteState(a, "done", "Bob", now + 11);

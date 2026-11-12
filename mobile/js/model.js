@@ -13,13 +13,26 @@ export const EVENT_LABEL = { done: "Resolved", progress: "In progress", open: "R
 export const live = (rows) => rows.filter((r) => r.deleted_at == null);
 export const byId = (rows, id) => rows.find((r) => r.id === id) || null;
 
-// Notes in Sight's order (video: by time, then created; else by created) — the numbers match Sight.
+// Notes in Sight's order: by when they were made, earlier first — videos too (the frame does not
+// count), so the numbers match Sight and a new note always lands at the end.
 export function notesSorted(rows, kind){
   const n = live(rows).filter((r) => r.kind === "note");
-  if (kind === "video") n.sort((a, b) => ((a.data.ctx && a.data.ctx.t) || 0) - ((b.data.ctx && b.data.ctx.t) || 0) || (a.data.created || 0) - (b.data.created || 0));
-  else n.sort((a, b) => (a.data.created || 0) - (b.data.created || 0));
+  n.sort((a, b) => (a.data.created || 0) - (b.data.created || 0));
   return n;
 }
+// The frame a time falls in. A stored frame time ((n + 0.01)·fd to 3 dp, see frameTime) can round
+// a hair below n·fd at 23.976 / 29.97 / 60 fps and up, so one is recognised as such and kept on
+// its frame; any other time is floored.
+export function frameIndex(t, fps){
+  const fd = 1 / (fps || 25), k = Math.round(t / fd - 0.01);
+  // Only a time with exactly 3 decimals can be a stored one (a player's own time never is).
+  if (Math.abs(t * 1000 - Math.round(t * 1000)) < 1e-6 && Math.abs(t - Math.round((k + 0.01) * fd * 1000) / 1000) < 6e-4) return Math.max(0, k);
+  return Math.floor(t / fd + 1e-6);
+}
+// A time as stored for its frame (a note's / drawing's ctx.t): the frame's start + a hair, 3 dp, so
+// it shows on exactly that frame (review-core ctxVisible) and Sight numbers it the same.
+// frameTime(frameTime(t)) === frameTime(t).
+export const frameTime = (t, fps) => Math.round((frameIndex(t, fps) + 0.01) / (fps || 25) * 1000) / 1000;
 export const liveReplies = (note) => (note.data.replies || []).filter((r) => r && !r.deleted);
 export const noteState = (note) => (note.data.status === "done" || note.data.status === "progress") ? note.data.status : "open";
 
@@ -34,6 +47,12 @@ export function replyGone(rows, it){
 }
 export function drawings(rows){
   return live(rows).filter((r) => r.kind !== "note" && r.kind !== "status" && r.data && RC().validItem(r) && !replyGone(rows, r));
+}
+// The frames a video note was drawn on (its own drawings, not its replies'), in time order.
+export function noteFrameTimes(rows, note){
+  const ts = new Set();
+  drawings(rows).forEach((r) => { if (r.data.note === note.id && !r.data.reply && r.data.ctx && r.data.ctx.t != null) ts.add(r.data.ctx.t); });
+  return [...ts].sort((a, b) => a - b);
 }
 export const maxZ = (rows) => rows.reduce((m, r) => Math.max(m, r.z_index || 0), 0);
 

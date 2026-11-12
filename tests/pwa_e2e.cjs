@@ -26,11 +26,16 @@ async function page(ctx){
   await p.waitForSelector(".opens");
   return p;
 }
-// The media panel is sticky: click by script so it is not "covered" while Playwright scrolls.
+// Click by script: the player / the notes may be slid off screen (Notes Panel open or not).
 const tap = (loc) => loc.evaluate((e) => e.click());
+// Takes a tool up (a tap on the tool already in hand would put it down).
+async function pick(p, tool){
+  const b = p.locator(`.draw button[title="${tool}"]`);
+  if (!await b.evaluate((e) => e.classList.contains("on"))) await b.click();
+}
 async function drawOn(p, tool, from, to, keep){
   await p.waitForSelector(".draw");
-  await p.click(`.draw button[title="${tool}"]`);
+  await pick(p, tool);
   const b = await p.locator(".draw .dview").boundingBox();
   const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
   await p.mouse.move(cx + from[0], cy + from[1]); await p.mouse.down();
@@ -39,16 +44,16 @@ async function drawOn(p, tool, from, to, keep){
 }
 // The Text tool: a tap opens a field there; a tap elsewhere puts the text on the picture.
 async function typeText(p, at, text){
-  await p.click('.draw button[title="Text"]');
+  await pick(p, "Text");
   const b = await p.locator(".draw .dview").boundingBox();
   await p.mouse.click(b.x + b.width / 2 + at[0], b.y + b.height / 2 + at[1]);
   await p.waitForSelector(".draw .dtext");
   await p.keyboard.type(text);
-  await p.mouse.click(b.x + 8, b.y + 8);
+  await p.mouse.click(b.x + 12, b.y + b.height * 0.4);  // clear of the floating bars
   await p.waitForSelector(".draw .dtext", { state: "detached" });
 }
 async function save(p, label, file){
-  await p.click('button[title="Export and more"]');
+  await tap(p.locator('button[title="Export and more"]'));  // the header may be off screen (Notes Panel open)
   await p.click(`.menu button:has-text("${label}")`);
   await p.waitForSelector('.sheet button:has-text("Download")', { timeout: 90000 });
   const info = await p.textContent(".sheet p");
@@ -71,7 +76,7 @@ async function make(){
   await p.fill(".newbar textarea", "Sky too dark — небо темнее");
   await p.click(".newbar .send");
   await p.waitForSelector(".note");
-  await p.click("text=✎ Draw a note");
+  await p.click('button[title="Draw a note on this picture / frame"]');
   await drawOn(p, "Rectangle", [-50, -25], [50, 25], true);
   await typeText(p, [-40, 40], "Lift\nсюда");
   await p.click(".draw .btn.primary");
@@ -79,6 +84,8 @@ async function make(){
   await p.fill(".newbar textarea", "Box this");
   await p.click(".newbar .send");
   await p.waitForFunction(() => document.querySelectorAll(".note").length === 2);
+  await p.click(".pbar");  // the Notes Panel
+  await p.waitForTimeout(350);
   const first = p.locator(".note").first();
   await tap(first.locator('button:has-text("Reply")'));
   await first.locator("textarea").fill("Lifted it");
@@ -87,7 +94,7 @@ async function make(){
   await tap(first.locator(".opt.done"));
   await tap(first.locator(".send"));
   await p.waitForFunction(() => document.querySelector(".note .rep.ev.done"));
-  await p.click(".rstate");
+  await tap(p.locator(".rstate"));
   await p.click('.menu button:has-text("Changes requested")');
   await p.waitForTimeout(400);
   res.imageRows = await rowsOf(p);
@@ -105,9 +112,9 @@ async function make(){
     for (let i = 0; i < 5; i++) await p.click('button[title="Next frame"]');
     await p.waitForTimeout(300);
     res.tcAfter5 = await p.textContent(".tc");
-    await p.click('button[title="Play / pause"]'); await p.waitForTimeout(2500); await p.click('button[title="Play / pause"]');
+    await p.evaluate(() => window.__sightReview.R.video.play()); await p.waitForTimeout(2500); await p.evaluate(() => window.__sightReview.R.video.pause());
     res.fps = await p.evaluate(() => window.__sightReview.R.fps);
-    // Drag sideways on the picture: half the stage's width = half the clip.
+    // Drag sideways on the picture: the clip runs on from where it is (a fixed pace, not the width).
     await p.evaluate(() => { window.__sightReview.R.video.currentTime = 0.5; });
     await p.waitForTimeout(300);
     const sb = await p.locator(".stage").boundingBox();
@@ -117,12 +124,14 @@ async function make(){
     res.scrubbed = await p.evaluate(() => [window.__sightReview.R.video.currentTime, window.__sightReview.R.video.paused]);
     await p.evaluate(() => { window.__sightReview.R.video.currentTime = 1.0; });
     await p.waitForTimeout(400);
-    await p.click("text=✎ Draw a note");
+    await p.click('button[title="Draw a note on this picture / frame"]');
     await drawOn(p, "Ellipse", [-40, -30], [40, 30]);
     await p.waitForSelector(".newbar .atts .fw");
     await p.fill(".newbar textarea", "Ring at one second");
     await p.click(".newbar .send");
     await p.waitForSelector(".note");
+    await p.click(".pbar");
+    await p.waitForTimeout(350);
     const n = p.locator(".note").first();
     await tap(n.locator('button:has-text("Reply")'));
     await tap(n.locator(".pen"));

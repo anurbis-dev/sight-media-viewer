@@ -5,7 +5,7 @@
 
 import { decode, canvasBlob, dropCanvas, fmtTime } from "./media.js";
 import { pdfFromJpegs } from "./pdf.js";
-import { notesSorted, liveReplies, drawings, NOTE_STATES, REVIEW_STATES, EVENT_LABEL, reviewState } from "./model.js";
+import { notesSorted, noteFrameTimes, liveReplies, drawings, NOTE_STATES, REVIEW_STATES, EVENT_LABEL, reviewState } from "./model.js";
 
 const RC = () => globalThis.SightReviewCore;
 export function fmtDate(ms){
@@ -57,6 +57,7 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
     if (progress) progress(i, notes.length);
     const d = n.data, c = d.ctx || null;
     let frame = null, cap = "";
+    const more = [];
     if (kind === "image"){
       const own = all.filter((it) => it.data.note === n.id);
       // One note on a picture: its frame would just repeat the cover.
@@ -65,11 +66,17 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
       const f = await src.frameAt(c.t);
       if (f) frame = await burn(f, W || f.w, H || f.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t: c.t, fps })), numOf);
       cap = "Frame " + Math.round(c.t * fps) + " · " + fmtTime(c.t, fps);
+      // More frames the note was drawn on: with its pictures, first.
+      for (const t of noteFrameTimes(rows, n)){
+        if (Math.abs(t - c.t) < 5e-4) continue;
+        const g = await src.frameAt(t);
+        if (g) more.push(await burn(g, W || g.w, H || g.h, all.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
+      }
     }
     const replies = [];
     for (const r of liveReplies(n)) replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: await shotPics(r.shots) });
     out.push({ num: i + 1, ctx: c && c.t != null ? fmtTime(c.t, fps) + "  ·  f " + Math.round(c.t * fps) : "", author: d.author || "", date: fmtDate(d.created),
-      text: d.text || "", status: d.status, frame, frameCaption: cap, shots: await shotPics(d.shots), replies });
+      text: d.text || "", status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots)), replies });
   }
   const st = reviewState(rows);
   return {
