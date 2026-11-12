@@ -432,6 +432,9 @@ async function openReview(key, file, fromRoute){
   if (seq !== openSeq) return;
   if (!meta){ if (fromRoute){ history.replaceState(null, "", location.pathname); renderHome(); } else toast("This review is not on the device any more"); return; }
   const rr = await DB.get("rows", key);
+  // A file picked before is kept on the device (autoKeep), so the review opens with it; without
+  // one the stage asks for the file.
+  const picked = !!file;
   if (!file){ const kept = await DB.get("files", key).catch(() => null); if (kept) file = kept.blob; }
   if (seq !== openSeq) return;
   closeReview();
@@ -443,6 +446,28 @@ async function openReview(key, file, fromRoute){
   DB.put("reviews", meta).catch(() => {});
   if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
   renderReview();
+  if (picked && rv.file) autoKeep(rv);
+}
+// Keeps the picked file in the app (IndexedDB "files") so the review opens with it next time — the
+// phone gives a web app no lasting access to a picked file. Not when the user said to forget it
+// (meta.noKeep) or the device is short of room; then the review asks for the file again.
+async function autoKeep(rv, replace){
+  const m = rv.meta, f = rv.file;
+  if (m.noKeep || !f) return;
+  if (m.kept && !replace){ const cur = await DB.get("files", m.key).catch(() => null); if (cur && cur.blob && cur.blob.size === f.size) return; }
+  try {
+    const e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+    if (e && e.quota && (e.usage || 0) + f.size > e.quota * 0.9) throw new Error("not enough room on this device");
+    await DB.put("files", { key: m.key, blob: f });
+    if (!await DB.has("reviews", m.key)){ await DB.del("files", m.key); return; }  // deleted meanwhile
+    m.kept = true; rv.keepFailed = null;
+    await DB.put("reviews", m);
+    DB.persist();
+  } catch (e){
+    console.warn("keep", e);
+    rv.keepFailed = e.message || String(e);
+  }
+  if (R === rv && els) paintKeep();
 }
 
 async function bindFile(rv, file){
@@ -649,6 +674,7 @@ async function rebind(file){
   if (R !== rv) return;
   DB.put("reviews", rv.meta).catch(() => {});
   buildStage(); paintReview();
+  autoKeep(rv, true);  // the file picked now is the one to open with next time
 }
 
 // ---- video transport ---------------------------------------------------------------------------
@@ -826,23 +852,24 @@ function paintReview(){
   paintNewBar();
   paintMarkers(); paintOverlay();
 }
+// Shown only when the file could not be kept: reopening the review will ask for it.
 function paintKeep(){
   const k = els.keep;
   k.textContent = "";
-  if (!R.file || R.meta.kept || R.meta.keepAsked) return;
+  if (!R.file || R.meta.kept || !R.keepFailed || R.meta.noKeep) return;
   const h = el("div", "hint"), p = el("p");
-  p.appendChild(document.createTextNode("Reopening this review later needs the file again (the phone gives the app no lasting access). "));
-  const b = btn("btn", `Keep a copy here · ${fmtBytes(R.file.size)}`, keepCopy);
+  p.appendChild(document.createTextNode(`The file is not kept on this device (${R.keepFailed}): reopening this review will ask for it again. `));
+  const b = btn("btn", `Try again · ${fmtBytes(R.file.size)}`, keepCopy);
   p.appendChild(b);
   h.appendChild(p);
-  h.appendChild(btn("", "×", () => { R.meta.keepAsked = true; DB.put("reviews", R.meta).catch(() => {}); h.remove(); }, "Hide"));
+  h.appendChild(btn("", "×", () => { R.keepFailed = null; h.remove(); }, "Hide"));
   k.appendChild(h);
 }
 async function keepCopy(){
   const b = busy("Keeping a copy…");
   try {
     await DB.put("files", { key: R.meta.key, blob: R.file });
-    R.meta.kept = true;
+    R.meta.kept = true; R.meta.noKeep = false; R.keepFailed = null;
     await DB.put("reviews", R.meta);
     DB.persist();
     toast("The file is kept on this device");
@@ -851,9 +878,9 @@ async function keepCopy(){
 }
 async function dropCopy(){
   await DB.del("files", R.meta.key);
-  R.meta.kept = false; R.meta.keepAsked = true;
+  R.meta.kept = false; R.meta.noKeep = true;
   await DB.put("reviews", R.meta);
-  toast("The copy is removed; the review stays");
+  toast("The file is forgotten on this device; the review stays. Reopening it asks for the file.", 4000);
 }
 function paintSeg(c){
   const seg = els.seg;
@@ -1346,8 +1373,8 @@ function reviewActions(){
     { label: "Web page (HTML)", note: "opens anywhere", fn: () => exportReport("html") },
     { label: "Review file for Sight (.srev)", fn: exportSrev },
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
-    R.file && !R.meta.kept ? { label: "Keep a copy on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
-    R.meta.kept ? { label: "Remove the kept copy", fn: dropCopy } : null,
+    R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
+    R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,
     { label: R.file ? "Use another copy of the file…" : "Pick the file…", fn: () => { const p = picker(kindNow() === "video" ? "video/*" : "image/*", false, (fs) => rebind(fs[0])); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     { label: "Your name: " + (who || "—"), fn: setName },
     { label: "Delete this review…", danger: true, fn: () => deleteReview(R.meta) },

@@ -166,6 +166,9 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(text["data"]["text"], "Lift\nсюда")
         self.assertEqual(text["data"]["note"], next(n for n in notes if n["data"]["text"] == "Box this")["id"])
         self.assertEqual(res["reopenedNotes"], 2)
+        self.assertEqual((res["reopenedFile"], res["reopenedPicker"]), (True, 0))
+        if self.video:
+            self.assertTrue(res["reopenedVideo"])
         self.assertEqual(res["listed"], 2 if self.video else 1)
         for f in ("app_image.pdf", "app_image.html", "app_image.srev"):
             self.assertGreater((out / f).stat().st_size, 1000, f)

@@ -174,9 +174,11 @@
   file for Sight (.srev)* — drag it into Sight to merge everything (Sight finds the file by name and
   size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger.
   Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
-  see it. The phone gives the app no lasting access to a picked file: to reopen a review later,
-  pick the same file again, or tap *Keep a copy here* to store it in the app (its size is shown).
-  Notes and their frames stay readable without the file. For a round trip with Sight, open the
+  see it. The app remembers the file you picked (it keeps a copy on the device — a web app
+  gets no lasting access to a picked file) and opens the review with it next time; ⋯ → *Forget the
+  file on this device* frees the room. When there is no copy (it was forgotten, the device was
+  short of room, or the review came from a `.srev`), the review shows *Pick the file*. Notes and
+  their frames stay readable without the file. For a round trip with Sight, open the
   original from Files (*Open a file…*): the Photos picker hands over a converted copy (HEIC becomes
   JPEG, video may be re-encoded), whose name / size Sight does not know. Press and hold a review in
   the list to delete it. When a new version of the app is out, a bar offers *Reload*.

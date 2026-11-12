@@ -139,13 +139,22 @@ async function make(){
     res.videoSrev = await save(p, "Review file for Sight", path.join(out, "app_video.srev"));
     res.videoPdf = await save(p, "PDF report", path.join(out, "app_video.pdf"));
   }
-  // ---- persistence: reload, the picture review opens from the device's copy of its picture ----
+  // ---- persistence: reload, the reviews open with the files kept on the device ----
   await p.goto(base);
   await p.waitForSelector(".item");
   res.listed = await p.locator(".item").count();
   await p.locator('.item:has-text("shot_v001.png")').click();
   await p.waitForSelector(".stage img");
   res.reopenedNotes = await p.locator(".note").count();
+  // The picked file was kept on the device: the review opens with it, no picker.
+  res.reopenedFile = await p.evaluate(() => !!window.__sightReview.R.file);
+  res.reopenedPicker = await p.locator(".stage .none").count();
+  if (fs.existsSync(clip)){
+    await p.goto(base);
+    await p.locator('.item:has-text("clip_v001.webm")').click();
+    await p.waitForSelector(".stage video");
+    res.reopenedVideo = await p.evaluate(() => !!window.__sightReview.R.file);
+  }
   await b.close();
   return res;
 }

@@ -377,7 +377,10 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   URL, kept / keepAsked), `rows` (`{key, rows}` — FORMAT.md rows plus `deleted_at`, tombstones
   kept like Sight's table), `shots` (`{id, blob}`), `frames` (clean pictures by `key|img` = the
   picture ≤ 1600 px and `key|t=<sec 3 dp>` = video frames, so cards / reports work without the
-  file), `files` (the media, only when the user keeps a copy). Saves are debounced 250 ms
+  file), `files` (the media: kept automatically when a file is picked — `autoKeep`, after the
+  review is on screen; not when `meta.noKeep` (⋯ *Forget the file*) or the copy would take the
+  storage past 90 % of the quota — then a hint says the review will ask for it again).
+  `openReview` binds the kept copy when no file is passed; none → the stage's *Pick the file*. Saves are debounced 250 ms
   (`dirty()` → `flush()`), flushed on `visibilitychange: hidden`, `pagehide`, before opening /
   importing / exporting; a failed write stays pending and is retried (3 s / next flush). store.js
   reopens a lost connection (iOS drops it in the background) and retries a call once.

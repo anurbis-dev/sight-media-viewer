@@ -2,6 +2,24 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.16.0 — 2026-11-10 — Lightbox annotations and review sessions (draw, notes, screenshots, PDF / .sightreview)
+- **What:** `A` in the lightbox (`Shift+A` in 3D) turns on annotation mode for images, PSDs, video and 3D models: a compact top toolbar (select, brush with pen pressure, pencil, highlighter, eraser, line, arrow, rect, ellipse, text, numbered pin, screenshot, region screenshot, undo/redo, onion, hide, panel) plus a second row with the current tool's or the selection's settings. All drawings are vector objects, editable later (move / scale / rotate / restyle / bend lines / re-edit text). A right panel collects review notes (text, reviewer, date, screenshots via `S` / `Shift+S`, resolve, delete); a note takes the unattached drawings on screen. Video: drawings and notes sit on a frame, markers on the timeline, `,` `.` frame step, `Shift+,` `Shift+.` marker jumps, hold time, onion skin. 3D: drawings belong to a camera view; notes also save shading/lights/explode/fov and restore them. Export: PDF report, `.sightreview` package (import by drag-drop, panel menu or palette; matched to the same media by path, else name+size), notes as text.
+- **Where:**
+  - new `app/static/annotate.js` (`createAnnotator`: tools, primitives → SVG + canvas, hit tests, transforms, undo, props bar, panel, markers, screenshots, export/import, keys).
+  - new `app/review.py` (shots on disk, `build_pdf` via PyMuPDF `Story`, `build_package`, `parse_package`); routes `/api/review/*` in `server.py`.
+  - `library.py`: `add_annotation` accepts a client `id` (revives a tombstoned row); `match_review_asset`, `import_annotations`.
+  - `index.html`: `annot` instance + host hooks, `#annoBtn` in the lightbox bar, `annot.setAsset` in `showInLight`, `bind2d` / `viewChanged` in `attachViewer`, `bindAnnot3d` in `boot3d` (mesh + splat), `getView` / `setView` on `makeCameraRig`, `annot.onKey` first in the keydown handler, `syncLightHint`, `pickReviewFile`, window drop of `.sightreview`.
+  - Fix in passing: `.light-frame > .view3d > canvas` is absolutely positioned — the px-sized WebGL canvas held the frame's grid track at its old width, so the 3D view never shrank (window narrowed, or now the review panel) and was cut off on the right.
+- **Notes:**
+  - Data model, coordinate spaces and hooks are written up in ARCHITECTURE.md → "Annotations / review". Board (canvas) annotations are still not built; the table already supports `scope='board'`.
+  - Input is taken in the capture phase on the viewer surface with `stopImmediatePropagation`, so the viewer's pan/zoom (middle/right), scrub and orbit stay untouched; a capture-phase `click` guard stops a drawing gesture from also toggling video play. Don't move those listeners to bubble phase.
+  - Text editor focus is set synchronously and the toolbar's `mousedown` is cancelled while editing — otherwise fast typing / clicking B lands in the tool shortcuts (`o` → ellipse, …).
+  - Saves: create = `POST` per object (client id), edits debounced into `/api/annotations/batch`; updates and deletes await a pending create (`S.creating`) so they can't overtake the insert.
+  - 3D views match by camera distance (0.4 %); damping is off while annotating (`annotating(on)`), and `setView` disables damping for one update so a restored view doesn't drift away. A note's `v3d` is applied live (`setV3D`) but not saved to settings.
+  - PDF: client composes frames (`composeNative`: native image/video frame, or the 3D view) as JPEG data URLs; the server lays out HTML with MuPDF Story, whose fallback fonts cover Cyrillic. `max-height` is ignored by MuPDF, so images are sized by width (`_img_tag`). Export goes to `~/Downloads` (else `<SIGHT_HOME>/exports`) and is revealed; a missing file manager is ignored.
+  - Not done: a `sight://` link / file association that opens a review from a messenger directly (needs launcher + OS registration, untested platform work) — the package file is the transport for now. No point-level stroke editing (Grease Pencil edit mode); strokes transform as a whole and the eraser can split them.
+  - Checked with Playwright on an isolated `SIGHT_HOME` (images, video 24 fps, a GLB cube under SwiftShader): every tool, synthetic pen pressure, Shift snapping, bend, eraser + undo, rotate/scale/duplicate/copy/paste/delete, text re-edit, notes, both screenshots, frame stepping and markers, onion, 3D view switch + shading restore, PDF (image/video/3D) and package export + import (UI and API), no JS errors. Not checked: a real pen tablet, Windows/macOS file reveal, the packaged builds.
+
 ## 0.15.6 — 2026-11-10 — Grid thumbnails decode asynchronously again
 - **What:** Reverts 0.15.4's `decoding="sync"` on grid thumbnails back to the original `async`. Nothing changes visibly.
 - **Where:** `index.html` `fillThumb`; `docs/ARCHITECTURE.md`.
