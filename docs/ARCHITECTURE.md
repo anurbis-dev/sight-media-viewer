@@ -367,7 +367,8 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   the timecode meanwhile; the click right after a mouse scrub is swallowed). The player's time is
   the truth; the frame on screen is `floor(t/fd)`; stepping lands on `(frame + n + 0.01)·fd`
   and a new note / drawing ctx is `{t: frameStart(t), hold: 0}` = `(frame + 0.01)·fd` to 3 dp, so it
-  shows on exactly that frame (Sight still rounds — PLAN.md); the overlay shows
+  shows on exactly that frame (same rule in Sight's annotate.js `frameStart` / `stepFrame`;
+  both keep the raw time while the frame rate is still a guess); the overlay shows
   `ctxVisible(ctx, {t, fps})`. fps comes from the MP4 / MOV container (`stts` of the video track,
   averaged); otherwise it is measured while playing (`requestVideoFrameCallback`, gaps near the
   median averaged, snapped to a common rate within 1.5 %), 25 until then (shown as "≈25 fps").

@@ -26,16 +26,6 @@ the phone next, then the owner's tracker Coreline, ftrack / ShotGrid, clouds las
    `python tools/bench_grid.py --home <copy>` on the owner's machine and put the results here
    (Linux container: health 390 → 181 ms median after the Starlette switch).
 
-## Known bugs
-
-- **Sight's frame stepping / note time** (found in the 0.23.0 review of the phone app, which already
-  does it right): `annotate.js stepFrame` rounds `currentTime / fd + n`, so a step from the second
-  half of a frame (after a pause during playback or a scrub) skips a frame forward and a step back
-  stays put; `ctxNow` stores the raw `currentTime`, so a note / drawing made while paused late in
-  frame k shows on frame k+1 (review-core `ctxVisible` centres on `t`). Fix as the app does
-  (`mobile/js/app.js` `frameStart` / `step`): floor to the frame on screen and store
-  `(frame + 0.01) · fd`. Same in `compare.js step` (uses `snapT`; check).
-
 ## Ideas, not scheduled
 
 - Load grid pages on demand around the scroll position instead of pulling the whole list at start

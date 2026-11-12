@@ -2,6 +2,14 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.15.5 — 2026-11-10 — Grid: no more blinking while dragging slowly (scroll anchoring)
+- **What:** The library grid no longer blinks while it is scrolled slowly. At certain positions it flipped between two rows on every frame, and kept doing so after the scrolling stopped.
+- **Where:** `index.html` CSS: `.grid { overflow-anchor: none; }`.
+- **Notes:**
+  - Root cause: Chromium's scroll anchoring. `renderGrid()` moves `.slice` (`top = startRow * rowH`) and replaces the cards above the view. Anchoring "corrected" `scrollTop` by one row to keep its anchor card in place. At the corrected position `startRow` changed back, the slice moved back, and the two flipped every frame. Seen in the owner's own window (two PrintWindow states alternating, content shifted by exactly one row). Reproduced in an off-screen Edge: scrolling 3 px per frame, `scrollTop` flipped 837 ↔ 1043 on its own (row 196 px + gap). With the fix, no flips in 400 steps.
+  - Not related to the 0.15.2 speed-ups. The grid code had it before. 0.15.4's `decoding="sync"` was not this bug (reverted in 0.15.6).
+  - Removed from `docs/PLAN.md`: the blink item. The "rows unpainted during very fast scrolling" seen in screencasts was most likely the same flip.
+
 ## 0.15.4 — 2026-11-10 — Splash closes with the window; thumbnails decode in sync; PLAN.md
 - **What:** The "Sight is loading" splash now closes the moment the window shows, and a normal launch, which takes under ~1.7 s, does not show it at all. Grid thumbnails decode in sync (the blinking itself was a different bug, fixed in 0.15.5). New `docs/PLAN.md` lists the queued improvements and known bugs with their numbers.
 - **Where:** `Sight.py`: `_close_splash()` in `main()`; `reveal_when_ready(..., on_ready=)` calls it right after the page's ready ping; `start_splash()` passes `-ShowAfterMs 1000`. `app/splash_screen.ps1`: `ShowAfterMs` parameter (sleep before `Show()`), "loading…" built with `[char]0x2026`. `index.html` `fillThumb`: `img.decoding = "sync"`. `CLAUDE.md` points to `docs/PLAN.md`.

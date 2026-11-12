@@ -611,8 +611,9 @@ const frameDur = () => 1 / (R.fps || 25);
 function togglePlay(){ const v = R && R.video; if (!v) return; if (v.paused) v.play().catch(() => {}); else v.pause(); }
 // The frame on screen at time t is the one that started at or before t; a time inside it is kept as
 // that frame's start + a hair (as Sight's stepping lands), so a note made there shows on exactly
-// that frame (review-core ctxVisible) and Sight numbers it the same.
-function frameStart(t){ const fd = frameDur(); return r3((Math.floor(t / fd + 1e-6) + 0.01) * fd); }
+// that frame (review-core ctxVisible) and Sight numbers it the same. Raw time while the frame rate
+// is still a guess (same rule as annotate.js frameStart).
+function frameStart(t){ if (!R.fpsKnown) return r3(t); const fd = frameDur(); return r3((Math.floor(t / fd + 1e-6) + 0.01) * fd); }
 // ±n frames from the frame on screen.
 function step(n){
   const v = R && R.video;

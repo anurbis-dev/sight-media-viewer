@@ -440,6 +440,15 @@ export function createAnnotator(host){
   // ---- context (video time / 3D view) ---------------------------------------------------------
   const video = () => S.b2?.isVid ? S.b2.media : null;
   const frameDur = () => 1 / (S.fps || 25);
+  // The frame on screen at time t is the one that started at or before it. A note / drawing made
+  // there is stored at that frame's start + a hair (where stepping lands), so ctxVisible shows it on
+  // exactly that frame and every client numbers it the same (same rule in mobile/js/app.js). With
+  // the frame rate not known yet, the raw time is kept rather than snapped to a guessed rate.
+  const frameStart = (t) => {
+    if (!S.fpsKnown) return Math.round(t * 1000) / 1000;
+    const fd = frameDur();
+    return Math.round((Math.floor(t / fd + 1e-6) + 0.01) * fd * 1000) / 1000;
+  };
   function camMatch(a, b){
     if (!a || !b) return false;
     const d = hyp(hyp(a.p[0] - a.t[0], a.p[1] - a.t[1]), a.p[2] - a.t[2]) || 1, tol = d * 0.004;
@@ -469,7 +478,7 @@ export function createAnnotator(host){
     if (S.kind === "video"){
       const v = video();
       if (!v) return null;
-      return { t: Math.round(v.currentTime * 1000) / 1000, hold: S.hold };
+      return { t: frameStart(v.currentTime), hold: S.hold };
     }
     if (S.kind === "model3d"){
       const cam = curCam();
@@ -1846,7 +1855,8 @@ export function createAnnotator(host){
     if (!v) return false;
     v.pause();
     const fd = frameDur();
-    v.currentTime = clamp(Math.round(v.currentTime / fd + n) * fd + fd * 0.01, 0, v.duration || 0);
+    // From the frame on screen (floor): rounding skipped a frame from its second half.
+    v.currentTime = clamp((Math.floor(v.currentTime / fd + 1e-6) + n) * fd + fd * 0.01, 0, v.duration || 0);
     return true;
   }
   function jumpMarker(dir){
@@ -2306,6 +2316,8 @@ export function createAnnotator(host){
     renderProps();
     if (supported()) load(a);
     else { renderPanel(); }
+    // Frame stepping (`,` / `.`) works without annotating too: it needs the clip's real rate.
+    if (S.kind === "video") loadFps();
     if (S.on && S.kind === "video") loadFps();
     syncPanel();
   }
