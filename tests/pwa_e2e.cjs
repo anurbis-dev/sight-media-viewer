@@ -28,6 +28,11 @@ async function page(ctx){
 }
 // Click by script: the player / the notes may be slid off screen (Notes Panel open or not).
 const tap = (loc) => loc.evaluate((e) => e.click());
+// The Notes Panel (and with it the "+ Note" bar): a tap on its bar, unless it is open already (then
+// the bar holds the filters).
+async function openPanel(p){
+  if (!await p.evaluate(() => window.__sightReview.R.panel)){ await p.click(".pbar"); await p.waitForTimeout(350); }
+}
 // Takes a tool up (a tap on the tool already in hand would put it down).
 async function pick(p, tool){
   const b = p.locator(`.draw button[title="${tool}"]`);
@@ -72,11 +77,12 @@ async function make(){
   // ---- picture ----
   await p.setInputFiles(".opens label.main input", path.join(media, "shot_v001.png"));
   await p.waitForSelector(".stage img");
+  await openPanel(p);
   await p.click(".newbar .add");
   await p.fill(".newbar textarea", "Sky too dark — небо темнее");
   await p.click(".newbar .send");
   await p.waitForSelector(".note");
-  await p.click('button[title="Draw a note on this picture / frame"]');
+  await tap(p.locator('button[title="Draw a note on this picture / frame"]'));
   await drawOn(p, "Rectangle", [-50, -25], [50, 25], true);
   await typeText(p, [-40, 40], "Lift\nсюда");
   await p.click(".draw .btn.primary");
@@ -84,8 +90,7 @@ async function make(){
   await p.fill(".newbar textarea", "Box this");
   await p.click(".newbar .send");
   await p.waitForFunction(() => document.querySelectorAll(".note").length === 2);
-  await p.click(".pbar");  // the Notes Panel
-  await p.waitForTimeout(350);
+  await openPanel(p);
   const first = p.locator(".note").first();
   await tap(first.locator('button:has-text("Reply")'));
   await first.locator("textarea").fill("Lifted it");
@@ -94,8 +99,9 @@ async function make(){
   await tap(first.locator(".opt.done"));
   await tap(first.locator(".send"));
   await p.waitForFunction(() => document.querySelector(".note .rep.ev.done"));
-  await tap(p.locator(".rstate"));
-  await p.click('.menu button:has-text("Changes requested")');
+  // The review state has no control on the phone any more (0.27.0); the rows still carry one
+  // (from Sight) and export it — set here through the model.
+  await p.evaluate(() => { const S = window.__sightReview; S.M.setReviewState(S.R.rows, "changes", "Phone Tester"); });
   await p.waitForTimeout(400);
   res.imageRows = await rowsOf(p);
   res.imageSrev = await save(p, "Review file for Sight", path.join(out, "app_image.srev"));
@@ -130,8 +136,7 @@ async function make(){
     await p.fill(".newbar textarea", "Ring at one second");
     await p.click(".newbar .send");
     await p.waitForSelector(".note");
-    await p.click(".pbar");
-    await p.waitForTimeout(350);
+    await openPanel(p);
     const n = p.locator(".note").first();
     await tap(n.locator('button:has-text("Reply")'));
     await tap(n.locator(".pen"));
@@ -183,6 +188,7 @@ async function merge(){
   // .srev again: nothing new, the local note stays.
   await p.setInputFiles(".stage .none input", path.join(media, "shot_v001.png"));
   await p.waitForSelector(".stage img");
+  await openPanel(p);
   await p.click(".newbar .add");
   await p.fill(".newbar textarea", "Local note on the phone");
   await p.click(".newbar .send");

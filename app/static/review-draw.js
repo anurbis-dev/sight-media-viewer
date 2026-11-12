@@ -15,6 +15,14 @@
 //   (one finger with no tool), onFrames(keys) (the frames that hold drawings), onKey(e) → true if
 //   the host took it; handle.setFrame(key, src, pending) switches the frame (its drawings, undo).
 //   onDone then gets every frame's drawings: [{key, items}].
+//   Placed as the host shows it (the phone's player): fitBox() → a viewport rect {left, top,
+//   width, height} the picture is fitted into (no padding, the floating bars ignored; null: the
+//   whole screen), nav {z, r, o: [dx, dy]} the host's own zoom / extra turn (degrees) / offset from
+//   that fit to open with, onNav(nav) when the canvas closes (the view it was left in, same terms).
+//
+//   SightReviewDraw.pinch(g, a, b, zmin, zmax) → {z, r}: the two-finger zoom / turn from the view at
+//   the start of a pinch (g: {z, r, d (finger distance), a (finger angle)}), a quarter turn snapping
+//   within 6° — shared with the phone's player so both feel the same.
 //
 // Same rules as review-core.js: plain script, no imports, and never a closing script tag or an
 // HTML comment opener anywhere in this file (the page inlines it verbatim; review._inline_js refuses
@@ -50,6 +58,9 @@ var SightReviewDraw = (function(){
     ".draw [hidden] { display: none !important; }",
     ".draw .swc { width: 28px; height: 28px; margin: 3px 4px; border-radius: 14px; border: 2px solid var(--rd-line, rgb(255 255 255 / .3)); cursor: pointer; padding: 0; }",
     ".draw .swc.on { border-color: var(--rd-fg, #fff); box-shadow: 0 0 0 2px #0a84ff; }",
+    ".draw .dsize { position: absolute; z-index: 3; left: 18px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }",
+    ".draw .dsize i { display: block; border-radius: 50%; box-shadow: 0 0 0 1.5px rgb(255 255 255 / .9), 0 0 0 3px rgb(0 0 0 / .4); }",
+    ".draw .dsize span { font-size: 12px; font-variant-numeric: tabular-nums; padding: 1px 8px; border-radius: 9px; background: var(--rd-ov, rgb(28 28 32 / .74)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); white-space: nowrap; }",
     ".draw .dtext { position: absolute; z-index: 1; margin: 0; border: 1px dashed #0a84ff; border-radius: 0; outline: none; resize: none; overflow: hidden; white-space: pre; background: rgb(0 0 0 / .6); box-sizing: content-box; min-width: 1em; -webkit-user-select: text; user-select: text; touch-action: auto; }",
   ].join("\n");
   var cssDone = false;
@@ -61,7 +72,11 @@ var SightReviewDraw = (function(){
 
   // Full screen: select / transform (V), brush (pen pressure), highlighter, arrow, rectangle,
   // ellipse, text, eraser (whole objects drawn here; Ctrl held = eraser for a moment), five colours,
-  // undo / redo, clear. Two fingers pinch-zoom / pan / turn the view; once a pen has touched it, the
+  // undo / redo, clear. Two fingers pinch-zoom / pan / turn the view; a quick tap of two fingers
+  // undoes, of three redoes. Press and hold with a tool, then drag up / down: its size (a preview
+  // circle on the left; the screen's height spans the tool's whole range); with the transform tool
+  // and a selection, up / down scales the selection's line width, sideways its opacity. Press and
+  // hold a tool's button: that tool's size back to its default. Once a pen has touched it, the
   // pen draws and one finger pans too. Mouse: left draws, wheel / right-drag zoom (the pen's side
   // button too), middle drags. Top
   // bar: turn 90°, mirror, back to fit. Items are FORMAT.md drawings in the doc units of `vb`;
@@ -78,14 +93,26 @@ var SightReviewDraw = (function(){
     ["eraser", "Eraser — or hold Ctrl", '<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>', "KeyE"],
   ];
   var COLORS = ["#ff3b30", "#ffd60a", "#34c759", "#0a84ff", "#ffffff"];
-  var SIZE = { brush: 6, marker: 24, shape: 4, eraser: 14, text: 24 };
+  // Sizes in screen px at the moment of drawing (turned into doc units by the zoom), per tool; a
+  // press-and-hold drag changes them within SIZE_RANGE, kept with the pen.
+  var SIZE0 = { brush: 6, marker: 24, arrow: 4, rect: 4, ellipse: 4, text: 24, eraser: 14 };
+  var SIZE_RANGE = { brush: [1, 80], marker: [4, 140], arrow: [1, 40], rect: [1, 40], ellipse: [1, 40], text: [8, 160], eraser: [4, 120] };
+  var SIZE = clone(SIZE0);
   var pen = { tool: "brush", color: COLORS[0] }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
     if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
     if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
+    if (ps && ps.sizes) Object.keys(SIZE0).forEach(function(k){ var v = Number(ps.sizes[k]); if (v >= SIZE_RANGE[k][0] && v <= SIZE_RANGE[k][1]) SIZE[k] = v; });
   } catch (e) {}
-  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color })); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE })); } catch (e) {} }
+  // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
+  // pinch (g: {z, r, d, a}); a quarter turn snaps within 6°.
+  function pinch(g, a, b, zmin, zmax){
+    var z = Math.min(zmax, Math.max(zmin, g.z * Math.hypot(a.x - b.x, a.y - b.y) / g.d));
+    var r = g.r + (Math.atan2(b.y - a.y, b.x - a.x) - g.a) * 180 / Math.PI, q90 = Math.round(r / 90) * 90;
+    return { z: z, r: Math.abs(r - q90) < 6 ? q90 : r };
+  }
   var penSeen = false;  // a stylus has been used: it draws, fingers only pan / zoom
   // A key with no modifier at all (the exact-match rule of Sight's keys.js, which this plain script
   // cannot import).
@@ -133,8 +160,23 @@ var SightReviewDraw = (function(){
     [cancel, ub, rb, clr, el("span", "sp"), turnB, mirB, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
     var tools = el("div"), cols = el("div");
     // A tap on the tool in hand puts it down: then one finger scrubs the video (onScrub) or pans.
-    TOOLS.forEach(function(t){ var b = tbtn(t[1], ico(t[2]), function(){ setTool(t[0] === pen.tool ? null : t[0]); }); b.dataset.t = t[0]; tools.appendChild(b); });
-    function setTool(t){ if (edit) commitText(); pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); }
+    TOOLS.forEach(function(t){
+      var b = tbtn(t[1], ico(t[2]), function(){ if (b.dataset.held){ delete b.dataset.held; return; } setTool(t[0] === pen.tool ? null : t[0]); });
+      b.dataset.t = t[0]; tools.appendChild(b);
+      // Press and hold: the tool in hand, at its default size (the preview shows it).
+      var ht = null;
+      b.addEventListener("pointerdown", function(){
+        clearTimeout(ht); delete b.dataset.held;
+        ht = setTimeout(function(){
+          b.dataset.held = "1";
+          if (SIZE0[t[0]] != null) SIZE[t[0]] = SIZE0[t[0]];
+          setTool(t[0]);
+          if (SIZE0[t[0]] != null){ showSize(t[0]); hideSize(); }
+        }, 550);
+      });
+      ["pointerup", "pointercancel", "pointerleave"].forEach(function(ev){ b.addEventListener(ev, function(){ clearTimeout(ht); }); });
+    });
+    function setTool(t){ stopAdj(); if (edit) commitText(); pen.tool = t; if (t !== "select") sel = []; savePen(); paintBar(); paint(); }
     COLORS.forEach(function(c){
       var b = el("button", "swc"); b.type = "button"; b.title = "Colour"; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
       b.onclick = function(){
@@ -188,6 +230,7 @@ var SightReviewDraw = (function(){
     function setFrame(key, src, pending){
       key = String(key);
       if (key !== fkey){
+        stopAdj();
         if (edit) commitText();
         if (stroke) abort();
         store.set(fkey, { items: items, undo: undo, redo: redo });
@@ -200,17 +243,22 @@ var SightReviewDraw = (function(){
       paint();
     }
     var coarse = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
-    function doUndo(){ if (edit) commitText(); if (stroke || !undo.length) return; redo.push(items); items = undo.pop(); paint(); }
-    function doRedo(){ if (edit) commitText(); if (stroke || !redo.length) return; undo.push(items); items = redo.pop(); paint(); }
+    // Anything else that changes the drawings ends a size / opacity hold first (cancelled), so its
+    // copies never land in another undo state or frame.
+    function stopAdj(){ if (adj) adjEnd(true); }
+    function doUndo(){ stopAdj(); if (edit) commitText(); if (stroke || !undo.length) return; redo.push(items); items = undo.pop(); paint(); }
+    function doRedo(){ stopAdj(); if (edit) commitText(); if (stroke || !redo.length) return; undo.push(items); items = redo.pop(); paint(); }
     function change(next){ undo.push(items); redo.length = 0; items = next; paint(); }
     // Trash: the selection (select tool), else every drawing made here (one undo step).
     function clearOrDelete(){
+      stopAdj();
       if (edit) commitText();
       if (stroke || !items.length) return;
       if (pen.tool === "select" && sel.length){ var gone = sel; change(items.filter(function(it){ return gone.indexOf(it) < 0; })); return; }
       change([]);
     }
     function recolour(c){
+      stopAdj();
       var map = new Map();
       sel.forEach(function(it){ var n = clone(it); n.data.color = c; if (n.data.fill != null) n.data.fill = c; map.set(it, n); });
       sel = sel.map(function(x){ return map.get(x); });  // before change(): its paint() keeps only what is in items
@@ -235,19 +283,38 @@ var SightReviewDraw = (function(){
     // Puts local point q under screen point p (zoom / pan / turn about a point).
     function pin(q, p){ var f = fwd0(q, V); V.o = [p[0] - f[0], p[1] - f[1]]; }
     var fitted = true;
+    // The picture box's width (local px) a fit into the host's box would give at turn rot.
+    function boxAt(rot){
+      var fb = o.fitBox ? o.fitBox() : null;
+      if (!fb || !(fb.width > 0 && fb.height > 0)) return 0;
+      var a = vb[2] / vb[3], side = (((Math.round(rot / 90) * 90) % 360) + 360) % 180 !== 0;
+      var w = fb.width, h = fb.height, ra = side ? 1 / a : a;
+      if (w / h > ra) w = h * ra; else h = w / ra;
+      return side ? h : w;
+    }
+    // The fit's centre and the quarter turn the host keeps (o.view, onView): o.nav / onNav are
+    // relative to these.
+    var fitC = [0, 0], viewR = ((V.r % 360) + 360) % 360;
     // Fit: zoom and pan reset, the turn straightened to the nearest quarter (mirror kept).
     function fit(user){
-      var r = view.getBoundingClientRect(), a = vb[2] / vb[3], pad = 10;
+      var r = view.getBoundingClientRect(), a = vb[2] / vb[3], fb = o.fitBox ? o.fitBox() : null, pad = fb ? 0 : 10;
+      if (fb && !(fb.width > 0 && fb.height > 0)) fb = null;
       V.r = ((Math.round(V.r / 90) * 90) % 360 + 360) % 360;
       var side = V.r % 180 !== 0;
-      var w = Math.max(1, r.width - pad * 2), h = Math.max(1, r.height - pad * 2), ra = side ? 1 / a : a;
+      var bw = fb ? fb.width : r.width, bh = fb ? fb.height : r.height;
+      var w = Math.max(1, bw - pad * 2), h = Math.max(1, bh - pad * 2), ra = side ? 1 / a : a;
       if (w / h > ra) w = h * ra; else h = w / ra;
       BW = side ? h : w; BH = side ? w : h;
-      // The bars float over the picture: one that fits between them sits there, a taller one uses
-      // the whole screen.
-      var t0 = top.getBoundingClientRect().bottom - r.top, b0 = bar.getBoundingClientRect().top - r.top, cy = r.height / 2;
-      if (b0 > t0 && h + pad <= b0 - t0) cy = (t0 + b0) / 2;
-      V.z = 1; V.o = [r.width / 2, cy];
+      V.z = 1;
+      if (fb) V.o = [fb.left - r.left + bw / 2, fb.top - r.top + bh / 2];  // where the host shows it, bars over it
+      else {
+        // The bars float over the picture: one that fits between them sits there, a taller one uses
+        // the whole screen.
+        var t0 = top.getBoundingClientRect().bottom - r.top, b0 = bar.getBoundingClientRect().top - r.top, cy = r.height / 2;
+        if (b0 > t0 && h + pad <= b0 - t0) cy = (t0 + b0) / 2;
+        V.o = [r.width / 2, cy];
+      }
+      fitC = V.o.slice();
       fitted = true;
       apply();
       if (user && edit) textField();
@@ -262,6 +329,7 @@ var SightReviewDraw = (function(){
     function afterView(){
       if (edit) commitText();
       fit(false);
+      viewR = V.r;
       if (o.onView) o.onView({ rot: ((Math.round(V.r / 90) * 90) % 360 + 360) % 360, mirror: V.m < 0 });
     }
     var refit = false;  // a resize while typing: fit once the text is done
@@ -272,6 +340,123 @@ var SightReviewDraw = (function(){
     // Pointers: one draws (`stroke`), the navigating ones (fingers / middle / right mouse) pan,
     // pinch and turn (`gest`, re-based whenever a finger comes or goes).
     var pts = new Map(), stroke = null, gest = null, zdrag = null, scr = null;
+    // Press and hold (hold → adj), and quick taps of two / three fingers (tap).
+    var hold = null, adj = null, tap = null, touches = new Set(), lastPen = -1e9;
+    // The size preview on the left (a circle as big as the line, the value under it).
+    var sizeEl = null, sizeT = null;
+    function showSize(t, info){
+      clearTimeout(sizeT);
+      if (!sizeEl){ sizeEl = el("div", "dsize"); var ring = el("i"); ring.appendChild(el("b")); sizeEl.appendChild(ring); sizeEl.appendChild(el("span")); root.appendChild(sizeEl); }
+      if (t) info = { d: SIZE[t] * (t === "eraser" ? 2 : 1), color: t === "eraser" ? "transparent" : pen.color, op: t === "marker" ? 0.4 : 1, label: (Math.round(SIZE[t] * 10) / 10) + " px" };
+      var ring2 = sizeEl.firstChild, fill = ring2.firstChild, dd = Math.max(2, Math.min(240, info.d));
+      ring2.style.width = ring2.style.height = dd + "px";
+      fill.style.cssText = "display:block;width:100%;height:100%;border-radius:50%;background:" + info.color + ";opacity:" + info.op;
+      sizeEl.lastChild.textContent = info.label;
+    }
+    function hideSize(now){
+      clearTimeout(sizeT);
+      var gone = function(){ if (sizeEl){ sizeEl.remove(); sizeEl = null; } };
+      if (now) gone(); else sizeT = setTimeout(gone, 700);
+    }
+    function startHold(e, sel0){
+      endHold();
+      if (e.pointerType === "mouse" || !pen.tool) return;
+      hold = { id: e.pointerId, x: e.clientX, y: e.clientY, tol: e.pointerType === "pen" ? 4 : 8, sel0: sel0 || [] };
+      hold.timer = setTimeout(holdFire, 450);
+    }
+    function endHold(){ if (hold){ clearTimeout(hold.timer); hold = null; } }
+    // The finger has stayed put: what it started (a dot, an erase, a move) is undone and its drag
+    // now sets the tool's size — or, with the transform tool, the selection's width / opacity.
+    function holdFire(){
+      var h = hold;
+      hold = null;
+      if (!h || !pts.has(h.id) || pts.size !== 1 || edit || adj || scr || zdrag) return;
+      var tool = pen.tool;
+      if (!tool) return;
+      if (stroke) abort();
+      gest = null;
+      var q = pts.get(h.id);
+      q.nav = false;
+      if (tool === "select"){
+        if (!sel.length) sel = h.sel0.filter(function(it){ return items.indexOf(it) >= 0; });
+        if (!sel.length){ q.nav = true; gestStart(); return; }
+        var map = new Map();
+        sel.forEach(function(it){ map.set(it, clone(it)); });
+        adj = { id: h.id, x: h.x, y: h.y, axis: null, prev: items, prevSel: sel, base: sel.map(function(it){ return it.data; }), changed: false };
+        items = items.map(function(x){ return map.get(x) || x; });
+        sel = sel.map(function(x){ return map.get(x); });
+        showSelSize();
+      } else if (SIZE0[tool] != null){
+        adj = { id: h.id, x: h.x, y: h.y, tool: tool, s0: SIZE[tool] };
+        showSize(tool);
+      }
+      paint();
+    }
+    var WKEY = { stroke: "size", text: "size", shape: "width" };
+    function showSelSize(){
+      if (!sel.length) return;
+      var it = sel[0], d = it.data, w = d[WKEY[it.kind]] || 0;
+      showSize(null, { d: w / kNow(), color: d.color || "#fff", op: d.opacity != null ? d.opacity : 1,
+        label: (Math.round(w / kNow() * 10) / 10) + " px · " + Math.round((d.opacity != null ? d.opacity : 1) * 100) + " %" });
+    }
+    // The screen's height spans the tool's whole range (a ratio, so small sizes move as finely as
+    // big ones), from the size it had; up = bigger.
+    function adjMove(e){
+      var r = view.getBoundingClientRect(), dy = e.clientY - adj.y, dx = e.clientX - adj.x;
+      if (adj.tool){
+        var rg = SIZE_RANGE[adj.tool];
+        SIZE[adj.tool] = Math.round(RC.clamp(adj.s0 * Math.pow(rg[1] / rg[0], -dy / Math.max(1, r.height)), rg[0], rg[1]) * 10) / 10;
+        showSize(adj.tool);
+        return;
+      }
+      // The selection: one axis per hold (up / down the width, sideways the opacity), set by the
+      // first 10 px.
+      if (!adj.axis){ if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return; adj.axis = Math.abs(dy) >= Math.abs(dx) ? "y" : "x"; }
+      var k = kNow(), f = Math.pow(16, -dy / Math.max(1, r.height)), dOp = dx / Math.max(1, r.width * 0.8);
+      sel.forEach(function(it, i){
+        var b = adj.base[i], d = it.data, key = WKEY[it.kind];
+        if (adj.axis === "y" && key && typeof b[key] === "number") d[key] = RC.clamp(b[key] * f, 0.5 * k, vb[2] * 0.5);
+        if (adj.axis === "x") d.opacity = Math.round(RC.clamp((b.opacity != null ? b.opacity : 1) + dOp, 0.05, 1) * 100) / 100;
+      });
+      adj.changed = true;
+      showSelSize();
+      paint();
+    }
+    function adjEnd(cancel){
+      var a = adj;
+      adj = null;
+      if (a.tool){ if (cancel) SIZE[a.tool] = a.s0; else savePen(); }
+      else if (a.changed && !cancel){ sel.forEach(roundItem); undo.push(a.prev); redo.length = 0; }
+      else { items = a.prev; sel = a.prevSel; }
+      hideSize(); paint();
+    }
+    // Two / three fingers down and up again quickly without moving: undo / redo (the view goes back
+    // to where it was before the fingers came down).
+    function tapDown(e){
+      if (e.pointerType === "pen") lastPen = e.timeStamp;
+      if (e.pointerType !== "touch") return;
+      if (!touches.size) tap = edit || adj ? null : { t0: e.timeStamp, n: 0, moved: false, at: new Map(), v: { z: V.z, r: V.r, m: V.m, o: V.o.slice() }, fitted: fitted };
+      touches.add(e.pointerId);
+      if (tap){ tap.n = Math.max(tap.n, touches.size); tap.at.set(e.pointerId, [e.clientX, e.clientY]); }
+    }
+    function tapMove(e){
+      var a0 = tap && tap.at.get(e.pointerId);
+      if (a0 && RC.hyp(e.clientX - a0[0], e.clientY - a0[1]) > 14) tap.moved = true;
+    }
+    function tapUp(e){
+      if (!touches.has(e.pointerId)) return null;
+      touches.delete(e.pointerId);
+      if (touches.size || !tap) return null;
+      var t0 = tap;
+      tap = null;
+      // Not a resting palm while a pen is drawing (or just was).
+      var pen0 = (stroke && stroke.type === "pen") || t0.t0 - lastPen < 600;
+      return e.type === "pointerup" && !pen0 && !t0.moved && t0.n >= 2 && t0.n <= 3 && e.timeStamp - t0.t0 < 400 ? t0 : null;
+    }
+    function tapAct(t0){
+      V = t0.v; fitted = t0.fitted; apply();
+      if (t0.n === 2) doUndo(); else doRedo();
+    }
     // No tool in hand: one finger (or the left button) scrubs the video through the host.
     function endScrub(){ if (!scr) return; var id = scr.id; scr = null; if (o.onScrub) o.onScrub({ phase: "end" }); var q = pts.get(id); if (q) q.nav = true; }
     function gestStart(){
@@ -287,9 +472,8 @@ var SightReviewDraw = (function(){
       if (!a) return;
       var m = b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : [a.x, a.y];
       if (b && gest.d > 0){
-        V.z = RC.clamp(gest.v.z * RC.hyp(a.x - b.x, a.y - b.y) / gest.d, 0.5, 16);
-        var r = gest.v.r + (Math.atan2(b.y - a.y, b.x - a.x) - gest.a) * 180 / Math.PI, q90 = Math.round(r / 90) * 90;
-        V.r = Math.abs(r - q90) < 6 ? q90 : r;  // a quarter turn snaps
+        var k = pinch({ z: gest.v.z, r: gest.v.r, d: gest.d, a: gest.a }, a, b, 0.5, 16);
+        V.z = k.z; V.r = k.r;
       }
       pin(gest.q, m);
       moved();
@@ -297,6 +481,9 @@ var SightReviewDraw = (function(){
     view.addEventListener("pointerdown", function(e){
       if (edit && e.target === edit.ta) return;  // placing the caret in the text field
       e.preventDefault();
+      tapDown(e);
+      endHold();  // a second pointer: no hold
+      if (adj) return;  // the size drag keeps the screen to itself
       if (edit){
         // A tap elsewhere ends the typing; that finger (and a second one: a pinch) then only navigates.
         commitText();
@@ -322,9 +509,11 @@ var SightReviewDraw = (function(){
         o.onScrub({ phase: "start" });
         return;
       }
+      var sel0 = sel.slice();  // a hold on empty space keeps adjusting the selection a tap there would drop
       if (drawer && !stroke && !gest && !scr){
         pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e);
         if (!stroke){ pts.get(e.pointerId).nav = true; gestStart(); }  // select tool on empty space: the finger pans
+        if (pts.size === 1) startHold(e, sel0);
         return;
       }
       // A pen wins over a resting palm / finger: their stroke is dropped, their pan stops.
@@ -334,6 +523,7 @@ var SightReviewDraw = (function(){
         gest = null;
         pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e);
         if (!stroke){ pts.get(e.pointerId).nav = true; gestStart(); }
+        if (pts.size === 1) startHold(e, sel0);
         return;
       }
       // A second finger while one draws: that was the start of a pinch, not a stroke.
@@ -352,9 +542,12 @@ var SightReviewDraw = (function(){
         moved();
         return;
       }
+      tapMove(e);
       var q = pts.get(e.pointerId);
       if (!q) return;
       var p = vpos(e); q.x = p[0]; q.y = p[1];
+      if (hold && hold.id === e.pointerId && RC.hyp(e.clientX - hold.x, e.clientY - hold.y) > hold.tol) endHold();
+      if (adj && adj.id === e.pointerId){ e.preventDefault(); adjMove(e); return; }
       if (scr && scr.id === e.pointerId){
         var dx = e.clientX - scr.x, dt = e.timeStamp - scr.t;
         scr.x = e.clientX; scr.t = e.timeStamp;
@@ -366,7 +559,15 @@ var SightReviewDraw = (function(){
     });
     // A cancelled pointer (e.g. a palm the system rejects) drops its stroke instead of keeping it.
     function up(e){
+      if (e.pointerType === "pen") lastPen = e.timeStamp;
+      var t0 = tapUp(e);
+      up0(e);
+      if (t0) tapAct(t0);
+    }
+    function up0(e){
       if (zdrag && e.pointerId === zdrag.id){ zdrag = null; return; }
+      if (hold && hold.id === e.pointerId) endHold();
+      if (adj && adj.id === e.pointerId){ pts.delete(e.pointerId); adjEnd(e.type === "pointercancel"); return; }
       if (!pts.has(e.pointerId)) return;
       if (scr && scr.id === e.pointerId) endScrub();
       pts.delete(e.pointerId);
@@ -391,6 +592,7 @@ var SightReviewDraw = (function(){
     // and every position here assumes it never scrolls.
     view.addEventListener("scroll", function(){ if (view.scrollLeft || view.scrollTop){ view.scrollLeft = 0; view.scrollTop = 0; } });
     root.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
+    root.addEventListener("contextmenu", function(e){ e.preventDefault(); });  // a long press on a button
 
     // The topmost drawing made here under p (doc units), within tol.
     function itemAt(p, tol){
@@ -449,10 +651,10 @@ var SightReviewDraw = (function(){
         d = { color: c, size: RC.r2(SIZE[t] * k), opacity: t === "marker" ? 0.4 : 1, pressure: true, pen: isPen, pts: [RC.r2(p[0]), RC.r2(p[1]), RC.r2(pr)] };
         cur = { kind: "stroke", shape_kind: t, z: ++zc, data: d };
       } else if (t === "arrow"){
-        d = { color: c, width: RC.r2(SIZE.shape * k), opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
+        d = { color: c, width: RC.r2(SIZE.arrow * k), opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
         cur = { kind: "shape", shape_kind: "arrow", z: ++zc, data: d };
       } else {
-        d = { color: c, strokeOn: true, width: RC.r2(SIZE.shape * k), dash: "solid", fillOn: false, fill: c, fillOpacity: 0.2, radius: 0, opacity: 1, x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
+        d = { color: c, strokeOn: true, width: RC.r2(SIZE[t] * k), dash: "solid", fillOn: false, fill: c, fillOpacity: 0.2, radius: 0, opacity: 1, x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
         cur = { kind: "shape", shape_kind: t, z: ++zc, data: d };
       }
       d.created = Date.now();
@@ -603,7 +805,7 @@ var SightReviewDraw = (function(){
       paint(); afterText();
     }
     function dropText(){ var e0 = edit; edit = null; e0.ta.remove(); if (!e0.isNew) e0.it.data = e0.before; paint(); afterText(); }
-    function afterText(){ view.scrollLeft = 0; view.scrollTop = 0; if (refit){ refit = false; fit(false); } }
+    function afterText(){ view.scrollLeft = 0; view.scrollTop = 0; if (refit){ refit = false; if (fitted) fit(false); else apply(); } }
     function onKey(e){
       var mod = e.ctrlKey || e.metaKey;
       if (edit){  // typing: the field keeps its own keys (Enter = new line, Ctrl+Z = its undo); Esc ends it
@@ -611,6 +813,7 @@ var SightReviewDraw = (function(){
         return;
       }
       if (e.key === "Control" && !ctrlHeld){ ctrlHeld = true; paintBar(); return; }
+      stopAdj();
       if (o.onKey && !stroke && o.onKey(e)){ e.preventDefault(); e.stopPropagation(); return; }
       if (e.key === "Escape" && !mod && !e.altKey && !e.shiftKey){ if (pen.tool === "select" && sel.length){ sel = []; paint(); } else cancel.onclick(); }
       else if (mod && !e.altKey && (e.key === "z" || e.key === "Z")){ if (e.shiftKey) doRedo(); else doUndo(); }
@@ -627,6 +830,14 @@ var SightReviewDraw = (function(){
     function onBlur(){ if (ctrlHeld){ ctrlHeld = false; paintBar(); } }
     function close(){
       endScrub();
+      endHold(); hideSize(true);
+      if (o.onNav){
+        // In the host's terms: its zoom is relative to its own fit at its quarter turn (viewR),
+        // whose box differs from this one when the canvas was turned / fitted at another quarter.
+        var cb = o.onNav, bh = boxAt(viewR), zr = bh ? BW / bh : 1;
+        o.onNav = null;
+        cb({ z: V.z * zr, r: V.r - viewR, o: [V.o[0] - fitC[0], V.o[1] - fitC[1]] });
+      }
       root.remove(); document.body.classList.remove("rd-open");
       document.removeEventListener("keydown", onKey, true); document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("resize", onResize); window.removeEventListener("blur", onBlur);
@@ -635,10 +846,14 @@ var SightReviewDraw = (function(){
     document.addEventListener("keydown", onKey, true); document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("resize", onResize); window.addEventListener("blur", onBlur);
     paintBar(); fit(false);
+    if (o.nav && (Math.abs(o.nav.z - 1) > 1e-3 || o.nav.r || o.nav.o[0] || o.nav.o[1])){
+      V.z = RC.clamp(o.nav.z, 0.5, 16); V.r = viewR + o.nav.r; V.o = [fitC[0] + o.nav.o[0], fitC[1] + o.nav.o[1]];
+      moved();
+    }
     requestAnimationFrame(function(){ if (root.isConnected && fitted && !edit) fit(false); });  // the bars' real size
     return { setFrame: setFrame, close: close, frameKey: function(){ return fkey; } };
   }
 
-  return { open: drawSheet, TOOLS: TOOLS, COLORS: COLORS, SIZE: SIZE };
+  return { open: drawSheet, pinch: pinch, TOOLS: TOOLS, COLORS: COLORS, SIZE: SIZE };
 })();
 if (typeof globalThis !== "undefined") globalThis.SightReviewDraw = SightReviewDraw;

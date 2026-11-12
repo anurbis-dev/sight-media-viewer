@@ -154,25 +154,35 @@
   made in Safari before installing stay in Safari. *Photo or video* picks from the library / camera
   roll, *Open a file…* from Files (pictures, videos, or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
-  changes it). The review is a full-screen player: a header over the picture holds ← (all
-  reviews), the name, ⋯, and a row with the pencil (*Draw a note*), the eye (hide drawings), ↻ /
-  mirror (turn 90° / mirror the view — the full-screen view and the canvas follow; the drawings
-  stay put on the picture) and *Set state*. Under the picture the thin **Notes Panel** bar: tap it
-  (or swipe up on it / on the picture) and the player slides up off the screen and the notes come
-  in; the bar then holds the filters (All / Open / In progress / Resolved) and ⌃ back to the
-  player. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
+  changes it). The review is a full-screen player: a header over the picture (no background, the
+  picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
+  drawings), ↻ / mirror (turn 90° / mirror the view — the full-screen view
+  and the canvas follow; the drawings stay put on the picture) and, when the view is zoomed, *Fit*.
+  Two fingers on the picture pan, zoom and turn it (as on the drawing canvas); a swipe down goes
+  back to the list of reviews. Under the picture the thin **Notes Panel** bar: tap it (or swipe up
+  on it / on the picture) and the player slides up off the screen and the notes come in; the bar
+  then holds the filters (All / Open / In progress / Resolved). Pull the list down when it is at
+  its top note to go back to the player. *+ Note* shows only with the panel open. The pencil
+  (*Draw a note*) floats at the bottom right of the picture — on a video just above the
+  transport — the same place as in the full-screen view, for pictures and videos alike. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
   (notes and frames drawn on), ◀ ▶ one frame back / forward, the timecode and frame number, and a
   timeline with the markers (tap / drag anywhere; near a marker it lands on it). Drag left / right
   across the picture to scrub from where the clip is (a frame per few pixels, faster when you move
   faster; Shift with a mouse = finer) — the clip's length no longer spreads over the screen's
   width; after opening, the app runs through the clip once and keeps small frames in memory (the
   green line in the timeline), so the picture follows at once. Tap the picture to play / pause
-  (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for markers). Notes are listed and numbered in
+  (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for markers); play starts from the frame on
+  screen, also right after a scrub. Notes are listed and numbered in
   the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
   adds a note — on a video at the frame on screen; while it is open the picture is clean (only its
   own drawing). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
   highlighter, arrow, rectangle, ellipse, text, eraser, colours, undo / redo, clear, pinch / pan /
-  turn), its buttons floating over the picture. On a video the canvas has the timeline at its
+  turn), its buttons floating over the picture. Opened from the player, the picture stays exactly
+  where and as big as it was (zoom and turn too) — drawing only brings the tools up; closing keeps
+  the view. Press and hold with a tool, then drag up / down: that tool's size (a circle on the
+  left shows it); with the select tool and a selection, hold and drag up / down for the line width,
+  sideways for the opacity. Press and hold a tool's button: its default size. Tap with two fingers
+  to undo, with three to redo. On a video the canvas has the timeline at its
   foot: tap the tool in hand to put it down (no fill), then drag the picture or the timeline / the
   step and marker buttons to another frame, take a tool again and draw there — as many frames as
   you like; *Done* makes them one note (its card shows every frame drawn on). Each note has
@@ -182,14 +192,16 @@
   view it full screen (pinch / double-tap to zoom; ← or a sideways swipe goes back; at full size a
   swipe up / down shows the next / previous note; the pencil draws a reply on it). Settings (⚙ on
   the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
-  and the notes share it. *Set state* sets the file's review state
-  (Needs review / Changes requested / Approved). The eye hides the drawings on the picture.
+  and the notes share it. The eye hides the drawings on the picture. (The file's review state —
+  Needs review / Changes requested / Approved — is set in Sight; the app keeps and exports it.)
   ⋯ menu: *PDF report* and *Web page (HTML)* — the same content as Sight's PDF report (pictures /
   frames with the drawings, every note, reply and picture), plain files anyone can open; *Review
   file for Sight (.srev)* — drag it into Sight to merge everything (Sight finds the file by name and
-  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, press and hold a
-  review and drag it onto the bin that appears at the bottom to delete it (let go without moving
-  for its menu).
+  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, swipe a review
+  left to uncover the bin (tap it to delete the review), right to uncover the eye (tap it to hide
+  the review for now — until the app is closed, or *Show* under the list); press and hold a review
+  and drag it up / down to move it in the list (the order is kept; new reviews come first); let go
+  without moving for its menu. Scrolled down, the two open buttons shrink into icons next to ⚙.
   Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
   see it. The app remembers the file you picked (it keeps a copy on the device — a web app
   gets no lasting access to a picked file) and opens the review with it next time; ⋯ → *Forget the

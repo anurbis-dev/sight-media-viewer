@@ -243,5 +243,39 @@ class RoundTrip(unittest.TestCase):
         self.assertIn("From Sight", [x.get("text") for x in bnote["data"]["replies"]])
 
 
+    def test_touch(self) -> None:
+        if not self.video:
+            self.skipTest("ffmpeg is not installed (no test clip)")
+        r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_touch.cjs"), self.base, str(self.media / "clip_v001.webm")],
+                           capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertEqual(res["log"], [])
+        self.assertEqual((res["newbarClosed"], res["stateControl"]), ("hidden", 0))
+        # Play after a scrub / queued steps starts from the frame asked for, not the older position.
+        self.assertFalse(res["playFrom"][1])
+        self.assertGreaterEqual(res["playFrom"][0], res["scrubbedTo"] - 0.02)
+        self.assertFalse(res["stepPlay"][1])
+        self.assertGreaterEqual(res["stepPlay"][0], res["stepAsked"] - 0.02)
+        self.assertGreater(res["pv"]["z"], 1.5)
+        self.assertGreater(abs(res["pv"]["r"]), 5)
+        self.assertTrue(res["fitShown"])
+        self.assertLess(res["centreShift"], 2)
+        self.assertAlmostEqual(res["canvasScale"], res["pv"]["z"], delta=0.01)
+        self.assertTrue(res["preview"][0])
+        self.assertGreater(res["brush"][1], res["brush"][0])
+        self.assertEqual(res["itemsAfterHold"], 0)  # the hold's dot is dropped
+        self.assertEqual(res["undoRedo"], [1, 0, 1])
+        self.assertEqual(res["brushReset"], [6, True])
+        self.assertAlmostEqual(res["pvBack"]["z"], res["pv"]["z"], delta=1e-6)
+        self.assertTrue(res["compose"])
+        self.assertEqual(len(res["stroke"]), 1)
+        self.assertLess(res["stroke"][0], 0.9)
+        self.assertEqual(res["panel"], [True, "visible", False])
+        self.assertTrue(res["home"])
+        self.assertEqual((res["swipeLeft"], res["covered"]), ("row r", "row"))
+        self.assertEqual(res["hidden"], [0, "1 hidden for now · Show"])
+
+
 if __name__ == "__main__":
     unittest.main()

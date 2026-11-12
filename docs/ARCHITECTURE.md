@@ -267,7 +267,17 @@ text drawn in this session edits it, a tap elsewhere / Done / Esc commits, empty
 Sight's text defaults (dark box 0.6, size 24 screen px at the current zoom → doc units).
 The bars float over the picture (`.dtop` / `.dbar`, colours from the host's `--rd-bg / --rd-ov /
 --rd-fg / --rd-line`, dark by default); fit centres the picture between them when it fits there,
-else on the whole screen. A tap on the tool in hand puts it down (`pen.tool = null`, never saved;
+else on the whole screen — unless the host passes `o.fitBox()` (a viewport rect: the picture is
+fitted into it with no padding, bars ignored) and `o.nav {z, r, o}` (its own zoom / extra turn /
+offset from that fit, opened with; `o.onNav` gets the view back on close, relative to the fit
+centre and the quarter turn last reported by `onView`). Gestures: hold (450 ms, touch / pen, ≤ 8 /
+4 px) with a tool → `adj`: the stroke it began is aborted, a vertical drag sets `SIZE[tool]` on a
+log scale (screen height = `SIZE_RANGE` ratio), preview `.dsize` on the left; with select +
+a selection, copies are adjusted (one axis per hold: y = width key `WKEY[kind]` ×16 per screen,
+x = opacity), one undo step. Sizes are per tool (`SIZE0` defaults), saved with the pen
+(`sight-review:pen` `sizes`); a hold on a tool button resets that tool's size. Two / three touches
+down and up within 400 ms, none moved 14 px → undo / redo, the view restored to before (`tap`).
+`SightReviewDraw.pinch(g, a, b)` is the two-finger zoom / turn rule, shared with the phone player. A tap on the tool in hand puts it down (`pen.tool = null`, never saved;
 each open starts with the last real tool): one finger then calls `o.onScrub({phase, dx, dt, fine})`
 if given, else pans. Video sessions: `o.frameKey` + `o.frames {key: items}` make it multi-frame —
 `store` keeps each other frame's `{items, undo, redo}`, `handle.setFrame(key, src, pending)` swaps
@@ -411,12 +421,30 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   bytes, as `review.put_shot`); the target review is the one holding most of the package's row
   ids, else name + size, else a new review from the package's asset (it then asks for the file).
 - **Layout**: `#app.review` is fixed full-screen; `.slide` = `.player` (height `--ph` = viewport −
-  `--pbh` 30 px − `--nbh`, the new-note bar's measured height) + `.pbar` (Notes Panel) + `.plist`
-  (the scrolling list). `R.panel` (`setPanel`) adds `.open`: the slide moves up by `--ph`, the bar
-  grows to hold the filters. The header (`.hdr`) and transport (`.tp`) are overlays on the player.
+  `--pbh` 30 px; with `.compose` — a new note open — also − `--nbh`, the new-note bar's measured
+  height) + `.pbar` (Notes Panel) + `.plist` (the scrolling list). `R.panel` (`setPanel`) adds
+  `.open`: the slide moves up by `--ph`, the bar grows to hold the filters. The new-note bar is
+  slid away (transform + visibility, so it keeps its measured height) unless `.open` or
+  `.compose`. Back to the player: pull the list down from its top (`bindPanelPull`: a touch that
+  started at scrollTop 0, > 60 px down; wheel up at the top after 300 ms without scrolling). The
+  header (`.hdr`) and transport (`.tp`) are overlays on the player with no fill (`--halo`
+  shadows); their containers are `pointer-events: none`, their children not, so gestures between
+  the buttons reach the stage.
+- **Stage gestures** (`bindStage`, once per stage element): one finger — sideways ≥ 6 px scrubs
+  (video), up 40 px opens the panel, down 60 px leaves the review, a tap = click (video: play /
+  pause; picture: full screen). Two fingers: `R.pv {z, r, o}` (view only, not saved) as a CSS
+  transform on `.sv` (wraps img / video / scrubimg / svg; `turnEl` still turns the children by
+  `R.meta.view`); the finger left after a pinch pans; z < 1 snaps back to fit. The header's Fit
+  button shows when not fitted. The pencil is a `.fab.pencil` in `.player` (bottom right; on a
+  video `applyStageView` lifts it above the transport), matching the viewer's. `drawCanvas` passes `playerPlace()` (fitBox = the stage rect,
+  nav = `R.pv`, onNav sets it) when the player is on screen (panel closed, no viewer).
   The root never scrolls (a scroll listener resets it); the list scrolls inside `.plist`.
   Themes: `html[data-theme=light|dark]` (Settings, `sight-review:theme`), none = system; the
   stage, overlays (`--ov*`) and the canvas (`--rd-*`) follow it.
+- **Home list**: `reviewRow` — swipe left / right uncovers the bin / eye (`.sw`), hold + drag
+  reorders (`sight-review:order` in localStorage, new reviews first), hide for now =
+  `sight-review:hidden` in sessionStorage. While dragging, the DOM is not reordered (that drops the
+  held card's pointer capture): other rows slide by transform, the row moves on release.
 - **Notes order**: by `data.created` for every kind (`notesSorted`, same in annotate.js) — numbers
   match Sight; the frame does not count.
 - **Frame math** (`model.js frameIndex / frameTime`, same rule in annotate.js): a stored time is
@@ -434,7 +462,9 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   from the current position (`scrubStep`: ¼ frame per px, up to ×12 with finger speed, Shift ¼;
   starts after 6 px of mostly-horizontal movement; the click right after a mouse scrub is
   swallowed); a swipe up on the stage opens the panel. No play button in the transport (tap the
-  picture / Space; the big one shows until first play). The player's time is
+  picture / Space; the big one shows until first play). `togglePlay` first sends the pending /
+  in-flight target (`R.want` / `R.scrubT`) to the player, so play starts on the frame on screen;
+  `.scrubimg` has `pointer-events: none` (it hides as its seek lands, often mid-tap). The player's time is
   the truth; the frame on screen is `floor(t/fd)`; stepping lands on `(frame + n + 0.01)·fd`
   and a new note / drawing ctx is `{t: frameStart(t), hold: 0}` = `(frame + 0.01)·fd` to 3 dp, so it
   shows on exactly that frame (same rule in Sight's annotate.js `frameStart` / `stepFrame`;
