@@ -1,0 +1,62 @@
+# The Sight Review phone app (PWA, docs/PLAN-mobile.md stage 3) on GitHub Pages.
+#
+#   push to master that touches the app       -> build + deploy to https://<owner>.github.io/<repo>/
+#   push to any other branch that touches it  -> build only (checks it builds)
+#   Actions tab -> "Phone app (GitHub Pages)" -> Run on master -> build + deploy
+#
+# One-time repository setting: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+name: Phone app (GitHub Pages)
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "mobile/**"
+      - "app/static/review-core.js"
+      - "app/static/review-draw.js"
+      - "app/static/keys.js"
+      - "app/static/favicon.svg"
+      - "app/version.py"
+      - "tools/build_pwa.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Unit tests (app logic)
+        run: node tests/pwa_unit.cjs
+      - name: Build
+        run: python tools/build_pwa.py --out _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -2,6 +2,15 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.15.4 — 2026-11-10 — Splash closes with the window; thumbnails decode in sync; PLAN.md
+- **What:** The "Sight is loading" splash now closes the moment the window shows, and a normal launch, which takes under ~1.7 s, does not show it at all. Grid thumbnails decode in sync (the blinking itself was a different bug, fixed in 0.15.5). New `docs/PLAN.md` lists the queued improvements and known bugs with their numbers.
+- **Where:** `Sight.py`: `_close_splash()` in `main()`; `reveal_when_ready(..., on_ready=)` calls it right after the page's ready ping; `start_splash()` passes `-ShowAfterMs 1000`. `app/splash_screen.ps1`: `ShowAfterMs` parameter (sleep before `Show()`), "loading…" built with `[char]0x2026`. `index.html` `fillThumb`: `img.decoding = "sync"`. `CLAUDE.md` points to `docs/PLAN.md`.
+- **Notes:**
+  - Splash: the owner's test build (0.15.2) kept the splash up ~3 s after the window appeared. That was the 3 s window search fixed in 0.15.3, because the splash was closed only after it. Measured with that build: splash at ~0.7 s, window at ~0.85 s, splash gone at ~3.9 s. Now it is closed before the window search and maximize, so nothing there can hold it up. In 3 source launches it never appeared (window at ~1.3 s). Run alone, the script shows the form at ~1.5 s and is gone 20 ms after `terminate()`.
+  - The literal "…" in the BOM-less `.ps1` came out as "â€¦" in Windows PowerShell 5.1, which reads such files as ANSI. Keep that script ASCII-only.
+  - Blinking: it was not a regression of 0.15.2. Off-screen Edge runs against 0.15.1 and 0.15.3 showed the same counts. An in-page probe found no card or `<img>` replaced while on screen, in steady state or while the startup scan ran. What remains is Chromium painting a thumbnail empty for a frame: async decoding of images built off-screen (fixed here, the lightbox already did this for cached images), and raster lag during very fast scrolls (see PLAN.md).
+  - Focus on launch (`SetForegroundWindow`) depends on Windows' foreground lock; see PLAN.md, bug 2.
+
 ## 0.15.3 — 2026-11-10 — Launch: the window opens maximized and focused again
 - **What:** If Sight was maximized when it was closed, it opens maximized again, and the window gets focus on launch. Before, neither happened on this machine. The window came up at its normal size, behind whatever had focus.
 - **Where:** `Sight.py`: new `_process_tree(root)` (Toolhelp32 snapshot through ctypes); `_find_browser_window(pids, user32)` now takes a set of pids; `reveal_when_ready()` passes `_process_tree(proc.pid)`; `close_browser(proc)` terminates the same tree instead of running a PowerShell WMI query by `--user-data-dir` (0.15.2).

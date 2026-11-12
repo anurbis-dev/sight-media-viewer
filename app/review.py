@@ -9,7 +9,8 @@
   and opened on another machine that has the same media file in its library.
   The format of everything in it is specified in docs/FORMAT.md.
 - HTML page: a self-contained reviewer page; it inlines app/static/review-core.js (the drawing
-  primitives and merge rules shared with Sight and the mobile app).
+  primitives and merge rules shared with Sight and the mobile app) and app/static/review-draw.js
+  (the drawing canvas, shared with the mobile app).
 """
 
 from __future__ import annotations
@@ -311,19 +312,30 @@ def parse_package(raw: bytes) -> dict:
 # ---- HTML page for reviewers without Sight ------------------------------------------------------
 
 CORE_JS = Path(__file__).resolve().parent / "static" / "review-core.js"
-_core_src: str | None = None
+DRAW_JS = Path(__file__).resolve().parent / "static" / "review-draw.js"
+_inline_src: dict[str, str] = {}
+
+
+def _inline_js(path: Path) -> str:
+    """A shared script as inlined into the HTML page. It is put into a <script> verbatim, so it
+    must not contain anything that ends the script block or opens a comment there."""
+    key = str(path)
+    if key not in _inline_src:
+        src = path.read_text(encoding="utf-8")
+        if re.search(r"</script|<!--", src, re.I):
+            raise ValueError(f"{path.name} contains '</script' or '<!--' and cannot be inlined")
+        _inline_src[key] = src
+    return _inline_src[key]
 
 
 def core_js() -> str:
-    """review-core.js as inlined into the HTML page. It is put into a <script> verbatim, so it must
-    not contain anything that ends the script block or opens a comment there."""
-    global _core_src
-    if _core_src is None:
-        src = CORE_JS.read_text(encoding="utf-8")
-        if re.search(r"</script|<!--", src, re.I):
-            raise ValueError("review-core.js contains '</script' or '<!--' and cannot be inlined")
-        _core_src = src
-    return _core_src
+    """review-core.js (drawing primitives + merge rules) as inlined into the HTML page."""
+    return _inline_js(CORE_JS)
+
+
+def draw_js() -> str:
+    """review-draw.js (the full-screen drawing canvas) as inlined into the HTML page."""
+    return _inline_js(DRAW_JS)
 
 
 def build_html(report: dict, pkg: dict) -> str:
@@ -337,8 +349,8 @@ def build_html(report: dict, pkg: dict) -> str:
     data = json.dumps({"report": report, "package": pkg}, ensure_ascii=False).replace("<", "\\u003c")
     title = html.escape(str(report.get("title") or "Review"))
     # One pass, so a note text or title that happens to contain a placeholder stays as it is.
-    parts = {"TITLE": title, "DATA": data, "CORE": core_js()}
-    return re.sub(r"%%(TITLE|DATA|CORE)%%", lambda m: parts[m.group(1)], _HTML_TEMPLATE)
+    parts = {"TITLE": title, "DATA": data, "CORE": core_js(), "DRAW": draw_js()}
+    return re.sub(r"%%(TITLE|DATA|CORE|DRAW)%%", lambda m: parts[m.group(1)], _HTML_TEMPLATE)
 
 
 _HTML_TEMPLATE = r"""<!doctype html>
@@ -479,24 +491,7 @@ body.zoomed { overflow: hidden; }
 .zoom .zw { position: relative; will-change: transform; pointer-events: none; }
 .zoom .zw img { display: block; }
 .zoom .zd { position: absolute; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 1; background: rgb(255 255 255 / .14); border-color: rgb(255 255 255 / .3); color: #fff; padding: 7px 14px; }
-/* Full-screen drawing canvas */
-.draw { position: fixed; inset: 0; z-index: 30; background: #0d0d10; color: #fff; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.dtop, .dbar { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: #1c1c20; }
-.dtop { padding-top: calc(6px + env(safe-area-inset-top)); }
-.dtop .sp { flex: 1; }
-.dtop .btn { background: none; color: #fff; border-color: rgb(255 255 255 / .25); }
-.dtop .btn.primary { background: #0a84ff; border-color: #0a84ff; }
-.dbar { flex-direction: column; gap: 6px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
-.dbar > div { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
-.dview { flex: 1; position: relative; overflow: hidden; touch-action: none; cursor: crosshair; }
-.dbox { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.dbox img, .dbox svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
-.dbox img { -webkit-user-drag: none; }
-.tb { width: 40px; height: 40px; border-radius: 10px; border: 0; background: none; color: #d8d8dc; display: grid; place-items: center; cursor: pointer; padding: 0; }
-.tb.on { background: #0a84ff; color: #fff; }
-.tb[disabled] { opacity: .3; cursor: default; }
-.swc { width: 30px; height: 30px; margin: 3px 4px; border-radius: 15px; border: 2px solid rgb(255 255 255 / .3); cursor: pointer; padding: 0; }
-.swc.on { border-color: #fff; box-shadow: 0 0 0 2px #0a84ff; }
+/* The full-screen drawing canvas (.draw) styles itself: review-draw.js. */
 .pick { position: fixed; inset: 0; z-index: 25; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
 .pick .sheet { max-width: 560px; max-height: 85vh; overflow: auto; }
 .pick .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
@@ -518,6 +513,9 @@ body.zoomed { overflow: hidden; }
 <script id="data" type="application/json">%%DATA%%</script>
 <script>
 %%CORE%%
+</script>
+<script>
+%%DRAW%%
 </script>
 <script>
 (function(){
@@ -804,248 +802,10 @@ body.zoomed { overflow: hidden; }
   }
 
   // ---- drawing canvas ------------------------------------------------------------------------
-  // Full screen: brush (pen pressure), highlighter, arrow, rectangle, ellipse, eraser (whole
-  // objects drawn here), five colours, undo / redo. Two fingers pinch-zoom / pan; once a pen has
-  // touched it, the pen draws and one finger pans too. Mouse: left draws, wheel zooms, middle /
-  // right drags. Items are FORMAT.md drawings in the doc units of `vb`; sizes are screen pixels at
-  // the moment of drawing, turned into doc units by the zoom.
-  function ico(p){ return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + p + "</svg>"; }
-  var TOOLS = [
-    ["brush", "Brush", '<path d="M19.5 3.5a2.1 2.1 0 0 1 3 3L13 16l-3-3z"/><path d="M10 13c-3 0-4.5 2-4.5 4.2 0 1.4-1 2.3-2.5 2.8 5 1.2 9.5-.2 9.5-4.3z"/>'],
-    ["marker", "Highlighter", '<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>'],
-    ["arrow", "Arrow", '<path d="M5 19 19 5"/><path d="M10 5h9v9"/>'],
-    ["rect", "Rectangle", '<rect x="4" y="6" width="16" height="12" rx="2"/>'],
-    ["ellipse", "Ellipse", '<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>'],
-    ["eraser", "Eraser", '<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>'],
-  ];
-  var COLORS = ["#ff3b30", "#ffd60a", "#34c759", "#0a84ff", "#ffffff"];
-  var SIZE = { brush: 6, marker: 24, shape: 4, eraser: 14 };
-  var pen = { tool: "brush", color: COLORS[0] };
-  try {
-    var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
-    if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = ps.tool;
-    if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
-  } catch (e) {}
-  function savePen(){ try { localStorage.setItem("sight-review:pen", JSON.stringify(pen)); } catch (e) {} }
-  var penSeen = false;  // a stylus has been used: it draws, fingers only pan / zoom
-  // o: {src, vb: [x, y, w, h] doc box the picture covers, base: rows drawn underneath (not
-  // editable), items: editable drawings, onDone(items)}.
-  function drawSheet(o){
-    var vb = o.vb, items = (o.items || []).map(clone), undo = [], redo = [], cur = null;
-    var zc = items.reduce(function(m, it){ return Math.max(m, it.z || 0); }, 0);
-    var root = el("div", "draw"), top = el("div", "dtop"), view = el("div", "dview"), box = el("div", "dbox"), bar = el("div", "dbar");
-    var img = el("img"); img.src = o.src; img.alt = ""; img.draggable = false;
-    var sv = document.createElementNS(SVGNS, "svg"); sv.setAttribute("viewBox", vb.join(" ")); sv.setAttribute("preserveAspectRatio", "none");
-    var gBase = document.createElementNS(SVGNS, "g"), gMine = document.createElementNS(SVGNS, "g");
-    gBase.innerHTML = RC.svgMarkup(o.base || [], numOf);
-    sv.appendChild(gBase); sv.appendChild(gMine);
-    box.appendChild(img); box.appendChild(sv); view.appendChild(box);
-    function tbtn(title, html, fn){ var b = el("button", "tb"); b.type = "button"; b.title = title; b.setAttribute("aria-label", title); b.innerHTML = html; b.onclick = fn; return b; }
-    var cancel = el("button", "btn", "Cancel"); cancel.type = "button";
-    cancel.onclick = function(){ if (undo.length && !confirm("Discard this drawing?")) return; close(); };
-    var ub = tbtn("Undo", ico('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), doUndo);
-    var rb = tbtn("Redo", ico('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'), doRedo);
-    var fitB = tbtn("Fit to screen", ico('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'), function(){ fit(); });
-    var done = el("button", "btn primary", "Done"); done.type = "button";
-    done.onclick = function(){ if (stroke) finish(); close(); o.onDone(items); };
-    [cancel, ub, rb, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
-    var tools = el("div"), cols = el("div");
-    TOOLS.forEach(function(t){ var b = tbtn(t[1], ico(t[2]), function(){ pen.tool = t[0]; savePen(); paintBar(); }); b.dataset.t = t[0]; tools.appendChild(b); });
-    COLORS.forEach(function(c){
-      var b = el("button", "swc"); b.type = "button"; b.title = "Colour"; b.setAttribute("aria-label", "Colour " + c); b.style.background = c; b.dataset.c = c;
-      b.onclick = function(){ pen.color = c; if (pen.tool === "eraser") pen.tool = "brush"; savePen(); paintBar(); };
-      cols.appendChild(b);
-    });
-    bar.appendChild(tools); bar.appendChild(cols);
-    root.appendChild(top); root.appendChild(view); root.appendChild(bar);
-    function paintBar(){
-      tools.querySelectorAll(".tb").forEach(function(b){ b.classList.toggle("on", b.dataset.t === pen.tool); });
-      cols.querySelectorAll(".swc").forEach(function(b){ b.classList.toggle("on", b.dataset.c === pen.color && pen.tool !== "eraser"); });
-      view.style.cursor = pen.tool === "eraser" ? "cell" : "crosshair";
-    }
-    function paint(){
-      gMine.innerHTML = RC.svgMarkup(cur ? items.concat([cur]) : items, numOf);
-      ub.disabled = !undo.length; rb.disabled = !redo.length;
-    }
-    function doUndo(){ if (stroke || !undo.length) return; redo.push(items); items = undo.pop(); paint(); }
-    function doRedo(){ if (stroke || !redo.length) return; undo.push(items); items = redo.pop(); paint(); }
-
-    // View: the picture fitted into the free area, then zoomed / panned (V, in screen px).
-    var V = { z: 1, x: 0, y: 0 };
-    function fit(){
-      var r = view.getBoundingClientRect(), a = vb[2] / vb[3], pad = 10;
-      var w = Math.max(1, r.width - pad * 2), h = Math.max(1, r.height - pad * 2);
-      if (w / h > a) w = h * a; else h = w / a;
-      box.style.width = w + "px"; box.style.height = h + "px";
-      V = { z: 1, x: (r.width - w) / 2, y: (r.height - h) / 2 };
-      apply(false);
-    }
-    function apply(moved){ box.style.transform = "translate(" + V.x + "px," + V.y + "px) scale(" + V.z + ")"; fitB.hidden = !moved; }
-    function onResize(){ if (!stroke && !gest) fit(); }
-    function vpos(e){ var r = view.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
-    function toDoc(e, r){ return [vb[0] + (e.clientX - r.left) / r.width * vb[2], vb[1] + (e.clientY - r.top) / r.height * vb[3]]; }
-
-    // Pointers: one draws (`stroke`), the navigating ones (fingers / middle / right mouse) pan and
-    // pinch (`gest`, re-based whenever a finger comes or goes).
-    var pts = new Map(), stroke = null, gest = null;
-    function gestStart(){
-      var ids = [];
-      pts.forEach(function(p, id){ if (p.nav) ids.push(id); });
-      if (!ids.length){ gest = null; return; }
-      var a = pts.get(ids[0]), b = ids.length > 1 ? pts.get(ids[1]) : null;
-      gest = { ids: ids.slice(0, 2), v: { z: V.z, x: V.x, y: V.y }, m: b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : [a.x, a.y], d: b ? RC.hyp(a.x - b.x, a.y - b.y) : 0 };
-    }
-    function gestMove(){
-      var a = pts.get(gest.ids[0]), b = gest.ids.length > 1 ? pts.get(gest.ids[1]) : null;
-      if (!a) return;
-      var m = b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : [a.x, a.y];
-      var z = b && gest.d > 0 ? RC.clamp(gest.v.z * RC.hyp(a.x - b.x, a.y - b.y) / gest.d, 0.5, 16) : gest.v.z;
-      var lx = (gest.m[0] - gest.v.x) / gest.v.z, ly = (gest.m[1] - gest.v.y) / gest.v.z;
-      V = { z: z, x: m[0] - lx * z, y: m[1] - ly * z };
-      apply(true);
-    }
-    view.addEventListener("pointerdown", function(e){
-      e.preventDefault();
-      if (e.pointerType === "pen") penSeen = true;
-      var p = vpos(e);
-      var drawer = e.pointerType === "pen" || (e.pointerType === "mouse" && e.button === 0) || (e.pointerType === "touch" && !penSeen);
-      try { view.setPointerCapture(e.pointerId); } catch (_){}
-      if (drawer && !stroke && !gest){ pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e); return; }
-      // A pen wins over a resting palm / finger: their stroke is dropped, their pan stops.
-      if (e.pointerType === "pen"){
-        if (stroke && stroke.type === "pen") return;
-        if (stroke){ var pp = pts.get(stroke.id); abort(); if (pp) pp.nav = true; }
-        gest = null;
-        pts.set(e.pointerId, { x: p[0], y: p[1], nav: false }); begin(e);
-        return;
-      }
-      // A second finger while one draws: that was the start of a pinch, not a stroke.
-      if (stroke && stroke.type === "touch"){ var sp = pts.get(stroke.id); abort(); if (sp) sp.nav = true; }
-      if (stroke) return;  // the pen is drawing; fingers wait
-      pts.set(e.pointerId, { x: p[0], y: p[1], nav: true });
-      gestStart();
-    });
-    view.addEventListener("pointermove", function(e){
-      var q = pts.get(e.pointerId);
-      if (!q) return;
-      var p = vpos(e); q.x = p[0]; q.y = p[1];
-      if (stroke && stroke.id === e.pointerId){ e.preventDefault(); extend(e); return; }
-      if (gest && gest.ids.indexOf(e.pointerId) >= 0) gestMove();
-    });
-    // A cancelled pointer (e.g. a palm the system rejects) drops its stroke instead of keeping it.
-    function up(e){
-      if (!pts.has(e.pointerId)) return;
-      pts.delete(e.pointerId);
-      if (stroke && stroke.id === e.pointerId){
-        if (e.type === "pointercancel") abort(); else finish();
-        gestStart();  // fingers still down (after a pen stroke) pan from here
-        return;
-      }
-      if (gest && gest.ids.indexOf(e.pointerId) >= 0) gestStart();
-    }
-    view.addEventListener("pointerup", up);
-    view.addEventListener("pointercancel", up);
-    view.addEventListener("wheel", function(e){
-      e.preventDefault();
-      var p = vpos(e), z = RC.clamp(V.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), 0.5, 16);
-      var lx = (p[0] - V.x) / V.z, ly = (p[1] - V.y) / V.z;
-      V = { z: z, x: p[0] - lx * z, y: p[1] - ly * z };
-      apply(true);
-    }, { passive: false });
-    view.addEventListener("contextmenu", function(e){ e.preventDefault(); });
-    root.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
-
-    function begin(e){
-      var r = box.getBoundingClientRect(), p = toDoc(e, r), k = vb[2] / r.width, t = pen.tool, c = pen.color, isPen = e.pointerType === "pen";
-      stroke = { id: e.pointerId, type: e.pointerType, t: t, k: k, x: p[0], y: p[1], sm: p.slice(), last: null };
-      if (t === "eraser"){ stroke.before = items; eraseAt(p); return; }
-      var d;
-      if (t === "brush" || t === "marker"){
-        var pr = isPen ? RC.clamp(e.pressure || 0.5, 0, 1) : 0.5;
-        d = { color: c, size: RC.r2(SIZE[t] * k), opacity: t === "marker" ? 0.4 : 1, pressure: true, pen: isPen, pts: [RC.r2(p[0]), RC.r2(p[1]), RC.r2(pr)] };
-        cur = { kind: "stroke", shape_kind: t, z: ++zc, data: d };
-      } else if (t === "arrow"){
-        d = { color: c, width: RC.r2(SIZE.shape * k), opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
-        cur = { kind: "shape", shape_kind: "arrow", z: ++zc, data: d };
-      } else {
-        d = { color: c, strokeOn: true, width: RC.r2(SIZE.shape * k), dash: "solid", fillOn: false, fill: c, fillOpacity: 0.2, radius: 0, opacity: 1, x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
-        cur = { kind: "shape", shape_kind: t, z: ++zc, data: d };
-      }
-      d.created = Date.now();
-      paint();
-    }
-    function extend(e){
-      var S0 = stroke, r = box.getBoundingClientRect();
-      if (S0.t === "eraser"){ eraseAt(toDoc(e, r)); return; }
-      if (!cur) return;
-      var d = cur.data;
-      if (S0.t === "brush" || S0.t === "marker"){
-        var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
-        if (!evs.length) evs = [e];
-        evs.forEach(function(ce){
-          var q = toDoc(ce, r), a = 1 - 0.5 * 0.82;  // smoothing as Sight's brush default
-          S0.sm = [S0.sm[0] + (q[0] - S0.sm[0]) * a, S0.sm[1] + (q[1] - S0.sm[1]) * a];
-          var n = d.pts.length;
-          if (RC.hyp(S0.sm[0] - d.pts[n - 3], S0.sm[1] - d.pts[n - 2]) < 0.75 * S0.k) return;
-          d.pts.push(RC.r2(S0.sm[0]), RC.r2(S0.sm[1]), RC.r2(d.pen ? RC.clamp(ce.pressure || 0, 0, 1) : 0.5));
-        });
-        var l = toDoc(e, r);
-        S0.last = [l[0], l[1], d.pen ? RC.clamp(e.pressure || 0, 0, 1) : 0.5];
-      } else {
-        var p = toDoc(e, r);
-        if (S0.t === "arrow") d.pts = [S0.x, S0.y, p[0], p[1]];
-        else { d.x = S0.x; d.y = S0.y; d.w = p[0] - S0.x; d.h = p[1] - S0.y; }
-      }
-      paint();
-    }
-    function finish(){
-      var S0 = stroke, it = cur;
-      stroke = null; cur = null;
-      if (S0.t === "eraser"){ if (S0.before !== items){ undo.push(S0.before); redo.length = 0; } paint(); return; }
-      if (!it){ paint(); return; }
-      var d = it.data, t = S0.t, k = S0.k;
-      if (t === "brush" || t === "marker"){
-        var n = d.pts.length;
-        if (S0.last && RC.hyp(S0.last[0] - d.pts[n - 3], S0.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(RC.r2(S0.last[0]), RC.r2(S0.last[1]), RC.r2(S0.last[2]));
-      } else if (t === "arrow"){
-        if (RC.hyp(d.pts[2] - d.pts[0], d.pts[3] - d.pts[1]) / k < 3){ paint(); return; }
-        d.pts = d.pts.map(RC.r2);
-      } else {
-        if (Math.abs(d.w) / k < 3 && Math.abs(d.h) / k < 3){ paint(); return; }
-        if (d.w < 0){ d.x += d.w; d.w = -d.w; }
-        if (d.h < 0){ d.y += d.h; d.h = -d.h; }
-        ["x", "y", "w", "h"].forEach(function(key){ d[key] = RC.r2(d[key]); });
-      }
-      undo.push(items); redo.length = 0;
-      items = items.concat([it]);
-      paint();
-    }
-    function abort(){
-      if (stroke && stroke.t === "eraser") items = stroke.before;
-      stroke = null; cur = null; paint();
-    }
-    // Removes the objects drawn here that the eraser touches (others' drawings stay).
-    function eraseAt(p){
-      var tol = SIZE.eraser * stroke.k;
-      var left = items.filter(function(it){ return !RC.hitTest(it, p[0], p[1], tol); });
-      if (left.length !== items.length){ items = left; paint(); }
-    }
-    function onKey(e){
-      var mod = e.ctrlKey || e.metaKey;
-      if (e.key === "Escape" && !mod && !e.altKey && !e.shiftKey) cancel.onclick();
-      else if (mod && !e.altKey && (e.key === "z" || e.key === "Z")){ if (e.shiftKey) doRedo(); else doUndo(); }
-      else if (mod && !e.altKey && !e.shiftKey && e.key === "y") doRedo();
-      else return;
-      e.preventDefault(); e.stopPropagation();
-    }
-    function close(){
-      root.remove(); document.body.classList.remove("zoomed");
-      document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", onResize);
-    }
-    document.body.appendChild(root); document.body.classList.add("zoomed");
-    document.addEventListener("keydown", onKey, true); window.addEventListener("resize", onResize);
-    paintBar(); paint(); fit();
-  }
+  // review-draw.js (inlined above, shared with the mobile app): brush with pen pressure,
+  // highlighter, arrow, rectangle, ellipse, eraser, five colours, undo / redo, pinch / pan.
+  // o: {src, vb, base, items, onDone(items)}.
+  function drawSheet(o){ SightReviewDraw.open(Object.assign({ numOf: numOf }, o)); }
 
   function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
   function thumbs(list, nid){

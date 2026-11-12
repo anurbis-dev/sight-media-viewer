@@ -5,7 +5,8 @@ and the owner's tracker. Sight stores the same rows in its `annotations` table; 
 those rows plus the media's identity and the pictures. Code that reads or writes this data:
 `app/review.py` (`build_package`, `parse_package`), `app/library.py` (`import_annotations` and
 friends — the reference merge), `app/static/review-core.js` (rendering + the JS port of the merge),
-`app/static/annotate.js` (Sight's editor).
+`app/static/annotate.js` (Sight's editor), `mobile/js/model.js` (the phone app: every row it
+writes, the package it builds / merges).
 
 ## Rules for changing the format
 
@@ -40,7 +41,7 @@ UTF-8 JSON (a BOM is accepted on import).
 |-----|------|--|
 | `format` | `"sight-review"` | required; import checks this, not the file extension |
 | `version` | `1` | required |
-| `app` | string | who wrote it, e.g. `"Sight 0.20.0"`, `"Sight 0.20.0 (web reply)"` |
+| `app` | string | who wrote it, e.g. `"Sight 0.20.0"`, `"Sight 0.20.0 (web reply)"`, `"Sight Review 0.23.0 (phone)"` |
 | `exported_at` | stamp | |
 | `author` | string | the sender's reviewer name |
 | `asset` | object | media identity, see below; required |
@@ -51,7 +52,8 @@ UTF-8 JSON (a BOM is accepted on import).
 ### Asset identity
 
 `asset = {id, name, path, ext, kind, size, mtime, width, height, duration}` — `id` is Sight's
-asset id (a hash of the file's path on the exporting machine), `kind` is `image` | `video` |
+asset id (a hash of the file's path on the exporting machine; the phone app writes its own key, a
+hash of name + size, with `path` = the name, unless the review came from Sight), `kind` is `image` | `video` |
 `audio` | `model3d` | …, `ext` like `.png`, `size` in bytes, `width` / `height` in pixels (null
 when unknown), `duration` in seconds.
 

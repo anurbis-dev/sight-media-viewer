@@ -108,11 +108,12 @@ class MergeParity(unittest.TestCase):
 
 class PageInlinesCore(unittest.TestCase):
     def test_core_is_inlined(self) -> None:
-        page = review.build_html({"title": "T %%DATA%% %%CORE%%", "notes": [{"text": "%%CORE%%"}]},
+        page = review.build_html({"title": "T %%DATA%% %%CORE%% %%DRAW%%", "notes": [{"text": "%%CORE%% %%DRAW%%"}]},
                                  {"format": "sight-review", "version": 1, "asset": {}, "annotations": []})
         self.assertIn("var SightReviewCore", page)
         self.assertEqual(page.count("var SightReviewCore"), 1)  # placeholders in user text stay text
-        self.assertIn("T %%DATA%% %%CORE%%", page)
+        self.assertEqual(page.count("var SightReviewDraw"), 1)  # the drawing canvas (review-draw.js)
+        self.assertIn("T %%DATA%% %%CORE%% %%DRAW%%", page)
 
 
 if __name__ == "__main__":

@@ -18,16 +18,20 @@ app/static/index.html    the whole UI: one inline <script type="module"> (no bui
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
+app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
-tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node)
-tools/                   archive_changes.py; bench_startup.py / bench_grid.py (benchlib.py: isolated SIGHT_HOME
+mobile/                  the phone app "Sight Review" (PWA, no build step) — see "Phone app" below
+tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node);
+                         test_pwa.py (phone app: build, pwa_unit.cjs, pwa_e2e.cjs round trip with Sight)
+tools/                   archive_changes.py; build_pwa.py (phone app → dist/pwa, --serve PORT); bench_startup.py / bench_grid.py (benchlib.py: isolated SIGHT_HOME
                          copy, headless Edge/Chrome/Chromium over a stdlib CDP client — never the live library)
 build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
 build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script gives dist/Sight/Sight
 .github/workflows/release.yml  CI: all four platform builds + headless smoke test; tag v<APP_VERSION> publishes a Release
+.github/workflows/pages.yml    CI: phone app unit tests + build on every branch; deploys to GitHub Pages from master
 ```
 
 `SIGHT_HOME` defaults to `~/.sight` (library.db, settings.json, thumbnails, review_shots/, private venv).
@@ -240,6 +244,12 @@ Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every 
 3D, null = picture); annotate.js `visibleNow` goes through it. `drawingRow(it, at)` makes a
 FORMAT.md row (bbox columns from `boundsOf`) from an editor item.
 
+**Drawing canvas** (`app/static/review-draw.js`, `SightReviewDraw.open`) — shared by the HTML page
+(inlined) and the phone app. Tools: brush, highlighter, arrow, rect, ellipse, **text**, eraser. Text:
+the field opens on pointer *up* (iOS shows the keyboard only from a touch-end gesture), a tap on a
+text drawn in this session edits it, a tap elsewhere / Done / Esc commits, empty text removes it;
+Sight's text defaults (dark box 0.6, size 24 screen px at the current zoom → doc units).
+
 **HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)`) — the report
 comes from `gatherReport(true)`: **clean** pictures (no drawings burned in) — `cover` (images /
 PSD, ≤2000 px) + `coverSize`, per note `frame` (video frame ≤1600 px, or the 3D view capture) +
@@ -311,3 +321,72 @@ layer local time = T − start/fps; `syncVideos()` nudges playbackRate for drift
 beyond, pauses clips outside their span (dimmed). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
+
+## Phone app (mobile/, PWA)
+
+"Sight Review" — local review on the phone (docs/PLAN-mobile.md stage 3). Plain HTML + ES modules,
+no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages serves): `mobile/` plus
+`app/static/review-core.js`, `review-draw.js`, `keys.js` and `favicon.svg` copied to `core/` /
+`icons/`, and fills `%%VERSION%%` (APP_VERSION + a hash of every file) into `index.html` /
+`sw.js` and the file list into `sw.js`. Relative URLs everywhere (it runs under `/<repo>/`).
+
+- **Modules** (`mobile/js/`): `app.js` UI (home list, review screen, transport, cards, composer,
+  viewer, exports, SW banner); `model.js` every change to the rows + `.srev` build / parse / merge
+  (pure, Node-tested); `store.js` IndexedDB; `media.js` file kind / identity / probing / frame
+  grabbing; `mp4.js` fps from the MP4 container; `report.js` report content + static HTML + PDF
+  layout; `pdf.js` the PDF writer. review-core / review-draw are classic scripts loaded first
+  (globals `SightReviewCore`, `SightReviewDraw`); keys go through `core/keys.js` `runHotkeys`.
+- **Identity**: a review per media file, `key = assetKey(name, size)` = first 16 hex of SHA-1 of
+  `lower(name) + "\n" + size` (mtime deliberately out: iOS reports the pick time for Photos).
+  Re-picking the same file finds its review; Sight matches the app's `.srev` by name + size (its
+  `asset.id` is the key, `path` = the name). A review imported from Sight keeps Sight's `asset`
+  (id, path) so exporting back matches by id; its local key is still name + size.
+- **Storage** (IndexedDB `sight-review`): `reviews` (list entry: asset, fps, counts, thumb data
+  URL, kept / keepAsked), `rows` (`{key, rows}` — FORMAT.md rows plus `deleted_at`, tombstones
+  kept like Sight's table), `shots` (`{id, blob}`), `frames` (clean pictures by `key|img` = the
+  picture ≤ 1600 px and `key|t=<sec 3 dp>` = video frames, so cards / reports work without the
+  file), `files` (the media, only when the user keeps a copy). Saves are debounced 250 ms
+  (`dirty()` → `flush()`), flushed on `visibilitychange: hidden`, `pagehide`, before opening /
+  importing / exporting; a failed write stays pending and is retried (3 s / next flush). store.js
+  reopens a lost connection (iOS drops it in the background) and retries a call once.
+  Async work holds its own review (`rv`) and checks `R === rv` before touching the screen;
+  `openReview` has a sequence number (the latest tap wins); late writes go through `putIfAlive`
+  (not into a review deleted meanwhile). Back while the canvas / viewer / a sheet is open does not
+  leave the review (`route`). `navigator.storage.persist()` is asked on the first file.
+- **Rows** are written in Sight's shapes (`model.js`): `newNote`, `addReply`, `setNoteState`
+  (status + `status_at` + an event in the thread), `editNote` (`edited_at`), `deleteReply` (reply
+  tombstone `{id, created, deleted}` + its drawings' `deleted_at`), `deleteNote` (note + its
+  drawings), `drawingRows` (review-core `drawingRow`, `data.note` / `data.reply` / ctx),
+  `setReviewState` (= `Library.set_review_status`: one live status row, history unioned).
+  Import = `mergeRows` with the package's `deleted` and a shot-id map (non-hex ids → SHA-1 of the
+  bytes, as `review.put_shot`); the target review is the one holding most of the package's row
+  ids, else name + size, else a new review from the package's asset (it then asks for the file).
+- **Video**: a sideways drag on the stage scrubs like Sight's click-drag (`bindScrub`: width = whole
+  clip, Shift ×0.1, starts after 6 px of mostly-horizontal movement; stage `touch-action: pan-y` so
+  vertical swipes still scroll; one seek in flight, the latest wanted time next; `R.scrubT` drives
+  the timecode meanwhile; the click right after a mouse scrub is swallowed). The player's time is
+  the truth; the frame on screen is `floor(t/fd)`; stepping lands on `(frame + n + 0.01)·fd`
+  and a new note / drawing ctx is `{t: frameStart(t), hold: 0}` = `(frame + 0.01)·fd` to 3 dp, so it
+  shows on exactly that frame (Sight still rounds — PLAN.md); the overlay shows
+  `ctxVisible(ctx, {t, fps})`. fps comes from the MP4 / MOV container (`stts` of the video track,
+  averaged); otherwise it is measured while playing (`requestVideoFrameCallback`, gaps near the
+  median averaged, snapped to a common rate within 1.5 %), 25 until then (shown as "≈25 fps").
+  Frames for cards, reply drawings and reports come from a second hidden `<video>` (`Grabber`,
+  one seek at a time) and are cached in `frames`.
+- **Overlays**: the stage `<svg>` uses `viewBox 0 0 w h` + `xMidYMid meet`, which matches the
+  media's `object-fit: contain`; card pictures use `preserveAspectRatio="none"` over the scaled
+  picture (same aspect). Doc units are pixels of the picture as shown (`asset.width/height`; when
+  the file is bound its probed size wins — rotation applied — over a stored one).
+- **Exports** (`report.js`): `gatherReport` = Sight's `gatherReport(false)` content (cover with
+  every drawing for pictures; a picture note's own frame only when there are several notes and it
+  has drawings; video: the frame at the note's time with everything visible there; replies,
+  pictures). HTML: one file, data-URL images, no script. PDF: A4 laid out in points, each page
+  drawn on a canvas at 2 px/pt with the device's fonts (any script) and stored as one JPEG per page
+  (`pdf.js`, objects: catalog, pages, info, then page / content / image per page). Files are
+  offered in a sheet with *Share…* (Web Share with a file — needs a fresh tap, hence the sheet)
+  and *Download*.
+- **Service worker** (`sw.js`): precaches every file of the build (cache `sight-review-<version>`),
+  serves cache-first, navigations get `./`; old caches are dropped on activate, `clients.claim()`.
+  A new version waits; the page shows *Reload* and only then sends `{type: "skip"}` and reloads on
+  `controllerchange` (the first install's claim must not reload). `reg.update()` on becoming
+  visible.

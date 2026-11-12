@@ -63,6 +63,20 @@ on GitHub's runners with the same two scripts, starts each packaged app headless
 - **Just build:** the same *Run workflow* without the tick (artifacts only, kept 14 days).
   A push that changes the workflow or the build scripts runs it too.
 
+## Phone app (Sight Review)
+
+`mobile/` is a small web app for reviewing pictures and videos on a phone or tablet, offline —
+notes, replies, states, drawings, PDF / HTML reports, and `.srev` files that merge in Sight (see
+[MANUAL.md](MANUAL.md) → *Phone app*). It is published to GitHub Pages by
+`.github/workflows/pages.yml` on every push to `master` that touches it (one-time setup: repository
+Settings → Pages → Source: *GitHub Actions*); clients open the link and *Add to Home Screen*.
+
+- Build / try locally: `python tools/build_pwa.py --serve 8800` → http://127.0.0.1:8800/
+  (`dist/pwa/`; a service worker needs `localhost` or https, so test on a phone through the Pages
+  link or an https tunnel).
+- Tests: `python -m unittest tests.test_pwa` (needs `node`; the round trip with Sight also needs
+  Playwright's Chromium and `ffmpeg`).
+
 ## User manual
 
 See [MANUAL.md](MANUAL.md).

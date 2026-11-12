@@ -120,6 +120,7 @@
     in a message field (or *✎ Draw* in the full-screen viewer) opens a full-screen canvas over the
     note's frame (a new note: over the picture, or — video / 3D — over a note frame you pick; the
     new note then sits on that frame): brush (pen pressure), highlighter, arrow, rectangle, ellipse,
+    text (tap where it goes, type; tap your text again to change it, empty it to remove it),
     eraser, five colours, undo / redo (Ctrl+Z / Ctrl+Shift+Z), *Done* / *Cancel*. Two fingers
     zoom and pan; once you have drawn with a pen (Apple Pencil, stylus) the pen draws and a finger
     pans; with a mouse the wheel zooms and the middle / right button pans. The drawing goes with
@@ -128,6 +129,36 @@
     copy of it instead — that one is sent as a flat picture. The pencil next to the search shows
     or hides *My drawings* / *Others' drawings* on the page. Everything
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
+- **Phone app (Sight Review)** — review pictures and videos on a phone or tablet, offline, without
+  Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
+  Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews
+  made in Safari before installing stay in Safari. *Photo or video* picks from the library / camera
+  roll, *Open a file…* from Files (pictures, videos, or a `.srev` someone sent). Nothing is
+  uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
+  changes it). The picture / video stays on top; on a video, drag left / right across the picture to
+  scrub (as click-drag in Sight: the picture's width is the whole clip; Shift with a mouse = finer),
+  tap it to play / pause; below it: play, ◀ ▶ one frame back / forward,
+  ‹ › previous / next note, the timecode and frame number, and a position bar with the notes
+  marked (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for notes). *+ Note* adds a note — on
+  a video at the frame on screen; *✎ Draw a note* (or tapping the picture → *✎ Draw*) opens the
+  same drawing canvas as the web page (brush with pen pressure, highlighter, arrow, rectangle,
+  ellipse, text, eraser, colours, undo / redo, pinch / pan) on the picture or the paused frame, and the
+  note goes there. Each note has *Reply* (text, pictures, a drawing on its frame, *Mark as In
+  progress / Resolved / Reopen*), *Resolve* / *Reopen*, and ⋯ for *Edit text*, *Edit the drawing*,
+  *Mark in progress*, *Delete*; × deletes a reply. Tap a timecode to go to that frame, a picture to
+  view it full screen (pinch / double-tap to zoom). *Set state* sets the file's review state
+  (Needs review / Changes requested / Approved). The eye hides the drawings on the picture.
+  ⋯ menu: *PDF report* and *Web page (HTML)* — the same content as Sight's PDF report (pictures /
+  frames with the drawings, every note, reply and picture), plain files anyone can open; *Review
+  file for Sight (.srev)* — drag it into Sight to merge everything (Sight finds the file by name and
+  size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger.
+  Opening a `.srev` from Sight makes (or updates) the review of that file; pick the file once to
+  see it. The phone gives the app no lasting access to a picked file: to reopen a review later,
+  pick the same file again, or tap *Keep a copy here* to store it in the app (its size is shown).
+  Notes and their frames stay readable without the file. For a round trip with Sight, open the
+  original from Files (*Open a file…*): the Photos picker hands over a converted copy (HEIC becomes
+  JPEG, video may be re-encoded), whose name / size Sight does not know. Press and hold a review in
+  the list to delete it. When a new version of the app is out, a bar offers *Reload*.
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
   file (see *Versions* above). Also the palette and the review panel's *Compare* button.

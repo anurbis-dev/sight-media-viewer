@@ -61,7 +61,14 @@ separate plan: `docs/PLAN-viewer.md`.
 - The swipe viewer (0.19.3, `zoom(gal, at)`) stays the way pictures are viewed; drawing is a
   separate button/mode, not a gesture in the viewer.
 
-### 3. The app — local review on the device (PWA on GitHub Pages; phones first)
+### 3. The app — local review on the device (PWA on GitHub Pages; phones first) — done in 0.23.0 (see RECENT)
+- Answered 2026-11-12: **images + video only** for now (PSD / PDF pages later); the PDF is made of
+  **pages drawn as pictures** (canvas with the device's fonts, one JPEG per page, own writer) —
+  no bundled font, any script works, text is not selectable.
+- Left to check on a real iPhone / iPad / Android (could not be done in the container): install
+  from Safari, Photos / Files pickers (names, HEIC → JPEG), H.264 / HEVC playback and frame grabs
+  in the hidden `<video>`, Pencil pressure, Web Share *Save to Files*, storage persistence,
+  the update banner.
 - Served from GitHub Pages (a workflow builds and deploys it from this repo); web app manifest +
   Service Worker: installable (*Add to Home Screen* on iOS), works offline, updates on the next
   launch (show "new version — reload"). Built on `review-core.js` (rendering, merge) and the HTML
@@ -130,7 +137,7 @@ separate plan: `docs/PLAN-viewer.md`.
   there. Review from scratch on any file in the folder.
 
 ## Open questions (ask when the stage comes)
-- Stage 3: which formats besides image / video matter on the phone first (PSD? PDF pages?).
+- ~~Stage 3: which formats besides image / video matter on the phone first~~ — answered: none yet.
 - Only if the PWA hits a Safari limit: iOS signing / Apple Developer account for a Capacitor build.
 - Coreline: where it runs (URL), how clients authenticate.
 - CORS on ftrack / ShotGrid → proxy or not; ftrack login flow and the status names on the
