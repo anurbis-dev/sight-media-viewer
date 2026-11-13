@@ -399,8 +399,9 @@ export function createAnnotator(host){
     if (!before || !S.saved.has(id)) serverCreate(S.items.get(id));
     else serverUpdate(id);
   }
-  // A drawing that an undo / redo takes off its note (its note: null again) is not left hanging on its frame:
-  // it goes into S.adopt, which the next note picks up wherever it is (pendingDrawings), as when it was drawn.
+  // A drawing that an undo / redo takes off its note (its note: null again) goes into S.adopt: it counts as part of
+  // the note being made (the compose mode, viewMode), as when it was drawn. (The next note takes it anyway: every
+  // loose drawing goes in, pendingDrawings.)
   function applyStates(states){
     for (const [id, v] of states){
       const had = S.items.has(id);
@@ -1465,9 +1466,14 @@ export function createAnnotator(host){
     const v = tg.items[0].data[p.k];
     return LEN_KEYS.has(p.k) && typeof v === "number" ? v / k() : v;
   }
+  // numDrag: a value is being dragged in the bar. A change to a selected drawing re-renders the bar (commit →
+  // afterChange), which would replace the dragged control and drop its pointer capture — the drag then ended as
+  // soon as the pointer left the field. The bar waits until the drag ends. It holds the dragged control: a control
+  // no longer in the page (the lightbox closed mid-drag) does not hold the bar back.
+  let numDrag = null;
   function renderProps(){
     const el = S.bar?.querySelector(".an-props");
-    if (!el) return;
+    if (!el || numDrag?.isConnected) return;
     const tg = propsTarget();
     let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
     if (tg.items) list = list.filter((p) => !p.create);
@@ -1571,7 +1577,13 @@ export function createAnnotator(host){
       el.setPointerCapture(e.pointerId);
       const x0 = e.clientX, v0 = get();
       let moved = false;
+      numDrag = el;
+      // What the drag changes: the selection (or the tool) it started on. Another one (Esc, Delete, a tool key,
+      // undo mid-drag) ends the drag rather than writing the value into it.
+      const tgKey = () => { const t = propsTarget(); return t.items ? t.items.map((it) => it.id).join() : "tool:" + S.tool; };
+      const key0 = tgKey();
       const mv = (ev) => {
+        if (tgKey() !== key0){ up(); return; }
         const dx = ev.clientX - x0;
         if (!moved && Math.abs(dx) < 3) return;
         moved = true;
@@ -1581,11 +1593,17 @@ export function createAnnotator(host){
         el.removeEventListener("pointermove", mv);
         el.removeEventListener("pointerup", up);
         el.removeEventListener("pointercancel", up);
-        if (!moved) typeNum(el, p, get(), (v) => set(v, false));
+        el.removeEventListener("lostpointercapture", up);
+        if (numDrag !== el) return;  // (pointerup, then lostpointercapture: once)
+        numDrag = null;
+        try { el.releasePointerCapture(e.pointerId); } catch {}
+        if (!moved && tgKey() === key0 && el.isConnected) typeNum(el, p, get(), (v) => set(v, false));
+        else renderProps();
       };
       el.addEventListener("pointermove", mv);
       el.addEventListener("pointerup", up);
       el.addEventListener("pointercancel", up);
+      el.addEventListener("lostpointercapture", up);  // whatever ends the capture ends the drag (numDrag never sticks)
     });
     el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(get(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
     el.addEventListener("contextmenu", (e) => { e.preventDefault(); const dflt = (DEFAULT_STYLES[propsTarget().type] || {})[p.k]; if (dflt != null) set(dflt, false); });
@@ -1736,13 +1754,13 @@ export function createAnnotator(host){
     paintBar();
     if (show) renderPanel();
   }
-  // Drawings a new note picks up: not attached to a note yet and on screen right now.
-  // Drawings waiting for the next note: loose ones shown now, and every loose one drawn since the
-  // file was opened on any frame / view — a note may hold drawings on several frames of a video or
-  // views of a 3D model (each drawing keeps its own ctx).
-  // (Also every drawing an undo / redo took off its note: S.adopt.)
-  const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note
-    && (ctxShown(it) || (it.data.created || 0) >= S.composeSince || S.adopt.has(it.id)));
+  // Drawings a new note picks up: every drawing not attached to a note yet, on any frame / view and from any
+  // time — a note may hold drawings on several frames of a video or views of a 3D model (each keeps its own ctx),
+  // and nothing is left hanging loose: a sketch left from an earlier opening of the file (drawn, never added) or
+  // one an undo took off its note goes into the next note too (0.46.3). The panel's line counts the ones off
+  // screen ("on other frames / views"). (The compose mode still counts only the recent ones: S.composeSince,
+  // S.adopt — an old sketch alone does not keep the picture clean.)
+  const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note);
   function renderPanel(){
     const el = S.ui;
     if (!el || el.hidden) return;
@@ -2436,7 +2454,10 @@ export function createAnnotator(host){
   async function addNote(){
     const inp = S.ui?.querySelector(".an-input"), cin = S.ui?.querySelector(".an-cin");
     const text = (inp?.value || "").trim(), capText = (cin?.value || "").trim();
-    if (!text && !capText && !S.pending.length && !pendingDrawings().length){ toast("Type a note, draw, or take a screenshot first"); return; }
+    // Something of this note must be here: words, a screenshot, or a drawing on screen / just made. Old sketches on
+    // other frames alone do not make an empty note (they go into the next real one).
+    const fresh = (it) => ctxShown(it) || (it.data.created || 0) >= S.composeSince || S.adopt.has(it.id);
+    if (!text && !capText && !S.pending.length && !pendingDrawings().some(fresh)){ toast("Type a note, draw, or take a screenshot first"); return; }
     const ctx = ctxNow(true, true);
     const note = { id: uid(), kind: "note", sub: null, z: 0, data: { text, author: reviewer(), created: Date.now(), status: "open", ctx, shots: S.pending.map((p) => p.id) } };
     // The picture's own text goes to the picture the note is made on (its frame / view / the image).
@@ -2461,7 +2482,7 @@ export function createAnnotator(host){
     if (step) step.added = { text, cap: capText, shots: note.data.shots.slice() };
     S.pending = [];
     for (const it of linked) S.adopt.delete(it.id);
-    S.composeSince = Date.now();  // drawings on other frames from here on go into the next note
+    S.composeSince = Date.now();  // drawings made from here on count as the next note in the making (viewMode)
     S.cleanPic = true;            // the picture goes clean: the drawings are on the new note's card (modeAllows)
     // Leave the field so S / Shift+S / tool keys work again straight away.
     if (inp){ inp.value = ""; inp.style.height = ""; inp.blur(); }

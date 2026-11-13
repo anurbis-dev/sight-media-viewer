@@ -14,6 +14,35 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.46.4 — 2026-11-13 — Annotations: dragging a value of a selected drawing no longer stops at the field's edge
+- **What:** with the select tool (V) and a line / shape / text selected, dragging a number in the bar (Width, Size,
+  Opacity, Radius…) stopped as soon as the pointer left the field. It now goes on until the button is let go, as it
+  did for the tool's own settings (nothing selected).
+- **Where:** `app/static/annotate.js` — `numDrag` (new), `renderProps` (returns while it is set), `bindNum` (sets it on
+  press, clears it and re-renders the bar on pointerup / pointercancel / lostpointercapture).
+- **Notes:** root cause: a change to a selected drawing goes through `commit` → `afterChange` → `renderProps`, which
+  rebuilt the bar's HTML mid-drag; the dragged control was replaced and its pointer capture went with it (the tool's
+  styles path saves without re-rendering, so it never broke there). Checked in Playwright: a rect's Width dragged
+  well outside the field went 4 → 71 (4 → 4.4 before the fix).
+  Review (fresh agent): found the flag could stick for good if the lightbox closed mid-drag (the capture is lost at
+  the document, not the control) — `numDrag` now holds the control and counts only while it is in the page; and that
+  the drag kept writing after the selection changed mid-drag (Esc, Delete, a tool key, undo) — the drag now ends when
+  its target (selection ids or tool) changes, and the bar is re-rendered then instead of opening the typing field.
+
+## 0.46.3 — 2026-11-13 — A new note takes every loose drawing
+- **What:** adding a note now attaches every drawing that has no note yet, whatever frame / view it is on and
+  whenever it was drawn — before, only the loose ones on screen and those drawn since the file was opened. A sketch
+  left from an earlier opening of the file (drawn, never added) no longer hangs on its frame. The owner chose this
+  over a "delete loose drawings" command.
+- **Where:** `app/static/annotate.js` — `pendingDrawings` (just `isDrawing && !data.note`). `MANUAL.md`.
+- **Notes:** the compose mode (clean picture, view chips) still counts only recent loose drawings
+  (`S.composeSince`, `S.adopt`), so an old sketch alone does not keep the picture clean or show the chips; it is
+  still counted in the panel line ("+N drawings (k on other frames)"); an empty Add with only old sketches off
+  screen gives the "Type a note…" toast instead of an empty note. Known: a forgotten old sketch (or a loose row from
+  another reviewer's file, if any) goes into whatever note is added next, under this reviewer's name.
+  Review (fresh agent): no correctness bug; the empty-Add case and two stale comments were fixed. Checked in Playwright (video:
+  stroke on one frame, reload, note on another frame took it, no loose rows left).
+
 ## 0.46.2 — 2026-11-13 — 3D: view numbers show only while a note is made, above its field
 - **What:** the numbered 3D view chips are no longer a row at the top of the review panel. They show only while a
   note is being made (drawing, or typing in its fields), right above the note field, titled *Views of this note*,
@@ -315,39 +344,3 @@ Add new entries directly below this line.
   made at the current amount keeps it. Review 2 (zoom): pinch was lost with `enableZoom` off (fixed: pinch in
   `bind3dZoom`); the modifier check blocked the right-drag in the splat viewer (fixed: only the Ctrl / Shift
   handlers that already stop the event take it); the splat right-drag was not cursor-anchored (fixed).
-
-## 0.41.2 — 2026-11-13 — 3D note pictures are stills: a light change no longer re-renders them
-- **What:** the pictures on a 3D note's card (one per view the note's drawings were made from) were re-rendered
-  every time the shading or the lights changed, so they looked like live mini-viewports. Now each view's
-  picture is taken once and kept; moving the light or switching shading leaves it as it was. The drawings on
-  top are still vector and follow the view as before.
-- **Where:** `app/static/annotate.js` — `view3dPic` (cache key no longer includes the shading; `PIC3` maps the
-  key to the data URL), the comment above it. `docs/ARCHITECTURE.md` (3D pictures), `MANUAL.md` (3D). `app/version.py`.
-- **Notes:** supersedes the 0.40.1 / 0.40.2 decision to re-capture on a shading change. The still is the one
-  made at first use, so it shows the lights the viewer had at that moment, not the note's saved lights; a
-  still made while the light is being dragged keeps that light. Still JPEG ≤640 px at quality 0.85, unchanged.
-  Stills are per session (cleared by `resetPF`), so a reopened review takes them again with the current lights.
-  Explode stays in the key: the first version dropped it with the shading, so a note's still would show the
-  assembled model after the explode slider moved (the drawings were made over exploded parts). Found by a fresh
-  review (correctness; 1 confirmed finding, fixed; camera, asset reset and null-capture paths were checked OK).
-  Not yet checked in a browser: the change was verified by reading the code and a syntax check of annotate.js.
-
-## 0.41.1 — 2026-11-13 — Drawing: round stroke ends, brush circle follows the pen, Alt no longer draws from the centre; 3D light on Shift+right-drag
-- **What:** (1) a brush / pencil stroke's start and end are round caps: they used to bulge into the stroke
-  (a notch at both ends). (2) The brush circle follows the pointer while a stroke is being drawn (it was
-  frozen at the press). (3) With Alt held over a drawing tool the brush circle is hidden (Alt moves the camera).
-  (4) Alt no longer draws shapes from the centre (rectangle / ellipse); Shift still makes a square / circle.
-  (5) The 3D light direction moves with Shift+right-drag (was Alt+left-drag); the info panel's "Rotate all" label
-  says so.
-- **Where:** `app/static/review-core.js` — `strokeOutline` (both cap arcs: sweep flag 0; shared with the phone
-  app and the HTML page). `app/static/annotate.js` — `renderSel` (circle shown while drawing, hidden under Alt;
-  the eraser drag keeps its own circle), `onMove` (stroke branch calls `renderSel`; the Alt shape branch removed),
-  `paintAlt` (redraws the circle), the tool labels. `app/static/index.html` — the light-drag `pointerdown`
-  (`button 2` + `shiftKey`, no ctrl / meta / alt), `lightYaw` comment and the "Rotate all" label.
-  `MANUAL.md` (drawing and 3D). `app/version.py`.
-- **Notes:** the cap test: a stroke rendered in headless Chromium from `primsOf` has ink 6 px past both ends
-  (before the fix: white there, the cap cut inward). The circle test: with pen events the circle stays on the
-  pointer while drawing and is gone while Alt is held. Pressure: a pen stroke with simulated pen pressure
-  (CDP `force`, `pointerType: 'pen'`) is 8 px at 0.95 and 2 px at 0.15, so the drawing path uses pressure when the
-  browser reports a pen. Not changed: a tablet that reports `pointerType: 'mouse'` (its driver in mouse mode)
-  or a brush with the Pressure toggle off draws at constant width by design.

@@ -2,6 +2,42 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.41.2 — 2026-11-13 — 3D note pictures are stills: a light change no longer re-renders them
+- **What:** the pictures on a 3D note's card (one per view the note's drawings were made from) were re-rendered
+  every time the shading or the lights changed, so they looked like live mini-viewports. Now each view's
+  picture is taken once and kept; moving the light or switching shading leaves it as it was. The drawings on
+  top are still vector and follow the view as before.
+- **Where:** `app/static/annotate.js` — `view3dPic` (cache key no longer includes the shading; `PIC3` maps the
+  key to the data URL), the comment above it. `docs/ARCHITECTURE.md` (3D pictures), `MANUAL.md` (3D). `app/version.py`.
+- **Notes:** supersedes the 0.40.1 / 0.40.2 decision to re-capture on a shading change. The still is the one
+  made at first use, so it shows the lights the viewer had at that moment, not the note's saved lights; a
+  still made while the light is being dragged keeps that light. Still JPEG ≤640 px at quality 0.85, unchanged.
+  Stills are per session (cleared by `resetPF`), so a reopened review takes them again with the current lights.
+  Explode stays in the key: the first version dropped it with the shading, so a note's still would show the
+  assembled model after the explode slider moved (the drawings were made over exploded parts). Found by a fresh
+  review (correctness; 1 confirmed finding, fixed; camera, asset reset and null-capture paths were checked OK).
+  Not yet checked in a browser: the change was verified by reading the code and a syntax check of annotate.js.
+
+## 0.41.1 — 2026-11-13 — Drawing: round stroke ends, brush circle follows the pen, Alt no longer draws from the centre; 3D light on Shift+right-drag
+- **What:** (1) a brush / pencil stroke's start and end are round caps: they used to bulge into the stroke
+  (a notch at both ends). (2) The brush circle follows the pointer while a stroke is being drawn (it was
+  frozen at the press). (3) With Alt held over a drawing tool the brush circle is hidden (Alt moves the camera).
+  (4) Alt no longer draws shapes from the centre (rectangle / ellipse); Shift still makes a square / circle.
+  (5) The 3D light direction moves with Shift+right-drag (was Alt+left-drag); the info panel's "Rotate all" label
+  says so.
+- **Where:** `app/static/review-core.js` — `strokeOutline` (both cap arcs: sweep flag 0; shared with the phone
+  app and the HTML page). `app/static/annotate.js` — `renderSel` (circle shown while drawing, hidden under Alt;
+  the eraser drag keeps its own circle), `onMove` (stroke branch calls `renderSel`; the Alt shape branch removed),
+  `paintAlt` (redraws the circle), the tool labels. `app/static/index.html` — the light-drag `pointerdown`
+  (`button 2` + `shiftKey`, no ctrl / meta / alt), `lightYaw` comment and the "Rotate all" label.
+  `MANUAL.md` (drawing and 3D). `app/version.py`.
+- **Notes:** the cap test: a stroke rendered in headless Chromium from `primsOf` has ink 6 px past both ends
+  (before the fix: white there, the cap cut inward). The circle test: with pen events the circle stays on the
+  pointer while drawing and is gone while Alt is held. Pressure: a pen stroke with simulated pen pressure
+  (CDP `force`, `pointerType: 'pen'`) is 8 px at 0.95 and 2 px at 0.15, so the drawing path uses pressure when the
+  browser reports a pen. Not changed: a tablet that reports `pointerType: 'mouse'` (its driver in mouse mode)
+  or a brush with the Pressure toggle off draws at constant width by design.
+
 ## 0.41.0 — 2026-11-13 — 3D views keep the hidden meshes; numbered in the order they were made; note pick shows its drawings while drawing
 - **What:** (1) a view (camera) also records which meshes were hidden (H / Ctrl+H / Alt+H) when it was made;
   a change of hidden meshes starts a new view; going to a view (chip, note click, Go to) shows its meshes as

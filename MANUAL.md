@@ -75,9 +75,10 @@
     `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
     Drawings already added to a note stay editable like any other.
   - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
-    takes the drawings currently on screen that aren't attached to a note yet, plus every loose
-    drawing you made since opening the file on other frames of a video or other views of a 3D
-    model — one note can hold pictures of several frames / views (as vector drawings, shown on a
+    takes every drawing that isn't attached to a note yet — on screen, on other frames of a video or
+    other views of a 3D model, including a sketch left from an earlier opening of the file or one an
+    undo took off its note (the line under the field counts them, "+3 drawings (2 on other frames)"),
+    so no drawing is left hanging — one note can hold pictures of several frames / views (as vector drawings, shown on a
     picture of each frame in its card; click one of the other frames to go to it; the PDF / web page
     show every frame / view). A card's pictures — its frames and screenshots, a reply's too — are
     small equal squares, each cut to fill (as in the phone app), as many to a row as fit; right-drag up
