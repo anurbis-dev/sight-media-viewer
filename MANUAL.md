@@ -111,8 +111,8 @@
     lights, explode and field of view. Orbiting away hides the drawings; the numbered *Views* chips
     at the top of the panel, or a click on the note, bring the camera and settings back. While
     annotating, left-drag on empty space with the select tool orbits.
-  - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots,
-    saved to Downloads and shown in the file manager), *Review file (.srev)* — one file with
+  - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
+    a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager), *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
     (drag it onto the window, the same Export menu → Import, or the palette "Import review file")
     gets the review on the same media file, found by path, else by name and size. Importing
@@ -245,7 +245,8 @@
   iPhone / iPad does not do it; the installed app (Add to Home Screen) is full screen anyway. The eye hides the drawings on the picture. (The file's review state —
   Needs review / Changes requested / Approved — is set in Sight; the app keeps and exports it.)
   ⋯ menu: *PDF report* and *Web page (HTML)* — the same content as Sight's PDF report (pictures /
-  frames with the drawings, every note, reply and picture), plain files anyone can open; *Review
+  frames with the drawings, every note, reply and picture; in the PDF a note's pictures sit side by
+  side in rows), plain files anyone can open; *Review
   file for Sight (.srev)* — drag it into Sight to merge everything (Sight finds the file by name and
   size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, tap a review's
   picture to open it; a tap on the review itself picks it (a tick on the picture; tap again to drop

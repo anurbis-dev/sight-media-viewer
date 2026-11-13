@@ -141,6 +141,33 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
     return f'<img src="{name}" style="width:{width:.0f}pt"/>'
 
 
+def _pic_rows(pics: list, row_h: float, indent: float = 0.0) -> str:
+    """A note's / reply's pictures in rows: each whole, row_h pt high (scaled down when wider than the
+    row), as many to a row as fit, a caption under its picture. pics: [(name, w, h, caption)].
+    PyMuPDF's Story does not wrap a table row, so the rows are packed here."""
+    cw, gap, out, row, used = PAGE[0] - 2 * MARGIN - indent - 2, 6.0, [], [], 0.0
+
+    def flush() -> None:
+        if not row:
+            return
+        cells = "".join(
+            f'<td style="padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
+            + (f'<p class="cap" style="width:{w:.0f}pt;margin:1pt 0 0 0">{html.escape(c)}</p>' if c else "") + "</td>"
+            for n, w, c in row)
+        out.append(f'<table style="border-collapse:collapse;margin:4pt 0 2pt {indent:.0f}pt"><tr>{cells}</tr></table>')
+        row.clear()
+
+    for name, w, h, cap in pics:
+        width = min(cw - gap, row_h * w / h) if w and h else cw - gap
+        if row and used + width + gap > cw:
+            flush()
+            used = 0.0
+        row.append((name, width, cap or ""))
+        used += width + gap
+    flush()
+    return "".join(out)
+
+
 def build_pdf(payload: dict, root: Path, out: Path) -> int:
     """payload: {title, subtitle, meta: [[label, value]], cover, notes: [{num, ctx, author, date,
     text, status (open|progress|done), frame, shots: [id], frameCaption, more: [{frame, caption}] (more
@@ -200,6 +227,21 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
         parts.append(f'<div class="note{" done" if done else ""}"><p class="head">{" &#160; ".join(head)}</p>')
         if n.get("text"):
             parts.append(f'<p class="text">{esc(n["text"])}</p>')
+        # The note's pictures in rows: its frame / view, the other frames / views it was drawn on,
+        # then its screenshots.
+        pics = []
+        frame = put_image(decode_data_url(n.get("frame") or ""))
+        if frame:
+            pics.append((*frame, n.get("frameCaption") or ""))
+        for m in n.get("more") or []:
+            pic = put_image(decode_data_url((m or {}).get("frame") or "")) if isinstance(m, dict) else None
+            if pic:
+                pics.append((*pic, m.get("caption") or ""))
+        for sid in n.get("shots") or []:
+            shot = put_image(shot_bytes(str(sid)))
+            if shot:
+                pics.append((*shot, ""))
+        parts.append(_pic_rows(pics, 92))
         for r in n.get("replies") or []:
             if r.get("event"):  # resolve / in progress / reopen entry in the thread
                 label = EVENT_LABEL.get(r["event"], "Reopened")
@@ -209,25 +251,8 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             who = " &#183; ".join(esc(x) for x in (r.get("author"), r.get("date")) if x)
             text = f"<br/>{esc(r.get('text'))}" if r.get("text") else ""
             parts.append(f'<p class="reply"><span class="who">{who}</span>{text}</p>')
-            for sid in r.get("shots") or []:
-                shot = put_image(shot_bytes(str(sid)))
-                if shot:
-                    parts.append(_img_tag(*shot, max_h=200))
-        frame = put_image(decode_data_url(n.get("frame") or ""))
-        if frame:
-            parts.append(_img_tag(*frame, max_h=300))
-            if n.get("frameCaption"):
-                parts.append(f'<p class="cap">{esc(n["frameCaption"])}</p>')
-        for m in n.get("more") or []:
-            pic = put_image(decode_data_url((m or {}).get("frame") or "")) if isinstance(m, dict) else None
-            if pic:
-                parts.append(_img_tag(*pic, max_h=220))
-                if m.get("caption"):
-                    parts.append(f'<p class="cap">{esc(m["caption"])}</p>')
-        for sid in n.get("shots") or []:
-            shot = put_image(shot_bytes(str(sid)))
-            if shot:
-                parts.append(_img_tag(*shot, max_h=300))
+            rshots = [s for s in (put_image(shot_bytes(str(sid))) for sid in r.get("shots") or []) if s]
+            parts.append(_pic_rows([(*s, "") for s in rshots], 70, indent=16))
         parts.append("</div>")
     story = pymupdf.Story(html="".join(parts), user_css=_PDF_CSS, archive=pymupdf.Archive(tmp))
     mediabox = pymupdf.Rect(0, 0, *PAGE)

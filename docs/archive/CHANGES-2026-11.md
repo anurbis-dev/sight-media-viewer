@@ -2,6 +2,26 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.32.2 — 2026-11-12 — Phone: the pencil right after a scrub opens at once, on the right frame
+- **What:** after a scrub, the pencil (draw) used to come up late and sometimes show a stale frame
+  until the clip was moved or the pencil tapped again. Now the canvas opens at once on the
+  scrubbed frame's cached picture, and the player's own frame replaces it when its seek lands.
+- **Where:** `mobile/js/app.js` — `openDrawVideo` (opens on `rv.frames` / the scrub cache, `early`
+  → `S.settled()`), new `painted(v)` used by `frameNow` / `currentFrame`. Test: `penAfterScrub` in
+  `pwa_touch.cjs`.
+- **Notes:** the root causes: the canvas waited for the last seek (a fast scrub ends on a decode
+  from the keyframe), then grabbed the player right after "seeked" — Safari fires it before the
+  frame is painted, so the grab could be the old frame, and it was cached under the new frame's
+  tag. A grab of a frame not cached yet now waits for a presented frame (rVFC, ≤ 150 ms). Only with
+  no picture at all (nothing cached) does the canvas still wait for the player.
+- **Review (fresh agent):** fixed — the new-note composer's pencil still grabbed the player
+  mid-seek (`currentFrame` now waits for the seek, and grabs again if the player moved while it
+  waited for the paint); `seekTo` moves the canvas before pumping the seek (a same-frame seek
+  settled before the canvas knew the frame); the canvas' own pause on opening a playing clip no
+  longer triggers a second grab (a flicker); the test now opens the canvas while a step's seek is
+  on its way. Left: wrong pictures that older versions cached on a device stay until the review is
+  reopened from a fresh file / deleted; without rVFC (iOS < 15.4) the paint wait is a 60 ms guess.
+
 ## 0.32.1 — 2026-11-12 — One floating bar for the player and the canvas, half see-through
 - **What:** the phone player's header and transport now sit on the same floating bar as the
   drawing canvas' top bar and tool bar (inset 8 px, rounded, blurred, half see-through); the halo

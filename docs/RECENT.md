@@ -14,6 +14,19 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.36.0 — 2026-11-13 — PDF reports: a note's pictures in rows
+- **What:** in both PDF reports (Sight's and the phone app's) a note's pictures — its frame / view
+  with its caption, the other frames / views it was drawn on, its screenshots — sit side by side in
+  rows, each whole, 92 pt high (three 16:9 frames to an A4 row), a small caption under each; a
+  reply's pictures likewise at 70 pt, indented. The cover stays one big picture. A note's pictures
+  now come right under its words, before its replies (as the phone's HTML report already did).
+- **Where:** `app/review.py` `_pic_rows` (one `<table>` per row: PyMuPDF's Story does not wrap a
+  table row, so the rows are packed here) used by `build_pdf`; `mobile/js/report.js` `toPdf` →
+  `rows(list, x0, width, rowH)`.
+- **Notes:** the HTML reports are unchanged (the browser lays them out). Checked by rendering both
+  PDFs to pictures (a note with three frames and a portrait screenshot, a reply with two pictures).
+  Review (fresh agent): results in the next entry if it finds anything.
+
 ## 0.35.5 — 2026-11-13 — Phone viewer: the incoming picture fades in as it slides
 - **What:** in the full-screen viewer the picture coming in now also comes out of transparency
   (0 → 1) while it slides, as the outgoing one fades out — it no longer shows up fully opaque at
@@ -216,23 +229,3 @@ Add new entries directly below this line.
   (≤ 12 small previews per review now, one at a time); a full localStorage lost group changes
   silently (toast); a failed delete skipped the re-render. Left: the update banner covers the
   selection bar while it shows; picked reviews inside a closed group still count.
-
-## 0.32.2 — 2026-11-12 — Phone: the pencil right after a scrub opens at once, on the right frame
-- **What:** after a scrub, the pencil (draw) used to come up late and sometimes show a stale frame
-  until the clip was moved or the pencil tapped again. Now the canvas opens at once on the
-  scrubbed frame's cached picture, and the player's own frame replaces it when its seek lands.
-- **Where:** `mobile/js/app.js` — `openDrawVideo` (opens on `rv.frames` / the scrub cache, `early`
-  → `S.settled()`), new `painted(v)` used by `frameNow` / `currentFrame`. Test: `penAfterScrub` in
-  `pwa_touch.cjs`.
-- **Notes:** the root causes: the canvas waited for the last seek (a fast scrub ends on a decode
-  from the keyframe), then grabbed the player right after "seeked" — Safari fires it before the
-  frame is painted, so the grab could be the old frame, and it was cached under the new frame's
-  tag. A grab of a frame not cached yet now waits for a presented frame (rVFC, ≤ 150 ms). Only with
-  no picture at all (nothing cached) does the canvas still wait for the player.
-- **Review (fresh agent):** fixed — the new-note composer's pencil still grabbed the player
-  mid-seek (`currentFrame` now waits for the seek, and grabs again if the player moved while it
-  waited for the paint); `seekTo` moves the canvas before pumping the seek (a same-frame seek
-  settled before the canvas knew the frame); the canvas' own pause on opening a playing clip no
-  longer triggers a second grab (a flicker); the test now opens the canvas while a step's seek is
-  on its way. Left: wrong pictures that older versions cached on a device stay until the review is
-  reopened from a fresh file / deleted; without rVFC (iOS < 15.4) the paint wait is a 60 ms guess.

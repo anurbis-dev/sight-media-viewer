@@ -266,6 +266,45 @@ export async function toPdf(p){
       if (im.close) im.close();
     });
   };
+  // A note's / reply's pictures in rows (as compact as Sight's report): each whole, ROW_H high (a
+  // picture too wide for the row is scaled down to fit), as many to a row as fit; a caption under
+  // its picture. list: [{pic, cap}].
+  const rows = (list, x0, width, rowH) => {
+    const items = list.filter((x) => x && x.pic && x.pic.w && x.pic.h).map((x) => {
+      const w = Math.min(width, rowH * x.pic.w / x.pic.h);
+      return { pic: x.pic, cap: x.cap || "", w, h: w * x.pic.h / x.pic.w };
+    });
+    const GAP = 6;
+    let row = [];
+    const flush = () => {
+      if (!row.length) return;
+      const r = row, capH = r.some((x) => x.cap) ? 10 : 0, h = Math.max(...r.map((x) => x.h));
+      gap(4);
+      add(h + capH + 2, async (g, yy) => {
+        let x = x0;
+        for (const it of r){
+          const im = await decode(it.pic.blob);
+          g.drawImage(im, x, yy, it.w, it.h);
+          if (im.close) im.close();
+          if (it.cap){
+            g.font = font({ size: 7 }); g.fillStyle = C.cap; g.textBaseline = "alphabetic";
+            let t = it.cap;
+            while (t.length > 1 && measure({ size: 7 }, t) > it.w) t = t.slice(0, -2) + "…";
+            g.fillText(t, x, yy + h + 8);
+          }
+          x += it.w + GAP;
+        }
+      });
+      row = [];
+    };
+    let used = 0;
+    for (const it of items){
+      if (row.length && used + GAP + it.w > width){ flush(); used = 0; }
+      used += (row.length ? GAP : 0) + it.w;
+      row.push(it);
+    }
+    flush();
+  };
   textLines([{ text: p.title, size: 17, bold: true }], M, CW); gap(2);
   if (p.subtitle){ textLines([{ text: p.subtitle, size: 8.5, color: C.muted }], M, CW); gap(6); }
   const meta = p.meta.filter((m) => m[1] !== "" && m[1] != null);
@@ -287,6 +326,8 @@ export async function toPdf(p){
     else if (n.status === "progress") head.push({ text: "   In progress", size: 9, bold: true, color: C.amber });
     textLines(head, M, CW); gap(3);
     if (n.text){ textLines([{ text: n.text, size: 10.5, strike: done, color: done ? C.muted : C.fg }], M, CW); gap(4); }
+    // Its pictures right under its words (as the HTML report), then the thread.
+    rows([{ pic: n.frame, cap: n.frameCaption }].concat(n.shots.map((s) => ({ pic: s }))), M, CW, 92);
     for (const r of n.replies){
       if (r.event){
         textLines([{ text: (EVENT_LABEL[r.event] || "Reopened") + (r.author ? " by " + r.author : "") + " · " + r.date, size: 8.5, color: C.muted }], M + 16, CW - 16, { bar: true });
@@ -295,14 +336,9 @@ export async function toPdf(p){
       const runs = [{ text: [r.author, r.date].filter(Boolean).join(" · "), size: 8.5, color: C.muted }];
       if (r.text) runs.push({ text: "\n" + r.text, size: 9.5 });
       textLines(runs, M + 16, CW - 16, { bar: true });
-      for (const s of r.shots) image(s, M + 16, CW - 16, 200);
+      rows(r.shots.map((s) => ({ pic: s })), M + 16, CW - 16, 70);
       gap(4);
     }
-    if (n.frame){
-      image(n.frame, M, CW, 300);
-      if (n.frameCaption) textLines([{ text: n.frameCaption, size: 7.5, color: C.cap }], M, CW);
-    }
-    for (const s of n.shots) image(s, M, CW, 300);
   }
   // Render: one JPEG per page.
   const total = pages.length, jpegs = [];
