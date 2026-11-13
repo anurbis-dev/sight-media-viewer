@@ -363,7 +363,9 @@ entry `clean: true` — the drawings are on the note pictures); a note id = pict
 or reply, and opens turned / mirrored as last left (localStorage `sight-review:view:<asset id>`); drafts keep `{frame, items}`; sending turns them
 into rows in `E.rows` (localStorage) with `data.note`, `data.reply` (a reply) and the frame's ctx
 (`drawCtx`: video `{t, hold}` of the note, 3D `{vk, cam}`); a new note drawn on a frame takes that
-note's whole ctx. *Download reply* merges `E.rows` like any other row (`RC.mergeRows`). Drawing on
+note's whole ctx. *Download reply* merges `E.rows` like any other row (`RC.mergeRows`). *Download page* (`downloadPage`)
+writes the page back: `ORIG` (the page's markup, captured before any script ran) with the data block replaced by
+`{report, package, edits: E, copy}`; the copy starts from `D.edits` and keeps its own localStorage key (`D.copy`). Drawing on
 an attachment is flattened into a new JPEG attachment (`drawFlat`): attachments have no doc space.
 
 **Rendering** — every object becomes primitives (`primsOf`) that both the SVG overlay (`primSvg`) and

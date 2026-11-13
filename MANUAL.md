@@ -165,7 +165,9 @@
     an attached picture in the field (or *✎ Draw* on an attachment in the viewer) to draw over a
     copy of it instead — that one is sent as a flat picture. The pencil next to the search shows
     or hides *My drawings* / *Others' drawings* on the page. Everything
-    stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
+    stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Download page*
+    saves the same page with your changes in it (it opens in any browser, with the replies, notes and drawings
+    already there, and can be answered and downloaded again); Sight does not import that file — send the `.srev` back for that. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
 - **Phone app (Sight Review)** — review pictures and videos on a phone or tablet, offline, without
   Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews

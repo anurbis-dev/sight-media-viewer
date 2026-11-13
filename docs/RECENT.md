@@ -14,6 +14,27 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.44.0 — 2026-11-13 — Reviewer page: *Download page* saves the page with your changes
+- **What:** the reviewer page (Web page for reviewers) has a *Download page* button next to *Download reply*. It
+  saves the same page with this reviewer's replies, pictures, drawings, state changes and new notes already in it.
+  The copy opens in any browser with those edits in place and can be answered and downloaded again. *Download reply*
+  (.srev) is unchanged and is still what Sight imports.
+- **Where:** `app/review.py` (`_HTML_TEMPLATE`: `ORIG` / `DATA_TEXT` captured at the start of the script, `D.edits`,
+  `D.copy` in `KEY`, `replyPackage()` split out of `download()`, `saveBlob`, `downloadPage()`, the `#dlpage` button
+  in the foot, the status text in `render()`). `tests/page_e2e.cjs` (optional 4th argument: the copy; the copy is
+  reopened, must show the reply, its two pictures and the new note, and its .srev merges with nothing added).
+  `tests/test_review_page.py`. `MANUAL.md`, `docs/ARCHITECTURE.md`. `app/version.py`.
+- **Notes:** the copy is a snapshot of the reviewer's local edits, not of the owner's package: the package and report
+  inside stay as exported, so the copy's *Download reply* still merges by ids (a second copy is no duplicate).
+  Each copy gets a new `copy` id, so copies do not share localStorage with the page they came from. The copy's
+  "From" line is the original sender. Sight cannot import the `.html` — a deliberate gap; import the `.srev`.
+  The data block is replaced as a literal string (the first match is the block; `<` is escaped as `\u003c` as in
+  `build_html`). Not checked at phone width (the foot now has three buttons).
+  Review (fresh agent): no confirmed bugs. Checked: the raw-string escape of `<`, `ORIG` taken before any DOM change,
+  `$` patterns in the replace (function replacer), PKG never mutated, re-download idempotent, the .srev unchanged,
+  original page KEY unchanged, Discard on a copy stays empty after reload. Dropped drafts are not in the copy (as in
+  Download reply); stale attachments in E.att are embedded but filtered out by the reply.
+
 ## 0.43.1 — 2026-11-13 — Review panel scrolls with middle-drag like the other lightbox panels
 - **What:** the review (annotation) panel's note list scrolls by middle-drag, as the info, PSD, 3D and frame
   panels already do; the wheel still scrolls it natively.
@@ -263,33 +284,3 @@ Add new entries directly below this line.
 - **Notes:** the pending line shows no view label while the camera is off every recorded view (it used to
   show the next number). Checked with Playwright on a GLB: an orbit leaves the chips unchanged; one brush
   stroke adds exactly one view.
-
-## 0.37.0 — 2026-11-13 — Desktop review fixes: report names and frame numbers, previews, 3D errors, usd-core install
-- **What:** (1) Phone review app on a desktop: a mouse right-click (and Ctrl-click on a Mac) is the browser's
-  own menu. The card's menu and the speed / sound controls no longer take it; a touch or pen long press
-  still opens the app's menu. (2) PDF and web-page reports name each video frame "<file> · frame N" and burn
-  "frame N" into its top-left corner (N = the number the panel shows as "f N"); a 3D view is "<file> · View N",
-  an image note "<file>". (3) Note previews of video frames: the hidden preview player is in the document, a
-  seek counts only when the player sits on the wanted time with its seek over, a frame not decoded yet is asked
-  again (three tries), and a player that fails to load is dropped and made again. (4) A 3D model that fails to
-  load shows "<ext> — could not open: <reason>" and stops its render loop (it no longer stays in the loading
-  state). A .usdz that cannot open says why: the USD library is missing (a source run prints the pip command),
-  the file is gone from disk, or it did not convert. (5) Sight.py: the first-run install of usd-core goes
-  through the runtime's own pip when uv is absent, and a failed install is logged with its last error line.
-- **Where:** `app/static/annotate.js` (`gatherReport` + `frameNo` / `frameTitle` / `viewTitle` / `bakeFrame`;
-  `pfLoad`, `pfSeek`, `pumpPF`, `resetPF`); `app/static/index.html` (`fetchBufferWithProgress` throws the
-  server's detail, `loadModel` usdz branch, `boot3d` catch); `app/server.py` (`usdz_problem(a)` as the 404
-  detail of `/api/model-glb/{aid}`, `import sys`, `importlib.util`); `Sight.py` (bootstrap usd-core install);
-  `mobile/js/app.js` (card `contextmenu`, `vdrag`); `MANUAL.md` (export captions); `app/version.py`.
-- **Notes:** not reproduced on Linux Chromium, so no change was made for: the notes panel disappearing when
-  annotating (A / the button / 3D Shift+A all keep it), a drawing covered by the frame while drawing, and the
-  Mac marquee. The preview changes are written for WebKit (the video in the document; the position check),
-  not checked on macOS. FBX display is NOT changed: the reported FBX problem is still open (the loader waits up
-  to 20 s for textures before the model is shown; no FBX sample was available here). Runtimes made before this
-  version (their `.deps-v4` marker is set) do not retry usd-core: `python -m pip install usd-core` in the
-  runtime. The draw canvas (RMB zoom) still blocks the browser menu on a right-drag, because on a Mac the menu
-  opens at press. The phone's own PDF captions (`mobile/js/report.js`) are unchanged. Review (four fresh
-  agents, one per block): fixed the keyboard menu key being taken by the card menu, the PDF label scale after
-  a downscaled frame, a seek timeout caching the old picture, the usdz reason for a missing file, and the
-  dead `null` branch; the notes that the loading state was not endless at HEAD (an outer catch existed) are
-  reflected in the wording above.

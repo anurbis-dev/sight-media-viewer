@@ -76,7 +76,8 @@ class PageRoundTrip(unittest.TestCase):
         page = tmp / "page.html"
         page.write_text(review.build_html(report, pkg), encoding="utf-8")
         out = tmp / "reply.srev"
-        r = subprocess.run([NODE, str(ROOT / "tests" / "page_e2e.cjs"), str(page), str(out), str(att)],
+        copy = tmp / "page copy.html"
+        r = subprocess.run([NODE, str(ROOT / "tests" / "page_e2e.cjs"), str(page), str(out), str(att), str(copy)],
                            capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
         self.assertEqual(r.returncode, 0, r.stderr[-4000:])
         res = json.loads(r.stdout)
@@ -84,6 +85,10 @@ class PageRoundTrip(unittest.TestCase):
         self.assertEqual(res["coverOverlay"], 0)   # the picture on top is the original
         self.assertEqual(res["canvasBase"], 0)     # new notes / replies are drawn on the clean picture
         self.assertEqual(res["replyPics"], 2)      # the attached picture and the drawing
+        # The downloaded page opens with the same edits: the reply, its two pictures, the new note.
+        self.assertEqual(res["copyReplies"], res["replyCount"])
+        self.assertEqual(res["copyNew"], 1)
+        self.assertEqual(res["copyReplyPics"], 2)
 
         got, stats = sight_import(lib, out.read_bytes())
         self.assertEqual(got["id"], a["id"])
@@ -106,6 +111,8 @@ class PageRoundTrip(unittest.TestCase):
         self.assertIn(rep["shots"][0], pkg2["shots"])
         # Merging the same reply again changes nothing.
         self.assertEqual(sight_import(lib, out.read_bytes())[1]["added"], 0)
+        # The reply file sent from the downloaded page merges the same way.
+        self.assertEqual(sight_import(lib, Path(str(copy) + ".srev").read_bytes())[1]["added"], 0)
 
 
 if __name__ == "__main__":

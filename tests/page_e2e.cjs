@@ -1,10 +1,12 @@
 // Drives the HTML reviewer page (review.build_html) in headless Chromium: the reviewer replies to
 // the note with text, a picture and a drawing, resolves it, adds a new note drawn on the picture,
 // and downloads the reply file. Called by tests/test_review_page.py.
-//   node tests/page_e2e.cjs <page.html> <out.srev> <picture>
+//   node tests/page_e2e.cjs <page.html> <out.srev> <picture> [copy.html]
+// With copy.html, also "Download page": the copy is opened again, must show the same replies and
+// new note, and its own reply file is written to <copy.html>.srev.
 "use strict";
 const { chromium } = require("playwright");
-const [page, out, picture] = process.argv.slice(2);
+const [page, out, picture, copyOut] = process.argv.slice(2);
 (async () => {
   const b = await chromium.launch();
   const ctx = await b.newContext({ viewport: { width: 900, height: 1000 }, acceptDownloads: true });
@@ -50,6 +52,20 @@ const [page, out, picture] = process.argv.slice(2);
   res.replyPics = await p.evaluate(() => [...document.querySelectorAll(".rep.mine .shots img, .rep.mine .fw img")].length);
   const [dl] = await Promise.all([p.waitForEvent("download"), p.click("#dl")]);
   await dl.saveAs(out);
+  if (copyOut){
+    res.replyCount = await p.locator(".rep.mine").count();
+    const [pg] = await Promise.all([p.waitForEvent("download"), p.click("#dlpage")]);
+    await pg.saveAs(copyOut);
+    const c = await ctx.newPage();
+    c.on("pageerror", (e) => log.push("copy pageerror: " + e.message));
+    await c.goto("file://" + copyOut);
+    if (await c.locator("#gate").isVisible()){ await c.fill("#gname", "Page Tester"); await c.click('#gform button[type="submit"]'); }
+    res.copyReplies = await c.locator(".rep.mine").count();
+    res.copyNew = await c.locator('.note:has-text("New from the page")').count();
+    res.copyReplyPics = await c.evaluate(() => [...document.querySelectorAll(".rep.mine .shots img, .rep.mine .fw img")].length);
+    const [cd] = await Promise.all([c.waitForEvent("download"), c.click("#dl")]);
+    await cd.saveAs(copyOut + ".srev");
+  }
   res.log = log;
   process.stdout.write(JSON.stringify(res));
   await b.close();

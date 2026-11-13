@@ -554,7 +554,7 @@ body.zoomed { overflow: hidden; }
 <input class="q" id="q" type="search" placeholder="Search notes" hidden>
 </div></header>
 <main id="app"></main>
-<div class="foot"><div><button class="add" id="add" type="button" title="New note" aria-label="New note"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><span id="status"></span><button class="btn" id="reset" type="button">Discard</button><button class="btn primary" id="dl" type="button">Download reply</button></div></div>
+<div class="foot"><div><button class="add" id="add" type="button" title="New note" aria-label="New note"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><span id="status"></span><button class="btn" id="reset" type="button">Discard</button><button class="btn" id="dlpage" type="button" title="This page with your changes: opens in any browser and can be answered and downloaded again">Download page</button><button class="btn primary" id="dl" type="button">Download reply</button></div></div>
 <div class="gate" id="gate" hidden><form class="sheet" id="gform"><h2>Who is reviewing?</h2><p>Your name goes on every reply, picture and status change you make on this page.</p><input id="gname" autocomplete="name" placeholder="Your name" maxlength="80" required><div class="acts"><button class="btn" id="gcancel" type="button">Cancel</button><button class="btn primary" type="submit">Continue</button></div></form></div>
 <script id="data" type="application/json">%%DATA%%</script>
 <script>
@@ -567,9 +567,14 @@ body.zoomed { overflow: hidden; }
 (function(){
   "use strict";
   var RC = window.SightReviewCore;  // review-core.js, inlined above: merge rules + drawing primitives
-  var D = JSON.parse(document.getElementById("data").textContent);
+  // The page as it was served, before any script ran, and its data block as text: "Download page"
+  // writes the page back with the reviewer's edits in place of the data block (downloadPage).
+  var ORIG = "<!doctype html>\n" + document.documentElement.outerHTML;
+  var DATA_TEXT = document.getElementById("data").textContent;
+  var D = JSON.parse(DATA_TEXT);
   var R = D.report, PKG = D.package;
-  var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at;
+  // A downloaded page (D.copy) keeps its own local state, apart from the page it was made from.
+  var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at + (D.copy ? ":" + D.copy : "");
   var rows = {};
   PKG.annotations.forEach(function(r){ rows[r.id] = r; });
   // Local edits, kept in localStorage until downloaded: {replies: {noteId: [entry]}, notes: [note],
@@ -579,7 +584,10 @@ body.zoomed { overflow: hidden; }
   // change, else the exported one. A new note is {id, text, author, created, shots, frame?, ctx?}
   // (frame: the picture its drawing was made on, ctx: that picture's place in the media). `rows`
   // are the drawings made on this page, as FORMAT.md rows (data.note, data.reply on a reply, ctx).
+  // A page made by "Download page" starts with the edits it was made with (D.edits); its own local
+  // state, once there is one, is newer and wins.
   var E = { replies: {}, notes: [], att: {}, rows: [] };
+  if (D.edits && D.edits.replies) E = D.edits;
   try { var saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.replies) E = saved; } catch (e) {}
   E.att = E.att || {}; E.rows = E.rows || [];
   var filter = "all", query = "", searchOn = false;
@@ -1149,7 +1157,7 @@ body.zoomed { overflow: hidden; }
       if (newOpen === "focus") focusLater("+new", function(){ newOpen = true; });
     }
     document.getElementById("add").classList.toggle("on", !!newOpen);
-    app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight."));
+    app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight. Download the page to keep it with your changes (it opens in any browser)."));
     renderList();
     paintFoot(); paintSeg(); paintShow();
     window.scrollTo(0, keepY);
@@ -1208,6 +1216,7 @@ body.zoomed { overflow: hidden; }
     var n = changes();
     document.getElementById("status").textContent = n ? n + " change" + (n > 1 ? "s" : "") : "No changes yet";
     document.getElementById("dl").disabled = !n;
+    document.getElementById("dlpage").disabled = !n;
     document.getElementById("reset").hidden = !n;
   }
   // The reply file is the exported package with this page's edits merged in by the shared rules
@@ -1215,7 +1224,7 @@ body.zoomed { overflow: hidden; }
   // unioned into their notes, the state goes by status_at, new notes and drawings are added. The
   // note's own content stamp (edited_at / created) is untouched, so answering never makes this
   // copy of the note's text win over edits made in Sight since.
-  function download(){
+  function replyPackage(){
     var now = Date.now(), used = {};
     var out = JSON.parse(JSON.stringify(PKG));
     out.author = who; out.exported_at = now; out.app = (PKG.app || "Sight") + " (web reply)";
@@ -1248,12 +1257,27 @@ body.zoomed { overflow: hidden; }
       if (o.kind === "note" && Object.prototype.hasOwnProperty.call(was, o.id)) o.updated_at = was[o.id];
       return o;
     });
-    var name = ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "") + ".srev";
-    var blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+    return out;
+  }
+  function baseName(){
+    return ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "");
+  }
+  function saveBlob(blob, name){
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = name.replace(/[\\/:*?"<>|]+/g, "_");
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  }
+  function download(){
+    saveBlob(new Blob([JSON.stringify(replyPackage())], { type: "application/json" }), baseName() + ".srev");
+  }
+  // The same page, with this reviewer's edits in it: the data block gets the report, the original
+  // package and the edits (E). The copy opens with them as its starting state and keeps its own
+  // local state after that (KEY, D.copy), so it can be answered and downloaded again. Sight does not
+  // read this file: the reply to send back is still the .srev (Download reply).
+  function downloadPage(){
+    var json = JSON.stringify({ report: R, package: PKG, edits: E, copy: uid() }).replace(/</g, "\\u003c");
+    saveBlob(new Blob([ORIG.replace(DATA_TEXT, function(){ return json; })], { type: "text/html" }), baseName() + ".html");
   }
   function header(){
     document.getElementById("ttl").textContent = R.title || "Review";
@@ -1310,6 +1334,7 @@ body.zoomed { overflow: hidden; }
   header();
   paintMe();
   document.getElementById("dl").onclick = download;
+  document.getElementById("dlpage").onclick = downloadPage;
   // The new-note form shows only after the + in the bottom bar (one at a time; + again jumps to it).
   document.getElementById("add").onclick = function(){ opening = "+new"; newOpen = "focus"; render(); };
   // An empty field (no text, picture, drawing or state) is a cancel: a tap anywhere else closes
