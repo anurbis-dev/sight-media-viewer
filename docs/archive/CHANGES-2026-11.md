@@ -2,6 +2,57 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.33.0 — 2026-11-12 — Phone: strip viewer, square note pictures, filters by swipe, text switches, home selection and moves between groups
+- **What:** (1) Note viewer: a swipe sends the picture on the way it went, fading out, and the
+  next follows it in like a strip (sideways = the note's pictures, up / down = notes). (2) Notes
+  list: a swipe left / right steps the status filter. (3) A note's / reply's pictures are one grid
+  of equal squares, cut to fill (Settings → *Pictures in a row*, 3–6, default 4). (4) Bug: a
+  reply's drawing showed on the note's own picture — now only on the reply's. (5) Transport:
+  "25 fps", the rate and the speaker a little apart from the timecode. (6) The turn-90° button is
+  gone everywhere (phone header, the canvas on phone + HTML page, Sight's lightbox — Shift+R stays
+  there); the header's view icons sit in the middle, *Fit* at the right end. (7) Canvas: the slot
+  rows have the bars' see-through look; the *Text* slot has switches — bold, italic, underline,
+  box, outline, alignment, font. (8) Home: a tap on a review picks it (tick), its picture opens it;
+  the bar at the foot moves (*Move to…*: a group / a new group / out), hides or deletes the picked
+  ones; any review — also one in a group — dropped onto another group's header or member moves
+  there (picked ones go along); a group's row counts every state; *Picture…* gives a group one of
+  its reviews' pictures / cached frames or a colour. (9) Bug: right after a swipe back from a
+  review, the next tap on a review did not open it — home taps now act on pointerup.
+- **Where:** `mobile/js/app.js` — `viewer` (`show(no, slide)`, `navigate`), `FILTERS` /
+  `stepFilter` / `bindPanelPull`, `picBox` (overlay `cover` = slice), `shotThumbs(…, into)`,
+  `noteCard` / `replyEntry` (`.pics`), `THUMBS` / `setThumbs`, `drawingsOn` (no reply rows for
+  the note), `paintRate` (`<small>fps`), `viewOf` (rot 0), `buildStage` (`.fitb`); home:
+  `homeSel` / `toggleSel` / `paintSelBar`, `moveInto` / `groupKeys` / `takeOut` / `moveMenu`,
+  `groupThumbSheet`, `groupHead`, `rowGestures` (`tapAct`, `st.targets`), `deleteReviews`,
+  `reviewNames`. `mobile/index.html` (`.pics`, `.selbar`, `.gcols` / `.gpics`, `.th.tint`, `.row.sel`,
+  `.th.four` fixed: its pictures were zero-sized). `app/static/review-draw.js` (`TEXT_OPTS`,
+  `textOpt` / `putText` / `paintTextFly` / `styleOf`, `.dfly.rd-panel`, turn button removed,
+  `afterView`). `app/review.py` (stored turn dropped), `app/static/index.html` (`#turnBtn` gone).
+  Tests: `pwa_touch.cjs` / `test_pwa.py` (`filterSwipe`, `pics`, `replyOffNote`, `viewerFade`
+  strip, `textFly`, `reopen`, `between`, `groupSum`, `pick`, `groupPic`), `pwa_e2e.cjs` opens
+  reviews by their picture.
+- **Notes:** a picked review stays picked across renders until opened / moved / hidden / deleted
+  (pruned when gone). Groups dissolve under two members at the next render, as before (`tidyGroups`).
+  The group picture is stored in the group (localStorage, a ≤ 200 px data URL). The phone and the
+  HTML page drop a quarter turn stored by an older version (mirror kept); a two-finger turn is
+  still the view's own. A new text's outline is 6 % of its size. (The phone report: 0.33.1.)
+- **Review (fresh agents):** viewer / notes / turn — no bugs; fixed: the report of an empty
+  picture grid (hidden when nothing loads), the view icons jumping when *Fit* came and went, a
+  test selector that could hit an attached picture. Canvas text — no bugs; fixed: a switch during
+  a selection hold lost its change (stopAdj first), the field lost the focus to the row's buttons
+  (keyboard bouncing; a resize folded the row), the row not repainted after undo, the field's
+  preview of centred / right text, outline and box colour, Impact not in the font cycle, test
+  pen state. Home — fixed: a review dragged while *not* picked took every picked one along; a
+  touch that stopped a fling picked / opened a review (a scroll within 150 ms or the page moved:
+  no tap); the click a pointerup-tap ends with could land on the selection bar it just brought up
+  (*Hide* at once) — eaten once, document-wide (`ghostUntil`, armed only by a pointer tap, not a
+  keyboard click); new groups / *Move to…* use the list's order, not the tap order; *Take out* of
+  several kept their order; an empty *Move to…* sheet (a toast now); a review's own *Move to…*
+  cleared an unrelated selection; the group-picture sheet decoded every cached 1600 px frame
+  (≤ 12 small previews per review now, one at a time); a full localStorage lost group changes
+  silently (toast); a failed delete skipped the re-render. Left: the update banner covers the
+  selection bar while it shows; picked reviews inside a closed group still count.
+
 ## 0.32.2 — 2026-11-12 — Phone: the pencil right after a scrub opens at once, on the right frame
 - **What:** after a scrub, the pencil (draw) used to come up late and sometimes show a stale frame
   until the clip was moved or the pencil tapped again. Now the canvas opens at once on the

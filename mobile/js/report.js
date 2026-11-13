@@ -276,22 +276,31 @@ export async function toPdf(p){
     });
     const GAP = 6;
     let row = [];
+    // A caption in at most two lines of its picture's width (split at words, the rest cut with "…").
+    const capLines = (text, w) => {
+      const fits = (t) => measure({ size: 7 }, t) <= w, cut = (t) => { while (t.length > 1 && !fits(t)) t = t.slice(0, -2) + "…"; return t; };
+      if (fits(text)) return [text];
+      const words = text.split(" ");
+      let a = "";
+      while (words.length && fits((a ? a + " " : "") + words[0])) a += (a ? " " : "") + words.shift();
+      if (!a) return [cut(text)];
+      return [a, cut(words.join(" "))].filter(Boolean);
+    };
     const flush = () => {
       if (!row.length) return;
-      const r = row, capH = r.some((x) => x.cap) ? 10 : 0, h = Math.max(...r.map((x) => x.h));
+      const r = row;
+      r.forEach((it) => { it.lines = it.cap ? capLines(it.cap, it.w) : []; });
+      // The row's height: the tallest picture with its caption under it.
+      const h = Math.max(...r.map((x) => x.h + (x.lines.length ? 1 + x.lines.length * 8.5 : 0)));
       gap(4);
-      add(h + capH + 2, async (g, yy) => {
+      add(h + 2, async (g, yy) => {
         let x = x0;
         for (const it of r){
           const im = await decode(it.pic.blob);
           g.drawImage(im, x, yy, it.w, it.h);
           if (im.close) im.close();
-          if (it.cap){
-            g.font = font({ size: 7 }); g.fillStyle = C.cap; g.textBaseline = "alphabetic";
-            let t = it.cap;
-            while (t.length > 1 && measure({ size: 7 }, t) > it.w) t = t.slice(0, -2) + "…";
-            g.fillText(t, x, yy + h + 8);
-          }
+          g.font = font({ size: 7 }); g.fillStyle = C.cap; g.textBaseline = "alphabetic";
+          it.lines.forEach((ln, i) => g.fillText(ln, x, yy + it.h + 8 + i * 8.5));  // right under its own picture
           x += it.w + GAP;
         }
       });
@@ -327,7 +336,7 @@ export async function toPdf(p){
     textLines(head, M, CW); gap(3);
     if (n.text){ textLines([{ text: n.text, size: 10.5, strike: done, color: done ? C.muted : C.fg }], M, CW); gap(4); }
     // Its pictures right under its words (as the HTML report), then the thread.
-    rows([{ pic: n.frame, cap: n.frameCaption }].concat(n.shots.map((s) => ({ pic: s }))), M, CW, 92);
+    rows([{ pic: n.frame, cap: n.frameCaption }].concat(n.shots.map((s) => ({ pic: s }))), M, CW, 90);
     for (const r of n.replies){
       if (r.event){
         textLines([{ text: (EVENT_LABEL[r.event] || "Reopened") + (r.author ? " by " + r.author : "") + " · " + r.date, size: 8.5, color: C.muted }], M + 16, CW - 16, { bar: true });

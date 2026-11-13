@@ -14,10 +14,21 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.36.1 — 2026-11-13 — PDF rows: within the text column; captions in two lines under their picture
+- **What:** fixes from the fresh-agent review of 0.36.0. Sight's PDF: rows (and the cover, as
+  before) ran ~11 pt past the text column into the right margin — PyMuPDF's Story lays content
+  out in x ≈ 50..545, so pictures are sized to `CONTENT_W` = 495 pt (each cell's width set: a
+  caption no longer widens a narrow picture's cell); the row height is 90 pt (three 16:9 frames
+  still fit); a caption that is not a string no longer breaks the export. Phone PDF: a caption
+  under a narrow (portrait) picture wraps to two lines instead of being cut to "Frame 1…", and
+  sits right under its own picture (not at the row's tallest).
+- **Where:** `app/review.py` (`CONTENT_W`, `_img_tag`, `_pic_rows`), `mobile/js/report.js`
+  (`rows` → `capLines`). Checked by rendering both PDFs (portrait frames with captions, 9 pictures).
+
 ## 0.36.0 — 2026-11-13 — PDF reports: a note's pictures in rows
 - **What:** in both PDF reports (Sight's and the phone app's) a note's pictures — its frame / view
   with its caption, the other frames / views it was drawn on, its screenshots — sit side by side in
-  rows, each whole, 92 pt high (three 16:9 frames to an A4 row), a small caption under each; a
+  rows, each whole, 90 pt high (three 16:9 frames to an A4 row), a small caption under each; a
   reply's pictures likewise at 70 pt, indented. The cover stays one big picture. A note's pictures
   now come right under its words, before its replies (as the phone's HTML report already did).
 - **Where:** `app/review.py` `_pic_rows` (one `<table>` per row: PyMuPDF's Story does not wrap a
@@ -25,7 +36,7 @@ Add new entries directly below this line.
   `rows(list, x0, width, rowH)`.
 - **Notes:** the HTML reports are unchanged (the browser lays them out). Checked by rendering both
   PDFs to pictures (a note with three frames and a portrait screenshot, a reply with two pictures).
-  Review (fresh agent): results in the next entry if it finds anything.
+  Review (fresh agent): fixes in 0.36.1.
 
 ## 0.35.5 — 2026-11-13 — Phone viewer: the incoming picture fades in as it slides
 - **What:** in the full-screen viewer the picture coming in now also comes out of transparency
@@ -178,54 +189,3 @@ Add new entries directly below this line.
 - **Notes:** the cover of a picture review still shows every drawing. Sight's own PDF / HTML
   report is unchanged: it has no reply pictures, so it still shows replies' drawings on the note's
   frame (dropping them there would lose them).
-
-## 0.33.0 — 2026-11-12 — Phone: strip viewer, square note pictures, filters by swipe, text switches, home selection and moves between groups
-- **What:** (1) Note viewer: a swipe sends the picture on the way it went, fading out, and the
-  next follows it in like a strip (sideways = the note's pictures, up / down = notes). (2) Notes
-  list: a swipe left / right steps the status filter. (3) A note's / reply's pictures are one grid
-  of equal squares, cut to fill (Settings → *Pictures in a row*, 3–6, default 4). (4) Bug: a
-  reply's drawing showed on the note's own picture — now only on the reply's. (5) Transport:
-  "25 fps", the rate and the speaker a little apart from the timecode. (6) The turn-90° button is
-  gone everywhere (phone header, the canvas on phone + HTML page, Sight's lightbox — Shift+R stays
-  there); the header's view icons sit in the middle, *Fit* at the right end. (7) Canvas: the slot
-  rows have the bars' see-through look; the *Text* slot has switches — bold, italic, underline,
-  box, outline, alignment, font. (8) Home: a tap on a review picks it (tick), its picture opens it;
-  the bar at the foot moves (*Move to…*: a group / a new group / out), hides or deletes the picked
-  ones; any review — also one in a group — dropped onto another group's header or member moves
-  there (picked ones go along); a group's row counts every state; *Picture…* gives a group one of
-  its reviews' pictures / cached frames or a colour. (9) Bug: right after a swipe back from a
-  review, the next tap on a review did not open it — home taps now act on pointerup.
-- **Where:** `mobile/js/app.js` — `viewer` (`show(no, slide)`, `navigate`), `FILTERS` /
-  `stepFilter` / `bindPanelPull`, `picBox` (overlay `cover` = slice), `shotThumbs(…, into)`,
-  `noteCard` / `replyEntry` (`.pics`), `THUMBS` / `setThumbs`, `drawingsOn` (no reply rows for
-  the note), `paintRate` (`<small>fps`), `viewOf` (rot 0), `buildStage` (`.fitb`); home:
-  `homeSel` / `toggleSel` / `paintSelBar`, `moveInto` / `groupKeys` / `takeOut` / `moveMenu`,
-  `groupThumbSheet`, `groupHead`, `rowGestures` (`tapAct`, `st.targets`), `deleteReviews`,
-  `reviewNames`. `mobile/index.html` (`.pics`, `.selbar`, `.gcols` / `.gpics`, `.th.tint`, `.row.sel`,
-  `.th.four` fixed: its pictures were zero-sized). `app/static/review-draw.js` (`TEXT_OPTS`,
-  `textOpt` / `putText` / `paintTextFly` / `styleOf`, `.dfly.rd-panel`, turn button removed,
-  `afterView`). `app/review.py` (stored turn dropped), `app/static/index.html` (`#turnBtn` gone).
-  Tests: `pwa_touch.cjs` / `test_pwa.py` (`filterSwipe`, `pics`, `replyOffNote`, `viewerFade`
-  strip, `textFly`, `reopen`, `between`, `groupSum`, `pick`, `groupPic`), `pwa_e2e.cjs` opens
-  reviews by their picture.
-- **Notes:** a picked review stays picked across renders until opened / moved / hidden / deleted
-  (pruned when gone). Groups dissolve under two members at the next render, as before (`tidyGroups`).
-  The group picture is stored in the group (localStorage, a ≤ 200 px data URL). The phone and the
-  HTML page drop a quarter turn stored by an older version (mirror kept); a two-finger turn is
-  still the view's own. A new text's outline is 6 % of its size. (The phone report: 0.33.1.)
-- **Review (fresh agents):** viewer / notes / turn — no bugs; fixed: the report of an empty
-  picture grid (hidden when nothing loads), the view icons jumping when *Fit* came and went, a
-  test selector that could hit an attached picture. Canvas text — no bugs; fixed: a switch during
-  a selection hold lost its change (stopAdj first), the field lost the focus to the row's buttons
-  (keyboard bouncing; a resize folded the row), the row not repainted after undo, the field's
-  preview of centred / right text, outline and box colour, Impact not in the font cycle, test
-  pen state. Home — fixed: a review dragged while *not* picked took every picked one along; a
-  touch that stopped a fling picked / opened a review (a scroll within 150 ms or the page moved:
-  no tap); the click a pointerup-tap ends with could land on the selection bar it just brought up
-  (*Hide* at once) — eaten once, document-wide (`ghostUntil`, armed only by a pointer tap, not a
-  keyboard click); new groups / *Move to…* use the list's order, not the tap order; *Take out* of
-  several kept their order; an empty *Move to…* sheet (a toast now); a review's own *Move to…*
-  cleared an unrelated selection; the group-picture sheet decoded every cached 1600 px frame
-  (≤ 12 small previews per review now, one at a time); a full localStorage lost group changes
-  silently (toast); a failed delete skipped the re-render. Left: the update banner covers the
-  selection bar while it shows; picked reviews inside a closed group still count.

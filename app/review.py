@@ -131,10 +131,13 @@ EVENT_LABEL = {"done": "Resolved", "progress": "In progress", "open": "Reopened"
 
 PAGE = (595.0, 842.0)  # A4, points
 MARGIN = 40.0
+# The width PyMuPDF's Story really lays content out in (x ≈ 50..545 with the margins above): text
+# and lines stop there, so pictures are sized to it too.
+CONTENT_W = 495.0
 
 
 def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
-    cw = PAGE[0] - 2 * MARGIN
+    cw = CONTENT_W
     if not w or not h:
         return f'<img src="{name}" style="width:{cw:.0f}pt"/>'
     width = min(cw, max_h * w / h)
@@ -145,14 +148,16 @@ def _pic_rows(pics: list, row_h: float, indent: float = 0.0) -> str:
     """A note's / reply's pictures in rows: each whole, row_h pt high (scaled down when wider than the
     row), as many to a row as fit, a caption under its picture. pics: [(name, w, h, caption)].
     PyMuPDF's Story does not wrap a table row, so the rows are packed here."""
-    cw, gap, out, row, used = PAGE[0] - 2 * MARGIN - indent - 2, 6.0, [], [], 0.0
+    # The budget counts each cell's right padding (gap), the last one's included (it shows nothing).
+    gap = 6.0
+    cw, out, row, used = CONTENT_W - indent + gap, [], [], 0.0
 
     def flush() -> None:
         if not row:
             return
         cells = "".join(
-            f'<td style="padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
-            + (f'<p class="cap" style="width:{w:.0f}pt;margin:1pt 0 0 0">{html.escape(c)}</p>' if c else "") + "</td>"
+            f'<td style="width:{w:.1f}pt;padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
+            + (f'<p class="cap" style="width:{max(w, 1):.1f}pt;margin:1pt 0 0 0">{html.escape(str(c))}</p>' if c else "") + "</td>"
             for n, w, c in row)
         out.append(f'<table style="border-collapse:collapse;margin:4pt 0 2pt {indent:.0f}pt"><tr>{cells}</tr></table>')
         row.clear()
@@ -241,7 +246,7 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             shot = put_image(shot_bytes(str(sid)))
             if shot:
                 pics.append((*shot, ""))
-        parts.append(_pic_rows(pics, 92))
+        parts.append(_pic_rows(pics, 90))
         for r in n.get("replies") or []:
             if r.get("event"):  # resolve / in progress / reopen entry in the thread
                 label = EVENT_LABEL.get(r["event"], "Reopened")
