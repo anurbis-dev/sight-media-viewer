@@ -681,7 +681,7 @@ const DEFAULT_V3D = {
   l3on: false, l3i: 0.5, l3az: 20,  l3el: -30, l3color: "#ffffff", l3size: 8,
   ambient: 0.35,
   anchor: "world", // "world" | "camera"
-  lightYaw: 0, // Alt+left-drag in the viewport rotates all lights + the env map around Y
+  lightYaw: 0, // Shift+right-drag in the viewport rotates all lights + the env map around Y
   floor: false, grid: false, shadowOnly: false, shadowStrength: 0.6,
   env: false, envStrength: 1, envPreset: "studio", // studio | sunset | overcast | night | custom
   shadeBase: "textured", // solid | vertex | textured | normal
@@ -4181,7 +4181,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     // see syncRig() below and the settings panel in renderV3DPanel()) -------------------
     let ambientLight, rigLights = [], floor = null, grid = null, floorMatSolid, floorMatShadow, envTex = null;
     let skyOcc = null, skyLum = null, envVersion = 0; // floor shadow from ambient + environment (makeSkyOcclusion)
-    let lightDrag = null; // Alt+left-drag on the canvas — rotates all lights + the env map (see below)
+    let lightDrag = null; // Shift+right-drag on the canvas — rotates all lights + the env map (see below)
     if (isLightbox){
       renderer.shadowMap.enabled = true;
       // Basic = raw depth, filtered by our PCSS getShadow (patchSoftShadows); PCF if the patch can't apply.
@@ -4233,12 +4233,12 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
           URL.revokeObjectURL(url);
         }
       };
-      // Alt+left-click-drag rotates all lights + the environment map around the vertical axis.
+      // Shift+right-click-drag rotates all lights + the environment map around the vertical axis.
       // Registered before OrbitControls binds its own pointerdown below, so on the shared
       // canvas element this handler runs first and can stopImmediatePropagation() to keep
-      // OrbitControls from also starting an orbit drag for the same gesture.
+      // OrbitControls from also starting a dolly drag for the same gesture.
       renderer.domElement.addEventListener("pointerdown", (e) => {
-        if (!e.altKey || e.button !== 0) return;
+        if (e.button !== 2 || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         lightDrag = { x: e.clientX, yaw0: state.v3d.lightYaw };
@@ -4567,6 +4567,17 @@ function bindAnnot3d(host, aid, rig, controls, capture){
     aid, host, capture,
     getCam: () => rig.getView(),
     setCam: (v) => rig.setView(v),
+    // The meshes hidden by H / Ctrl+H / Alt+H, as their indices in the inspector's list (null: no inspector
+    // for this model). A view records them; setHidden shows a view's meshes again.
+    getHidden: () => {
+      if (!v3dInspect || v3dInspect.aid !== aid) return null;
+      return v3dInspect.meshes.flatMap((m, i) => (m.c.visible ? [] : [i]));
+    },
+    setHidden: (list) => {
+      if (!v3dInspect || v3dInspect.aid !== aid) return;
+      v3dInspect.meshes.forEach((m, i) => { m.c.visible = !list.includes(i); });
+      renderLightInfo();
+    },
     // While annotating, orbit damping is off: the camera must stop exactly where the drawing was made.
     annotating: (on) => { controls.enableDamping = on ? false : damp; },
   });
@@ -6224,7 +6235,7 @@ function renderV3DPanel(){
     ${v3dLightRows(2)}
     ${v3dLightRows(3)}
     ${v3dSliderRow("Ambient", "ambient", 0, 2, 0.05, "")}
-    ${v3dSliderRow("Rotate all (Alt+drag)", "lightYaw", -180, 180, 1, "°")}
+    ${v3dSliderRow("Rotate all (Shift+right-drag)", "lightYaw", -180, 180, 1, "°")}
     <h3>Floor</h3>
     ${v3dSliderRow("Shadow strength", "shadowStrength", 0, 1, 0.05, "")}
     <h3>Environment</h3>

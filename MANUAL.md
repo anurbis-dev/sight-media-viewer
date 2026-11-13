@@ -65,7 +65,7 @@
     alignment, background box (colour, opacity), outline; double-click a text to edit it again
     (`Ctrl+Enter` or Esc finishes).
   - While drawing: `Shift` snaps lines, arrows and straight brush strokes to 15° steps (0/45/90…),
-    makes rectangles square and ellipses round; `Alt` draws from the centre. Select tool: click /
+    makes rectangles square and ellipses round. Select tool: click /
     Shift+click / drag a box to select, drag to move (Shift locks the axis), Alt+drag duplicates,
     corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
@@ -113,9 +113,12 @@
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
     whole clip; the onion button shows drawings within ±1 s faded.
   - **3D** — a drawing belongs to the camera view it was made in, and a note also saves the shading,
-    lights, explode and field of view. Orbiting away hides the drawings; the numbered *Views* chips
-    at the top of the panel, or a click on the note, bring the camera and settings back. While
-    annotating, left-drag on empty space with the select tool orbits.
+    lights, explode and field of view. A view also keeps which meshes were hidden (H / Ctrl+H / Alt+H)
+    when it was made: a change of hidden meshes starts a new view, and going back to a view shows its
+    meshes as they were. Orbiting away hides the drawings; the numbered *Views* chips at the top of the
+    panel, or a click on the note, bring the camera, settings and meshes back. The chips and the
+    pictures of a note are numbered in the order the views were made. While annotating, left-drag on
+    empty space with the select tool orbits.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
     a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; each video frame is captioned with its file name and frame number, e.g. "clip.mp4 · frame 24", and carries the frame number in its top-left corner), *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
@@ -407,7 +410,7 @@
 - Video gets automatic thumbnail stills (needs ffmpeg — bundled in the standalone builds,
   otherwise Sight shows an "Install" banner if it can't find one). PSD opens per-layer;
   fonts get a live specimen; 3D models get an interactive viewer (drag to orbit,
-  Alt+drag to move the light, Shift+1–4 to switch shading, Shift+5/6 to toggle wireframe/x-ray,
+  Shift+right-drag to turn the light, Shift+1–4 to switch shading, Shift+5/6 to toggle wireframe/x-ray,
   Shift+7 to turn the model 90°, `G` for the view-settings panel). The toolbar shown over the
   viewer belongs to the asset's type — images, fonts etc. don't get the 3D one. The explode
   slider only appears for models made of several parts; while parts are pushed below the floor,

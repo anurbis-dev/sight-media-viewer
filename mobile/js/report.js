@@ -282,7 +282,12 @@ export async function toPdf(p){
       if (!a) return [cut(text)];
       return [a, cut(words.join(" "))].filter(Boolean);
     };
-    const items = list.filter((x) => x && x.pic && x.pic.w && x.pic.h).map((x) => ({ pic: x.pic, cap: x.cap || "", a: x.pic.w / x.pic.h }));
+    const items = list.filter((x) => x && x.pic).filter((x) => {
+      // A picture without its size cannot be laid out: say so instead of leaving it out silently.
+      const ok = !!(x.pic.w && x.pic.h);
+      if (!ok) console.warn("PDF: a picture without a size was left out");
+      return ok;
+    }).map((x) => ({ pic: x.pic, cap: x.cap || "", a: x.pic.w / x.pic.h }));
     const groups = [];
     let cur = [];
     for (const it of items){

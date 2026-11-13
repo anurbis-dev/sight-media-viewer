@@ -122,9 +122,10 @@ var SightReviewCore = (function(){
     }
     var re = rs[n - 1], rb = rs[0];
     var d = smoothPath(L, false);
-    d += "A" + r2(re) + " " + r2(re) + " 0 0 1 " + r2(R[n - 1][0]) + " " + r2(R[n - 1][1]);
+    // The end cap bulges forward (sweep 0): L → R turns through the stroke's direction of travel.
+    d += "A" + r2(re) + " " + r2(re) + " 0 0 0 " + r2(R[n - 1][0]) + " " + r2(R[n - 1][1]);
     d += smoothPath(R.slice().reverse(), false).replace(/^M/, "L");
-    d += "A" + r2(rb) + " " + r2(rb) + " 0 0 1 " + r2(L[0][0]) + " " + r2(L[0][1]) + "Z";
+    d += "A" + r2(rb) + " " + r2(rb) + " 0 0 0 " + r2(L[0][0]) + " " + r2(L[0][1]) + "Z";  // start cap, bulging backward
     return d;
   }
 

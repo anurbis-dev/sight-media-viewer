@@ -14,6 +14,77 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.41.1 — 2026-11-13 — Drawing: round stroke ends, brush circle follows the pen, Alt no longer draws from the centre; 3D light on Shift+right-drag
+- **What:** (1) a brush / pencil stroke's start and end are round caps: they used to bulge into the stroke
+  (a notch at both ends). (2) The brush circle follows the pointer while a stroke is being drawn (it was
+  frozen at the press). (3) With Alt held over a drawing tool the brush circle is hidden (Alt moves the camera).
+  (4) Alt no longer draws shapes from the centre (rectangle / ellipse); Shift still makes a square / circle.
+  (5) The 3D light direction moves with Shift+right-drag (was Alt+left-drag); the info panel's "Rotate all" label
+  says so.
+- **Where:** `app/static/review-core.js` — `strokeOutline` (both cap arcs: sweep flag 0; shared with the phone
+  app and the HTML page). `app/static/annotate.js` — `renderSel` (circle shown while drawing, hidden under Alt;
+  the eraser drag keeps its own circle), `onMove` (stroke branch calls `renderSel`; the Alt shape branch removed),
+  `paintAlt` (redraws the circle), the tool labels. `app/static/index.html` — the light-drag `pointerdown`
+  (`button 2` + `shiftKey`, no ctrl / meta / alt), `lightYaw` comment and the "Rotate all" label.
+  `MANUAL.md` (drawing and 3D). `app/version.py`.
+- **Notes:** the cap test: a stroke rendered in headless Chromium from `primsOf` has ink 6 px past both ends
+  (before the fix: white there, the cap cut inward). The circle test: with pen events the circle stays on the
+  pointer while drawing and is gone while Alt is held. Pressure: a pen stroke with simulated pen pressure
+  (CDP `force`, `pointerType: 'pen'`) is 8 px at 0.95 and 2 px at 0.15, so the drawing path uses pressure when the
+  browser reports a pen. Not changed: a tablet that reports `pointerType: 'mouse'` (its driver in mouse mode)
+  or a brush with the Pressure toggle off draws at constant width by design.
+
+## 0.41.0 — 2026-11-13 — 3D views keep the hidden meshes; numbered in the order they were made; note pick shows its drawings while drawing
+- **What:** (1) a view (camera) also records which meshes were hidden (H / Ctrl+H / Alt+H) when it was made;
+  a change of hidden meshes starts a new view; going to a view (chip, note click, Go to) shows its meshes as
+  they were. (2) The views are numbered in the order they were first made, so the chips, the "View N" labels,
+  the pictures of a note and the report agree; the pictures of a note are in view-number order. (3) Clicking
+  a note now shows its drawings even while new drawings that are not yet attached to a note are on the
+  screen (before, any such drawing hid every note's drawings until it was attached). (4) A note's drawings-count
+  caption ("N drawings") is gone; "from <name>" stays.
+- **Where:** `app/static/annotate.js` — `rebuildViews` (views sorted by first made; `hidden` from the items'
+  ctx), `curHidden` / `sameHidden` / `viewMatches` / `findVk(cam, hid)`, `ctxNow` (3D ctx carries `hidden`),
+  `view3dPic` (applies a view's meshes for its picture, restores the live ones; cache key has `hidden`),
+  `view3dPreviews` (sorted by `viewNumber`), `goView` (restores `hidden`), `tick` (mesh state in the signature),
+  `modeAllows` (a pick wins over `compose`), `renderPanel` (count caption removed). `app/static/index.html` —
+  `bindAnnot3d` host gets `getHidden` / `setHidden` from `v3dInspect.meshes`. `docs/FORMAT.md` (3D `hidden`),
+  `MANUAL.md` (3D). `app/version.py`.
+- **Notes:** the mesh index is the inspector's traversal order, so it is stable for one file only (views are
+  per asset, as before). Views made before 0.41 have no `hidden` and match any mesh state, so an old view keeps
+  its old behaviour. A 3D preview is still re-captured when the shading changes (0.40.2). Not tested in a
+  browser yet: the view-number order, the mesh restore and the pick-while-drawing case were checked by reading
+  the code and by a syntax check of annotate.js and the inline scripts of index.html.
+
+## 0.40.2 — 2026-11-13 — Video: drawings show at once after a timeline scrub
+- **What:** after a scrub or a seek that lands in the second half of a frame, the drawings of that frame were
+  not shown (a new stroke was saved but stayed invisible until the time moved again). Desktop lightbox and
+  phone both now decide "the frame on screen" with the same rule the drawings are stored with (the frame's
+  start), so the frame's drawings show at once.
+- **Where:** `app/static/annotate.js` — `frameNow()` (video: `frameStart(v.currentTime)`). `mobile/js/app.js` —
+  `stageDrawings()` (`frameStart(scrubT or currentTime)`). `app/version.py`.
+- **Notes:** `ctxVisible` (review-core.js) is a window centred on the stored time (±half a frame), and a
+  drawing is stored at `frameStart(t)` = (n + 0.01)·fd, so the frame's own time must be the stored one, not
+  the raw player time. Any new "what is on screen" check for video must pass `frameStart`, never the raw time.
+  Checked by computing `ctxVisible` on the real review-core.js: raw 2.915 s hid the drawing stored at 2.880,
+  the frame start shows it. Not yet checked in a browser with a video scrub.
+
+## 0.40.1 — 2026-11-13 — Review fixes: undecodable clips, list selection, 3D preview cache, phone menu key, PDF sizes
+- **What:** (desktop) an undecodable clip that the server cannot convert stops its preview frames at once
+  (no 4 s-per-frame retries in one serial pump); (desktop) a text selection dragged out of a note card and
+  released in the gap of the notes list no longer drops the picked note; (desktop) 3D previews keep one picture
+  per view, replaced when the shading changes, instead of one per shading step. (Phone) the menu key on a
+  mouse works again within 1.5 s of a press on a row; a picture without its size is reported in the console
+  instead of left out of the PDF silently.
+- **Where:** `app/static/annotate.js` — `pumpPF` (`PF.failed`, cleared by `resetPF`), `onListClick` (the empty
+  branch checks `getSelection`), `view3dPic` (`PIC3` keyed by asset + view + camera, value `{shade, url}`).
+  `mobile/js/app.js` — the row's `contextmenu` (the mouse exemption restored). `mobile/js/report.js` — `rows()`.
+  `app/version.py`.
+- **Notes:** the Alt-from-centre loss from 0.40.0 is NOT changed here (MANUAL.md still describes it; decision
+  pending). A 3D preview is still recaptured for a shading change: the picture must show the shading, so the
+  capture moves the live camera twice per view (set and restore). `PF.failed` is per asset: a reopened review
+  resets it, and a clip that later becomes decodable needs that reset. The PDF size warning is for a caller
+  bug only; `picOf` and `burn` always set `w` / `h` today.
+
 ## 0.40.0 — 2026-11-13 — Annotations: hold Alt to move the camera or scrub without the select tool
 - **What:** in annotation mode with a drawing tool, holding Alt makes a drag go to the viewer instead of
   drawing: a 3D model orbits, a video scrubs (sideways on the picture). While Alt is held the annotation bar
@@ -206,45 +277,3 @@ Add new entries directly below this line.
 - **Notes:** the HTML reports are unchanged (the browser lays them out). Checked by rendering both
   PDFs to pictures (a note with three frames and a portrait screenshot, a reply with two pictures).
   Review (fresh agent): fixes in 0.36.1.
-
-## 0.35.5 — 2026-11-13 — Phone viewer: the incoming picture fades in as it slides
-- **What:** in the full-screen viewer the picture coming in now also comes out of transparency
-  (0 → 1) while it slides, as the outgoing one fades out — it no longer shows up fully opaque at
-  once (what the user saw as "appears abruptly"; the 0.35.4 seek change stays).
-- **Where:** `mobile/js/app.js` `viewer` → `show(no, slide)` (the incoming box's keyframes).
-  Test: `viewerFade` checks both pictures are part-transparent mid-slide.
-
-## 0.35.4 — 2026-11-13 — Phone viewer: the strip slide is smooth again (no seek on opening)
-- **What:** since 0.35.0 a tap on a note's picture also moved the player to that frame before the
-  viewer opened; on a phone the first swipes then stuttered and the next picture popped in
-  instead of sliding. Back to 0.33's behaviour: the tap selects the note and opens the viewer, the
-  player is left alone; Back puts it on the frame last looked at, as before.
-- **Where:** `mobile/js/app.js` `openThread` (no `selectNote` / seek, only `R.curNote`).
-- **Notes:** cause, as far as could be told without the device (headless Chromium slides fine
-  either way): the seek's `settle` grabs and encodes a ≤ 1600 px frame on the main thread right
-  under the first swipe, and the grabber's video competes with the player's decoder for the next
-  picture (over FADE_WAIT, it comes in blank and pops). Do not seek the player while the viewer
-  is opening.
-
-## 0.35.3 — 2026-11-13 — Canvas: the fill row's "the line's colour" is back
-- **What:** the Shapes row's fill colour row starts again with *the line's colour* (the default: a
-  fill in the line's own colour, lighter), then the six colours — the way back once a colour was
-  picked (the user's call, reversing 0.35.0).
-- **Where:** `app/static/review-draw.js` `fillButton`. Test: `fill` (7 entries, back to null).
-
-## 0.35.2 — 2026-11-13 — Phone: picked reviews swipe together; fixes to note selection
-- **What:** (1) Home: a picked review swiped left / right slides with every other picked one; the
-  bin / eye uncovered on any of them deletes (one confirm) / hides all the picked ones.
-  (2) Fixes from the fresh-agent review of 0.35.0: a tap on a card or a picture while a new note
-  or a reply is being written no longer moves the player or the selection (a text-only note went
-  on the tapped note's frame; a reply's pencil drew on another note's frame); closing the viewer
-  on another note of a picture review now moves the highlight (`showNote` repaints); a note's
-  "first frame" is its own drawings' (`noteFrameList`), not its replies'; a marker step on the
-  drawing canvas does not select the note behind it; a text selection made / dropped on a card
-  is no tap; while writing over the player the hidden controls show again; the speaker's tooltip
-  says "tap: full / mute"; the `select` test clicks and checks the same card.
-- **Where:** `mobile/js/app.js` — `rowGestures` (`peers` / `placeAll`, `row._place`), the review
-  row's `.sw` buttons, `selectNote`, the card's click, `showNote`, `jumpNote`, `paintSnd`;
-  `mobile/index.html` (`.review.clean` rules `:not(.compose)`). Test: `swipeAll`.
-- **Notes:** left as reviewed: with the controls hidden a mouse has no way to the panel but the
-  round button (the swipe up is touch only). (The fill row's "the line's colour" is back in 0.35.3.)

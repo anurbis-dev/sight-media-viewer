@@ -66,8 +66,8 @@ const TOOLS = [
   null,
   ["line", "KeyL", "Line — Shift snaps to 15°", ICON.line],
   ["arrow", "KeyW", "Arrow — Shift snaps to 15°", ICON.arrow],
-  ["rect", "KeyR", "Rectangle — Shift square, Alt from centre", ICON.rect],
-  ["ellipse", "KeyO", "Ellipse — Shift circle, Alt from centre", ICON.ellipse],
+  ["rect", "KeyR", "Rectangle — Shift square", ICON.rect],
+  ["ellipse", "KeyO", "Ellipse — Shift circle", ICON.ellipse],
   ["text", "KeyT", "Text", ICON.text],
   ["pin", "KeyN", "Numbered pin", ICON.pin],
 ];
@@ -471,21 +471,35 @@ export function createAnnotator(host){
     const dt = hyp(hyp(a.t[0] - b.t[0], a.t[1] - b.t[1]), a.t[2] - b.t[2]);
     return dp < tol && dt < tol && Math.abs((a.fov || 50) - (b.fov || 50)) < 0.5 && (a.turns || 0) === (b.turns || 0);
   }
+  // A view is a camera plus the meshes shown or hidden there: {vk, cam, hidden, v3d, created}. hidden is
+  // the mesh indices hidden (null when the file predates it: any mesh state matches). The views are kept
+  // in the order they were first made, so the number a view shows (viewNumber, the chips, the pictures
+  // of a note, the report) does not depend on the order the items load in.
   function rebuildViews(){
-    S.views.clear();
+    const made = new Map();
     for (const it of S.items.values()){
       const c = it.data.ctx;
-      if (c && c.vk && c.cam && !S.views.has(c.vk)) S.views.set(c.vk, { vk: c.vk, cam: c.cam, v3d: it.kind === "note" ? c.v3d : null });
+      if (!c || !c.vk || !c.cam) continue;
+      const at = it.data.created || 0;
+      let v = made.get(c.vk);
+      if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, v3d: null, created: at }; made.set(c.vk, v); }
+      v.created = Math.min(v.created, at);
+      if (Array.isArray(c.hidden) && (v.hidden == null || it.kind === "note")) v.hidden = c.hidden;
+      // A note's display settings win over a drawing's bare camera (the last note's, as before).
+      if (it.kind === "note" && c.v3d) v.v3d = c.v3d;
     }
-    for (const it of S.items.values()){ // a note's display settings win over a drawing's bare camera
-      const c = it.data.ctx;
-      if (it.kind === "note" && c?.vk && c.v3d) S.views.get(c.vk).v3d = c.v3d;
-    }
+    S.views.clear();
+    for (const v of [...made.values()].sort((a, b) => a.created - b.created)) S.views.set(v.vk, v);
   }
   function curCam(){ return S.b3?.getCam?.() || null; }
-  function findVk(cam){
+  // The meshes hidden right now (sorted indices), null with no 3D host or no inspector.
+  function curHidden(){ return S.b3?.getHidden?.() ?? null; }
+  // Two mesh states match; an unknown one (null) matches any.
+  const sameHidden = (a, b) => a == null || b == null || (a.length === b.length && a.every((x, i) => x === b[i]));
+  const viewMatches = (v, cam, hid) => !!v && camMatch(cam, v.cam) && sameHidden(v.hidden, hid);
+  function findVk(cam, hid = curHidden()){
     if (!cam) return null;
-    for (const v of S.views.values()) if (camMatch(cam, v.cam)) return v.vk;
+    for (const v of S.views.values()) if (viewMatches(v, cam, hid)) return v.vk;
     return null;
   }
   // The context a new object gets right now. `make` is set only where an object is really created:
@@ -500,12 +514,16 @@ export function createAnnotator(host){
     if (S.kind === "model3d"){
       const cam = curCam();
       if (!cam) return null;
-      let vk = S.curVk || findVk(cam);
+      const hid = curHidden();
+      const cur = S.views.get(S.curVk);
+      let vk = viewMatches(cur, cam, hid) ? S.curVk : findVk(cam, hid);
       if (!vk){
         if (!make) return { vk: null, cam };
-        vk = uid(); S.views.set(vk, { vk, cam, v3d: null }); S.curVk = vk;
+        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, created: Date.now() }); S.curVk = vk;
       }
-      const c = { vk, cam: S.views.get(vk).cam };
+      const view = S.views.get(vk);
+      const c = { vk, cam: view.cam };
+      if (view.hidden) c.hidden = view.hidden;
       if (forNote) c.v3d = host.getV3D?.() || null;
       return c;
     }
@@ -553,14 +571,20 @@ export function createAnnotator(host){
     // Right after a note is made the picture is clean: its drawings are on its card. A note's drawings
     // come back only while that note is hovered (or pinned, below).
     if (S.cleanPic && m.pin !== it.data.note && m.hover !== it.data.note) return false;
-    return !m.compose && (!m.pin || it.data.note === m.pin);
+    // A picked note's drawings show even while a new note is being drawn (the pick is what the user asked for).
+    if (m.pin) return it.data.note === m.pin;
+    return !m.compose;
   }
   function visibleNow(it){ return ctxShown(it) && modeAllows(it); }
   // The view mode may have changed (typing started, a note picked): repaint what shows.
   function modeChanged(){ modeCache = null; if (!S.layer) return; paintVisibility(); renderSel(); renderPending(); }
   // The frame on screen, as review-core's ctxVisible takes it.
+  // The frame on screen is the one that started at or before the time (frameStart), the same time a new
+  // drawing is stored at. The raw time would sit in the frame's second half after a timeline scrub, and
+  // ctxVisible's window (centred on the stored time) would then hide that frame's drawings until the
+  // time moved again.
   function frameNow(){
-    if (S.kind === "video"){ const v = video(); return v ? { t: v.currentTime, fps: S.fps } : null; }
+    if (S.kind === "video"){ const v = video(); return v ? { t: frameStart(v.currentTime), fps: S.fps } : null; }
     if (S.kind === "model3d") return { vk: S.curVk || null };
     return null;
   }
@@ -701,13 +725,15 @@ export function createAnnotator(host){
       const x = Math.min(m[0], m[2]), y = Math.min(m[1], m[3]), w = Math.abs(m[2] - m[0]), h = Math.abs(m[3] - m[1]);
       html += `<path class="an-regionshade" d="M0 0H${g.w}V${g.h}H0Z M${x} ${y}v${h}h${w}v${-h}Z"/><rect class="an-region" x="${x}" y="${y}" width="${w}" height="${h}"/><text class="an-regionlbl" x="${x + 4}" y="${y - 6}">${Math.round(w)} × ${Math.round(h)}</text>`;
     }
-    if (S.hover && !S.drag && !S.region){
+    // The brush circle: shown while drawing too (it follows the pointer), hidden while Alt moves the camera.
+    if (S.hover && !S.region && !altCam()){
       const t = effTool(), st = S.styles[t];
-      if (STROKE_TOOLS.has(t) || t === "eraser"){
+      if (!S.drag?.eraser && (STROKE_TOOLS.has(t) || t === "eraser")){
         const r = Math.max(1, st.size / 2);
         html += `<circle class="an-cursor${t === "eraser" ? " er" : ""}" cx="${r2(S.hover[0])}" cy="${r2(S.hover[1])}" r="${r2(r)}"/>`;
       }
-    } else if (S.drag?.eraser && S.hover){
+    }
+    if (S.drag?.eraser && S.hover && !altCam()){
       html += `<circle class="an-cursor er" cx="${r2(S.hover[0])}" cy="${r2(S.hover[1])}" r="${r2(Math.max(1, S.styles.eraser.size / 2))}"/>`;
     }
     L.ui.innerHTML = html;
@@ -882,6 +908,7 @@ export function createAnnotator(host){
         D.last = [x, y, d.pen ? clamp(e.pressure || 0, 0, 1) : 0.5];
       }
       renderItem(it);
+      renderSel();  // the brush circle follows the pointer while the stroke is drawn
       return;
     }
     if (D.shape){
@@ -892,8 +919,7 @@ export function createAnnotator(host){
       } else {
         let w = x - D.x, h = y - D.y;
         if (e.shiftKey){ const m = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * m; h = Math.sign(h || 1) * m; }
-        if (e.altKey){ d.x = D.x - w; d.y = D.y - h; d.w = w * 2; d.h = h * 2; }
-        else { d.x = D.x; d.y = D.y; d.w = w; d.h = h; }
+        d.x = D.x; d.y = D.y; d.w = w; d.h = h;
       }
       renderItem(it);
       return;
@@ -1059,6 +1085,7 @@ export function createAnnotator(host){
   function paintAlt(){
     S.light?.classList.toggle("an-alt", altCam());
     if (S.on && S.hover && !S.drag) updateCursor(...S.hover);
+    if (S.on && S.hover) renderSel();  // the brush circle shows or goes with Alt
   }
   function altChanged(on){
     if (!!S.altHeld === on) return;
@@ -1589,8 +1616,6 @@ export function createAnnotator(host){
     const notes = S.filter === "all" ? all : all.filter((n) => stOf(n) === S.filter);
     const list = el.querySelector(".an-list");
     const scroll = list.scrollTop;
-    const counts = new Map();
-    for (const it of S.items.values()) if (isDrawing(it) && it.data.note) counts.set(it.data.note, (counts.get(it.data.note) || 0) + 1);
     list.innerHTML = !all.length ? "" : !notes.length ? `<div class="an-hint"><p>No ${S.filter === "done" ? "resolved" : S.filter === "progress" ? "in-progress" : "open"} notes.</p></div>` : notes.map((n) => {
       const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
@@ -1604,7 +1629,7 @@ export function createAnnotator(host){
           <button type="button" class="an-ib sm" data-del="${n.id}" title="Delete note and its drawings">${ICON.trash}</button></div>
         <div class="an-nt" title="Double-click to edit">${esc(d.text || "") || '<i class="an-empty">No text</i>'}</div>
         ${picGrid(notePreview(n) + shots)}
-        ${counts.get(n.id) || d.from ? `<div class="an-nmeta">${[counts.get(n.id) ? `${counts.get(n.id)} drawing${counts.get(n.id) > 1 ? "s" : ""}` : "", d.from ? `from ${esc(d.from.name || "previous version")}` : ""].filter(Boolean).join(" · ")}</div>` : ""}
+        ${d.from ? `<div class="an-nmeta">from ${esc(d.from.name || "previous version")}</div>` : ""}
         ${repliesHtml(n)}
       </div>`;
     }).join("");
@@ -1622,19 +1647,27 @@ export function createAnnotator(host){
   // own view first), the drawings over it, as a video note's frames. A render is made on demand and kept
   // per view and shading (cleared with the video previews, resetPF); the camera goes back right after.
   // The shading is the viewer's current one (a 3D note's shading is applied only when it is opened).
+  // One picture per view: {shade, url}. A shading change replaces the view's picture (the old shading is
+  // not kept), so the cache stays one entry per view however often the shading is moved.
   const PIC3 = new Map();
   function view3dPic(vk){
     const v = S.views.get(vk);
     if (!v || !S.b3) return null;
-    const key = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(host.getV3D?.() || null);
-    if (PIC3.has(key)) return PIC3.get(key);
+    const id = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(v.hidden);
+    const shade = JSON.stringify(host.getV3D?.() || null);
+    const hit = PIC3.get(id);
+    if (hit && hit.shade === shade) return hit.url;
     // No camera move while a drag (orbit, stroke) is on; the picture comes with the next refresh.
     if (S.drag) return null;
     const save = curCam();
     if (!save) return null;
     const same = camMatch(save, v.cam);
+    // The view's meshes (hidden ones stay hidden in its picture), then the live ones back.
+    const saveHid = curHidden(), moveMeshes = v.hidden != null && !sameHidden(v.hidden, saveHid) && !!S.b3.setHidden;
     if (!same) S.b3.setCam(v.cam);
+    if (moveMeshes) S.b3.setHidden(v.hidden);
     const src = S.b3.capture();
+    if (moveMeshes) S.b3.setHidden(saveHid);
     let url = null;
     if (src?.width && src?.height){
       const sc = Math.min(1, 640 / Math.max(src.width, src.height));
@@ -1644,7 +1677,7 @@ export function createAnnotator(host){
       url = cv.toDataURL("image/jpeg", 0.85);
     }
     if (!same) S.b3.setCam(save);
-    if (url) PIC3.set(key, url);
+    if (url) PIC3.set(id, { shade, url });
     return url;
   }
   function view3dPreviews(n){
@@ -1652,7 +1685,8 @@ export function createAnnotator(host){
     const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
     const vk0 = n.data.ctx?.vk || null, vks = [];
     own.forEach((it) => { const k = it.data.ctx?.vk || vk0; if (k && !vks.includes(k)) vks.push(k); });
-    if (vk0 && vks.includes(vk0)){ vks.splice(vks.indexOf(vk0), 1); vks.unshift(vk0); }
+    // In view-number order (the chips' and the report's), the note's own view among them.
+    vks.sort((a, b) => viewNumber(a) - viewNumber(b));
     return vks.map((vk) => view3dBox(n, own.filter((it) => (it.data.ctx?.vk || vk0) === vk), vk === vk0 ? "" : " sm", vk === vk0 ? null : vk)).join("");
   }
   // One picture: the render from `vk`, drawn over in the 3D host's units (1000 high, origin at the
@@ -1726,10 +1760,12 @@ export function createAnnotator(host){
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.
-  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0, tries: new Map() };
+  // failed: the asset whose clip no player could show (the file and its server copy both failed); its
+  // frames are not asked for again until the asset is reset.
+  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0, tries: new Map(), failed: null };
   function resetPF(){
     if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); PF.v.remove(); }
-    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++; PF.tries = new Map();
+    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++; PF.tries = new Map(); PF.failed = null;
     PIC3.clear();
   }
   function previewFrame(t){
@@ -1780,6 +1816,7 @@ export function createAnnotator(host){
   }
   async function pumpPF(){
     if (PF.busy || !PF.want.length || !PF.aid) return;
+    if (PF.failed === PF.aid){ PF.want = []; return; }
     PF.busy = true;
     // A reset (another asset, or the same one reopened) ends this run: its generation is gone.
     const aid = PF.aid, gen = PF.gen;
@@ -1794,13 +1831,20 @@ export function createAnnotator(host){
         PF.v = nv;
         nv.src = `/api/file/${aid}`;
         // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
-        const shown = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
-        if (!shown){
+        let playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
+        if (!playable){
           const res = await convertForPlayback(aid, null, () => PF.gen === gen);
           if (res.ok && PF.gen === gen){
             nv.src = `/api/file/${aid}?copy=${Date.now()}`;
-            await pfLoad(nv, 8000).catch(() => {});
+            playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
           }
+        }
+        if (PF.gen !== gen) return;
+        if (!playable){
+          // Nothing can show this clip: drop the player and give up on the asset (no 4 s-per-frame retries).
+          PF.failed = aid; PF.want = []; PF.tries = new Map();
+          nv.removeAttribute("src"); nv.load(); nv.remove(); PF.v = null;
+          return;
         }
       }
       const v = PF.v;
@@ -1932,13 +1976,16 @@ export function createAnnotator(host){
     if (!el) return;
     if (S.kind !== "model3d" || !S.views.size){ el.innerHTML = ""; el.hidden = true; return; }
     el.hidden = false;
-    el.innerHTML = `<span>Views</span>` + [...S.views.values()].map((v, i) => `<button type="button" class="an-vchip${v.vk === S.curVk ? " on" : ""}" data-vk="${v.vk}" title="Restore this camera${v.v3d ? ", shading and lights" : ""}">${i + 1}</button>`).join("");
+    el.innerHTML = `<span>Views</span>` + [...S.views.values()].map((v, i) => `<button type="button" class="an-vchip${v.vk === S.curVk ? " on" : ""}" data-vk="${v.vk}" title="Restore this camera${v.v3d ? ", shading and lights" : ""}${v.hidden?.length ? ", hidden meshes" : ""}">${i + 1}</button>`).join("");
     el.querySelectorAll("[data-vk]").forEach((b) => { b.onclick = () => goView(b.dataset.vk); });
   }
   function onListClick(e){
     const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-note");
     if (!t){
-      // A click on the empty list drops the picked note (as Esc does).
+      // A click on the empty list drops the picked note (as Esc does). Not when it ends a text selection
+      // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
+      const sl = window.getSelection?.();
+      if (sl && !sl.isCollapsed) return;
       if (S.pinFocus){ S.pinFocus = S.focusNote = null; paintVisibility(); renderPanel(); }
       return;
     }
@@ -2047,6 +2094,8 @@ export function createAnnotator(host){
     if (!v || !S.b3) return;
     const look = v3d || v.v3d;
     if (look) host.setV3D?.(look);
+    // The meshes the view was made with: hidden ones hidden, the rest shown (an empty list shows all).
+    if (v.hidden) S.b3.setHidden?.(v.hidden);
     S.b3.setCam(v.cam);
     S.curVk = vk;
     afterChange();
@@ -2155,10 +2204,12 @@ export function createAnnotator(host){
     const v = video();
     if (v) sig += "|" + v.currentTime.toFixed(3);
     if (S.b3){
-      const cam = curCam();
-      const vk = S.drag ? S.curVk : findVk(cam);
+      const cam = curCam(), hid = curHidden();
+      const vk = S.drag ? S.curVk : findVk(cam, hid);
       if (vk !== S.curVk && !S.drag){ S.curVk = vk; renderViews(); }
       if (cam) sig += "|" + cam.p.map((x) => x.toFixed(4)).join(",") + "|" + cam.t.map((x) => x.toFixed(4)).join(",");
+      // A mesh shown or hidden (H, Ctrl+H, Alt+H) moves to another view like a camera move does.
+      sig += "|h" + (hid ? hid.join(",") : "-");
     }
     if (sig !== S.lastSig){
       S.lastSig = sig;

@@ -1012,7 +1012,7 @@ function rowGestures(row, it, o){
   it.addEventListener("contextmenu", (e) => {
     if (lastType === "mouse" && (e.button === 2 || e.ctrlKey)) return;  // a mouse's right / Ctrl click
     e.preventDefault();
-    if (st || mode || menuT || (e.button !== 2 && performance.now() - downAt < 1500)) return;
+    if (st || mode || menuT || (lastType !== "mouse" && e.button !== 2 && performance.now() - downAt < 1500)) return;
     o.menu();
   });
   return row;
@@ -1355,7 +1355,9 @@ const drawFrames = (draw) => draw ? [{ frame: draw.frame, items: draw.items }].c
 // While a new note is open the picture is clean: only that note's own drawing shows (on its frames).
 function stageDrawings(){
   if (R.hide) return [];
-  const v = R.video, at = kindNow() === "video" ? (v ? { t: R.scrubT != null ? R.scrubT : v.currentTime, fps: R.fps } : null) : null;
+  // The frame on screen, by the rule drawings are stored with (frameStart): a timeline scrub lands mid-frame,
+  // and the raw time would hide that frame's drawings until the time moved again.
+  const v = R.video, at = kindNow() === "video" ? (v ? { t: frameStart(R.scrubT != null ? R.scrubT : v.currentTime), fps: R.fps } : null) : null;
   if (kindNow() === "video" && !at) return [];
   if (R.newOpen || R.replyTo){
     const d = R.drafts[composeKey()];

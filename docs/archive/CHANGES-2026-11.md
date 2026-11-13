@@ -2,6 +2,48 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.35.5 — 2026-11-13 — Phone viewer: the incoming picture fades in as it slides
+- **What:** in the full-screen viewer the picture coming in now also comes out of transparency
+  (0 → 1) while it slides, as the outgoing one fades out — it no longer shows up fully opaque at
+  once (what the user saw as "appears abruptly"; the 0.35.4 seek change stays).
+- **Where:** `mobile/js/app.js` `viewer` → `show(no, slide)` (the incoming box's keyframes).
+  Test: `viewerFade` checks both pictures are part-transparent mid-slide.
+
+## 0.35.4 — 2026-11-13 — Phone viewer: the strip slide is smooth again (no seek on opening)
+- **What:** since 0.35.0 a tap on a note's picture also moved the player to that frame before the
+  viewer opened; on a phone the first swipes then stuttered and the next picture popped in
+  instead of sliding. Back to 0.33's behaviour: the tap selects the note and opens the viewer, the
+  player is left alone; Back puts it on the frame last looked at, as before.
+- **Where:** `mobile/js/app.js` `openThread` (no `selectNote` / seek, only `R.curNote`).
+- **Notes:** cause, as far as could be told without the device (headless Chromium slides fine
+  either way): the seek's `settle` grabs and encodes a ≤ 1600 px frame on the main thread right
+  under the first swipe, and the grabber's video competes with the player's decoder for the next
+  picture (over FADE_WAIT, it comes in blank and pops). Do not seek the player while the viewer
+  is opening.
+
+## 0.35.3 — 2026-11-13 — Canvas: the fill row's "the line's colour" is back
+- **What:** the Shapes row's fill colour row starts again with *the line's colour* (the default: a
+  fill in the line's own colour, lighter), then the six colours — the way back once a colour was
+  picked (the user's call, reversing 0.35.0).
+- **Where:** `app/static/review-draw.js` `fillButton`. Test: `fill` (7 entries, back to null).
+
+## 0.35.2 — 2026-11-13 — Phone: picked reviews swipe together; fixes to note selection
+- **What:** (1) Home: a picked review swiped left / right slides with every other picked one; the
+  bin / eye uncovered on any of them deletes (one confirm) / hides all the picked ones.
+  (2) Fixes from the fresh-agent review of 0.35.0: a tap on a card or a picture while a new note
+  or a reply is being written no longer moves the player or the selection (a text-only note went
+  on the tapped note's frame; a reply's pencil drew on another note's frame); closing the viewer
+  on another note of a picture review now moves the highlight (`showNote` repaints); a note's
+  "first frame" is its own drawings' (`noteFrameList`), not its replies'; a marker step on the
+  drawing canvas does not select the note behind it; a text selection made / dropped on a card
+  is no tap; while writing over the player the hidden controls show again; the speaker's tooltip
+  says "tap: full / mute"; the `select` test clicks and checks the same card.
+- **Where:** `mobile/js/app.js` — `rowGestures` (`peers` / `placeAll`, `row._place`), the review
+  row's `.sw` buttons, `selectNote`, the card's click, `showNote`, `jumpNote`, `paintSnd`;
+  `mobile/index.html` (`.review.clean` rules `:not(.compose)`). Test: `swipeAll`.
+- **Notes:** left as reviewed: with the controls hidden a mouse has no way to the panel but the
+  round button (the swipe up is touch only). (The fill row's "the line's colour" is back in 0.35.3.)
+
 ## 0.35.1 — 2026-11-13 — Phone: the viewer's caption across the width, the pencil over it; no subtitle on home
 - **What:** the full-screen viewer's caption (number, frame, words) spans the whole width at the
   foot and the pencil sits just over it, whatever the caption's height. The home screen's title
