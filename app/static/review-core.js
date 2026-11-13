@@ -605,6 +605,46 @@ var SightReviewCore = (function(){
     return true;
   }
 
+  // ---- picture texts (FORMAT.md "note", `captions`) -------------------------------------------
+  // A note's text is the topic; each of its pictures may carry a text of its own, kept in the note's
+  // data.captions = {key: text}. A picture is {} (the image / PSD itself), {t} (a video frame),
+  // {vk} (a 3D view) or {shot: id} (an attached picture). Keys: "pic", "t:<seconds, 3 dp>",
+  // "vk:<view key>", "shot:<id>". A frame matches by `same(a, b)` (the client's own frame rule;
+  // default: within half a millisecond), so a frame time written by another client still finds it.
+  function picKey(p){
+    if (!p) return "pic";
+    if (p.shot != null) return "shot:" + String(p.shot);
+    if (p.vk) return "vk:" + p.vk;
+    if (p.t != null && Number.isFinite(Number(p.t))) return "t:" + Number(p.t).toFixed(3);
+    return "pic";
+  }
+  var sameT = function(a, b){ return Math.abs(a - b) < 5e-4; };
+  // The keys of `caps` that stand for picture p (an exact key, or a frame key on the same frame).
+  function capKeys(caps, p, same){
+    var k = picKey(p), out = [];
+    if (!isObj(caps)) return out;
+    var isT = p && p.shot == null && !p.vk && p.t != null && Number.isFinite(Number(p.t));
+    Object.keys(caps).forEach(function(x){
+      if (x === k) out.push(x);
+      else if (isT && x.indexOf("t:") === 0 && Number.isFinite(Number(x.slice(2))) && (same || sameT)(Number(x.slice(2)), Number(p.t))) out.push(x);
+    });
+    return out;
+  }
+  function captionOf(data, p, same){
+    var caps = data && data.captions, ks = capKeys(caps, p, same);
+    for (var i = 0; i < ks.length; i++){ var v = caps[ks[i]]; if (typeof v === "string" && v.trim()) return v; }
+    return "";
+  }
+  // The note's captions with picture p's text set to `text` (empty: removed). Returns a new object,
+  // or null when nothing is left (the caller then drops data.captions).
+  function withCaption(data, p, text, same){
+    var caps = isObj(data && data.captions) ? Object.assign({}, data.captions) : {};
+    capKeys(caps, p, same).forEach(function(k){ delete caps[k]; });
+    var v = String(text == null ? "" : text).trim();
+    if (v) caps[picKey(p)] = v;
+    return Object.keys(caps).length ? caps : null;
+  }
+
   // A drawing as a review row (FORMAT.md "Rows"): `it` = {id, kind, sub | shape_kind, z | z_index,
   // data}; the bounding box columns come from its geometry. `at` = created / updated stamp.
   function drawingRow(it, at){
@@ -795,6 +835,7 @@ var SightReviewCore = (function(){
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
     ctxVisible: ctxVisible, drawingRow: drawingRow,
+    picKey: picKey, captionOf: captionOf, withCaption: withCaption,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };
 })();

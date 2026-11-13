@@ -51,12 +51,18 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
     picture = await src.picture();
     cover = await burn(picture, W, H, all, numOf);
   }
-  const shotPics = async (ids) => (await Promise.all((ids || []).map(async (s) => picOf(await src.shot(String(s)))))).filter(Boolean);
+  const shotPics = async (ids, d) => (await Promise.all((ids || []).map(async (s) => {
+    const p = await picOf(await src.shot(String(s)));
+    if (p && d) p.text = RC().captionOf(d, { shot: String(s) });  // a note's attached picture: its own text
+    return p;
+  }))).filter(Boolean);
+  // A picture's own text (FORMAT.md captions) finds its frame within half a frame.
+  const sameT = (a, b) => Math.abs(a - b) < 0.5 / (fps || 25);
   const out = [];
   for (const [i, n] of notes.entries()){
     if (progress) progress(i, notes.length);
     const d = n.data, c = d.ctx || null;
-    let frame = null, cap = "";
+    let frame = null, cap = "", picText = "";
     const more = [];
     // The note's own pictures carry no reply's drawing (as the app shows them): each reply has its own.
     const noteOnly = all.filter((it) => !it.data.reply);
@@ -64,15 +70,21 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
       const own = noteOnly.filter((it) => it.data.note === n.id);
       // One note on a picture: its frame would just repeat the cover.
       if (notes.length > 1 && own.length) frame = await burn(picture, W, H, own, numOf);
+      // The picture's own text: under its frame, else (no frame: the cover is the picture) under the note's words.
+      const pt = RC().captionOf(d, {});
+      if (frame && pt) frame = Object.assign({}, frame, { text: pt });
+      else picText = pt;
     } else if (kind === "video" && c && c.t != null){
       const f = await src.frameAt(c.t);
       if (f) frame = await burn(f, W || f.w, H || f.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t: c.t, fps })), numOf);
+      if (frame) frame = Object.assign({}, frame, { text: RC().captionOf(d, { t: c.t }, sameT) });
       cap = "Frame " + Math.round(c.t * fps) + " · " + fmtTime(c.t, fps);
       // More frames the note was drawn on: with its pictures, first.
       for (const t of noteFrameTimes(rows, n)){
         if (Math.abs(t - c.t) < 5e-4) continue;
         const g = await src.frameAt(t);
-        if (g) more.push(await burn(g, W || g.w, H || g.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
+        const bg = g ? await burn(g, W || g.w, H || g.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf) : null;
+        if (bg) more.push(Object.assign({}, bg, { text: RC().captionOf(d, { t }, sameT) }));
       }
     }
     // A reply's drawing: with that reply, on each frame it drew on (the note's own frame too) — only
@@ -93,7 +105,7 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
       replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: pics.filter(Boolean).concat(await shotPics(r.shots)) });
     }
     out.push({ num: i + 1, ctx: c && c.t != null ? fmtTime(c.t, fps) + "  ·  f " + Math.round(c.t * fps) : "", author: d.author || "", date: fmtDate(d.created),
-      text: d.text || "", status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots)), replies });
+      text: d.text || "", picText, status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots, d)), replies });
   }
   const st = reviewState(rows);
   return {
@@ -138,6 +150,9 @@ img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
 .cap { font-size: 11px; color: var(--muted); }
 .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .shots img { max-height: 220px; width: auto; border: 1px solid var(--line); }
+.shots figure { margin: 0; max-width: 360px; }
+.shots figcaption, .ptx { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-top: 3px; }
+.ptx { margin: 4px 0 6px; }
 .replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }
 .rep { margin: 6px 0; } .rep .rh { font-size: 11px; color: var(--muted); } .rep .rt { white-space: pre-wrap; word-break: break-word; }
 .ev { font-size: 12px; color: var(--muted); }
@@ -147,7 +162,9 @@ img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
 
 export async function toHtml(p){
   const img = async (pic, cls) => pic ? `<img class="${cls || ""}" src="${await blobUrl(pic.blob)}" width="${pic.w}" height="${pic.h}" alt="">` : "";
-  const shots = async (list) => list.length ? `<div class="shots">${(await Promise.all(list.map((s) => img(s)))).join("")}</div>` : "";
+  // A picture with its own text (a note's pictures) is a figure: the text right under it.
+  const fig = async (pic) => pic.text ? `<figure>${await img(pic)}<figcaption>${esc(pic.text)}</figcaption></figure>` : img(pic);
+  const shots = async (list) => list.length ? `<div class="shots">${(await Promise.all(list.map((s) => fig(s)))).join("")}</div>` : "";
   const parts = [`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(p.title)}</title><style>${HTML_CSS}</style></head><body><main>`];
   parts.push(`<h1>${esc(p.title)}</h1>`);
   if (p.subtitle) parts.push(`<p class="sub">${esc(p.subtitle)}</p>`);
@@ -160,8 +177,10 @@ export async function toHtml(p){
     if (n.ctx) parts.push(`<span class="ctx">${esc(n.ctx)}</span>`);
     parts.push(`<span>${esc([n.author, n.date].filter(Boolean).join(" · "))}</span><span class="state ${st}">${esc(NOTE_STATES[st])}</span></div>`);
     if (n.text) parts.push(`<div class="text">${esc(n.text)}</div>`);
+    if (n.picText) parts.push(`<div class="ptx">${esc(n.picText)}</div>`);
     if (n.frame) parts.push(await img(n.frame, "frame"));
     if (n.frameCaption) parts.push(`<div class="cap">${esc(n.frameCaption)}</div>`);
+    if (n.frame && n.frame.text) parts.push(`<div class="ptx">${esc(n.frame.text)}</div>`);
     parts.push(await shots(n.shots));
     if (n.replies.length){
       parts.push(`<div class="replies">`);
@@ -272,15 +291,19 @@ export async function toPdf(p){
   // stops short of the right edge). A caption under each picture. list: [{pic, cap}].
   const rows = (list, x0, width, maxH, minH) => {
     const GAP = 6;
-    // A caption in at most two lines of its picture's width (split at words, the rest cut with "…").
-    const capLines = (text, w) => {
+    // A caption in at most six lines of its picture's width (split at words, the rest cut with "…"):
+    // the frame's place and the picture's own text.
+    const capLines = (text, w, max = 6) => {
       const fits = (t) => measure({ size: 7 }, t) <= w, cut = (t) => { while (t.length > 1 && !fits(t)) t = t.slice(0, -2) + "…"; return t; };
-      if (fits(text)) return [text];
-      const words = text.split(" ");
-      let a = "";
-      while (words.length && fits((a ? a + " " : "") + words[0])) a += (a ? " " : "") + words.shift();
-      if (!a) return [cut(text)];
-      return [a, cut(words.join(" "))].filter(Boolean);
+      const words = String(text).split(/\s+/).filter(Boolean), out = [];
+      while (words.length && out.length < max - 1){
+        let a = "";
+        while (words.length && fits((a ? a + " " : "") + words[0])) a += (a ? " " : "") + words.shift();
+        if (!a) break;  // a word wider than the picture: the last line cuts it
+        out.push(a);
+      }
+      if (words.length) out.push(cut(words.join(" ")));
+      return out;
     };
     const items = list.filter((x) => x && x.pic).filter((x) => {
       // A picture without its size cannot be laid out: say so instead of leaving it out silently.
@@ -338,8 +361,10 @@ export async function toPdf(p){
     else if (n.status === "progress") head.push({ text: "   In progress", size: 9, bold: true, color: C.amber });
     textLines(head, M, CW); gap(3);
     if (n.text){ textLines([{ text: n.text, size: 10.5, strike: done, color: done ? C.muted : C.fg }], M, CW); gap(4); }
+    if (n.picText){ textLines([{ text: n.picText, size: 9.5, color: C.sub }], M, CW); gap(4); }
     // Its pictures right under its words (as the HTML report), then the thread.
-    rows([{ pic: n.frame, cap: n.frameCaption }].concat(n.shots.map((s) => ({ pic: s }))), M, CW, 240, 120);
+    const withText = (cap, pic) => [cap, pic && pic.text].filter(Boolean).join(" — ");
+    rows([{ pic: n.frame, cap: withText(n.frameCaption, n.frame) }].concat(n.shots.map((s) => ({ pic: s, cap: withText("", s) }))), M, CW, 240, 120);
     for (const r of n.replies){
       if (r.event){
         textLines([{ text: (EVENT_LABEL[r.event] || "Reopened") + (r.author ? " by " + r.author : "") + " · " + r.date, size: 8.5, color: C.muted }], M + 16, CW - 16, { bar: true });

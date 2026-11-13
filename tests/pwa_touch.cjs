@@ -347,23 +347,57 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await p.waitForSelector(".note .fw:not(.wait):not(.sm):not(.shot)", { timeout: 10000 });
   await ev(() => document.querySelector(".note .fw:not(.wait):not(.sm):not(.shot)").click());
   await p.waitForSelector(".view");
-  const capNow = () => ev(() => { const c = document.querySelector(".view .cap .fr"); return c ? c.textContent : null; });
+  const capNow = () => ev(() => { const c = document.querySelector(".view .scp-lab"); return c ? c.textContent : null; });
   out.viewer = [await capNow()];
-  // The caption's words: up to three lines, more scroll inside it (a drag there scrolls the words,
-  // it does not go to another note).
-  const capTx = await ev(() => { const t = document.querySelector(".view .cap .tx"); t.textContent = Array.from({ length: 12 }, (_, i) => "Line " + (i + 1) + " of a long note").join("\n");
+  // The text plate (caption-plate.js): bottom centre, 80 % wide; more than five lines scroll inside it
+  // (a finger drag there scrolls the words, it does not go to another note).
+  const capTx = await ev(() => { const t = document.querySelector(".view .scp-body"); t.textContent = Array.from({ length: 12 }, (_, i) => "Line " + (i + 1) + " of a long note").join("\n");
+    window.dispatchEvent(new Event("resize"));
     const r = t.getBoundingClientRect(), lh = parseFloat(getComputedStyle(t).lineHeight); return [Math.round(r.height / lh), t.scrollHeight > t.clientHeight + 10, r.x + r.width / 2, r.y + r.height / 2]; });
-  // (A finger scrolls them natively: the viewer leaves touches on the words alone — no pointer
-  // capture, no preventDefault; the wheel there does not zoom the picture. They take the
-  // caption's full width, under the number and the frame.)
-  const scrolls = await ev(() => { const t = document.querySelector(".view .cap .tx"), r = t.getBoundingClientRect(), h = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-    t.scrollTop = 30; return h === t && t.scrollTop > 0 && r.width > innerWidth * 0.5; });
-  // The caption spans the width; the pencil sits over it.
-  out.capPlace = await ev(() => { const c = document.querySelector(".view .cap").getBoundingClientRect(), pn = document.querySelector(".view .fab.pencil").getBoundingClientRect();
-    return [Math.round(c.width) === innerWidth - 24, pn.bottom <= c.top, pn.right > innerWidth - 40]; });
-  const notCaught = await ev(() => { const t = document.querySelector(".view .cap .tx"); const e = new TouchEvent("touchmove", { bubbles: true, cancelable: true }); t.dispatchEvent(e); return !e.defaultPrevented; });
+  const scrolls = await ev(() => { const t = document.querySelector(".view .scp-body"), r = t.getBoundingClientRect(), h = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    t.scrollTop = 30; return t.contains(h) && t.scrollTop > 0 && t.classList.contains("scroll"); });
+  // The plate: 80 % of the width at the foot, kept to the left edge; the pencil bottom right, clear of it.
+  out.capPlace = await ev(() => { const c = document.querySelector(".view .scp-plate").getBoundingClientRect(), pn = document.querySelector(".view .fab.pencil").getBoundingClientRect();
+    return [Math.abs(c.width - innerWidth * 0.8) <= 1 && c.left < 12, innerHeight - c.bottom < 40, pn.left >= c.right && innerHeight - pn.bottom < 40 && pn.right > innerWidth - 40]; });
+  const notCaught = await ev(() => { const t = document.querySelector(".view .scp-body"); const e = new TouchEvent("touchmove", { bubbles: true, cancelable: true }); t.dispatchEvent(e); return !e.defaultPrevented; });
   out.capText = [capTx[0], capTx[1], scrolls, await capNow() === out.viewer[0], notCaught,
     await ev(() => { const b = document.querySelector(".view .vb"); return !b.style.transform.includes("scale(1)") ? b.style.transform : "fit"; })];
+  // A tap on the plate folds it into the icon (bottom centre); a tap on the icon opens it again.
+  const innerHeightNear = (r) => 844 - (r.y + r.h) < 40;
+  const plateBox = () => ev(() => { const P = document.querySelector(".view .scp"), pl = P.querySelector(".scp-plate"), ic = P.querySelector(".scp-icon");
+    const r = (getComputedStyle(pl).display !== "none" ? pl : ic).getBoundingClientRect();
+    return { side: ["b", "t", "l", "r"].find((x) => P.classList.contains(x)), min: P.classList.contains("min"), x: r.x, y: r.y, w: r.width, h: r.height }; });
+  let pb = await plateBox();
+  const head = [pb.x + pb.w / 2, pb.y + 12];
+  await tapN([head]); await sleep(250);
+  const folded = await plateBox();
+  await tapN([[folded.x + folded.w / 2, folded.y + folded.h / 2]]); await sleep(250);
+  const opened = await plateBox();
+  out.plateFold = [folded.min, Math.abs(folded.x + folded.w / 2 - 195) < 2 && innerHeightNear(folded), opened.min, await capNow() === out.viewer[0]];
+  // A drag to the left edge: the plate sticks there, 25 % wide and 80 % high; the icon too; back to the foot.
+  pb = await plateBox();
+  await drag([pb.x + pb.w / 2, pb.y + 12], [8, 420], 10, 16); await sleep(350);
+  const left = await plateBox();
+  await tapN([[left.x + left.w / 2, left.y + 12]]); await sleep(250);
+  const leftIcon = await plateBox();
+  await tapN([[leftIcon.x + leftIcon.w / 2, leftIcon.y + leftIcon.h / 2]]); await sleep(250);
+  // On the right side it ends above the pencil.
+  pb = await plateBox();
+  await drag([pb.x + pb.w / 2, pb.y + 12], [384, 420], 10, 16); await sleep(350);
+  const right = await plateBox();
+  out.plateRight = [right.side, await ev(() => document.querySelector(".view .scp-plate").getBoundingClientRect().bottom <= document.querySelector(".view .fab.pencil").getBoundingClientRect().top)];
+  pb = await plateBox();
+  await drag([pb.x + pb.w / 2, pb.y + 12], [195, 836], 10, 16); await sleep(350);
+  const back = await plateBox();
+  out.plateSide = [left.side, Math.abs(left.w - 390 * 0.25) <= 1 || left.w === 96, Math.abs(left.h - 844 * 0.8) <= 1, left.x < 20,
+    leftIcon.min && leftIcon.x < 20 && Math.abs(leftIcon.y + leftIcon.h / 2 - 422) < 2, back.side, back.min, await capNow() === out.viewer[0]];
+  // The picture's own text: the pencil on the plate asks for it; it shows under the note's text and is stored in the note.
+  await ev(() => document.querySelector(".view .scp-edit").click()); await sleep(300);
+  await p.fill(".sheet textarea", "Look at the left edge here");
+  await ev(() => document.querySelector(".sheet .btn.primary").click()); await sleep(300);
+  out.plateText = await ev(() => { const R = window.__sightReview.R, P = document.querySelector(".view .scp"), t = P.querySelector(".scp-text");
+    const n = R.rows.find((r) => r.kind === "note" && r.data.captions);
+    return [t ? t.textContent : null, !!n && Object.values(n.data.captions)[0], !!n && Object.keys(n.data.captions)[0].startsWith("t:"), !!n && !!n.data.edited_at, !!document.querySelector(".view")]; });
   await drag([320, 420], [60, 420], 8, 16);
   // A strip: the old picture goes on to the left, fading out, the new one comes in from the right, fading in.
   out.viewerFade = [await p.waitForFunction(() => { const b = document.querySelectorAll(".view .vb"); if (b.length !== 2) return false;
@@ -430,7 +464,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(300);
   out.thread = [await capNow()];
   for (let k = 0; k < 3; k++){ await drag([320, 420], [60, 420], 8, 16); await sleep(700); out.thread.push(await capNow()); }
-  out.thread.push(await ev(() => { const c = document.querySelectorAll(".view .cap span"); return c.length ? c[c.length - 1].textContent : null; }));
+  out.thread.push(await ev(() => { const c = document.querySelector(".view .scp-theme"); return c ? c.textContent : null; }));
   await ev(() => document.querySelector(".view .fab.back").click()); await sleep(600);
   out.thread.push(await onT(newT));
   // A reply's menu: Edit text — the new words, marked edited.

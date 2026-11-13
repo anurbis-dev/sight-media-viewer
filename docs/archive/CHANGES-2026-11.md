@@ -2,6 +2,23 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.40.1 — 2026-11-13 — Review fixes: undecodable clips, list selection, 3D preview cache, phone menu key, PDF sizes
+- **What:** (desktop) an undecodable clip that the server cannot convert stops its preview frames at once
+  (no 4 s-per-frame retries in one serial pump); (desktop) a text selection dragged out of a note card and
+  released in the gap of the notes list no longer drops the picked note; (desktop) 3D previews keep one picture
+  per view, replaced when the shading changes, instead of one per shading step. (Phone) the menu key on a
+  mouse works again within 1.5 s of a press on a row; a picture without its size is reported in the console
+  instead of left out of the PDF silently.
+- **Where:** `app/static/annotate.js` — `pumpPF` (`PF.failed`, cleared by `resetPF`), `onListClick` (the empty
+  branch checks `getSelection`), `view3dPic` (`PIC3` keyed by asset + view + camera, value `{shade, url}`).
+  `mobile/js/app.js` — the row's `contextmenu` (the mouse exemption restored). `mobile/js/report.js` — `rows()`.
+  `app/version.py`.
+- **Notes:** the Alt-from-centre loss from 0.40.0 is NOT changed here (MANUAL.md still describes it; decision
+  pending). A 3D preview is still recaptured for a shading change: the picture must show the shading, so the
+  capture moves the live camera twice per view (set and restore). `PF.failed` is per asset: a reopened review
+  resets it, and a clip that later becomes decodable needs that reset. The PDF size warning is for a caller
+  bug only; `picOf` and `burn` always set `w` / `h` today.
+
 ## 0.40.0 — 2026-11-13 — Annotations: hold Alt to move the camera or scrub without the select tool
 - **What:** in annotation mode with a drawing tool, holding Alt makes a drag go to the viewer instead of
   drawing: a 3D model orbits, a video scrubs (sideways on the picture). While Alt is held the annotation bar

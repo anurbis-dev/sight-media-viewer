@@ -118,6 +118,7 @@ h1 { font-size: 17pt; margin: 0 0 2pt 0; }
 .ctx { font-weight: bold; }
 .who { color: #6e6e73; }
 .text { font-size: 10.5pt; margin: 2pt 0 4pt 0; }
+.ptext { font-size: 9.5pt; color: #3a3a3c; margin: 0 0 4pt 0; }
 .status { color: #34a853; font-weight: bold; }
 .prog { color: #c77c02; font-weight: bold; }
 .reply { font-size: 9.5pt; margin: 0 0 4pt 10pt; padding: 0 0 0 6pt; border-left: 1.5pt solid #c7c7cc; }
@@ -239,6 +240,8 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
         parts.append(f'<div class="note{" done" if done else ""}"><p class="head">{" &#160; ".join(head)}</p>')
         if n.get("text"):
             parts.append(f'<p class="text">{esc(n["text"])}</p>')
+        if n.get("picText"):  # the picture's own text when the note has no frame of its own (FORMAT.md captions)
+            parts.append(f'<p class="ptext">{esc(n["picText"])}</p>')
         # The note's pictures in rows: its frame / view, the other frames / views it was drawn on,
         # then its screenshots.
         pics = []
@@ -249,10 +252,11 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             pic = put_image(decode_data_url((m or {}).get("frame") or "")) if isinstance(m, dict) else None
             if pic:
                 pics.append((*pic, m.get("caption") or ""))
+        shot_caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
         for sid in n.get("shots") or []:
             shot = put_image(shot_bytes(str(sid)))
             if shot:
-                pics.append((*shot, ""))
+                pics.append((*shot, str(shot_caps.get(str(sid)) or "")))
         parts.append(_pic_rows(pics, 240, 120))
         for r in n.get("replies") or []:
             if r.get("event"):  # resolve / in progress / reopen entry in the thread
@@ -916,13 +920,15 @@ body.zoomed { overflow: hidden; }
   }
 
   function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
-  function thumbs(list, nid){
+  // caps: a note's picture texts by shot id (FORMAT.md captions), shown under each picture.
+  function thumbs(list, nid, caps){
     var sids = (list || []).filter(shotSrc);
     if (!sids.length) return null;
     var sh = el("div", "shots"), gal = noteGal || [];
     sids.forEach(function(s){
       var src = shotSrc(s), k = gal.push({ src: src, note: nid }) - 1, i = el("img");
       i.src = src; i.alt = ""; i.onclick = function(){ zoom(gal, k); }; sh.appendChild(i);
+      if (caps && caps[s]) sh.appendChild(el("div", "cap", caps[s]));
     });
     return sh;
   }
@@ -1056,6 +1062,7 @@ body.zoomed { overflow: hidden; }
     h.appendChild(el("span", "state " + st, local ? "New · not sent yet" : STATES[st] || "Open"));
     c.appendChild(h);
     if (n.text) c.appendChild(el("div", "text", n.text));
+    if (n.picText) c.appendChild(el("div", "cap", n.picText));
     // The note's picture: its video frame / 3D view, or (pictures) the cover when the note has
     // drawings; a new note shows the picture its drawing was made on.
     var f = null;
@@ -1078,7 +1085,7 @@ body.zoomed { overflow: hidden; }
       c.appendChild(mw);
       if (m.caption) c.appendChild(el("div", "cap", m.caption));
     });
-    var sh = thumbs(n.shots, id); if (sh) c.appendChild(sh);
+    var sh = thumbs(n.shots, id, n.shotCaptions); if (sh) c.appendChild(sh);
     var mineL = E.replies[id] || [];
     var reps = (n.replies || []).concat(mineL.map(function(r){ return { id: r.id, author: r.author, date: fmt(r.created), text: r.text, event: r.event, shots: r.shots, mine: true }; }));
     if (reps.length){

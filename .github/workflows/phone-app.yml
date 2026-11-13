@@ -16,6 +16,7 @@ on:
       - "app/static/review-core.js"
       - "app/static/review-draw.js"
       - "app/static/keys.js"
+      - "app/static/caption-plate.js"
       - "app/static/favicon.svg"
       - "app/version.py"
       - "tools/build_pwa.py"

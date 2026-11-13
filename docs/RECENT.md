@@ -14,6 +14,54 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.46.0 — 2026-11-13 — Picture texts: each note picture has its own text, shown on a movable plate
+- **What:** a note's text is now its topic, and each of the note's own pictures (the image, a video frame, a 3D
+  view, an attached screenshot) can carry a text of its own. Desktop: a second field under *Add a note…* (*Text for
+  this frame / view / picture*) gives the new note's picture a text; while a note is picked and one of its pictures
+  is on screen, a half-transparent plate over the picture shows the note's text and that picture's text, with a
+  pencil to edit it in place; the same plate over an attached screenshot; the note card lists the texts (click =
+  go to the frame / view, double-click = edit) and marks previews that have one. Phone: the full-screen viewer's
+  caption became the same plate (pencil on it → the text sheet); thumbnails with a text get a corner mark; the
+  draw pencil stays bottom right: there the plate keeps to the left edge at the foot and, stuck to the right side,
+  ends above the pencil (`--scp-bx` / `--scp-bw` / `--scp-rb` in `mobile/index.html`; under 390 px wide the foot
+  plate narrows below 80 % to stay clear; on the left side it starts below Back, `--scp-lt`; desktop keeps the
+  defaults: centred, 10 % / 80 %). A fresh-agent review of this layout found the narrow-phone overlap and the
+  left plate under Back (both fixed); geometry checked by arithmetic for 360 × 800 and 844 × 390. The
+  plate: bottom centre, 80 % wide, more than five lines scroll; a tap folds it into an icon, a tap on the icon
+  opens it; a drag sticks the plate / icon to the nearest side (left / right: 25 % wide, 80 % high); side and fold
+  kept per device. PDF / HTML exports (Sight and phone) show the texts under the pictures.
+- **Where:** `app/static/caption-plate.js` (new, shared ES module), `app/static/review-core.js` (`picKey`,
+  `captionOf`, `withCaption`), `app/static/annotate.js` (`.an-cin`, `captionsHtml`, `editCaption`, `platePic`,
+  `paintPlate` in `tick`, `showShot(src, from)`, `setCaptionFor`, report payload `withPicText` / `picText` /
+  `shotCaptions`; `onDown` / dblclick skip `.scp`), `app/review.py` (PDF `picText` / `shotCaptions`, page
+  `picText`), `mobile/js/app.js` (`viewer` → `paintPlate`, `markCap`, `sameFrameT`),
+  `mobile/js/model.js` (`setCaption`), `mobile/js/report.js`, `mobile/index.html`, `tools/build_pwa.py` +
+  workflow paths (publishes `core/caption-plate.js`), `docs/FORMAT.md` (`captions`), `ARCHITECTURE.md`,
+  `MANUAL.md`, tests (`pwa_unit.cjs` captions test; `pwa_touch.cjs` / `test_pwa.py` plate fold / side / edit).
+- **Notes:** no format version change: `captions` is an optional note field; older clients keep it. It is note
+  content: editing stamps `edited_at`, so merges are unchanged (rule 3) — concurrent edits of two different
+  pictures' texts keep only the later note copy, as with text / shots (deliberately not a per-caption merge;
+  that would need a parity change in `Library.import_annotations` and `mergeRows`). Frame keys are written as
+  `t:<ctx.t to 3 dp>` and read by each client's own frame rule (`same` argument), never by string equality.
+  Reply pictures have no texts (the reply's words are theirs). Desktop plate shows only in annotation mode with a
+  note picked and the frame / view on screen being one of that note's (its own, one it drew on, one with a text).
+  The HTML reviewer page shows `picText` and frame / view captions but not screenshot texts, and cannot edit
+  texts yet. 3D was checked by reading only (no 3D asset in the container); image and video were driven in
+  Playwright on a dev server with a scratch library.
+  Review (fresh agent): no crash-level bug. Fixed: (1) a press on the plate body's scrollbar (mouse, long text)
+  moved / folded the plate — `down` now skips it; (2) the HTML reviewer page dropped screenshot texts — `thumbs`
+  takes `shotCaptions`; (3) the screenshot overlay's plate leaked its resize listener when the lightbox closed or
+  the asset changed — `S.shotView` / `closeShotView()` in `setAsset` / `unmount`; (4) `destroy()` of a plate with an
+  open edit ran after `S.asset` changed / after `flush` — the plates are now destroyed first; (5) a click on the
+  plate's pencil while editing saved and reopened the editor, a press on the plate while editing folded it; (6)
+  `captionsHtml` sorted an unknown view as NaN; a click on a screenshot's text row now opens that picture; the
+  plate blocks the browser context menu. Left as is: Enter during IME composition saves early (same as every
+  editor here; `hotkey` does not check `isComposing`); a frame text on a frame whose drawings were all deleted is
+  listed in the card and on the plate but not in the reports (they walk frames with drawings); the screenshot
+  overlay's plate does not follow note edits made elsewhere while it is open; `paintPlate` scans the items every
+  frame while a note is picked (cheap at review sizes). Fixes re-tested (unit, PWA touch, desktop Playwright), not
+  re-reviewed. Not committed.
+
 ## 0.45.2 — 2026-11-13 — Lightbox: Alt+drag scrubs a video; a video turns with Ctrl+Alt+drag
 - **What:** Alt is the quick 2D gesture again. Alt+drag on a picture turns it by hand, as before. On a video plain
   Alt+drag scrubs it (sideways on the picture), which is what the Alt-over-a-drawing-tool mode (0.40.0) relies on.
@@ -298,20 +346,3 @@ Add new entries directly below this line.
   the raw player time. Any new "what is on screen" check for video must pass `frameStart`, never the raw time.
   Checked by computing `ctxVisible` on the real review-core.js: raw 2.915 s hid the drawing stored at 2.880,
   the frame start shows it. Not yet checked in a browser with a video scrub.
-
-## 0.40.1 — 2026-11-13 — Review fixes: undecodable clips, list selection, 3D preview cache, phone menu key, PDF sizes
-- **What:** (desktop) an undecodable clip that the server cannot convert stops its preview frames at once
-  (no 4 s-per-frame retries in one serial pump); (desktop) a text selection dragged out of a note card and
-  released in the gap of the notes list no longer drops the picked note; (desktop) 3D previews keep one picture
-  per view, replaced when the shading changes, instead of one per shading step. (Phone) the menu key on a
-  mouse works again within 1.5 s of a press on a row; a picture without its size is reported in the console
-  instead of left out of the PDF silently.
-- **Where:** `app/static/annotate.js` — `pumpPF` (`PF.failed`, cleared by `resetPF`), `onListClick` (the empty
-  branch checks `getSelection`), `view3dPic` (`PIC3` keyed by asset + view + camera, value `{shade, url}`).
-  `mobile/js/app.js` — the row's `contextmenu` (the mouse exemption restored). `mobile/js/report.js` — `rows()`.
-  `app/version.py`.
-- **Notes:** the Alt-from-centre loss from 0.40.0 is NOT changed here (MANUAL.md still describes it; decision
-  pending). A 3D preview is still recaptured for a shading change: the picture must show the shading, so the
-  capture moves the live camera twice per view (set and restore). `PF.failed` is per asset: a reopened review
-  resets it, and a clip that later becomes decodable needs that reset. The PDF size warning is for a caller
-  bug only; `picOf` and `burn` always set `w` / `h` today.

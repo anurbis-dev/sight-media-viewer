@@ -75,7 +75,7 @@ class Build(unittest.TestCase):
             files = json.loads(sw.split("var FILES = ", 1)[1].split(";\n", 1)[0])
             on_disk = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()} - {"sw.js", ".nojekyll"}
             self.assertEqual(set(files) - {"./"}, on_disk)
-            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "manifest.webmanifest", "icons/icon-512.png"):
+            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "manifest.webmanifest", "icons/icon-512.png"):
                 self.assertIn(f, files)
             json.loads((out / "manifest.webmanifest").read_text(encoding="utf-8"))
 
@@ -302,9 +302,16 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["viewer"][2].endswith("2 / 2"), res["viewer"])
         self.assertFalse(res["viewer"][3])
         self.assertEqual(res["viewerFade"], [True, 1])
-        # The viewer's caption: three lines of words, the rest scrolls in it (no note change).
-        self.assertEqual(res["capText"], [3, True, True, True, True, "fit"])
+        # The viewer's text plate: five lines of words, the rest scrolls in it (no note change).
+        self.assertEqual(res["capText"], [5, True, True, True, True, "fit"])
         self.assertEqual(res["capPlace"], [True, True, True])
+        # A tap folds it into the icon at the foot, a tap on the icon opens it.
+        self.assertEqual(res["plateFold"], [True, True, False, True])
+        # Dragged to the left it sticks there 25 % wide, 80 % high (its icon too); dragged back to the foot.
+        self.assertEqual(res["plateSide"], ["l", True, True, True, True, "b", False, True])
+        self.assertEqual(res["plateRight"], ["r", True])
+        # The picture's own text, written from the plate: shown there, stored in the note (frame key, content stamp).
+        self.assertEqual(res["plateText"], ["Look at the left edge here", "Look at the left edge here", True, True, True])
         # Notes list: a swipe left = the next filter (Open), right = back to All.
         self.assertEqual(res["filterSwipe"], ["open", "Open", "all"])
         # A note's pictures: equal squares, four to a row filling it.

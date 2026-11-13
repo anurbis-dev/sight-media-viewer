@@ -227,6 +227,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .pics > .fw > img, .pics > .fw.sm > img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
 .pics > .fw.wait { height: auto; font-size: 11px; }
 .pics > .fw.shot { background: var(--chip); }
+/* A picture with its own text: three lines in its corner (the text shows on the full-screen plate). */
+.fw.hascap::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 18px; height: 18px; border-radius: 5px; background: rgb(0 0 0 / .6) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M5 7h14M5 12h14M5 17h9'/%3E%3C/svg%3E") center / 13px no-repeat; pointer-events: none; }
 .pics:empty { display: none; }  /* every picture failed to load */
 .replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }
 .rep { margin: 6px 0; position: relative; padding-right: 26px; }
@@ -299,18 +301,15 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .view .vb img, .view .vb svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; -webkit-user-drag: none; }
 .fab { position: absolute; z-index: 2; width: 46px; height: 46px; border-radius: 23px; border: 1px solid var(--ov-line); background: var(--ov); color: var(--ov-fg); display: grid; place-items: center; cursor: pointer; padding: 0; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 4px 16px rgb(0 0 0 / .18); }
 .view .fab.back { left: 12px; top: calc(12px + var(--st)); }
-.view .vfoot { position: absolute; z-index: 2; left: 12px; right: 12px; bottom: calc(14px + var(--sb)); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: none; }
-.view .vfoot .fab.pencil { position: relative; width: 54px; height: 54px; border-radius: 27px; margin-right: 2px; pointer-events: auto; }
+.view .fab.pencil { right: 12px; bottom: calc(14px + var(--sb)); width: 54px; height: 54px; border-radius: 27px; }
+/* The plate layer (caption-plate.js): the note's text and the picture's own text, 80 % wide, folds
+   to an icon on a tap, sticks to any side when dragged. At the foot it keeps to the left edge so the
+   pencil (bottom right) stays clear (narrower than 80 % on screens under 390 px); on the right side
+   it ends above the pencil; the top and left sides clear the Back button; the sides clear the safe area. */
+.view .vfoot { position: absolute; inset: 0; z-index: 1; pointer-events: none; --scp-b: calc(14px + var(--sb)); --scp-t: calc(74px + var(--st)); --scp-l: calc(8px + env(safe-area-inset-left)); --scp-r: calc(10px + env(safe-area-inset-right)); --scp-bx: calc(8px + env(safe-area-inset-left)); --scp-bw: min(80%, calc(100% - 78px - env(safe-area-inset-left) - env(safe-area-inset-right))); --scp-rb: max(10%, calc(80px + var(--sb))); --scp-lt: max(10%, calc(70px + var(--st))); }
+/* A sheet opened from the viewer (the picture's text) comes over it. */
+.view ~ .back { z-index: 30; }
 .player .fab.pencil { z-index: 4; right: 14px; bottom: 14px; width: 54px; height: 54px; border-radius: 27px; }
-.view .cap { position: relative; align-self: stretch; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: flex-start; line-height: 1.35; padding: 7px 12px; border-radius: 14px; background: var(--ov); color: var(--ov-fg); font-size: 13.5px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: none; }
-.view .cap span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The note's / reply's words: on their own line under the number and frame, up to three lines,
-   more scroll inside (the picture stays in view). */
-.view .cap span.tx { flex: 1 1 100%; white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: calc(1.35em * 3); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
-.view .cap .num { flex: none; }
-.view .cap .fr { flex: none; font-variant-numeric: tabular-nums; opacity: .85; }
-.view .cap .fr:last-child { flex: 0 1 auto; }
-.view .cap:empty { display: none; }
 .busy { position: fixed; inset: 0; z-index: 45; background: rgb(0 0 0 / .4); display: grid; place-items: center; }
 .busy div { background: var(--card); border-radius: 14px; padding: 16px 20px; font-size: 14px; min-width: 200px; text-align: center; }
 </style>

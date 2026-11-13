@@ -139,6 +139,45 @@ const moovPayload = (...traks) => Buffer.concat(traks);
     assert.throws(() => M.parsePackage(JSON.stringify({ format: "sight-review", version: 99, asset: {}, annotations: [] })), /newer Sight/);
   });
 
+  // ---- picture texts (FORMAT.md captions) ----
+  t("captions: keys, frame match, set / remove, content stamp", () => {
+    const RC = globalThis.SightReviewCore;
+    assert.strictEqual(RC.picKey({}), "pic");
+    assert.strictEqual(RC.picKey(null), "pic");
+    assert.strictEqual(RC.picKey({ t: 1.0004 }), "t:1.000");
+    assert.strictEqual(RC.picKey({ vk: "ab12" }), "vk:ab12");
+    assert.strictEqual(RC.picKey({ shot: "ff00" }), "shot:ff00");
+    const note = M.newNote({ text: "Topic", author: "A" }, 1000);
+    M.setCaption(note, { t: 1.04 }, "  frame text  ", null, 2000);
+    assert.deepStrictEqual(note.data.captions, { "t:1.040": "frame text" });
+    assert.strictEqual(note.data.edited_at, 2000);
+    assert.strictEqual(note.updated_at, 2000);
+    // Another client's time for the same frame finds it with its own frame rule; the default is ±0.5 ms.
+    const fps25 = (a, b) => Math.floor(a * 25 + 1e-6) === Math.floor(b * 25 + 1e-6);
+    assert.strictEqual(RC.captionOf(note.data, { t: 1.05 }, fps25), "frame text");
+    assert.strictEqual(RC.captionOf(note.data, { t: 1.05 }), "");
+    assert.strictEqual(RC.captionOf(note.data, { t: 1.0402 }), "frame text");
+    // Setting it from the other time replaces the old key (one text per picture).
+    M.setCaption(note, { t: 1.05 }, "new", fps25, 3000);
+    assert.deepStrictEqual(note.data.captions, { "t:1.050": "new" });
+    M.setCaption(note, { shot: "aa" }, "shot text", null, 3500);
+    M.setCaption(note, {}, "the picture", null, 3600);
+    assert.strictEqual(RC.captionOf(note.data, { shot: "aa" }), "shot text");
+    assert.strictEqual(RC.captionOf(note.data, {}), "the picture");
+    assert.strictEqual(RC.captionOf(note.data, { vk: "zz" }), "");
+    // Empty removes it; the last one gone drops data.captions.
+    M.setCaption(note, { t: 1.05 }, "", fps25, 4000);
+    M.setCaption(note, { shot: "aa" }, " ", null, 4001);
+    M.setCaption(note, {}, "", null, 4002);
+    assert.ok(!("captions" in note.data));
+    assert.strictEqual(note.data.text, "Topic");
+    // Captions merge with the note's content (edited_at): the later copy wins as a whole.
+    const a = M.newNote({ text: "T", author: "A" }, 1000), b2 = JSON.parse(JSON.stringify(a));
+    M.setCaption(b2, {}, "from the phone", null, 5000);
+    const res = M.mergePackage([a], { annotations: [b2], deleted: [] }, {}, 6000);
+    assert.strictEqual(RC.captionOf(res.rows[0].data, {}), "from the phone");
+  });
+
   // ---- pdf ----
   let pdfOut = null;
   t("pdf writer: structure and xref offsets", () => {

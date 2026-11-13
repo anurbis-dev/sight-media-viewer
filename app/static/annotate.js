@@ -21,6 +21,7 @@ import { convertForPlayback } from "/static/video-playable.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
 import "/static/review-core.js";
+import { createPlate } from "/static/caption-plate.js";
 const RC = globalThis.SightReviewCore;
 const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, textLayout,
   primsOf, primSvg, boundsOf, hitTest, transformItem, validItem } = RC;
@@ -169,6 +170,7 @@ export function createAnnotator(host){
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
+    plate: null, shotView: null,
   };
 
   function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
@@ -643,9 +645,10 @@ export function createAnnotator(host){
   function viewMode(){
     if (modeCache) return modeCache;
     const inp = S.ui && !S.ui.hidden ? S.ui.querySelector(".an-input") : null, D = S.drag;
+    const cin = S.ui && !S.ui.hidden ? S.ui.querySelector(".an-cin") : null;
     // Loose drawings from before (never attached to a note) do not count: only the ones drawn since
     // this file was opened are a new note in the making.
-    const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
+    const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(cin && (document.activeElement === cin || cin.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
       || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.composeSince);
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
     modeCache = { compose, pin: note(S.pinFocus) };
@@ -865,6 +868,7 @@ export function createAnnotator(host){
   let suppressClick = false;
   function onDown(e){
     if (!S.on) return;
+    if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
     if (altCam() && e.button === 0) return; // Alt held: the viewer's own press (orbit, scrub), not ours
     const pen = e.pointerType === "pen";
@@ -1615,6 +1619,7 @@ export function createAnnotator(host){
       <div class="an-compose">
         <div class="an-pend"></div>
         <textarea class="an-input" rows="2" placeholder="Add a note…  Enter adds · Shift+Enter new line"></textarea>
+        <textarea class="an-input an-cin" rows="1" placeholder="Text for this picture (optional)"></textarea>
         <div class="an-crow">
           <button type="button" class="an-ib" data-act="shot" title="Screenshot (S)">${ICON.shot}</button>
           <button type="button" class="an-ib" data-act="region" title="Screenshot of an area (Shift+S)">${ICON.region}</button>
@@ -1658,6 +1663,17 @@ export function createAnnotator(host){
     // Typing a new note shows the clean picture (with only the new note's drawings).
     inp.addEventListener("focus", modeChanged);
     inp.addEventListener("blur", modeChanged);
+    // The second field: the text of the picture the note is made on (this frame / this view), FORMAT.md
+    // captions. The note's own text is the topic. Same keys as the note field.
+    const cin = el.querySelector(".an-cin");
+    cin.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (hotkey(e, "Enter")){ e.preventDefault(); addNote(); }
+      else if (hotkey(e, "Escape")){ e.preventDefault(); cin.blur(); }
+    });
+    cin.addEventListener("input", () => { cin.style.height = "auto"; cin.style.height = Math.min(120, cin.scrollHeight + 2) + "px"; modeChanged(); });
+    cin.addEventListener("focus", modeChanged);
+    cin.addEventListener("blur", modeChanged);
     el.querySelector(".an-filt").addEventListener("click", (e) => {
       const b = e.target.closest?.("[data-filt]");
       if (!b) return;
@@ -1719,7 +1735,7 @@ export function createAnnotator(host){
     list.innerHTML = !all.length ? "" : !notes.length ? `<div class="an-hint"><p>No ${S.filter === "done" ? "resolved" : S.filter === "progress" ? "in-progress" : "open"} notes.</p></div>` : notes.map((n) => {
       const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
-      const shots = (d.shots || []).map((sid) => `<img src="/api/review/shots/${sid}" data-src="/api/review/shots/${sid}" data-shot="${sid}" alt="" loading="lazy">`).join("");
+      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<img src="/api/review/shots/${sid}" data-src="/api/review/shots/${sid}" data-shot="${sid}"${ct ? ` class="an-hascap" title="${esc(ct)}"` : ""} alt="" loading="lazy">`; }).join("");
       const ctx = ctxLabel(d.ctx);
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
@@ -1729,6 +1745,7 @@ export function createAnnotator(host){
           <button type="button" class="an-ib sm" data-del="${n.id}" title="Delete note and its drawings">${ICON.trash}</button></div>
         <div class="an-nt" title="Double-click to edit">${esc(d.text || "") || '<i class="an-empty">No text</i>'}</div>
         ${picGrid(notePreview(n) + shots)}
+        ${captionsHtml(n)}
         ${d.from ? `<div class="an-nmeta">from ${esc(d.from.name || "previous version")}</div>` : ""}
         ${repliesHtml(n)}
       </div>`;
@@ -1800,7 +1817,8 @@ export function createAnnotator(host){
     const url = view3dPic(vk, explodeOf(vk, [n, ...list]));
     const vw = g.w * 1000 / g.h;
     const img = url ? `<img src="${url}" alt="">` : "";
-    return `<div class="an-nprev${cls}"${goVk ? ` data-vk="${goVk}"` : ""} style="aspect-ratio:${g.w} / ${g.h}" title="${goVk ? "Go to this view" : "Show this note's drawings"}">${img}<svg viewBox="${-vw / 2} -500 ${vw} 1000" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
+    const ct = RC.captionOf(n.data, { vk });
+    return `<div class="an-nprev${cls}${ct ? " an-hascap" : ""}"${goVk ? ` data-vk="${goVk}"` : ""} style="aspect-ratio:${g.w} / ${g.h}" title="${ct ? esc(ct) : goVk ? "Go to this view" : "Show this note's drawings"}">${img}<svg viewBox="${-vw / 2} -500 ${vw} 1000" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
   }
   function notePreview(n){
     if (S.kind === "model3d") return view3dPreviews(n);
@@ -1859,7 +1877,10 @@ export function createAnnotator(host){
       const url = previewFrame(t);
       img = url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`;
     } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
-    return `<div class="an-nprev${cls}"${pt} style="aspect-ratio:${g.nw} / ${g.nh}" title="${pt ? "Go to this frame" : "Show this note's drawings"}">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
+    // A note's own picture with a text of its own gets a mark (a reply's picture: list = its drawings, at = null).
+    const tt = S.kind === "video" ? at ?? n.data.ctx?.t : null;
+    const ct = list.some((it) => it.data.reply) ? "" : RC.captionOf(n.data, tt != null ? { t: tt } : {}, sameFrame);
+    return `<div class="an-nprev${cls}${ct ? " an-hascap" : ""}"${pt} style="aspect-ratio:${g.nw} / ${g.nh}" title="${ct ? esc(ct) : pt ? "Go to this frame" : "Show this note's drawings"}">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.
@@ -2072,6 +2093,8 @@ export function createAnnotator(host){
     const n = pendingDrawings().length;
     const c = ctxLabel(ctxNow(false));
     const away = pendingDrawings().filter((it) => !ctxShown(it)).length;
+    const cin = el.querySelector(".an-cin");
+    if (cin) cin.placeholder = `Text for this ${S.kind === "video" ? "frame" : S.kind === "model3d" ? "view" : "picture"} (optional)`;
     el.querySelector(".an-ctx").textContent = [c, n ? `+${n} drawing${n > 1 ? "s" : ""}${away ? ` (${away} on other ${S.kind === "model3d" ? "views" : "frames"})` : ""}` : ""].filter(Boolean).join("  ·  ");
   }
   function renderViews(){
@@ -2083,7 +2106,7 @@ export function createAnnotator(host){
     el.querySelectorAll("[data-vk]").forEach((b) => { b.onclick = () => goView(b.dataset.vk); });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-note");
+    const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
     if (!t){
       // A click on the empty list drops the picked note (as Esc does). Not when it ends a text selection
       // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
@@ -2108,6 +2131,16 @@ export function createAnnotator(host){
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
     if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
     if (t.classList.contains("an-rep")) return;
+    if (t.classList.contains("an-cap")){
+      // A picture's text: the note picked (a second click does not drop it: double-click edits), the
+      // clip / camera on that picture.
+      const id = t.closest(".an-note").dataset.id, p = picOfKey(t.dataset.cap);
+      if (S.pinFocus !== id) goNote(id);
+      if (p.shot != null){ showShot(`/api/review/shots/${p.shot}`, { note: id, shot: p.shot }); return; }
+      if (p.t != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(p.t); } }
+      else if (p.vk && S.views.has(p.vk) && p.vk !== S.curVk) goView(p.vk);
+      return;
+    }
     if (t.dataset.done || t.dataset.prog){
       const id = t.dataset.done || t.dataset.prog, want = t.dataset.done ? "done" : "progress";
       commit([id], () => {
@@ -2131,7 +2164,7 @@ export function createAnnotator(host){
         commit([id], () => { const d = S.items.get(id).data; d.shots = (d.shots || []).filter((x) => x !== sid); d.edited_at = Date.now(); });
         return;
       }
-      showShot(t.dataset.src);
+      showShot(t.dataset.src, { note: t.closest(".an-note").dataset.id, shot: t.dataset.shot });
       return;
     }
     const card = t.closest(".an-note");
@@ -2151,6 +2184,8 @@ export function createAnnotator(host){
     if (card) goNote(card.dataset.id);
   }
   function onListDblClick(e){
+    const cp = e.target.closest?.(".an-cap");
+    if (cp){ editCaption(cp); return; }
     const rt = e.target.closest?.(".an-rt");
     if (rt){ editReply(rt.closest(".an-note").dataset.id, rt.closest(".an-rep").dataset.rid, rt); return; }
     const nt = e.target.closest?.(".an-nt");
@@ -2173,6 +2208,33 @@ export function createAnnotator(host){
       // updated_at (which replies and resolving also move; see Library._content_at).
       if (ok && v !== (it.data.text || "")) commit([id], () => { const d = S.items.get(id).data; d.text = v; d.edited_at = Date.now(); });
       else renderPanel();
+    };
+    ta.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (hotkey(ev, "Enter")){ ev.preventDefault(); end(true); }
+      else if (hotkey(ev, "Escape")){ ev.preventDefault(); end(false); }
+    });
+    ta.addEventListener("blur", () => end(true));
+  }
+  // A picture's text in a note card, edited in place (Enter saves, Esc cancels, an empty text removes it).
+  function editCaption(row){
+    const id = row.closest(".an-note")?.dataset.id, n = id && S.items.get(id);
+    if (!n) return;
+    const pic = picOfKey(row.dataset.cap), was = RC.captionOf(n.data, pic, sameFrame);
+    const ta = document.createElement("textarea");
+    ta.className = "an-input an-nedit";
+    ta.value = was;
+    ta.placeholder = picLabel(n, pic) + " — text (empty removes it)";
+    row.replaceWith(ta);
+    ta.style.height = Math.min(160, ta.scrollHeight + 4) + "px";
+    ta.focus();
+    let ended = false;
+    const end = (ok) => {
+      if (ended || !ta.isConnected) return;
+      ended = true;
+      const v = ta.value.trim();
+      ta.remove();
+      if (ok && v !== was) setCaptionFor(id, pic, v); else renderPanel();
     };
     ta.addEventListener("keydown", (ev) => {
       ev.stopPropagation();
@@ -2206,21 +2268,131 @@ export function createAnnotator(host){
     S.curVk = vk;
     afterChange();
   }
-  function showShot(src){
+  // An attached picture, large. A note's own picture (from: {note, shot}) shows the text plate: the
+  // note's text and the picture's own, editable there.
+  function showShot(src, from){
     const ov = document.createElement("div");
     ov.className = "an-shotview";
     ov.innerHTML = `<img src="${src}" alt="">`;
-    ov.onclick = () => ov.remove();
+    closeShotView();
+    let plate = null;
+    const close = () => { plate?.destroy(); ov.remove(); if (S.shotView === close) S.shotView = null; };
+    S.shotView = close;
+    ov.onclick = close;
     ov.addEventListener("pointerdown", (e) => e.stopPropagation());
     S.light?.appendChild(ov);
+    if (!from?.note) return;
+    plate = createPlate(ov, { storeKey: "sight.annotate.plate" });
+    const pic = { shot: from.shot };
+    const paint = () => {
+      const n = S.items.get(from.note);
+      if (!n || n.kind !== "note" || !ov.isConnected){ plate.set(null); return; }
+      const k = (n.data.shots || []).indexOf(from.shot);
+      plate.set({ key: n.id + "|" + RC.picKey(pic), num: numOfNote(n.id), cls: noteCls(n), label: "Attached picture" + (k >= 0 && (n.data.shots || []).length > 1 ? " " + (k + 1) : ""),
+        theme: n.data.text || "", text: RC.captionOf(n.data, pic), placeholder: "No text for this picture yet",
+        onSave: (v) => { setCaptionFor(n.id, pic, v); paint(); } });
+    };
+    paint();
+  }
+
+  // The enlarged attached picture (and its plate), if one is open.
+  function closeShotView(){ S.shotView?.(); }
+
+  // ---- picture texts (FORMAT.md captions): the note's text is the topic, each picture may add its own -----
+  // The picture a note context stands for: the image itself, the video frame, the 3D view.
+  function picOfCtx(c){
+    if (S.kind === "video") return c?.t != null ? { t: c.t } : {};
+    if (S.kind === "model3d") return c?.vk ? { vk: c.vk } : {};
+    return {};
+  }
+  const numOfNote = (id) => { const i = notesSorted().findIndex((n) => n.id === id); return i >= 0 ? i + 1 : ""; };
+  const noteCls = (n) => n.data.status === "done" ? "done" : n.data.status === "progress" ? "progress" : "open";
+  function setCaptionFor(id, pic, text){
+    const n = S.items.get(id);
+    if (!n || n.kind !== "note" || RC.captionOf(n.data, pic, sameFrame) === String(text || "").trim()) return;
+    commit([id], () => {
+      const d = S.items.get(id).data;
+      const caps = RC.withCaption(d, pic, text, sameFrame);
+      if (caps) d.captions = caps; else delete d.captions;
+      d.edited_at = Date.now();  // the note's content stamp, as for its text
+    });
+  }
+  // A caption key back to its picture (RC.picKey's forms).
+  function picOfKey(k){
+    if (k.startsWith("shot:")) return { shot: k.slice(5) };
+    if (k.startsWith("vk:")) return { vk: k.slice(3) };
+    if (k.startsWith("t:") && Number.isFinite(Number(k.slice(2)))) return { t: Number(k.slice(2)) };
+    return {};
+  }
+  function picLabel(n, pic){
+    if (pic.shot != null){ const sh = n.data.shots || [], k = sh.indexOf(pic.shot); return "Attached picture" + (k >= 0 && sh.length > 1 ? " " + (k + 1) : ""); }
+    if (pic.vk) return "View " + (viewNumber(pic.vk) || "?");
+    if (pic.t != null) return fmtTime(pic.t, S.fps);
+    return S.kind === "video" ? "Frame" : S.kind === "model3d" ? "View" : "Picture";
+  }
+  // Under a note's pictures: each picture's own text with which picture it is (frames in time order,
+  // views in view order, attached pictures in their order). Double-click edits one.
+  function captionsHtml(n){
+    const caps = n.data.captions;
+    if (!caps || typeof caps !== "object") return "";
+    const shots = n.data.shots || [];
+    const rank = (p) => p.shot != null ? [3, shots.indexOf(p.shot)] : p.vk ? [2, viewNumber(p.vk) || 1e9] : p.t != null ? [1, p.t] : [0, 0];
+    const list = Object.entries(caps).filter(([, v]) => typeof v === "string" && v.trim()).map(([k, v]) => ({ k, v, p: picOfKey(k) }))
+      .sort((a, b) => { const x = rank(a.p), y = rank(b.p); return x[0] - y[0] || x[1] - y[1]; });
+    if (!list.length) return "";
+    return `<div class="an-caps">${list.map((c) => `<div class="an-cap" data-cap="${esc(c.k)}" title="Double-click to edit"><b>${esc(picLabel(n, c.p))}</b><span>${esc(c.v)}</span></div>`).join("")}</div>`;
+  }
+  // The picture of picked note n that is on screen, or null: the image itself; a video frame the note
+  // is on (its own frame, a frame it drew on, a frame with a text); a 3D view of it.
+  function platePic(n){
+    if (S.kind === "image" || S.kind === "psd") return { pic: {}, label: "Picture" };
+    const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
+    const keys = Object.keys(n.data.captions || {}).map(picOfKey);
+    if (S.kind === "video"){
+      const f = frameNow();
+      if (!f) return null;
+      const ts = [n.data.ctx?.t, ...own.map((it) => it.data.ctx?.t), ...keys.map((p) => p.t)].filter((t) => t != null && Number.isFinite(Number(t)));
+      const hit = ts.find((t) => sameFrame(Number(t), f.t));
+      return hit != null ? { pic: { t: Number(hit) }, label: ctxLabel({ t: Number(hit) }) } : null;
+    }
+    if (S.kind === "model3d"){
+      const vk = S.curVk;
+      if (!vk) return null;
+      const vks = [n.data.ctx?.vk, ...own.map((it) => it.data.ctx?.vk || n.data.ctx?.vk), ...keys.map((p) => p.vk)];
+      return vks.includes(vk) ? { pic: { vk }, label: "View " + (viewNumber(vk) || "") } : null;
+    }
+    return null;
+  }
+  function ensurePlate(){
+    const el = surfaceEl();
+    if (!el) return null;
+    if (S.plate && S.plate.el.parentNode === el) return S.plate;
+    S.plate?.destroy();
+    S.plate = createPlate(el, { storeKey: "sight.annotate.plate" });
+    return S.plate;
+  }
+  // The plate over the picture while a note is picked and one of its pictures is on screen (runs every tick).
+  function paintPlate(){
+    const n = S.on && S.pinFocus ? S.items.get(S.pinFocus) : null;
+    const cur = n && n.kind === "note" ? platePic(n) : null;
+    if (!cur){ S.plate?.set(null); return; }
+    const P = ensurePlate();
+    if (!P) return;
+    const id = n.id, pic = cur.pic;
+    P.set({ key: id + "|" + RC.picKey(pic), num: numOfNote(id), cls: noteCls(n), label: cur.label,
+      theme: n.data.text || "", text: RC.captionOf(n.data, pic, sameFrame), placeholder: "No text for this picture yet",
+      onSave: (v) => setCaptionFor(id, pic, v) });
   }
 
   async function addNote(){
-    const inp = S.ui?.querySelector(".an-input");
-    const text = (inp?.value || "").trim();
-    if (!text && !S.pending.length && !pendingDrawings().length){ toast("Type a note, draw, or take a screenshot first"); return; }
+    const inp = S.ui?.querySelector(".an-input"), cin = S.ui?.querySelector(".an-cin");
+    const text = (inp?.value || "").trim(), capText = (cin?.value || "").trim();
+    if (!text && !capText && !S.pending.length && !pendingDrawings().length){ toast("Type a note, draw, or take a screenshot first"); return; }
     const ctx = ctxNow(true, true);
     const note = { id: uid(), kind: "note", sub: null, z: 0, data: { text, author: reviewer(), created: Date.now(), status: "open", ctx, shots: S.pending.map((p) => p.id) } };
+    // The picture's own text goes to the picture the note is made on (its frame / view / the image).
+    const caps = capText ? RC.withCaption(note.data, picOfCtx(ctx), capText, sameFrame) : null;
+    if (caps) note.data.captions = caps;
     const linked = pendingDrawings();
     commit([note.id, ...linked.map((it) => it.id)], () => {
       S.items.set(note.id, note);
@@ -2242,6 +2414,7 @@ export function createAnnotator(host){
     S.cleanPic = true;            // the picture goes clean: the drawings are on the new note's card (modeAllows)
     // Leave the field so S / Shift+S / tool keys work again straight away.
     if (inp){ inp.value = ""; inp.style.height = ""; inp.blur(); }
+    if (cin){ cin.value = ""; cin.style.height = ""; cin.blur(); }
     S.sel.clear();
     afterChange();
     const list = S.ui?.querySelector(".an-list");
@@ -2341,7 +2514,7 @@ export function createAnnotator(host){
         if (S.ui && !S.ui.hidden) renderPending();
       }
     }
-    if (S.on) S.raf = requestAnimationFrame(tick);
+    if (S.on){ paintPlate(); S.raf = requestAnimationFrame(tick); }
   }
   function startTick(){ if (!S.raf) S.raf = requestAnimationFrame(tick); }
 
@@ -2504,6 +2677,8 @@ export function createAnnotator(host){
     cx.fillText(text, m + pad, m + pad);
     cx.restore();
   }
+  // "<which picture> — <its own text>" (the text alone when there is no title).
+  const withPicText = (title, d, pic) => { const t = RC.captionOf(d, pic, sameFrame); return [title, t].filter(Boolean).join(" — "); };
   async function gatherReport(forPage){
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
@@ -2557,7 +2732,7 @@ export function createAnnotator(host){
           for (const t of ts){
             await seekTo(v, landAt(t));
             const cm = composeNative(pick((it) => ctxShown(it)), 1600);
-            if (cm){ bakeFrame(cm, t); more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: frameTitle(a, t), ctx: { t, hold: 0 } }); }
+            if (cm){ bakeFrame(cm, t); more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: withPicText(frameTitle(a, t), d, { t }), ctx: { t, hold: 0 } }); }
           }
         } else if (S.b3 && c?.vk){
           for (const vk of new Set(mine.map((it) => it.data.ctx?.vk).filter((k) => k && k !== c.vk))){
@@ -2569,10 +2744,16 @@ export function createAnnotator(host){
             S.curVk = vk;
             await nextFrame(); await nextFrame(); await nextFrame();
             const cm = composeNative(pick((it) => it.data.ctx?.vk === vk && !replyGone(it)));
-            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: viewTitle(a, vk), ctx: { vk, cam: view.cam } });
+            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: withPicText(viewTitle(a, vk), d, { vk }), ctx: { vk, cam: view.cam } });
           }
         }
-        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size, frameCaption: cap, more, shots: d.shots || [],
+        // Picture texts (FORMAT.md captions): under each picture, after which picture it is; the note's own
+        // picture with no frame of its own (one note on an image: the cover is it) under the note's text.
+        const ownPic = picOfCtx(c), ownText = RC.captionOf(d, ownPic, sameFrame);
+        const shotCaptions = {};
+        (d.shots || []).forEach((sid) => { const t = RC.captionOf(d, { shot: sid }); if (t) shotCaptions[sid] = t; });
+        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size,
+          frameCaption: frame ? withPicText(cap, d, ownPic) : cap, picText: frame ? "" : ownText, shotCaptions, more, shots: d.shots || [],
           replies: liveReplies(n).map((r) => ({ id: r.id, author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
       }
     } finally {
@@ -2694,6 +2875,7 @@ export function createAnnotator(host){
     renderProps();
     syncPanel();
     paintBadge();
+    paintPlate();
     host.onModeChange?.(S.on);
     startTick();
     return true;
@@ -2782,6 +2964,9 @@ export function createAnnotator(host){
     paintBar();
   }
   function unmount(){
+    // The plates first: an edit still open there saves into this asset's notes before the flush.
+    S.plate?.destroy(); S.plate = null;
+    closeShotView();
     flush();
     finishEdit();
     cancelAnimationFrame(S.raf);
@@ -2797,6 +2982,9 @@ export function createAnnotator(host){
     host.onModeChange?.(false);
   }
   function setAsset(a){
+    // The plates first (an open edit saves into the old asset's notes), then the flush.
+    S.plate?.destroy(); S.plate = null;
+    closeShotView();
     flush();
     finishEdit();
     cancelRegion();
@@ -2835,7 +3023,7 @@ export function createAnnotator(host){
     // double-click (frame / 100%).
     el.addEventListener("click", (e) => { if (suppressClick){ suppressClick = false; e.stopImmediatePropagation(); } }, true);
     el.addEventListener("dblclick", (e) => {
-      if (!S.on) return;
+      if (!S.on || e.target.closest?.(".scp")) return;
       const [x, y] = toDoc(e);
       const hit = hitAt(x, y);
       if (hit && typeOf(hit) === "text" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editText(hit); return; }
@@ -3043,6 +3231,15 @@ function injectStyles(){
 .an-ctx { flex: 1; min-width: 0; color: var(--subtle); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .an-add { height: 28px; padding: 0 14px; }
 .an-shotview { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: rgb(0 0 0 / .82); cursor: zoom-out; }
+.an-cin { margin-top: 4px; font-size: 12.5px; }
+/* The text plate over the picture (caption-plate.js): clear of the zoom chip at the foot and of the
+   tool bar at the top. */
+.scp { --scp-b: 30px; --scp-t: 140px; }
+.an-caps { margin: 4px 0 2px; display: flex; flex-direction: column; gap: 3px; }
+.an-cap { font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; padding: 3px 7px; border-radius: 5px; background: rgb(255 255 255 / .05); border-left: 2px solid rgb(255 255 255 / .25); cursor: pointer; user-select: text; }
+.an-cap b { font-weight: 600; opacity: .7; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.an-nprev.an-hascap::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 15px; height: 15px; border-radius: 4px; background: rgb(0 0 0 / .65) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M5 7h14M5 12h14M5 17h9'/%3E%3C/svg%3E") center / 11px no-repeat; pointer-events: none; }
+.an-pics > img.an-hascap { outline: 2px solid rgb(255 255 255 / .55); outline-offset: -2px; }
 .an-shotview img { max-width: 92%; max-height: 92%; border-radius: 6px; box-shadow: 0 20px 60px rgb(0 0 0 / .6); }
 .vtrack .an-marks { position: absolute; inset: 0; pointer-events: none; }
 .an-mk { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #ffd60a; box-shadow: 0 0 0 1px rgb(0 0 0 / .5); pointer-events: auto; cursor: pointer; }

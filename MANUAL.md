@@ -88,7 +88,20 @@
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
     show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), double-click its text to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
-    drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
+    drawings. Alt+click a screenshot in a note removes it.
+    **Picture texts** — the note's text is its topic; each of its pictures (the image, a video frame,
+    a 3D view, an attached screenshot) can carry a text of its own. The second field under *Add a
+    note…* (*Text for this frame / view / picture*) gives one to the picture the note is made on.
+    While a note is picked and one of its pictures is on screen (its frame, a frame it was drawn on,
+    its view), a half-transparent plate over the picture shows the note's text with the picture's
+    text under it; the pencil on the plate edits that picture's text (Enter saves, Shift+Enter new
+    line, Esc cancels, an empty text removes it). Click an attached screenshot of the note: the same
+    plate over it. The plate sits at the foot, 80 % wide (more than five lines scroll inside it);
+    click it to fold it into a round icon, click the icon to open it; drag the plate or the icon to
+    any of the four sides — on the left / right it is 25 % wide and 80 % high. The side and the fold
+    are kept. In the note card the texts are listed under its pictures (a mark in a preview's
+    corner shows which have one); click one to go to that frame / view, double-click to edit it.
+    The PDF report and the reviewer page show them under the pictures. The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
@@ -259,11 +272,17 @@
   edited reply says so). Tap a timecode to go to that frame, a picture to
   view it full screen (pinch / double-tap to zoom; at full size a swipe left / right — or ← / → —
   goes through the whole note: its frames, its attached pictures, then each reply's drawings and
-  pictures, the caption telling which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture") with the note's /
-  reply's words under it — up to three lines, more scroll inside the caption; a swipe up /
+  pictures; a half-transparent plate at the foot (80 % wide, at the left edge so the pencil bottom right stays free) tells which ("0:01.05 · f 30 · 2 / 7",
+  "↳ Bob · Picture") with the note's / reply's words and, on the note's own pictures, the picture's
+  own text under them — more than five lines scroll inside the plate; the pencil on the plate writes
+  or changes that picture's text (the note's text stays its topic; a picture with a text has a mark
+  in its corner in the card, and the PDF / HTML exports show the text under it); a tap on the plate
+  folds it into a round icon, a tap on the icon opens it; drag the plate or the icon to any side of
+  the screen — on the left / right it is 25 % wide and up to 80 % high (on the right it ends above the
+  pencil; kept for next time); a swipe up /
   down shows the next / previous note — the picture goes on the way you swiped, fading out, and the
-  next one follows it in like a strip, fading in; the round ← Back button leaves — no swipe does; the pencil
-  draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on
+  next one follows it in like a strip, fading in; the round ← Back button (top left) leaves — no swipe does; the pencil
+  (bottom right) draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on
   the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
   and the notes share it — and *Full screen*: Auto (the default — the app goes full screen at the
   first tap in a browser tab; left with Back, it comes back on the next screen) or Off. Safari on

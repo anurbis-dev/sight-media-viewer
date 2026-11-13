@@ -96,9 +96,31 @@ data = {
   ctx,                                // where it sits, see Context (3D notes add ctx.v3d)
   shots: [shotId],                    // attached pictures (screenshots, uploads)
   replies?: [reply | event],          // the thread, oldest first
-  from?: {id, asset, name}            // copied from note `id` on the previous version `asset`
+  from?: {id, asset, name},           // copied from note `id` on the previous version `asset`
+  captions?: {key: text}              // 0.46+: each picture's own text, see below
 }
 ```
+
+**Picture texts** (`captions`, 0.46+): the note's `text` is the topic; each of the note's own
+pictures may carry a text of its own. Keys (`picKey` in `review-core.js`):
+
+| Key | Picture |
+|-----|---------|
+| `pic` | the image / PSD itself (also a note with no frame / view) |
+| `t:<seconds, 3 dp>` | the video frame at that time (e.g. `t:1.000`, the stored `ctx.t` of the frame) |
+| `vk:<view key>` | the 3D view `vk` |
+| `shot:<shot id>` | an attached picture in `data.shots` |
+
+A frame is found by its frame, not the exact string: a reader compares the key's time with the
+picture's time by its own frame rule (`captionOf(data, pic, same)`), so a time written by another
+client still matches; writing a text replaces any key of the same frame (`withCaption`). Values
+are trimmed strings; an empty text removes the key, and no keys left removes `captions`. A
+caption is the note's content: changing one stamps `edited_at`, so it merges with the note's
+text (the later content stamp wins the whole note's content, rule 3 — two people editing
+different pictures' texts at once keep only the later copy, as with the text and `shots`).
+Reply pictures have no captions (the reply's own words are their text). Older clients ignore the
+field and keep it (Sight stores `data` as is; the HTML page and the phone copy `data` when they
+add replies).
 
 `progress` appeared in 0.19; older Sight shows such a note as open. "Open notes" (counts,
 carry-over, the report's *Open*) means status ≠ `done`.

@@ -6,7 +6,7 @@
 
 The app is mobile/ plus the scripts it shares with Sight: app/static/review-core.js (drawing
 primitives, merge rules) and app/static/review-draw.js (the drawing canvas) and app/static/keys.js (the one
-shortcut rule), copied to core/. The
+shortcut rule) and app/static/caption-plate.js (the text plate over a full-screen picture), copied to core/. The
 service worker gets the version (APP_VERSION + a hash of every file, so any change makes phones
 offer "New version — Reload") and the list of files to cache for offline use. Standard library only.
 """
@@ -29,6 +29,7 @@ SHARED = {  # published path -> source
     "core/review-core.js": ROOT / "app" / "static" / "review-core.js",
     "core/review-draw.js": ROOT / "app" / "static" / "review-draw.js",
     "core/keys.js": ROOT / "app" / "static" / "keys.js",
+    "core/caption-plate.js": ROOT / "app" / "static" / "caption-plate.js",
     "icons/favicon.svg": ROOT / "app" / "static" / "favicon.svg",
 }
 TEMPLATED = {"index.html", "sw.js"}  # get %%VERSION%% (and sw.js %%FILES%%)

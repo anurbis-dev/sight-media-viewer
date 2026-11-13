@@ -251,6 +251,19 @@ Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every 
 3D, null = picture); annotate.js `visibleNow` goes through it. `drawingRow(it, at)` makes a
 FORMAT.md row (bbox columns from `boundsOf`) from an editor item.
 
+**Picture texts and the text plate** — a note's `data.captions` (FORMAT.md) holds each picture's
+own text; `review-core.js` `picKey` / `captionOf` / `withCaption` read and write it (frames match by
+the caller's own frame rule). `app/static/caption-plate.js` (ES module, imports `./keys.js`, injects
+its own CSS) is the half-transparent plate shown over a full-screen picture: `createPlate(parent,
+{storeKey})` → `{set(content), destroy()}`; bottom centre 80 % wide, five lines then a scroll; a tap
+folds it into an icon, a drag sticks it to the nearest side (sides: 25 % × 80 %), side / fold kept in
+localStorage. It stops pointer / wheel / touch events from reaching the host (the host's
+capture-phase listeners must skip `.scp` targets themselves — annotate.js `onDown` / dblclick do).
+Used by annotate.js (on the lightbox surface while a note is picked and one of its pictures is on
+screen — `paintPlate` runs every tick — and over an attached picture in `showShot`; `onSave` edits in
+place) and by the phone's viewer (`onEdit` opens the app's text sheet); `tools/build_pwa.py`
+publishes it as `core/caption-plate.js`.
+
 **Transform (select tool)** — `review-core.js` `xfBox / xfHandles / xfAt / xfStart / xfDrag /
 xfSvg / XF_CURSOR / snap15`: handles, hit test, the drag math (move, 8 scale handles, rotate, line
 ends / bend) and the selection markup, shared by annotate.js (screen-px overlay: `map` = toScreen,

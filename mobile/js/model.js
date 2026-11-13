@@ -87,6 +87,15 @@ export function editNote(note, patch, now = Date.now()){
   note.data = Object.assign({}, note.data, patch, { edited_at: now });
   note.updated_at = Math.max(now, note.updated_at || 0);
 }
+// A picture's own text (FORMAT.md captions): pic = {} | {t} | {shot}; "" removes it. It is the
+// note's content, so it stamps edited_at like the note's text (the later edit wins the merge).
+export function setCaption(note, pic, text, same, now = Date.now()){
+  const caps = RC().withCaption(note.data, pic, text, same);
+  const data = Object.assign({}, note.data, { edited_at: now });
+  if (caps) data.captions = caps; else delete data.captions;
+  note.data = data;
+  note.updated_at = Math.max(now, note.updated_at || 0);
+}
 // A reply's text / pictures changed: `edited` is its merge key (the later edit wins, FORMAT.md) —
 // always past the stamp it has, so a clock behind the reply author's still wins.
 const after = (r, now) => Math.max(now, RC().stamp(r.edited != null ? r.edited : r.created) + 1);

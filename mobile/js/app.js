@@ -11,6 +11,7 @@ import { videoFps } from "./mp4.js";
 import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
+import { createPlate } from "../core/caption-plate.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -2202,6 +2203,12 @@ async function noteFrame(n){
 function drawingsOn(f, opts = {}){
   return M.drawings(R.rows).filter((r) => opts.reply ? r.data.reply === opts.reply && (!f.at || RC.ctxVisible(r.data.ctx, f.at)) : !r.data.reply && (f.note ? r.data.note === f.note : RC.ctxVisible(r.data.ctx, f.at)));
 }
+// A note's picture that has its own text (FORMAT.md captions) gets a mark in its corner.
+function markCap(box, n, pic){
+  const t = n && pic ? RC.captionOf(n.data, pic, sameFrameT) : "";
+  if (t){ box.classList.add("hascap"); box.title = t; }
+  return box;
+}
 function picBox(f, list, cls){
   const w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img");
   i.src = f.url; i.alt = ""; i.draggable = false; w.appendChild(i);
@@ -2213,7 +2220,7 @@ function asyncPic(n, list, cls, onTap){
   const ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
   noteFrame(n).then((f) => {
     if (!f){ ph.remove(); return; }
-    const box = picBox(f, list(f), cls);
+    const box = markCap(picBox(f, list(f), cls), n, f.at ? { t: f.at.t } : {});
     box.onclick = () => onTap(f);
     ph.replaceWith(box);
   });
@@ -2226,6 +2233,7 @@ function asyncFrameAt(n, t, rid){
     if (R !== rv || !fr){ ph.remove(); return; }
     const f = { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t, hold: 0 }, at: { t, fps: R.fps } };
     const box = picBox(f, rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), "sm");
+    if (!rid) markCap(box, n, { t });
     box.onclick = () => openThread(n, rid ? { kind: "frame", t, rid } : { kind: "frame", t });
     ph.replaceWith(box);
   });
@@ -2235,6 +2243,7 @@ function asyncFrameAt(n, t, rid){
 function shotThumbs(ids, n, rid, into){
   (ids || []).forEach((sid) => {
     const w = el("div", "fw shot"), i = el("img"); i.alt = ""; i.draggable = false; w.appendChild(i);
+    if (n && !rid) markCap(w, n, { shot: String(sid) });
     shotUrl(String(sid)).then((u) => { if (u){ i.src = u; w.onclick = () => n ? openThread(n, rid ? { kind: "shot", id: String(sid), rid } : { kind: "shot", id: String(sid) }) : openShot(u); } else w.remove(); });
     into.appendChild(w);
   });
@@ -2278,7 +2287,7 @@ function noteCard(n){
     const mf = kind === "video" ? memFrame(c.t) : null;
     if (mf){
       const f = { url: mf.url, vb: [0, 0, docW(), docH()], ctx: c, at: { t: c.t, fps: R.fps } };
-      const box = picBox(f, drawingsOn(f), "");
+      const box = markCap(picBox(f, drawingsOn(f), ""), n, { t: c.t });
       box.onclick = () => openThread(n, { kind: "frame", t: c.t });
       pics.appendChild(box);
     } else pics.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
@@ -2316,6 +2325,8 @@ async function quickState(n, s){
 // its replies drew on, in time order (one time per frame, by r3).
 // One key per frame (by index when the rate is known: two stored times a hair apart are one frame).
 const frameKey = (t) => R.fpsKnown ? frameIdx(t) : r3(t);
+// Two frame times on one frame (a picture's text is found by its frame, FORMAT.md captions).
+const sameFrameT = (a, b) => R ? frameKey(a) === frameKey(b) : Math.abs(a - b) < 5e-4;
 function threadFrames(n){
   const c = n.data.ctx, by = new Map();
   if (c && c.t != null) by.set(frameKey(c.t), c.t);
@@ -3003,15 +3014,17 @@ function playerPlace(){
 // SLIDE_WAIT ms, so it never comes in blank).
 const SLIDE_MS = 300, SLIDE_WAIT = 600;
 function viewer(o){
-  const v = el("div", "view"), cap = el("div", "cap");
+  const v = el("div", "view");
   const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
   const pen = btn("fab pencil", null, () => { const cur = o; close(); cur.onDraw(); }, "Draw on it"); pen.innerHTML = ico("pen", 24);
-  // The caption across the whole width at the foot, the pencil just over it (whatever its height).
+  // The pictures sit under the plate's layer (`foot`: the note's text and the picture's own text on
+  // a plate that folds / moves to any side, caption-plate.js); Back top left, the pencil bottom right.
   const foot = el("div", "vfoot");
-  foot.appendChild(pen); foot.appendChild(cap);
-  v.appendChild(foot); v.appendChild(back);
+  v.appendChild(foot); v.appendChild(back); v.appendChild(pen);
+  const plate = createPlate(foot, { storeKey: "sight-review:plate" });
   let box = null, V = { z: 1, x: 0, y: 0 }, off = [0, 0], busyNav = false;
   const close = () => {
+    plate.destroy();
     v.remove(); window.removeEventListener("resize", fit); document.removeEventListener("keydown", onKey, true);
     const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1);
     if (o.onClose) o.onClose(o);
@@ -3030,15 +3043,7 @@ function viewer(o){
     o = no; box = nb;
     v.insertBefore(box, foot);
     pen.hidden = !o.onDraw;
-    cap.textContent = "";
-    cap.className = "cap" + (o.note ? " " + M.noteState(o.note) : "");
-    if (o.note){
-      cap.appendChild(el("span", "num", String(NUM.get(o.note.id) || "")));
-      const c = o.note.data.ctx, lab = o.label || (c && c.t != null && R ? fmtTime(c.t, R.fps) : "");
-      if (lab) cap.appendChild(el("span", "fr", lab));
-      const tx = o.text != null ? o.text : o.note.data.text;  // a reply's picture: the reply's words
-      if (tx || !lab) cap.appendChild(el("span", "tx", tx || "Note"));
-    } else if (o.label) cap.appendChild(el("span", "fr", o.label));
+    paintPlate();
     off = [0, 0];
     fit();
     if (!was) return;
@@ -3052,6 +3057,31 @@ function viewer(o){
     box.animate([{ transform: at(V, [0, 0], D + wasOff[k]), opacity: 0 }, { transform: at(V, [0, 0], 0), opacity: 1 }], { duration: SLIDE_MS, easing: ease });
     was.animate([{ transform: at(wasV, wasOff, 0), opacity: 1 }, { transform: at(wasV, [0, 0], -D), opacity: 0 }], { duration: SLIDE_MS, easing: ease, fill: "forwards" }).onfinish = () => was.remove();
     setTimeout(() => was.remove(), SLIDE_MS + 200);  // onfinish never comes for a node already gone
+  }
+  // The plate: the note's text (a reply's picture: the reply's words) and, on a note's own picture,
+  // that picture's text (o.pic, FORMAT.md captions) with the pencil-on-the-plate to edit it.
+  function paintPlate(){
+    if (!o.note){ plate.set(o.label ? { key: "x", label: o.label } : null); return; }
+    const n = o.note, c = n.data.ctx, lab = o.label || (c && c.t != null && R ? fmtTime(c.t, R.fps) : "");
+    const reply = o.text != null, pic = reply ? null : o.pic || null;
+    const at = o;
+    plate.set({
+      key: n.id + "|" + (pic ? RC.picKey(pic) : "-") + "|" + lab,
+      num: NUM.get(n.id) || "", cls: M.noteState(n), label: lab,
+      theme: reply ? o.text : n.data.text || (pic ? "" : "Note"),
+      text: pic ? RC.captionOf(n.data, pic, sameFrameT) : "",
+      placeholder: "No text for this picture yet",
+      onEdit: pic ? async () => {
+        const rv = R, was = RC.captionOf(n.data, pic, sameFrameT);
+        const t = await askText({ title: "Text for this picture", text: "Shown over this picture. The note's own text stays the topic.", value: was, multiline: true, placeholder: "What to look at here" });
+        if (t == null || R !== rv || t.trim() === was) return;
+        const live = M.byId(R.rows, n.id);
+        if (!live || live.deleted_at != null) return;
+        M.setCaption(live, pic, t, sameFrameT);
+        dirty();
+        if (o === at && v.isConnected){ at.note = live; paintPlate(); }
+      } : null,
+    });
   }
   function fit(){
     const vw = o.view || { rot: 0, mirror: false };  // per picture: an attached one is not turned
@@ -3098,7 +3128,7 @@ function viewer(o){
     sw = p.length === 1 && V.z <= 1.01 ? { x: p[0].x, y: p[0].y, axis: null } : null;
   };
   v.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".fab, .cap .tx")) return;  // (the caption's words scroll on their own)
+    if (e.target.closest(".fab, .scp-plate, .scp-icon")) return;  // (the plate has its own gestures; its words scroll)
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { v.setPointerCapture(e.pointerId); } catch {}
     start();
@@ -3139,7 +3169,7 @@ function viewer(o){
     start();
   };
   v.addEventListener("pointerup", up); v.addEventListener("pointercancel", up);
-  const inText = (e) => !!(e.target.closest && e.target.closest(".cap .tx"));
+  const inText = (e) => !!(e.target.closest && e.target.closest(".scp-plate, .scp-icon"));
   v.addEventListener("wheel", (e) => { if (inText(e)) return; e.preventDefault(); zoomAt(e.clientX, e.clientY, V.z * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
   v.addEventListener("touchmove", (e) => { if (!inText(e)) e.preventDefault(); }, { passive: false });
   function onKey(e){
@@ -3215,7 +3245,9 @@ function threadView(n, items, i, f, from, prevAt){
   const rep = it.rid ? (n.data.replies || []).find((x) => x.id === it.rid) : null;
   const where = it.kind === "shot" ? "Picture" : t0 != null ? `${fmtTime(t0, R.fps)} · f ${Math.round(t0 * R.fps)}` : "Drawing";
   const label = (rep ? `↳ ${rep.author || "Reply"} · ` : "") + where + (items.length > 1 ? ` · ${i + 1} / ${items.length}` : "");
-  return { url: f.url, vb: f.vb, view: f.shot ? null : viewOf(), note: n, label, text: rep ? rep.text || "" : undefined,
+  // The note's own pictures carry a text each (a reply's pictures show the reply's words instead).
+  const pic = rep ? null : it.kind === "shot" ? { shot: it.id } : it.t != null ? { t: it.t } : kindNow() === "video" ? null : {};
+  return { url: f.url, vb: f.vb, view: f.shot ? null : viewOf(), note: n, label, pic, text: rep ? rep.text || "" : undefined,
     at: it.kind === "shot" ? prevAt || null : f.at, rows: f.rows,
     onDraw: f.shot ? null : () => {
       if (R !== rv) return;
