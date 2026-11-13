@@ -131,8 +131,9 @@ var SightReviewDraw = (function(){
   // The text slot's row: switches for the text being typed (or the selected texts, with the
   // transform tool), kept with the pen for the next text. Their FORMAT.md fields: bold, italic,
   // underline, bgOn + bg (the box behind it, its colour), outline (a width; on = 6 % of the size) +
-  // outlineColor, align, font. The box and the font have a second row (`sub`): the box's colours or
-  // none, the fonts; the outline is a plain switch.
+  // outlineColor, align, font. The box and the font have a second row (`sub`): the box's colours
+  // (shown when the box is switched on; off is the switch itself), the fonts; the outline is a
+  // plain switch.
   var TXT = "font-size=\"16\" fill=\"currentColor\" stroke=\"none\" text-anchor=\"middle\"";
   var TEXT_OPTS = [
     { k: "bold", label: "Bold", ico: '<text x="12" y="17.5" ' + TXT + ' font-weight="800" font-family="system-ui, sans-serif">B</text>' },
@@ -274,10 +275,6 @@ var SightReviewDraw = (function(){
     }
     function openSub(x, anchor){
       var cur = textNow();
-      var none = function(label, patch){
-        var b = tbtn(label, ico('<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>'), function(){ closeSub(); applyText(patch); });
-        b.classList.toggle("on", !cur[x.k]); return b;
-      };
       var swatches = function(key, onKey){
         return TEXT_COLORS.map(function(c){
           var b = el("button", "swc" + (cur[onKey] && cur[key] === c ? " on" : "")); b.type = "button"; b.style.background = c; b.dataset.c = c;
@@ -286,7 +283,7 @@ var SightReviewDraw = (function(){
           return b;
         });
       };
-      var entries = x.sub === "box" ? [none("No box", { bgOn: false })].concat(swatches("bg", "bgOn"))
+      var entries = x.sub === "box" ? swatches("bg", "bgOn")
         : FONT_IDS.map(function(fid){
           var b = tbtn("Font: " + fid, ico(fontIco(fid)), function(){ closeSub(); applyText({ font: fid }); });
           b.classList.toggle("on", cur.font === fid); return b;
@@ -323,6 +320,8 @@ var SightReviewDraw = (function(){
           openFly("text", b, TEXT_OPTS.map(function(x){
             var tb2 = tbtn(x.label, "", function(){
               if (!x.sub){ closeSub(); textOpt(x); return; }
+              // The box: a plain switch; switched on, its colours show in the second row.
+              if (x.sub === "box"){ closeSub(); textOpt(x); if (textNow().bgOn) openSub(x, tb2); return; }
               if (sub && sub.k === x.k){ closeSub(); return; }
               openSub(x, tb2);
             });

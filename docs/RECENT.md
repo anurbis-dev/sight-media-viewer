@@ -14,6 +14,14 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.33.6 — 2026-11-13 — Canvas: the text box is a plain switch again
+- **What:** the *Text* row's box button switches the box on / off as before; switched on, its
+  colours show in the second row (no "no box" entry there — the user's call: off is the switch).
+- **Where:** `app/static/review-draw.js` (the text row's button handler, `openSub`). Test:
+  `textSub` (on → off hides the row; on again shows six colours).
+- **Notes:** to change the box's colour later: tap it off and on again (the colours show), or pick
+  it while the box is being switched on.
+
 ## 0.33.5 — 2026-11-13 — Canvas: filled shapes get their own fill colour
 - **What:** on the drawing canvas (phone + HTML page) the Shapes row ends with *Fill colour*: a
   second row above it — the line's own colour (as before) or black, white, red, yellow, green,
@@ -29,7 +37,8 @@ Add new entries directly below this line.
 
 ## 0.33.4 — 2026-11-13 — Canvas: a second row for the text's box colour and font
 - **What:** on the drawing canvas (phone + HTML page) the *Text* row's box and font switches open
-  a second row above it: no box / the box's colour (black, white, red, yellow, green, blue), and
+  a second row above it: the box's colour (black, white, red, yellow, green, blue; 0.33.6: no
+  "no box" in it), and
   the five fonts each shown in itself. The box switch shows the box's colour. The outline stays a
   plain on / off switch (the user's choice: a colour row for it is not needed).
 - **Where:** `app/static/review-draw.js` — `openSub` / `closeSub` (`.dfly.dsub`, closed with
@@ -372,74 +381,3 @@ Add new entries directly below this line.
   flashed the pre-seek frame (now from the first presented frame); rVFC may not fire off screen
   (rAF fallback); a second viewer swipe within the 170 ms slide acted on the old picture
   (`busyNav` held until shown); every frame played past left an empty store entry (not stored).
-
-## 0.27.0 — 2026-11-12 — Phone: player gestures, panel by pull-down, canvas in place, hold-to-size, finger undo / redo
-- **What:** (phone app; the canvas parts also on the HTML page, same review-draw.js)
-  **Fix:** a scrub (or frame steps) followed at once by Play jumped back to an older frame — play
-  now starts on the frame on screen. The header and transport over the player have no fill (a halo
-  keeps them readable). *+ Note* shows only with the Notes Panel open (or while a new note is being
-  written). The panel's ⌃ is gone: pulling the list down from its top note goes back to the player.
-  A swipe down on the player goes back to the reviews. Two fingers pan / zoom / turn the player
-  (header *Fit* to reset). *Set state* is gone from the phone UI. The drawing canvas opened from the
-  player shows the picture exactly where the player did (same box, zoom, turn; bars float over
-  it) and hands the view back. Canvas: press and hold with a tool, drag up / down = that tool's size
-  (preview circle on the left); select tool + selection: hold, drag up / down = line width,
-  sideways = opacity; hold a tool's button = its default size; two-finger tap = undo, three = redo.
-  The pencil (*Draw a note*) moved from the header row to a round button at the bottom right of
-  the picture (above the transport on a video), where the full-screen viewer has it — it no
-  longer jumps between corners from screen to screen.
-  **Home:** the drag-to-bin is gone. Swipe a review left = the bin, right = the eye (hide for now);
-  press, hold and drag = move it in the list (order kept). No hint text about deleting under the
-  list. Scrolled past the two open buttons, they show as two small icons in the bar next to ⚙. Its class is `fab pencil` (the viewer's too,
-  was `fab draw`): `.draw` is the canvas' root class — review-draw's injected CSS (`.draw {position:
-  fixed; inset: 0}`) and the app's "canvas open" checks (`querySelector(".draw")` turns the
-  player's keys off) must never match anything else.
-- **Where:** `mobile/js/app.js` (`togglePlay`, `bindStage` replaces bindScrub / bindStageSwipe,
-  `R.pv` / `applyPlayerView` / `fitPlayer`, `bindPanelPull`, `swipeLeave`, `playerPlace` +
-  `drawCanvas`, `.compose` in `paintNewBar`, review-state menu removed, `reviewRow` / `orderReviews` /
-  `hiddenKeys` + bar `.mini` on the home screen, `els.penB` placed in
-  `applyStageView`), `mobile/index.html`
-  (`.hdr` / `.tp` without fill + `--halo`, `.sv`, `.scrubimg` pointer-events, newbar / `--ph`
-  rules), `app/static/review-draw.js` (`pinch`, `fitBox` / `nav` / `onNav`, hold → `adj`,
-  `tap`, per-tool `SIZE` + `SIZE0` / `SIZE_RANGE` saved with the pen, tool-button hold),
-  tests `tests/pwa_touch.cjs` (new, CDP multi-touch) + `test_pwa.py test_touch`, `pwa_e2e.cjs`
-  (opens the panel before *+ Note*; the review state is set through the model).
-- **Notes (home):** `reviewRow` replaces `dragToBin`. Order: `localStorage sight-review:order`
-  (keys; reviews not in it — new ones — first, newest opened first; `orderReviews`). Hidden:
-  `sessionStorage sight-review:hidden` (gone when the app is closed; *Show* under the list clears
-  it). While a card is held and dragged the DOM is not reordered — moving its row drops the
-  pointer capture and ended the drag after one place; the other rows slide by `translateY` and the
-  row is moved once on release. One card open at a time (`openRow`; a pointerdown elsewhere shuts
-  it). The bar's mini open buttons (`.bar .mini`, labels around file inputs) show when an
-  IntersectionObserver sees `.opens` gone under the bar.
-- **Notes:** the play bug: `play` cleared `R.want` while a seek was still queued / in flight, so the
-  player played on from the older seek. `togglePlay` sends the target first. Separately, a tap
-  landing on the cached scrub frame got no click when that picture hid mid-tap — `.scrubimg` is
-  now `pointer-events: none`. (Headless Chromium also drops the click of a tap 0 ms after a drag;
-  humans are slower — the test waits 120 ms.) A touch scrub no longer swallows the next click
-  (only a mouse drag ends with its own click). `R.pv` is view only (not saved); the quarter turn /
-  mirror stay in `R.meta.view`. The review state stays in the data (from Sight, exported, model
-  `setReviewState`), only the phone control is gone. Size hold is touch / pen only (a mouse user
-  pausing before a drag would trigger it). Tool-button hold resets the size only, not the colour.
-  A swipe down while a new note or reply has content asks first.
-- **Review (fresh agent, player / canvas):** the view handed back by the canvas was wrong when its
-  quarter turn differed from the review's (canvas Fit after a pinch-turn handed back "fitted" =
-  no turn; zoom was relative to the canvas' fit, not the player's — ×1.78 off on a 16:9 clip
-  turned 90°): `onNav` now converts the zoom with the host's box at its own turn (`boxAt`), and a
-  resize while typing refits only a fitted view. A selection hold (`adj`) was not ended by undo /
-  redo / trash / recolour / tool change / frame change / keys — a TypeError per move and another
-  frame's state pushed onto this frame's undo; all of them now cancel it first (`stopAdj`). A
-  cancelled tool-size hold keeps the old size. "Draw on it" in the full-screen viewer used the
-  player's place (the viewer is gone before the check) — `noPlace`. Finger taps within 600 ms of
-  a pen (palm) no longer undo; the wheel pull-to-close waits 700 ms after scrolling (trackpad
-  momentum); the touch test waits for playback instead of sampling at 60 ms.
-- **Review (fresh agent, home list):** a tap on a swiped-open card opened the review (the
-  document-level closer shut it before the card's click) — the closer now skips the open card
-  itself, which also lets an open card be dragged back; a hold let go without moving opened the menu
-  on pointerup and the tap's click then hit the sheet's backdrop and closed it — the menu now opens
-  from that click (350 ms fallback when none comes); holding near the screen's edge scrolled and
-  reordered (moving and edge scroll now start only past 8 px; a still release never saves); a mouse
-  released off the card before the hold left a stuck ghost and a second finger left rows shifted —
-  the pointer's end is heard on `window`, a second pointer is ignored, cancel puts rows back;
-  `saveOrder` keeps reviews hidden for now in their slots; a non-array saved order is ignored;
-  the IntersectionObserver reads the latest entry; `renderHome` drops a leftover ghost.

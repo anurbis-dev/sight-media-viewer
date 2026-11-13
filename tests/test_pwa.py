@@ -327,8 +327,9 @@ class RoundTrip(unittest.TestCase):
         # Italic while typing; the text put down is bold, italic and centred.
         self.assertEqual(res["textFly"], [[7, True], [True, "Alignment: center", True], ["700", "center"], "italic", ["italic", "middle", "Hi"],
             {"bold": False, "italic": False, "underline": False, "bgOn": True, "bg": "#000000", "outline": False, "outlineColor": "#000000", "align": "left", "font": "sans"}])
-        # Box / Font: a second row above the text row (none + 6 colours; 5 fonts); a pick sets the pen.
-        self.assertEqual(res["textSub"], [[1, 6, True, True], 5, ["#ffffff", True, "serif", False, True]])
+        # Box / Font: the box is a switch (on → off: no row), switched on its 6 colours show above
+        # the text row; the font row has 5; a pick sets the pen.
+        self.assertEqual(res["textSub"], [[0, 6, True, True], 5, ["#ffffff", True, "serif", False, True], [False, False]])
         # Speed: dragged up → faster; a tap → a common frame rate; a hold → the clip's own.
         (r1, t1, fps), (r2, t2, _), (r3, t3, _) = res["speed"]
         self.assertGreater(r1, 1.1)

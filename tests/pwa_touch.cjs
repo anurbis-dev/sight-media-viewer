@@ -254,7 +254,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(50);
   await ev(() => { for (const t of ["Bold", "Italic"]) document.querySelector('.draw .dfly button[title="' + t + '"]').click();
     for (let i = 0; i < 2; i++) document.querySelector('.draw .dfly button[title^="Alignment"]').click(); });
-  // Box / Outline / Font: a second row above — the box's colours (or none), the fonts; a pick sets it and folds that row.
+  // Box / Font: a second row above — the box's colours (the box switched on; a tap switches it off,
+  // the row goes), the fonts; a pick sets it and folds that row.
+  await ev(() => document.querySelector('.draw .dfly button[title="Box behind the text"]').click()); await sleep(80);
+  const boxOff = await ev(() => [JSON.parse(localStorage.getItem("sight-review:pen")).text.bgOn, !!document.querySelector(".draw .dsub:not([hidden])")]);
   await ev(() => document.querySelector('.draw .dfly button[title="Box behind the text"]').click()); await sleep(80);
   out.textSub = [await ev(() => { const r = document.querySelector(".draw .dsub:not([hidden])"); return r ? [r.querySelectorAll(".tb").length, r.querySelectorAll(".swc").length, r.classList.contains("rd-panel"),
     r.getBoundingClientRect().bottom <= document.querySelector(".draw .dfly:not(.dsub)").getBoundingClientRect().top] : null; })];
@@ -262,8 +265,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ev(() => document.querySelector('.draw .dfly button[title^="Font"]').click()); await sleep(80);
   out.textSub.push(await ev(() => document.querySelectorAll(".draw .dsub:not([hidden]) .tb").length));
   await ev(() => document.querySelector('.draw .dsub button[title="Font: serif"]').click()); await sleep(80);
-  out.textSub.push(await ev(() => { const t = JSON.parse(localStorage.getItem("sight-review:pen")).text; return [t.bg, t.bgOn, t.font, !!document.querySelector(".draw .dsub:not([hidden])"), !!document.querySelector(".draw .dfly:not([hidden])")]; }));
-  // Back to the defaults: a black box, sans.
+  out.textSub.push(await ev(() => { const t = JSON.parse(localStorage.getItem("sight-review:pen")).text; return [t.bg, t.bgOn, t.font, !!document.querySelector(".draw .dsub:not([hidden])"), !!document.querySelector(".draw .dfly:not([hidden])")]; }), boxOff);
+  // Back to the defaults: a black box (off, on: the colours), sans.
+  await ev(() => document.querySelector('.draw .dfly button[title="Box behind the text"]').click()); await sleep(80);
   await ev(() => document.querySelector('.draw .dfly button[title="Box behind the text"]').click()); await sleep(80);
   await ev(() => document.querySelector('.draw .dsub .swc[data-c="#000000"]').click()); await sleep(80);
   await ev(() => document.querySelector('.draw .dfly button[title^="Font"]').click()); await sleep(80);

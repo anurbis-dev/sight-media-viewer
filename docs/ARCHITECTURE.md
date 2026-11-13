@@ -260,8 +260,8 @@ ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The bar (`.dtool
 rect / ellipse). A tap on a slot shows its row (`.dfly`, above the bar); a pick, a touch on the
 picture, another slot folds it. The rows are `.dfly.rd-panel` (the bars' own look). The *Text*
 slot's row is switches (`TEXT_OPTS`: bold, italic, underline, `bgOn`, outline = 6 % of the size,
-align cycles; the box and the font open a second row `.dsub` above it — `openSub`: none + the box
-colours `TEXT_COLORS` / `FONT_IDS`) on `pen.text` (also `bg`, `outlineColor`). The Shapes row ends with
+align cycles; the box (a switch: switched on, it shows its colours `TEXT_COLORS`) and the font
+(`FONT_IDS`) use a second row `.dsub` above it — `openSub`) on `pen.text` (also `bg`, `outlineColor`). The Shapes row ends with
 *Fill colour* (`fillButton` → `subRow("fill")`): `pen.fill` (null = the line's colour at 0.3, else
 that colour at 0.6), saved with the pen; recolouring a selection moves a fill only when it
 followed the line (saved with the pen, used by a new text); a switch also styles
