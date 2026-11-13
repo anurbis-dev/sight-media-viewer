@@ -586,9 +586,12 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   picture), left / right `o.side(±1)` (a video note's frames, `noteFrameList` = its ctx frame +
   `M.noteFrameTimes`, by r3; the caption's `.fr` says `time · f N · i / n`). `from0` (where it was
   opened) travels through nav / side; closing on another note or frame brings it forward
-  (`showNote(n, t)`: seeks there, scrolls the card). The step is a cross-fade (`show(no, true)`):
-  the next `.vb` is built and its image decoded (≤ `FADE_WAIT`) before `o` / `box` switch, then it
-  fades in on top while the old box holds, fades and is removed; `busyNav` covers load + fade.
+  (`showNote(n, t)`: seeks there, scrolls the card). The step is a strip slide — the only one,
+  `show(no, {axis, dir})`: the next `.vb` is built and its image decoded (≤ `SLIDE_WAIT`) before
+  `o` / `box` switch; then (WAAPI, `SLIDE_MS`) the old box goes on from where the finger let it go
+  to a screen away while fading out (fill forwards, then removed), the new one comes in from a
+  screen behind it while fading in; `busyNav` covers load + slide. No seek of the player while the
+  viewer opens (RECENT 0.35.4).
 - **Thread viewer**: `threadItems(n)` = `{kind: "frame", t?, rid?}` / `{kind: "shot", id, rid?}`
   — the note's frames (`noteFrameList`; a picture: one, if it has its own drawings), its shots,
   then per live reply its drawn frames (`replyFrameTimes`) and shots. `openThread(n, item)` from

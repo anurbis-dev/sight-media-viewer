@@ -2994,8 +2994,8 @@ function playerPlace(){
 // Promise<o | null>, onClose(o)}
 // The next picture comes in like a strip: the swiped one goes on the way the finger sent it,
 // fading out, the next follows it in from that side, one screen behind, fading in (decoded first, at most
-// FADE_WAIT ms, so it never comes in blank).
-const FADE_MS = 300, FADE_WAIT = 600;
+// SLIDE_WAIT ms, so it never comes in blank).
+const SLIDE_MS = 300, SLIDE_WAIT = 600;
 function viewer(o){
   const v = el("div", "view"), cap = el("div", "cap");
   const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
@@ -3017,7 +3017,7 @@ function viewer(o){
     const img = el("img"); img.src = no.url; img.alt = ""; img.draggable = false; nb.appendChild(img);
     if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows));
     if (slide){
-      await Promise.race([img.decode ? img.decode().catch(() => {}) : Promise.resolve(), new Promise((r) => setTimeout(r, FADE_WAIT))]);
+      await Promise.race([img.decode ? img.decode().catch(() => {}) : Promise.resolve(), new Promise((r) => setTimeout(r, SLIDE_WAIT))]);
       if (!v.isConnected) return;
     }
     const was = box, wasV = V, wasOff = off;
@@ -3043,9 +3043,9 @@ function viewer(o){
     const at = (vv, o2, d) => `translate(${vv.x + o2[0] + (ax ? d : 0)}px,${vv.y + o2[1] + (ax ? 0 : d)}px) scale(${vv.z})`;
     const ease = "cubic-bezier(.25,.8,.3,1)";
     // The incoming one comes out of transparency as the outgoing one fades.
-    box.animate([{ transform: at(V, [0, 0], D + wasOff[k]), opacity: 0 }, { transform: at(V, [0, 0], 0), opacity: 1 }], { duration: FADE_MS, easing: ease });
-    was.animate([{ transform: at(wasV, wasOff, 0), opacity: 1 }, { transform: at(wasV, [0, 0], -D), opacity: 0 }], { duration: FADE_MS, easing: ease, fill: "forwards" }).onfinish = () => was.remove();
-    setTimeout(() => was.remove(), FADE_MS + 200);  // onfinish never comes for a node already gone
+    box.animate([{ transform: at(V, [0, 0], D + wasOff[k]), opacity: 0 }, { transform: at(V, [0, 0], 0), opacity: 1 }], { duration: SLIDE_MS, easing: ease });
+    was.animate([{ transform: at(wasV, wasOff, 0), opacity: 1 }, { transform: at(wasV, [0, 0], -D), opacity: 0 }], { duration: SLIDE_MS, easing: ease, fill: "forwards" }).onfinish = () => was.remove();
+    setTimeout(() => was.remove(), SLIDE_MS + 200);  // onfinish never comes for a node already gone
   }
   function fit(){
     const vw = o.view || { rot: 0, mirror: false };  // per picture: an attached one is not turned
@@ -3079,7 +3079,7 @@ function viewer(o){
       return;
     }
     await show(next, { axis, dir });
-    setTimeout(() => { busyNav = false; }, FADE_MS);  // a swipe mid-slide would stack two
+    setTimeout(() => { busyNav = false; }, SLIDE_MS);  // a swipe mid-slide would stack two
   }
   const pts = new Map();
   let g = null, lastTap = 0, sw = null;
