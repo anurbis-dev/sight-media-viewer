@@ -174,7 +174,8 @@
   (*Draw a note*) floats at the bottom right of the picture — on a video just above the
   transport — the same place as in the full-screen view, for pictures and videos alike. On a video the transport sits over the foot of the picture: ‹ › previous / next marker
   (notes and frames drawn on), ◀ ▶ one frame back / forward, the timecode and frame number with
-  the frame rate ("25 fps") on its left and the sound on its right, and a timeline with the markers. The
+  the frame rate ("25 fps") on its left and the sound on its right, then the playing mode — once (stops at the
+  end; the default) or loop, a tap switches, kept on the device — and a timeline with the markers. The
   frame rate (≈ while the app is still measuring it) is also the speed: drag it up / down to play
   faster / slower (the number shows the rate it plays at, in the accent colour when not the
   clip's own), tap it for the nearest common rate (24, 25, 30, 12, 15…), hold it for the clip's own
@@ -227,8 +228,8 @@
   edited reply says so). Tap a timecode to go to that frame, a picture to
   view it full screen (pinch / double-tap to zoom; at full size a swipe left / right — or ← / → —
   goes through the whole note: its frames, its attached pictures, then each reply's drawings and
-  pictures, the caption telling which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture") with a reply's
-  words; a swipe up /
+  pictures, the caption telling which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture") with the note's /
+  reply's words under it — up to three lines, more scroll inside the caption; a swipe up /
   down shows the next / previous note — the picture goes on the way you swiped, fading out, and the
   next one follows it in like a strip; the round ← Back button leaves — no swipe does; the pencil
   draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on

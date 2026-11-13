@@ -302,6 +302,8 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["viewer"][2].endswith("2 / 2"), res["viewer"])
         self.assertFalse(res["viewer"][3])
         self.assertEqual(res["viewerFade"], [True, 1])
+        # The viewer's caption: three lines of words, the rest scrolls in it (no note change).
+        self.assertEqual(res["capText"], [3, True, True, True, True, "fit"])
         # Notes list: a swipe left = the next filter (Open), right = back to All.
         self.assertEqual(res["filterSwipe"], ["open", "Open", "all"])
         # A note's pictures: equal squares, four to a row filling it.
@@ -338,6 +340,7 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(r3, 1)
         self.assertNotEqual(t1, t3)
         self.assertEqual(res["sound"], [True, False])
+        self.assertEqual(res["loop"], [[False, False, None], [True, True, "1"], [False, False, "0"]])
         self.assertEqual(res["groupPlace"], ["g", "grp-c"])
         # Auto full screen on a plain tap, not a scrub / drag / hold (again after the reload);
         # Settings → Off leaves it.

@@ -157,10 +157,14 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .tpi .fps { flex: none; margin-left: auto; margin-right: 8px; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; height: 36px; padding: 0 3px; border-radius: 8px; cursor: ns-resize; opacity: .8; }
 .tpi .fps small { font-size: 9.5px; margin-left: 2px; opacity: .75; }
 .tpi .fps.on { opacity: 1; color: var(--accent); }
-.tpi .snd { width: 34px; margin-left: 8px; margin-right: auto; -webkit-touch-callout: none; cursor: ns-resize; }
+.tpi .snd { width: 34px; margin-left: 8px; -webkit-touch-callout: none; cursor: ns-resize; }
+.tpi .loopb { width: 32px; margin-right: auto; }  /* right of the sound: loop / once */
+.tpi .loopb.on { color: var(--accent); }
 .tpi .snd.none { opacity: .35; cursor: default; }
 /* Phones up to 400 px: the step / marker buttons give the timecode room. */
-@media (max-width: 400px) { .tpi .ib { width: 30px; } .tpi .snd { width: 28px; margin-left: 4px; } .tpi .fps { min-width: 34px; padding: 0 1px; margin-right: 4px; } .tpi .tc { font-size: 11.5px; } }
+@media (max-width: 400px) { .tpi .ib { width: 30px; } .tpi .snd { width: 28px; margin-left: 4px; } .tpi .loopb { width: 26px; } .tpi .fps { min-width: 34px; padding: 0 1px; margin-right: 4px; } .tpi .tc { font-size: 11.5px; } }
+/* Up to 360 px (with the loop button): the smallest buttons, no "fps" word. */
+@media (max-width: 360px) { .tpi .ib { width: 27px; } .tpi .snd, .tpi .loopb { width: 24px; } .tpi .snd { margin-left: 2px; } .tpi .fps { margin-right: 2px; } .tpi .fps small { display: none; } .tpi .row { gap: 1px; } }
 .volbar { position: fixed; z-index: 40; left: 6px; top: 25%; height: 50%; width: 4px; border-radius: 2px; background: rgb(255 255 255 / .25); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); pointer-events: none; opacity: 0; transition: opacity .25s; display: flex; align-items: flex-end; overflow: hidden; }
 .volbar.on { opacity: 1; transition: none; }
 .volbar i { display: block; width: 100%; background: #fff; }
@@ -287,8 +291,11 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .view .fab.back { left: 12px; top: calc(12px + var(--st)); }
 .view .fab.pencil { right: 14px; bottom: calc(16px + var(--sb)); width: 54px; height: 54px; border-radius: 27px; }
 .player .fab.pencil { z-index: 4; right: 14px; bottom: 14px; width: 54px; height: 54px; border-radius: 27px; }
-.view .cap { position: absolute; z-index: 2; left: 12px; right: 82px; bottom: calc(18px + var(--sb)); display: flex; gap: 8px; align-items: center; padding: 7px 12px; border-radius: 14px; background: var(--ov); color: var(--ov-fg); font-size: 13.5px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: none; }
+.view .cap { position: absolute; z-index: 2; left: 12px; right: 82px; bottom: calc(18px + var(--sb)); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: flex-start; line-height: 1.35; padding: 7px 12px; border-radius: 14px; background: var(--ov); color: var(--ov-fg); font-size: 13.5px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: none; }
 .view .cap span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The note's / reply's words: on their own line under the number and frame, up to three lines,
+   more scroll inside (the picture stays in view). */
+.view .cap span.tx { flex: 1 1 100%; white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: calc(1.35em * 3); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 .view .cap .num { flex: none; }
 .view .cap .fr { flex: none; font-variant-numeric: tabular-nums; opacity: .85; }
 .view .cap .fr:last-child { flex: 0 1 auto; }

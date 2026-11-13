@@ -32,6 +32,8 @@ const ICONS = {
   prev: '<path d="M14 6 8 12l6 6"/>', next: '<path d="m10 6 6 6-6 6"/>',
   snd: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6"/><path d="M18.4 6.6a7.6 7.6 0 0 1 0 10.8"/>',
   sndoff: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
+  loop: '<path d="M17 3l3 3-3 3"/><path d="M4 11.5V10a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12.5V14a4 4 0 0 1-4 4H4"/>',
+  once: '<path d="M3.5 12h12"/><path d="m11.5 7.5 4.5 4.5-4.5 4.5"/><path d="M20 6v12"/>',
   stepb: '<path d="M6 5v14"/><path d="M18 6 10 12l8 6z" fill="currentColor"/>', stepf: '<path d="M18 5v14"/><path d="m6 6 8 6-8 6z" fill="currentColor"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeoff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
@@ -1411,7 +1413,7 @@ function buildStage(){
       const v = el("video");
       v.playsInline = true; v.setAttribute("playsinline", ""); v.preload = "auto"; v.src = R.url;
       R.video = v;
-      applyVol(v); v.playbackRate = v.defaultPlaybackRate = R.rate || 1;
+      applyVol(v); v.playbackRate = v.defaultPlaybackRate = R.rate || 1; v.loop = loopOn;
       // A cached frame shown over the player while a seek is on its way (ScrubCache).
       const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
       els.scrubImg = si;
@@ -1649,7 +1651,9 @@ function makeTransport(){
   T.snd = btn("ib snd", null, null, "Volume: drag up / down · tap: full");
   vdrag(T.snd, { begin: () => { T.v0 = volNow(); }, move: (dy) => { if (R && R.hasAudio !== false) setVol(T.v0 - dy / 140); },
     tap: () => { if (R && R.hasAudio === false) toast("This clip has no sound", 1600); else setVol(1); } });
-  [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.fps, T.tc, T.snd,
+  // Right of the sound: loop / play once and stop at the end.
+  T.loop = btn("ib loopb", null, () => setLoop(!loopOn));
+  [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.fps, T.tc, T.snd, T.loop,
     ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next marker", () => jumpNote(1))].forEach((b) => row.appendChild(b));
   const tl = el("div", "tl"), trk = el("div", "trk");
   T.cache = el("i", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
@@ -1692,7 +1696,7 @@ function paintTransport(T){
   if (!v) return;
   const t = R.scrubT != null ? R.scrubT : v.currentTime, d = durOf();
   T.tc.textContent = `${fmtTime(t, R.fps)} · f ${Math.round(t * R.fps)}`;
-  paintRate(T); paintSnd(T);
+  paintRate(T); paintSnd(T); paintLoop(T);
   T.ph.style.left = (d ? Math.min(100, Math.max(0, t / d * 100)) : 0).toFixed(3) + "%";
 }
 // ---- speed and sound -------------------------------------------------------------------------------
@@ -1786,6 +1790,27 @@ function setAudio(has, guess){
   if (guess) return;  // not stored: a guess is made again next time
   if (R.meta.audio !== has){ R.meta.audio = has; putIfAlive(R, "reviews", R.meta); }
   TPS.forEach(paintSnd);
+}
+// Playing mode, kept on the device: loop (on from the start at the end) or once (stops at the end).
+const LOOP_KEY = "sight-review:loop";
+let loopOn = false;
+try { loopOn = localStorage.getItem(LOOP_KEY) === "1"; } catch {}
+function setLoop(on){
+  loopOn = on;
+  try { localStorage.setItem(LOOP_KEY, on ? "1" : "0"); } catch {}
+  if (R && R.video) R.video.loop = on;
+  TPS.forEach(paintLoop);
+  toast(on ? "Loop: plays on from the start" : "Once: stops at the end", 1400);
+}
+function paintLoop(T){
+  if (!T.loop) return;
+  const name = loopOn ? "loop" : "once";
+  if (T.loop.dataset.ico === name) return;
+  T.loop.dataset.ico = name;
+  T.loop.innerHTML = ico(name, 20);
+  T.loop.classList.toggle("on", loopOn);
+  T.loop.title = loopOn ? "Loop (tap: play once and stop)" : "Play once and stop (tap: loop)";
+  T.loop.setAttribute("aria-label", T.loop.title);
 }
 function paintSnd(T){
   if (!T.snd || !R) return;
@@ -2950,7 +2975,7 @@ function viewer(o){
       const c = o.note.data.ctx, lab = o.label || (c && c.t != null && R ? fmtTime(c.t, R.fps) : "");
       if (lab) cap.appendChild(el("span", "fr", lab));
       const tx = o.text != null ? o.text : o.note.data.text;  // a reply's picture: the reply's words
-      if (tx || !lab) cap.appendChild(el("span", "", tx || "Note"));
+      if (tx || !lab) cap.appendChild(el("span", "tx", tx || "Note"));
     } else if (o.label) cap.appendChild(el("span", "fr", o.label));
     off = [0, 0];
     fit();
@@ -3010,7 +3035,7 @@ function viewer(o){
     sw = p.length === 1 && V.z <= 1.01 ? { x: p[0].x, y: p[0].y, axis: null } : null;
   };
   v.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".fab")) return;
+    if (e.target.closest(".fab, .cap .tx")) return;  // (the caption's words scroll on their own)
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { v.setPointerCapture(e.pointerId); } catch {}
     start();
@@ -3051,8 +3076,9 @@ function viewer(o){
     start();
   };
   v.addEventListener("pointerup", up); v.addEventListener("pointercancel", up);
-  v.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, V.z * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
-  v.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+  const inText = (e) => !!(e.target.closest && e.target.closest(".cap .tx"));
+  v.addEventListener("wheel", (e) => { if (inText(e)) return; e.preventDefault(); zoomAt(e.clientX, e.clientY, V.z * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+  v.addEventListener("touchmove", (e) => { if (!inText(e)) e.preventDefault(); }, { passive: false });
   function onKey(e){
     if (sheets[sheets.length - 1] !== close) return;
     runHotkeys(e, [["ArrowDown", () => navigate(1)], ["ArrowUp", () => navigate(-1)], ["ArrowLeft", () => navigate(-1, "x")], ["ArrowRight", () => navigate(1, "x")]]);

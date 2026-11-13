@@ -81,6 +81,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.speed.push(await sp());
   await touch("touchStart", [fc]); await sleep(700); await touch("touchEnd", []); await sleep(100);
   out.speed.push(await sp());
+  // Right of the sound: once (the default) / loop — the player's loop follows, kept on the device.
+  const lp = () => ev(() => [window.__sightReview.R.video.loop, document.querySelector(".tpi .loopb").classList.contains("on"), localStorage.getItem("sight-review:loop")]);
+  out.loop = [await lp()];
+  await ev(() => document.querySelector(".tpi .loopb").click()); await sleep(100);
+  out.loop.push(await lp());
+  await ev(() => document.querySelector(".tpi .loopb").click()); await sleep(100);
+  out.loop.push(await lp());
 
 
   // Pencil right after a scrub: the canvas opens at once on the scrubbed frame (the cached picture),
@@ -322,6 +329,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await p.waitForSelector(".view");
   const capNow = () => ev(() => { const c = document.querySelector(".view .cap .fr"); return c ? c.textContent : null; });
   out.viewer = [await capNow()];
+  // The caption's words: up to three lines, more scroll inside it (a drag there scrolls the words,
+  // it does not go to another note).
+  const capTx = await ev(() => { const t = document.querySelector(".view .cap .tx"); t.textContent = Array.from({ length: 12 }, (_, i) => "Line " + (i + 1) + " of a long note").join("\n");
+    const r = t.getBoundingClientRect(), lh = parseFloat(getComputedStyle(t).lineHeight); return [Math.round(r.height / lh), t.scrollHeight > t.clientHeight + 10, r.x + r.width / 2, r.y + r.height / 2]; });
+  // (A finger scrolls them natively: the viewer leaves touches on the words alone — no pointer
+  // capture, no preventDefault; the wheel there does not zoom the picture. They take the
+  // caption's full width, under the number and the frame.)
+  const scrolls = await ev(() => { const t = document.querySelector(".view .cap .tx"), r = t.getBoundingClientRect(), h = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    t.scrollTop = 30; return h === t && t.scrollTop > 0 && r.width > innerWidth * 0.5; });
+  const notCaught = await ev(() => { const t = document.querySelector(".view .cap .tx"); const e = new TouchEvent("touchmove", { bubbles: true, cancelable: true }); t.dispatchEvent(e); return !e.defaultPrevented; });
+  out.capText = [capTx[0], capTx[1], scrolls, await capNow() === out.viewer[0], notCaught,
+    await ev(() => { const b = document.querySelector(".view .vb"); return !b.style.transform.includes("scale(1)") ? b.style.transform : "fit"; })];
   await drag([320, 420], [60, 420], 8, 16);
   // A strip: the old picture goes on to the left, fading, the new one comes in from the right.
   out.viewerFade = [await p.waitForFunction(() => { const b = document.querySelectorAll(".view .vb"); if (b.length !== 2) return false;
