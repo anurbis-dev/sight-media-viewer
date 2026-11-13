@@ -810,7 +810,13 @@ export function createAnnotator(host){
     const L = S.layer;
     if (!L) return;
     syncViewBox();
-    let html = RC.xfSvg(selVisible(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
+    // Handles and the box are for the editable selection; a baked drawing (selected for Delete) gets a dashed outline.
+    let html = RC.xfSvg(editSel(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
+    for (const it of selVisible()){
+      if (!baked(it)) continue;
+      const b = boundsOf(it), a = toScreen(b[0], b[1]), c = toScreen(b[2], b[3]);
+      html += `<rect fill="none" stroke="#4c9aff" stroke-width="1" stroke-dasharray="3 3" x="${r2(Math.min(a[0], c[0]))}" y="${r2(Math.min(a[1], c[1]))}" width="${r2(Math.abs(c[0] - a[0]))}" height="${r2(Math.abs(c[1] - a[1]))}"/>`;
+    }
     if (S.drag?.marquee){
       const m = S.drag.marquee;
       html += `<rect class="an-marquee" x="${r2(Math.min(m[0], m[2]))}" y="${r2(Math.min(m[1], m[3]))}" width="${r2(Math.abs(m[2] - m[0]))}" height="${r2(Math.abs(m[3] - m[1]))}"/>`;
@@ -1295,7 +1301,7 @@ export function createAnnotator(host){
       const n = structuredClone(it);
       n.id = uid(); n.z = nextZ() + src.indexOf(it);
       transformItem(n, it, (x, y) => [x + off, y + off]);
-      n.data.note = null; n.data.created = Date.now(); n.data.ctx = ctxNow(false, true) || n.data.ctx;
+      n.data.note = null; n.data.reply = null; n.data.created = Date.now(); n.data.ctx = ctxNow(false, true) || n.data.ctx;
       return n;
     });
     commit(fresh.map((n) => n.id), () => { for (const n of fresh) S.items.set(n.id, n); });
@@ -1320,7 +1326,7 @@ export function createAnnotator(host){
       const n = structuredClone(it);
       n.id = uid(); n.z = nextZ() + i;
       transformItem(n, it, (x, y) => [x + off, y + off]);
-      n.data.note = null; n.data.ctx = ctxNow(false, true); n.data.created = Date.now();
+      n.data.note = null; n.data.reply = null; n.data.ctx = ctxNow(false, true); n.data.created = Date.now();
       return n;
     });
     S.clip = fresh.map(snap);
@@ -1339,13 +1345,13 @@ export function createAnnotator(host){
     return true;
   }
   function reorder(dir){
-    const ids = [...S.sel].filter((id) => editable(S.items.get(id)));
-    if (!ids.length) return false;
-    // Baked drawings keep their z: only the editable ones take part in the order.
-    const all = [...S.items.values()].filter((it) => isDrawing(it) && editable(it)).sort((a, b) => a.z - b.z);
-    const sel = all.filter((it) => S.sel.has(it.id)), rest = all.filter((it) => !S.sel.has(it.id));
-    const order = dir > 0 ? [...rest, ...sel] : [...sel, ...rest];
-    commit(order.map((it) => it.id), () => order.forEach((it, i) => { it.z = i + 1; }));
+    // Only editable drawings get a new z; baked ones keep theirs. Front goes above every drawing, back below
+    // every drawing, so the values stay unique. The selection keeps its order among itself.
+    const all = [...S.items.values()].filter(isDrawing);
+    const sel = all.filter((it) => S.sel.has(it.id) && editable(it)).sort((a, b) => a.z - b.z);
+    if (!sel.length) return false;
+    const zs = all.map((it) => it.z || 0), top = Math.max(...zs), bottom = Math.min(...zs);
+    commit(sel.map((it) => it.id), () => sel.forEach((it, i) => { it.z = dir > 0 ? top + 1 + i : bottom - sel.length + i; }));
     return true;
   }
   function selectAll(){
@@ -1456,8 +1462,8 @@ export function createAnnotator(host){
     if (S.kind === "video" && !tg.items && S.tool !== "select" && S.tool !== "eraser"){
       html += `<label class="an-psel" title="How long new drawings stay on screen"><span>Hold</span><select data-hold>${HOLDS.map(([v, n]) => `<option value="${v}"${v === S.hold ? " selected" : ""}>${n}</option>`).join("")}</select></label>`;
     }
-    if (tg.items && tg.items.some((it) => S.kind === "video" && it.data.ctx?.t != null)){
-      const h = tg.items[0].data.ctx?.hold ?? 0;
+    if (tg.items && tg.items.some((it) => editable(it) && S.kind === "video" && it.data.ctx?.t != null)){
+      const h = tg.items.find((it) => editable(it) && it.data.ctx?.t != null).data.ctx?.hold ?? 0;
       html += `<label class="an-psel" title="How long the selection stays on screen"><span>Hold</span><select data-shold>${HOLDS.map(([v, n]) => `<option value="${v}"${v === h ? " selected" : ""}>${n}</option>`).join("")}</select></label>`;
     }
     if (tg.items){
@@ -1509,7 +1515,8 @@ export function createAnnotator(host){
     });
     el.querySelector("select[data-hold]")?.addEventListener("change", (e) => { S.hold = Number(e.target.value); writeJSON("sight.annotate.hold", S.hold); });
     el.querySelector("select[data-shold]")?.addEventListener("change", (e) => {
-      const v = Number(e.target.value), ids = tg.items.map((it) => it.id);
+      const v = Number(e.target.value), ids = tg.items.filter(editable).map((it) => it.id);
+      if (!ids.length) return;
       commit(ids, () => { for (const id of ids){ const c = S.items.get(id).data.ctx; if (c && c.t != null) c.hold = v; } });
     });
     el.querySelector("[data-cmd=front]")?.addEventListener("click", () => reorder(1));

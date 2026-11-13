@@ -5236,9 +5236,10 @@ function attachViewer(stage, a, src, opts = {}){
     else toFit();
   });
   wrap.addEventListener("pointerdown", (e) => {
-    // Alt-drag turns the picture (image or video) about its centre, to any angle. Shift snaps the angle
-    // to absolute 15° steps (0, 15, 30 …), not steps from where the drag began.
-    if (e.button === 0 && e.altKey){
+    // Alt-drag turns a picture about its centre, to any angle; on a video plain Alt-drag scrubs it instead,
+    // and Ctrl+Alt-drag turns the video. Shift snaps the angle to absolute 15° steps (0, 15, 30 …), not
+    // steps from where the drag began. Alt over a drawing tool hands the press to the viewer (annotate.js).
+    if (e.button === 0 && e.altKey && (!isVid || e.ctrlKey || e.metaKey)){
       e.preventDefault();
       wrap.setPointerCapture(e.pointerId);
       const r = wrap.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -5248,6 +5249,7 @@ function attachViewer(stage, a, src, opts = {}){
     if (isVid && e.button === 0){
       // Click-drag on the picture scrubs the video, same as dragging the timeline. Nothing happens
       // until the pointer has moved a few px, so a plain click / double-click is untouched.
+      if (e.altKey) e.preventDefault(); // an Alt-scrub must not start a native text selection (as the turn does)
       wrap.setPointerCapture(e.pointerId);
       vs.scrubD = { x: e.clientX, t0: el.currentTime, t: el.currentTime, fine: e.shiftKey, on: false };
       return;
@@ -5310,19 +5312,21 @@ function attachViewer(stage, a, src, opts = {}){
       if (t != null) sd.t = t;
     }
   });
-  const end = () => {
+  // cancelled: the browser took the pointer, so no click follows the drag and nothing may be swallowed.
+  const end = (cancelled) => {
     const scrubbed = vs.scrubD && vs.scrubD.on;
-    // A turn drag ends with a click on the wrap: swallow it (as after a scrub), or a video would pause.
+    // A turn or scrub drag ends with a click on the wrap: swallow it, or a video would pause. A turn
+    // of an image is not swallowed here (the click handler only looks at videos, so the flag would stay set).
     if (vs.rotD){
-      if (vs.rotD.moved) justScrubbed = true;
+      if (vs.rotD.moved && isVid && !cancelled) justScrubbed = true;
       vs.rotD = null;
       if (!opts.embedded) saveTurn(a.id, turn); // kept once the drag ends
     }
     vs.panD = vs.zoomD = vs.scrubD = null;
-    if (scrubbed){ wrap.style.cursor = ""; endScrub(); justScrubbed = true; }
+    if (scrubbed){ wrap.style.cursor = ""; endScrub(); if (!cancelled) justScrubbed = true; }
   };
-  wrap.addEventListener("pointerup", end);
-  wrap.addEventListener("pointercancel", end);
+  wrap.addEventListener("pointerup", () => end(false));
+  wrap.addEventListener("pointercancel", () => end(true));
   wrap.addEventListener("contextmenu", (e) => e.preventDefault());
   wrap.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
   // Annotations draw over this picture (its listeners go in first, in the capture phase, so a

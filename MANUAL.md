@@ -105,7 +105,8 @@
     the top of the viewer (`Shift+M`) mirrors it; Sight remembers it per file. Only the
     view changes: the file and the drawings on it stay as they are. Mirror and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
-  - **Turn by hand** — Alt+drag on a picture or video turns it about its centre, to any angle; hold
+  - **Turn by hand** — Alt+drag on a picture turns it about its centre, to any angle (on a video Alt+drag
+    scrubs; Ctrl+Alt+drag turns the video); hold
     Shift to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
