@@ -250,20 +250,19 @@ var SightReviewDraw = (function(){
       f.style.bottom = (r.bottom - fb.top + 6) + "px";
       sub = { el: f, k: k };
     }
-    // The Shapes row's last button: the fill colour of filled shapes (a second row: the line's own,
-    // or a colour). A colour picked while an outlined shape is in hand takes its filled kind.
+    // The Shapes row's last button: the fill colour of filled shapes (a second row of colours; until
+    // one is picked, a fill is the line's own, lighter). A colour picked while an outlined shape is
+    // in hand takes its filled kind.
     function fillIco(){ var c = pen.fill || pen.color; return '<rect x="4" y="6" width="16" height="12" rx="2" fill="' + RC.esc(c) + '" fill-opacity="' + (pen.fill ? 1 : 0.35) + '" stroke="' + RC.esc(pen.color) + '"/>'; }
     function fillButton(){
       var fb = tbtn("Fill colour", ico(fillIco()), function(){
         if (sub && sub.k === "fill"){ closeSub(); return; }
-        var same = tbtn("Fill: the line's colour", ico('<rect x="4" y="6" width="16" height="12" rx="2" fill="' + RC.esc(pen.color) + '" fill-opacity=".35" stroke="' + RC.esc(pen.color) + '"/>'), function(){ setFill(null); });
-        same.classList.toggle("on", !pen.fill);
-        subRow("fill", fb, [same].concat(TEXT_COLORS.map(function(c){
+        subRow("fill", fb, TEXT_COLORS.map(function(c){
           var sw = el("button", "swc" + (pen.fill === c ? " on" : "")); sw.type = "button"; sw.style.background = c; sw.dataset.c = c;
           sw.title = "Fill " + c; sw.setAttribute("aria-label", sw.title);
           sw.onclick = function(){ setFill(c); };
           return sw;
-        })));
+        }));
       });
       fb.dataset.fill = "1";
       return fb;

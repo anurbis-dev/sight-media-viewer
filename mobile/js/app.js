@@ -33,6 +33,8 @@ const ICONS = {
   snd: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6"/><path d="M18.4 6.6a7.6 7.6 0 0 1 0 10.8"/>',
   sndoff: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
   loop: '<path d="M17 3l3 3-3 3"/><path d="M4 11.5V10a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12.5V14a4 4 0 0 1-4 4H4"/>',
+  hideui: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 9h18M3 15h18" stroke-dasharray="2 2.4"/>',
+  showui: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 9h18M3 15h18"/>',
   once: '<path d="M3.5 12h12"/><path d="m11.5 7.5 4.5 4.5-4.5 4.5"/><path d="M20 6v12"/>',
   stepb: '<path d="M6 5v14"/><path d="M18 6 10 12l8 6z" fill="currentColor"/>', stepf: '<path d="M18 5v14"/><path d="m6 6 8 6-8 6z" fill="currentColor"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -1480,6 +1482,16 @@ function buildStage(){
   mirB.classList.toggle("on", viewOf().mirror);
   els.mirB = mirB;
   tools.appendChild(mirB);
+  // Left end: hide every control; the round button left in the top left corner brings them back
+  // (the gestures keep working meanwhile).
+  const uiB = ibtn("hideui", "Hide the controls", () => setClean(true));
+  uiB.classList.add("uib");
+  tools.appendChild(uiB);
+  if (els.showB) els.showB.remove();
+  const showB = btn("fab showui", null, () => setClean(false), "Show the controls"); showB.innerHTML = ico("showui", 22);
+  els.showB = showB;
+  stage.parentNode.appendChild(showB);
+  root.classList.toggle("clean", !!R.clean);
   const fitB = ibtn("fit", "Fit to screen", fitPlayer);
   fitB.classList.add("fitb");
   els.fitB = fitB;
@@ -1637,6 +1649,9 @@ function jumpNote(dir){
   const t = dir > 0 ? ts.find((x) => x > cur + eps) : ts.reverse().find((x) => x < cur - eps);
   if (t == null){ toast(dir > 0 ? "No later marker" : "No earlier marker"); return; }
   seekTo(t);
+  // Landed on a note's own frame: that note is selected (its card brought into view).
+  const n = !composing() && listedNotes().find((x) => x.data.ctx && x.data.ctx.t != null && frameKey(x.data.ctx.t) === frameKey(t));
+  if (n){ R.curNote = n.id; paintCurrent(); const c = els && els.notes.querySelector(`.note[data-id="${n.id}"]`); if (c) c.scrollIntoView({ block: "nearest" }); }
 }
 // Transports on screen: the player's, and the drawing canvas's while a video is drawn on.
 const TPS = new Set();
@@ -1648,9 +1663,9 @@ function makeTransport(){
   // grey when the clip has none).
   T.fps = btn("fps", null, null, "Playback speed: drag up / down · tap: the nearest common rate · hold: the clip's own");
   vdrag(T.fps, { begin: () => { T.r0 = rateNow(); }, move: (dy) => setRate(T.r0 * Math.pow(2, -dy / 110)), tap: snapRate, hold: () => setRate(1) });
-  T.snd = btn("ib snd", null, null, "Volume: drag up / down · tap: full");
+  T.snd = btn("ib snd", null, null, "Volume: drag up / down from where it is · tap: full / mute");
   vdrag(T.snd, { begin: () => { T.v0 = volNow(); }, move: (dy) => { if (R && R.hasAudio !== false) setVol(T.v0 - dy / 140); },
-    tap: () => { if (R && R.hasAudio === false) toast("This clip has no sound", 1600); else setVol(1); } });
+    tap: () => { if (R && R.hasAudio === false) toast("This clip has no sound", 1600); else setVol(volLevel < 0.02 ? 1 : 0); } });
   // Right of the sound: loop / play once and stop at the end.
   T.loop = btn("ib loopb", null, () => setLoop(!loopOn));
   [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.fps, T.tc, T.snd, T.loop,
@@ -2026,6 +2041,13 @@ function applyPlayerView(anim){
   sv.style.transform = pvFitted(pv) ? "" : `translate(${pv.o[0]}px,${pv.o[1]}px) rotate(${pv.r}deg) scale(${pv.z})`;
   if (els.fitB) els.fitB.hidden = pvFitted(pv);
 }
+// The controls hidden (R.clean, for this review while it is open): only the button that shows them.
+function setClean(on){
+  if (!R) return;
+  R.clean = !!on;
+  root.classList.toggle("clean", R.clean);
+  applyStageView();
+}
 function fitPlayer(){ if (!R) return; R.pv = PV0(); applyPlayerView(true); }
 // While playing: overlay + time every frame, and the frame rate measured when the container did
 // not say (WebM): the median gap between presented frames, snapped to a common rate.
@@ -2120,14 +2142,24 @@ function renderNotes(){
   els.plist.scrollTop = keepY;
   paintCurrent();
 }
-// The note(s) on the frame now (video).
+// The selected note (R.curNote: tapped, replied to, looked at, reached by a marker step) has the
+// accent frame (.cur); the notes on the frame shown now a lighter one (.here), so playing or
+// scrubbing past notes never moves the selection.
 function paintCurrent(){
-  if (!els || !R || !R.video) return;
-  const t = R.scrubT != null ? R.scrubT : R.video.currentTime, fd = frameDur();
-  let any = false;
-  els.notes.querySelectorAll(".note[data-t]").forEach((c) => { const on = Math.abs(Number(c.dataset.t) - t) < fd * 0.75; c.classList.toggle("cur", on); any = any || on; });
-  // Off every note's own frame: the note last worked on (replied to, looked at) stays lit.
-  if (!any && R.curNote){ const c = els.notes.querySelector(`.note[data-id="${R.curNote}"]`); if (c) c.classList.add("cur"); }
+  if (!els || !R) return;
+  const v = R.video, t = v ? (R.scrubT != null ? R.scrubT : v.currentTime) : null, fd = v ? frameDur() : 0;
+  els.notes.querySelectorAll(".note").forEach((c) => {
+    c.classList.toggle("cur", c.dataset.id === R.curNote);
+    c.classList.toggle("here", t != null && c.dataset.t != null && Math.abs(Number(c.dataset.t) - t) < fd * 0.75);
+  });
+}
+// A tap on a note's card (not on its buttons / pictures / fields): it is selected and the player
+// goes to the first frame its drawing is on (else its own frame); at = a frame of it to go to.
+function selectNote(n, at){
+  if (!R) return;
+  R.curNote = n.id;
+  if (R.video && kindNow() === "video"){ const t = at != null ? at : threadFrames(n)[0]; if (t != null) seekTo(t); }
+  paintCurrent();
 }
 
 // A note's picture to show / draw on: {url, vb, ctx, at, note} or null.
@@ -2199,6 +2231,7 @@ function noteCard(n){
   const id = n.id, st = M.noteState(n), c = n.data.ctx, kind = kindNow();
   const card = el("div", "note " + st);
   card.dataset.id = id;
+  card.addEventListener("click", (e) => { if (!e.target.closest("button, a, input, textarea, label, .fw, .cmp, .x")) selectNote(n); });
   if (kind === "video" && c && c.t != null) card.dataset.t = String(c.t);
   const h = el("div", "nh");
   h.appendChild(el("span", "num", String(NUM.get(id) || "")));
@@ -3188,8 +3221,10 @@ function threadView(n, items, i, f, from, prevAt){
       if (last.note.id !== from0.id || (t != null && (from0.t == null || frameKey(t) !== frameKey(from0.t)))) showNote(last.note, t);
     } };
 }
-// Opens note n's thread at item `at` (a frame / picture tapped in its card).
+// Opens note n's thread at item `at` (a frame / picture tapped in its card) — the note selected and
+// the player on that frame first (a picture: on the note's first frame).
 async function openThread(n, at){
+  selectNote(n, at && at.t != null ? at.t : null);
   const rv = R, items = threadItems(n);
   let i = items.findIndex((x) => sameItem(x, at));
   if (i < 0){ items.unshift(at); i = 0; }

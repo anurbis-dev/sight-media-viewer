@@ -159,14 +159,19 @@
   changes it). The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
   drawings) and mirror (the full-screen view and the canvas follow; the drawings stay put on the
-  picture) in the middle of the bar and, when the view is zoomed, *Fit* at its right end.
+  picture) in the middle of the bar and, when the view is zoomed, *Fit* at its right end; at its
+  left end the button that hides every control (header, transport, pencil, Notes Panel bar) — only
+  a round button in the top left corner is left, which brings them back; the gestures keep working.
   Two fingers on the picture pan, zoom and turn it (as on the drawing canvas — on both, letting go
   smaller than the screen, or nearly at fit and straight, goes back to fit with the turn to the
   nearest quarter); a swipe down goes
   back to the list of reviews. Under the picture the thin **Notes Panel** bar: tap it (or swipe up
   on it / on the picture) and the player slides up off the screen and the notes come in; the bar
   then holds the filters (All / Open / In progress / Resolved) — a swipe left / right on the list
-  steps to the next / previous one; a playing video pauses where it is. A note's pictures (its
+  steps to the next / previous one; a playing video pauses where it is. A tap on a note selects it
+  (the accent frame) and puts the player on the first frame of its drawing; a tap on one of its
+  pictures does the same and opens it full screen; stepping to a note's marker selects it too. A
+  lighter frame marks the notes on the frame shown now. A note's pictures (its
   frames, attached pictures; a reply's too) are equal squares in a row, each cut to fill its
   square — Settings → *Pictures in a row* (3–6, 4 by default); a reply's drawing shows on the
   reply's pictures only, not on the note's. Pull the list down when it is at
@@ -179,8 +184,8 @@
   frame rate (≈ while the app is still measuring it) is also the speed: drag it up / down to play
   faster / slower (the number shows the rate it plays at, in the accent colour when not the
   clip's own), tap it for the nearest common rate (24, 25, 30, 12, 15…), hold it for the clip's own
-  speed. The speaker: drag it up / down for the volume (a thin bar at the screen's left edge shows
-  the level; kept on the device), tap it for full volume; grey when the clip has no sound
+  speed. The speaker: drag it up / down for the volume from where it is (a thin bar at the screen's
+  left edge shows the level; kept on the device), tap it to mute / back to full volume; grey when the clip has no sound
   (iPhone / iPad Safari only mutes / unmutes). The canvas' transport has both too. The timeline (tap / drag anywhere; near a marker it lands on it). Drag left / right
   across the picture to scrub from where the clip is (a frame per few pixels, faster when you move
   faster; Shift with a mouse = finer) — the clip's length no longer spreads over the screen's
@@ -195,8 +200,8 @@
   turn), its buttons floating over the picture. A tap on *Arrows and lines* or *Shapes* takes it and
   shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
   rectangle, rounded, ellipse, filled rectangle, filled ellipse — and at its end the fill colour:
-  a second row with the line's own colour or one of six; picking a colour with an outlined shape in
-  hand takes its filled kind): tap one to draw with it, or just
+  a second row of six colours — until one is picked a fill is the line's own, lighter; picking a
+  colour with an outlined shape in hand takes its filled kind): tap one to draw with it, or just
   draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; switched on, the box shows its colours in a second

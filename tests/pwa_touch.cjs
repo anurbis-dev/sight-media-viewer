@@ -81,6 +81,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.speed.push(await sp());
   await touch("touchStart", [fc]); await sleep(700); await touch("touchEnd", []); await sleep(100);
   out.speed.push(await sp());
+  // The speaker: a tap mutes, another gives full volume (a drag sets it from where it is).
+  await val(`${R}.hasAudio = null`);
+  const snb = await p.locator(".tpi .snd").first().boundingBox(), sc = [snb.x + snb.width / 2, snb.y + snb.height / 2];
+  await tapN([sc]); await sleep(100);
+  out.mute = [await ev(() => [localStorage.getItem("sight-review:vol"), window.__sightReview.R.video.muted])];
+  await tapN([sc]); await sleep(100);
+  out.mute.push(await ev(() => [localStorage.getItem("sight-review:vol"), window.__sightReview.R.video.muted]));
+  // The header's left button hides every control; the round one in the top left brings them back.
+  await ev(() => document.querySelector(".hdr .uib").click()); await sleep(100);
+  const ui = () => ev(() => [document.querySelector(".review").classList.contains("clean"), getComputedStyle(document.querySelector(".hdr")).display, getComputedStyle(document.querySelector(".player .tp")).display,
+    getComputedStyle(document.querySelector(".pbar")).display, getComputedStyle(document.querySelector(".player .fab.showui")).display]);
+  out.clean = [await ui()];
+  await ev(() => document.querySelector(".player .fab.showui").click()); await sleep(100);
+  out.clean.push(await ui());
   // Right of the sound: once (the default) / loop — the player's loop follows, kept on the device.
   const lp = () => ev(() => [window.__sightReview.R.video.loop, document.querySelector(".tpi .loopb").classList.contains("on"), localStorage.getItem("sight-review:loop")]);
   out.loop = [await lp()];
@@ -218,10 +232,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.fill.push(await ev(() => { const P = JSON.parse(localStorage.getItem("sight-review:pen")); return [P.fill, P.shape, !!document.querySelector(".draw .dfly:not([hidden])")]; }));
   out.fill.push(await ev(() => { const g = document.querySelectorAll(".draw .dbox svg > g")[1]; return [...g.querySelectorAll("path")].some((x) => x.getAttribute("fill") === "#0a84ff"); }));
   await ev(() => document.querySelector('.draw button[title="Undo"]').click());
-  await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
-  await ev(() => document.querySelector('.draw .dfly button[title="Fill colour"]').click()); await sleep(80);
-  await ev(() => document.querySelector('.draw .dsub button[title^="Fill: the line"]').click()); await sleep(80);
-  out.fill.push(await ev(() => JSON.parse(localStorage.getItem("sight-review:pen")).fill));
   // A key takes a tool: the open row folds (it would show a stale pick).
   await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
   await p.keyboard.press("KeyB"); await sleep(80);
@@ -319,6 +329,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.filterSwipe = [await val(`${R}.filter`), await ev(() => document.querySelector(".pbar .seg button.on").textContent.replace(/\d+$/, ""))];
   await drag([pl.x + 40, py], [pl.x + pl.width - 40, py], 8, 16); await sleep(250);
   out.filterSwipe.push(await val(`${R}.filter`));
+  // A tap on a note's card selects it (the accent frame) and puts the player on its first frame.
+  await val(`(${R}.curNote = null, ${R}.video.currentTime = Math.max(0, ${R}.video.duration - 0.5))`); await sleep(300);
+  await ev(() => document.querySelector(".note .text").click()); await sleep(500);
+  out.select = await ev(() => { const R = window.__sightReview.R, n = R.rows.find((r) => r.kind === "note");
+    const ts = [n.data.ctx.t].concat(R.rows.filter((r) => r.kind === "stroke" && r.data.note === n.id && !r.data.reply).map((r) => r.data.ctx.t));
+    return [R.curNote === n.id, document.querySelector(".note").classList.contains("cur"), Math.abs(R.video.currentTime - Math.min(...ts)) < 1 / R.fps]; });
   // The note's pictures: equal squares in one grid (4 to a row by default).
   out.pics = await ev(() => { const c = [...document.querySelectorAll(".note .pics > .fw")]; const w = c.map((x) => Math.round(x.getBoundingClientRect().width)), h = c.map((x) => Math.round(x.getBoundingClientRect().height));
     const g = document.querySelector(".note .pics"); return [c.length, w.every((x, i) => x === w[0] && Math.abs(h[i] - x) <= 1), Math.abs(w[0] * 4 + 12 - g.getBoundingClientRect().width) <= 2]; });

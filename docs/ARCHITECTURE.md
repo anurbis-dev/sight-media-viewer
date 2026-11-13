@@ -263,7 +263,7 @@ slot's row is switches (`TEXT_OPTS`: bold, italic, underline, `bgOn`, outline = 
 align cycles; the box (a switch: switched on, it shows its colours `TEXT_COLORS`) and the font
 (`FONT_IDS`) use a second row `.dsub` above it — `openSub`) on `pen.text` (also `bg`, `outlineColor`). The Shapes row ends with
 *Fill colour* (`fillButton` → `subRow("fill")`): `pen.fill` (null = the line's colour at 0.3, else
-that colour at 0.6), saved with the pen; recolouring a selection moves a fill only when it
+that colour at 0.6; the second row has only the six colours), saved with the pen; recolouring a selection moves a fill only when it
 followed the line (saved with the pen, used by a new text); a switch also styles
 the text being typed (`edit.it.data`, restored from `edit.before` on cancel; `commitText` compares
 `styleOf`) or, with select + texts selected, those texts (copies, one undo step). While typing,
@@ -530,8 +530,13 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   shows the note's drawings + the draft (`stageDrawings`). `sendReply` writes one drawing set per
   frame drawn on, each with that frame's ctx. `composing()` = `R.newOpen || R.replyTo` (the
   `.compose` layout, `els.where`); starting a reply closes the new-note bar (its draft stays).
-  `R.curNote` (set by a reply, `goTo`, `showNote`) keeps a card `.cur` while no note is on the
-  frame shown. Picture notes / no video: the inline composer in the card (`R.openReply`). A sideways drag on the stage scrubs
+  Selection: `R.curNote` is the selected note, the only card `.cur` (`paintCurrent`, pictures too);
+  cards on the frame shown get `.here` (lighter), so play / scrub never move the selection. Set by
+  a tap on a card (`selectNote`: seek to `threadFrames(n)[0]`), a picture tapped (`openThread`
+  selects + seeks to that frame first), a marker step landing on a note's frame (`jumpNote`), a
+  reply, `goTo`, `showNote`. Controls hidden: `setClean` → `.review.clean` (CSS hides `.hdr`,
+  `.tp`, the pencil, `.playbig`, `.pbar` with `--pbh: 0` while the panel is closed; `.fab.showui`
+  brings them back). Picture notes / no video: the inline composer in the card (`R.openReply`). A sideways drag on the stage scrubs
   from the current position (`scrubStep`: ¼ frame per px, up to ×12 with finger speed, Shift ¼;
   starts after 6 px of mostly-horizontal movement; the click right after a mouse scrub is
   swallowed); a swipe up on the stage opens the panel. No play button in the transport (tap the

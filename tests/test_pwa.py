@@ -319,8 +319,8 @@ class RoundTrip(unittest.TestCase):
         # Tool rows: Shapes → 5, a pick folds it (the slot on, the ellipse in hand) and draws;
         # Arrows → 5, a touch on the picture folds it (the arrow kept); colour → 5, a pick sets it.
         self.assertEqual(res["fly"][:2], [6, [False, True, "ellipse"]])  # 5 shapes + the fill colour
-        # Fill colour: a second row (the line's + 6); blue → the shape drawn is filled blue; back to the line's.
-        self.assertEqual(res["fill"], [7, ["#0a84ff", 4, False], True, None])  # the filled ellipse in hand stays
+        # Fill colour: a second row of 6 colours; blue → the shape drawn is filled blue.
+        self.assertEqual(res["fill"], [6, ["#0a84ff", 4, False], True])  # the filled ellipse in hand stays
         self.assertGreaterEqual(res["fly"][2], 1)
         self.assertEqual(res["fly"][3:6], [5, [False, "arrow"], 5])
         self.assertEqual(res["fly"][6], ["rgb(255, 214, 10)", False])
@@ -340,6 +340,12 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(r3, 1)
         self.assertNotEqual(t1, t3)
         self.assertEqual(res["sound"], [True, False])
+        # The speaker: a tap mutes, the next gives full volume.
+        self.assertEqual(res["mute"], [["0", True], ["1", False]])
+        # Controls hidden: header, transport, Notes Panel bar gone, the round button shown; back again.
+        self.assertEqual(res["clean"], [[True, "none", "none", "none", "grid"], [False, "block", "block", "flex", "none"]])
+        # A tap on a note's card: selected (accent frame), the player on its first frame.
+        self.assertEqual(res["select"], [True, True, True])
         self.assertEqual(res["loop"], [[False, False, None], [True, True, "1"], [False, False, "0"]])
         self.assertEqual(res["groupPlace"], ["g", "grp-c"])
         # Auto full screen on a plain tap, not a scrub / drag / hold (again after the reload);

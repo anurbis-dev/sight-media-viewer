@@ -2,6 +2,21 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.28.1 — 2026-11-12 — Phone viewer: pictures cross-fade instead of sliding
+- **What:** in the full-screen note viewer a swipe (up / down = another note, sideways = the
+  note's other frame) no longer slides the picture off and the next one in from the edge (which
+  blinked: the new image was not loaded yet). The swiped picture settles back, the next one is
+  decoded, then fades in on top while the old one fades out in the same place.
+- **Where:** `mobile/js/app.js` `viewer()` (`show(no, fade)`, `navigate`, `FADE_MS` / `FADE_WAIT`);
+  test `viewerFade` in `tests/pwa_touch.cjs` / `tests/test_pwa.py`.
+- **Notes:** `show` is async but with no `fade` it never awaits, so the first `show(o)` is still
+  synchronous. `o` and `box` switch together only after the decode (capped at 600 ms; a slower
+  image fades in blank and pops in). The old box holds full opacity until 45 % of the fade, so the
+  pair never lets the background show through mid-way. Old boxes are removed by `onfinish` with a
+  timeout fallback. `busyNav` lasts until the fade ends; a swipe while busy just snaps back.
+  Fresh-agent review found no bugs; it flagged the mid-fade dimming of a plain both-ways fade and
+  the old picture sitting off-centre while the next loads; both fixed as above.
+
 ## 0.28.0 — 2026-11-12 — Phone: play inside the drawing canvas, clean timeline for a new note, note frames in the viewer
 - **What:** (phone app; review-draw.js gains host hooks, no change on the HTML page)
   On a video's drawing canvas with no tool in hand, a tap plays / pauses: the clip plays in the

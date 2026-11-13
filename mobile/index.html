@@ -140,7 +140,14 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .hdr { position: absolute; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); top: calc(8px + var(--st)); z-index: 3; padding: 2px 4px; }
 .hdr .row { display: flex; align-items: center; gap: 2px; }
 .hdr .row + .row { justify-content: center; position: relative; }  /* the view's icons, in the middle of the bar */
-.hdr .row + .row .fitb { position: absolute; right: 0; top: 0; }  /* Fit comes and goes: the others stay put */
+.hdr .row + .row .fitb { position: absolute; right: 0; top: 0; }
+.hdr .row + .row .uib { position: absolute; left: 0; top: 0; }
+/* The controls hidden (setClean): the header, transport, pencil, play button and the Notes Panel
+   bar go; the player takes the bar's room; one round button in the top left brings them back. */
+.player .fab.showui { display: none; left: calc(8px + env(safe-area-inset-left)); top: calc(8px + var(--st)); z-index: 4; width: 40px; height: 40px; border-radius: 20px; }
+.review.clean:not(.open) .player .fab.showui { display: grid; }
+.review.clean:not(.open) .player .hdr, .review.clean:not(.open) .player .tp, .review.clean:not(.open) .player .fab.pencil, .review.clean:not(.open) .stage .playbig, .review.clean:not(.open):not(.compose) .pbar { display: none; }
+.review.clean:not(.open):not(.compose) { --pbh: 0px; }  /* Fit comes and goes: the others stay put */
 .hdr .ib { color: inherit; width: 38px; height: 38px; }
 .hdr .ib.on { color: var(--accent); }
 .hdr .ttl { flex: 1; min-width: 0; padding: 0 4px; }
@@ -195,6 +202,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .notes { padding: 0 16px 24px; max-width: 760px; margin: 0 auto; }
 .note { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 10px 0; }
 .note.cur { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.note.here:not(.cur) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }  /* on the frame shown now */
+.note { cursor: pointer; }
 .note.done { opacity: .72; }
 .note.done .text { text-decoration: line-through; text-decoration-color: var(--muted); }
 .nh { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }

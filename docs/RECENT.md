@@ -14,6 +14,23 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.35.0 — 2026-11-13 — Phone: selecting a note, controls hidden, mute on a tap
+- **What:** (1) A tap on a note's card selects it (the accent frame) and puts the player on the
+  first frame of its drawing; a tap on one of its pictures does the same, then opens it full
+  screen; a marker step that lands on a note's frame selects it. The highlight no longer follows
+  the playhead (that was the confusing part): notes on the frame shown get a lighter frame.
+  (2) The header's second row has, at its left end, a button that hides every control; a round
+  button in the top left brings them back; the gestures keep working. (3) A tap on the speaker
+  mutes / gives full volume; a drag sets the volume from where it is. (4) Canvas: the fill row
+  has only the six colours (no "the line's colour" entry; a fill follows the line until one is
+  picked).
+- **Where:** `mobile/js/app.js` — `paintCurrent` (`.cur` / `.here`), `selectNote`, the card's
+  click, `openThread`, `jumpNote`; `setClean`, `.uib` / `.fab.showui` in `buildStage`, icons
+  `hideui` / `showui`; the speaker's tap. `mobile/index.html` (`.note.here`, `.review.clean`).
+  `app/static/review-draw.js` (`fillButton`). Tests: `select`, `clean`, `mute`, `fill`.
+- **Notes:** the controls stay hidden while the review is open (`R.clean`, not kept). With the
+  panel open the bar shows as usual. Review (fresh agent): see the next entry if it found anything.
+
 ## 0.34.0 — 2026-11-13 — Phone: loop / once button; the viewer's caption shows three lines of words
 - **What:** (1) The transport has a button right of the sound: *once* (stops at the end, the
   default) or *loop*; a tap switches, kept on the device; the canvas' transport has it too.
@@ -337,18 +354,3 @@ Add new entries directly below this line.
   note being replied to sent the player back to the first frame; frames are now told apart by
   frame index (`frameKey`), and the phone report shows a frame a reply added once. Left: switching
   to another note's reply keeps the first one's draft without asking (it comes back on its Reply).
-
-## 0.28.1 — 2026-11-12 — Phone viewer: pictures cross-fade instead of sliding
-- **What:** in the full-screen note viewer a swipe (up / down = another note, sideways = the
-  note's other frame) no longer slides the picture off and the next one in from the edge (which
-  blinked: the new image was not loaded yet). The swiped picture settles back, the next one is
-  decoded, then fades in on top while the old one fades out in the same place.
-- **Where:** `mobile/js/app.js` `viewer()` (`show(no, fade)`, `navigate`, `FADE_MS` / `FADE_WAIT`);
-  test `viewerFade` in `tests/pwa_touch.cjs` / `tests/test_pwa.py`.
-- **Notes:** `show` is async but with no `fade` it never awaits, so the first `show(o)` is still
-  synchronous. `o` and `box` switch together only after the decode (capped at 600 ms; a slower
-  image fades in blank and pops in). The old box holds full opacity until 45 % of the fade, so the
-  pair never lets the background show through mid-way. Old boxes are removed by `onfinish` with a
-  timeout fallback. `busyNav` lasts until the fade ends; a swipe while busy just snaps back.
-  Fresh-agent review found no bugs; it flagged the mid-fade dimming of a plain both-ways fade and
-  the old picture sitting off-centre while the next loads; both fixed as above.
