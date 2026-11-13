@@ -48,7 +48,12 @@
   (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
   appears at the top with a second row that always shows the settings of the current tool — or of
   the selected drawings, which stay editable: every drawing is a vector object you can select, move,
-  scale, rotate, restyle and delete at any time.
+  scale, rotate, restyle and delete at any time. In a 3D model a note shows a picture of each camera
+  view its drawings were made from (its own view first), like a video note's frames; click a picture
+  of another view to go to it. Hold **Alt** with a drawing tool to work the picture without switching to
+  the select tool: a drag orbits a 3D model or scrubs a video (sideways on the picture), and the toolbar and
+  the notes panel stop taking the pointer until Alt is let go. With the select tool Alt keeps its own
+  duplicate-drag.
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
     eraser end erases too) · `L` line · `W` arrow · `R` rectangle · `O` ellipse · `T` text ·
@@ -79,7 +84,7 @@
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
-    show; click it again or Esc to see all; hovering a note dims the others; right after you make a note the picture is clean, and that note's drawings come back when you hover its card), double-click its text to edit, the clock marks it *In progress* (someone took
+    show; click it again, click empty space in the list, or Esc to see all; hovering a note dims the others; right after you make a note the picture is clean, and that note's drawings come back when you hover its card), double-click its text to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening

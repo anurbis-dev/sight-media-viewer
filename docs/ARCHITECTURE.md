@@ -258,7 +258,9 @@ the angle is atan2 about the pivot, so a longer arm turns finer.
 
 **Drawing canvas** (`app/static/review-draw.js`, `SightReviewDraw.open`) — shared by the HTML page
 (inlined) and the phone app. Tools: select / transform (`V`), brush, highlighter, arrow, rect,
-ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The bar (`.dtools`) is built from
+ellipse, **text**, eraser (Ctrl held = eraser for that stroke). Alt held over a drawing tool (`altCam()`, state `altHeld`,
+class `.an-alt` on the lightbox) lets the press through to the viewer (`onDown` returns before `grab`) and
+makes the bar / notes panel pointer-inert. The bar (`.dtools`) is built from
 `SLOTS`: two slots hold kinds — *Arrows and lines* (`ARROWS`: heads / dash, `line` = shape_kind
 "line") and *Shapes* (`SHAPES`: rect / rounded / ellipse, outlined or filled); `pen.arrow` /
 `pen.shape` (saved with the pen) pick the kind, `pen.tool` stays the drawing tool key (arrow /
@@ -331,7 +333,9 @@ picture for the new note; **pin** (a note clicked) only that note's; **hover** d
 until its card is hovered or pinned; compose and pin clear it (`viewMode` / `modeAllows`).
 Hit tests, the eraser, selection and "clear on screen" follow `visibleNow`; reports and exports
 use `ctxShown` (every drawing on that frame). Cards show the note's own drawings (and each reply's)
-over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset).
+over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset). In 3D
+the pictures are renders from each view (`view3dPic`, kept per asset / view / shading, made with the
+camera moved and put back; skipped during a drag); `view3dBox` draws the drawings in the host's units.
 A note may hold drawings on several frames / views (each row keeps its own ctx): `pendingDrawings`
 = loose drawings shown now + every loose one created since `S.openedAt` (any frame / view);
 `notePreview` makes one box per frame (`data-pt` on the extra ones: a click goes there);

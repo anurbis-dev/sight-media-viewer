@@ -166,7 +166,7 @@ export function createAnnotator(host){
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
-    drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null, cleanPic: false,
+    drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null, cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
   };
@@ -739,6 +739,7 @@ export function createAnnotator(host){
   function onDown(e){
     if (!S.on) return;
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
+    if (altCam() && e.button === 0) return; // Alt held: the viewer's own press (orbit, scrub), not ours
     const pen = e.pointerType === "pen";
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
     if (e.button !== 0 && !penEraser) return; // middle / right: the viewer's pan / zoom
@@ -1031,7 +1032,8 @@ export function createAnnotator(host){
     const el = surfaceEl();
     if (!el) return;
     let c = "crosshair";
-    if (S.region) c = "crosshair";
+    if (altCam()) c = "";
+    else if (S.region) c = "crosshair";
     else if (S.tool === "select"){
       const h = S.sel.size ? handleAt(sx, sy) : null;
       if (h) c = RC.XF_CURSOR[h];
@@ -1050,9 +1052,22 @@ export function createAnnotator(host){
     S.ctrlHeld = on;
     if (S.on && S.hover && !S.drag){ updateCursor(...S.hover); renderSel(); }
   }
-  document.addEventListener("keydown", (e) => { if (e.key === "Control") ctrlChanged(true); }, true);
-  document.addEventListener("keyup", (e) => { if (e.key === "Control") ctrlChanged(false); }, true);
-  window.addEventListener("blur", () => ctrlChanged(false));
+  // Alt held over a drawing tool (altCam): the press goes to the viewer (orbit, video scrub on the picture)
+  // and the bar and notes panel let the pointer through, so the camera / picture moves without switching
+  // to the select tool. Select keeps Alt for its duplicate-drag. A state flag, like Ctrl above.
+  const altCam = () => !!S.altHeld && S.on && S.tool !== "select" && !S.region;
+  function paintAlt(){
+    S.light?.classList.toggle("an-alt", altCam());
+    if (S.on && S.hover && !S.drag) updateCursor(...S.hover);
+  }
+  function altChanged(on){
+    if (!!S.altHeld === on) return;
+    S.altHeld = on;
+    paintAlt();
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Alt") altChanged(true); }, true);
+  document.addEventListener("keyup", (e) => { if (e.key === "Alt") altChanged(false); }, true);
+  window.addEventListener("blur", () => { ctrlChanged(false); altChanged(false); });
 
   // ---- text editing ---------------------------------------------------------------------------
   function editText(it, isNew){
@@ -1268,6 +1283,7 @@ export function createAnnotator(host){
     finishEdit();
     S.tool = t;
     if (t !== "select" && S.sel.size){ S.sel.clear(); renderSel(); }
+    paintAlt();
     paintBar();
     renderProps();
     if (S.hover) updateCursor(...S.hover);
@@ -1602,7 +1618,55 @@ export function createAnnotator(host){
   // ---- note previews: the clean picture / video frame with the note's drawings over it (vector,
   // nothing burned in) ---------------------------------------------------------------------------
   // A video note drawn on several frames: one preview per frame, the note's own frame first.
+  // 3D: a note's pictures are the view's render from each camera its drawings were made from (the note's
+  // own view first), the drawings over it, as a video note's frames. A render is made on demand and kept
+  // per view and shading (cleared with the video previews, resetPF); the camera goes back right after.
+  // The shading is the viewer's current one (a 3D note's shading is applied only when it is opened).
+  const PIC3 = new Map();
+  function view3dPic(vk){
+    const v = S.views.get(vk);
+    if (!v || !S.b3) return null;
+    const key = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(host.getV3D?.() || null);
+    if (PIC3.has(key)) return PIC3.get(key);
+    // No camera move while a drag (orbit, stroke) is on; the picture comes with the next refresh.
+    if (S.drag) return null;
+    const save = curCam();
+    if (!save) return null;
+    const same = camMatch(save, v.cam);
+    if (!same) S.b3.setCam(v.cam);
+    const src = S.b3.capture();
+    let url = null;
+    if (src?.width && src?.height){
+      const sc = Math.min(1, 640 / Math.max(src.width, src.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(src.width * sc)); cv.height = Math.max(1, Math.round(src.height * sc));
+      cv.getContext("2d").drawImage(src, 0, 0, cv.width, cv.height);
+      url = cv.toDataURL("image/jpeg", 0.85);
+    }
+    if (!same) S.b3.setCam(save);
+    if (url) PIC3.set(key, url);
+    return url;
+  }
+  function view3dPreviews(n){
+    if (!S.b3) return "";
+    const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
+    const vk0 = n.data.ctx?.vk || null, vks = [];
+    own.forEach((it) => { const k = it.data.ctx?.vk || vk0; if (k && !vks.includes(k)) vks.push(k); });
+    if (vk0 && vks.includes(vk0)){ vks.splice(vks.indexOf(vk0), 1); vks.unshift(vk0); }
+    return vks.map((vk) => view3dBox(n, own.filter((it) => (it.data.ctx?.vk || vk0) === vk), vk === vk0 ? "" : " sm", vk === vk0 ? null : vk)).join("");
+  }
+  // One picture: the render from `vk`, drawn over in the 3D host's units (1000 high, origin at the
+  // centre); `goVk` (another view than the note's own) makes a click go there.
+  function view3dBox(n, list, cls, goVk){
+    const g = geom();
+    if (!list.length || !g?.w || !g?.h) return "";
+    const url = view3dPic(goVk ? goVk : (n.data.ctx?.vk || null));
+    const vw = g.w * 1000 / g.h;
+    const img = url ? `<img src="${url}" alt="">` : "";
+    return `<div class="an-nprev${cls}"${goVk ? ` data-vk="${goVk}"` : ""} style="aspect-ratio:${g.w} / ${g.h}" title="${goVk ? "Go to this view" : "Show this note's drawings"}">${img}<svg viewBox="${-vw / 2} -500 ${vw} 1000" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
+  }
   function notePreview(n){
+    if (S.kind === "model3d") return view3dPreviews(n);
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
     const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
     if (S.kind !== "video") return previewBox(n, own, "");
@@ -1666,6 +1730,7 @@ export function createAnnotator(host){
   function resetPF(){
     if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); PF.v.remove(); }
     PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++; PF.tries = new Map();
+    PIC3.clear();
   }
   function previewFrame(t){
     const key = Number(t).toFixed(3);
@@ -1872,7 +1937,11 @@ export function createAnnotator(host){
   }
   function onListClick(e){
     const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-note");
-    if (!t) return;
+    if (!t){
+      // A click on the empty list drops the picked note (as Esc does).
+      if (S.pinFocus){ S.pinFocus = S.focusNote = null; paintVisibility(); renderPanel(); }
+      return;
+    }
     if (t.dataset.rdraw){
       const rid = t.dataset.rdraw;
       if (S.hiddenReplies.has(rid)) S.hiddenReplies.delete(rid);
@@ -1917,7 +1986,13 @@ export function createAnnotator(host){
     }
     const card = t.closest(".an-note");
     // Another frame the note was drawn on: the note picked, the clip on that frame.
-    const pv = e.target.closest?.(".an-nprev[data-pt]");
+    const pv = e.target.closest?.(".an-nprev[data-pt], .an-nprev[data-vk]");
+    if (card && pv?.dataset.vk){
+      // Another view the note was drawn from: the note picked, the camera on that view.
+      if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id);
+      goView(pv.dataset.vk);
+      return;
+    }
     if (card && pv){
       if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id);
       const v = video(); if (v){ v.pause(); v.currentTime = landAt(Number(pv.dataset.pt)); }
@@ -2435,6 +2510,7 @@ export function createAnnotator(host){
     S.on = want;
     if (!want){ finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.focusNote = S.pinFocus = null; flush(); }
     S.light?.classList.toggle("an-on", S.on);
+    paintAlt();
     S.b3?.annotating?.(S.on);
     if (S.bar) S.bar.hidden = !S.on;
     const el = surfaceEl();
@@ -2742,6 +2818,7 @@ function injectStyles(){
 .an-nprev { position: relative; width: 100%; margin: 6px 0 2px; border-radius: 6px; overflow: hidden; background: #000; }
 .an-nprev.sm { margin-top: 4px; }
 .an-nprev[data-pt] { display: inline-block; width: calc(50% - 3px); margin-right: 6px; vertical-align: top; cursor: pointer; }
+.an-nprev[data-vk] { cursor: pointer; }
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 .an-hint { color: var(--subtle); padding: 10px 8px; line-height: 1.5; }
@@ -2807,6 +2884,9 @@ function injectStyles(){
 .an-badge { position: absolute; right: 2px; top: 2px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: #d0342c; color: #fff; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; }
 .an-badge[hidden] { display: none; }
 .light.an-regioning .an-top { opacity: .3; pointer-events: none; }
+/* Alt held over a drawing tool (altCam): the bar and the notes panel do not take the pointer. */
+.light.an-alt .an-top, .light.an-alt .an-panel { opacity: .5; }
+.light.an-alt .an-panel, .light.an-alt .an-top *, .light.an-alt .an-panel * { pointer-events: none !important; }
 `;
   document.head.appendChild(st);
 }

@@ -14,6 +14,53 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.40.0 — 2026-11-13 — Annotations: hold Alt to move the camera or scrub without the select tool
+- **What:** in annotation mode with a drawing tool, holding Alt makes a drag go to the viewer instead of
+  drawing: a 3D model orbits, a video scrubs (sideways on the picture). While Alt is held the annotation bar
+  and the notes panel do not take the pointer (they are faded). Releasing Alt draws again. With the select
+  tool nothing changes (Alt+drag still duplicates).
+- **Where:** `app/static/annotate.js` — `altCam()`, `paintAlt()`, `altChanged()` (keydown / keyup of
+  `Alt`, blur resets it, like Ctrl); `onDown` (returns before `grab` when `altCam()`); `setTool`, `toggle`
+  and `updateCursor` (cursor / class follow it); CSS `.light.an-alt`. `MANUAL.md` (Annotations), `docs/ARCHITECTURE.md`
+  (annotation input). `app/version.py`.
+- **Notes:** the state is only the Alt key's `keydown` / `keyup` (the same pattern as Ctrl, which is the
+  eraser modifier, not a shortcut through `hotkey()`). Shapes lose their "Alt from centre" while Alt is held
+  (the press is the viewer's); the select tool's Alt keeps its meaning. Checked with Playwright on the scratch
+  GLB: a plain drag draws; with Alt held the drag changes the view and draws nothing, the bar takes no
+  pointer (`elementFromPoint`), and after release drawing works again. On the scratch mp4 an Alt-drag
+  moved the playhead from 0.0 s to 3.1 s with no drawing. No page errors. Not checked: Mac Option (same
+  `Alt` key name, not run), Safari / Firefox, pen tablets. Not committed. The fresh-agent review CLAUDE.md
+  asks for was not run (no subagent requested).
+
+## 0.39.0 — 2026-11-13 — 3D notes show a picture per camera view, like video notes
+- **What:** a 3D note's card shows a picture of each view its drawings were made from (the note's own view
+  first, then the others in the order drawn), with the drawings over it, as a video note shows its frames.
+  Clicking the picture of another view picks the note and moves the camera there. A note made from drawings
+  on several views (orbit, draw, orbit, draw, then Add) gets one picture per view; the drawings then leave
+  the picture as before (the clean picture).
+- **Where:** `app/static/annotate.js` — `PIC3` cache, `view3dPic(vk)` (renders from the view's camera with
+  `S.b3.capture()`, JPEG ≤640 px, camera put back), `view3dPreviews(n)` / `view3dBox(n, list, cls, goVk)`
+  (called from `notePreview` for `model3d`), `resetPF` clears `PIC3`, `onListClick` (`.an-nprev[data-vk]`),
+  CSS `.an-nprev[data-vk]`. `MANUAL.md` (Annotations), `docs/ARCHITECTURE.md` (3D previews). `app/version.py`.
+- **Notes:** the picture uses the viewer's current shading, not the note's saved one (the saved one is applied
+  only when the note is opened, as before). It is made on demand and kept per asset / view / shading; no
+  picture is made while a drag (orbit or stroke) is on, so it can show up one refresh later. A note with no
+  drawings has no picture, as with video. Checked with Playwright on a scratch GLB: a note from three views
+  shows three different renders with their drawings, a click on the second picture moves the camera there and
+  the chip follows, the camera stays where it was after the renders, and no page errors. Not checked: a model
+  with a very large canvas, Safari / Firefox, the reports (they already capture per view). Not committed. The
+  fresh-agent review CLAUDE.md asks for was not run (no subagent requested).
+
+## 0.38.2 — 2026-11-13 — Desktop: a click on the empty notes list drops the picked note
+- **What:** in the desktop lightbox's notes panel, a click on empty space in the list (below or between
+  the cards) clears the picked note (the `.on` card, its drawings and the view), the same as Esc.
+- **Where:** `app/static/annotate.js` — `onListClick` (the no-target branch: `S.pinFocus` / `S.focusNote`
+  cleared, `paintVisibility`, `renderPanel`). `MANUAL.md` (Annotations). `app/version.py`.
+- **Notes:** a card click still picks it (and a second click on it drops it, as before). Only the note
+  pick is cleared; drawing selection is left as it was, like Esc. Checked with Playwright on the scratch
+  `SIGHT_HOME`: picked card → 1 `.on`, click on the list's bottom padding → 0, card click → 1 again; no page
+  errors. Not committed yet. The fresh-agent review CLAUDE.md asks for was not run (no subagent requested).
+
 ## 0.38.1 — 2026-11-13 — Desktop: the picture goes clean as soon as a note is made
 - **What:** in the desktop lightbox, once a note is made (Add button or Enter) its drawings and every other
   note's drawings leave the picture at once. Before, they stayed on screen until you started a new drawing.
@@ -201,44 +248,3 @@ Add new entries directly below this line.
   `mobile/index.html` (`.review.clean` rules `:not(.compose)`). Test: `swipeAll`.
 - **Notes:** left as reviewed: with the controls hidden a mouse has no way to the panel but the
   round button (the swipe up is touch only). (The fill row's "the line's colour" is back in 0.35.3.)
-
-## 0.35.1 — 2026-11-13 — Phone: the viewer's caption across the width, the pencil over it; no subtitle on home
-- **What:** the full-screen viewer's caption (number, frame, words) spans the whole width at the
-  foot and the pencil sits just over it, whatever the caption's height. The home screen's title
-  has no "Reviews stay on this device" under it (the list's foot says it already).
-- **Where:** `mobile/js/app.js` `viewer` (`.vfoot` holds the pencil and the caption; the picture
-  boxes go in before it), `renderHome`; `mobile/index.html` (`.view .vfoot`, `.view .cap`).
-  Test: `capPlace`.
-
-## 0.35.0 — 2026-11-13 — Phone: selecting a note, controls hidden, mute on a tap
-- **What:** (1) A tap on a note's card selects it (the accent frame) and puts the player on the
-  first frame of its drawing; a tap on one of its pictures does the same, then opens it full
-  screen; a marker step that lands on a note's frame selects it. The highlight no longer follows
-  the playhead (that was the confusing part): notes on the frame shown get a lighter frame.
-  (2) The header's second row has, at its left end, a button that hides every control; a round
-  button in the top left brings them back; the gestures keep working. (3) A tap on the speaker
-  mutes / gives full volume; a drag sets the volume from where it is. (4) Canvas: the fill row
-  has only the six colours (no "the line's colour" entry; a fill follows the line until one is
-  picked).
-- **Where:** `mobile/js/app.js` — `paintCurrent` (`.cur` / `.here`), `selectNote`, the card's
-  click, `openThread`, `jumpNote`; `setClean`, `.uib` / `.fab.showui` in `buildStage`, icons
-  `hideui` / `showui`; the speaker's tap. `mobile/index.html` (`.note.here`, `.review.clean`).
-  `app/static/review-draw.js` (`fillButton`). Tests: `select`, `clean`, `mute`, `fill`.
-- **Notes:** the controls stay hidden while the review is open (`R.clean`, not kept). With the
-  panel open the bar shows as usual. Review (fresh agent): fixes in 0.35.2.
-
-## 0.34.0 — 2026-11-13 — Phone: loop / once button; the viewer's caption shows three lines of words
-- **What:** (1) The transport has a button right of the sound: *once* (stops at the end, the
-  default) or *loop*; a tap switches, kept on the device; the canvas' transport has it too.
-  (2) The full-screen viewer's caption puts the note's / reply's words on their own line under the
-  number and the frame, up to three lines; longer words scroll inside the caption (the picture is
-  not covered).
-- **Where:** `mobile/js/app.js` — `LOOP_KEY` / `loopOn` / `setLoop` / `paintLoop`, `T.loop` in
-  `makeTransport`, `v.loop` in `buildStage`, icons `loop` / `once`; `viewer` (`.cap .tx`, its
-  pointerdown / touchmove / wheel left to the words). `mobile/index.html` (`.tpi .loopb`, a
-  ≤ 360 px layout without the "fps" word, `.view .cap` wraps, `span.tx`). Tests: `loop`,
-  `capText` in `pwa_touch.cjs` / `test_pwa.py`.
-- **Notes:** the words' scroll is the browser's own (touch-action pan-y on the scroll box; the
-  viewer neither captures nor prevents those touches) — headless Chromium's synthetic touches do
-  not scroll, so the test checks the box scrolls, is hit and is not prevented. One run of the
-  PWA suite out of four ended with an error not seen again (not traced; the next three passed).

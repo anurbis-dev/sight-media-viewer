@@ -2,6 +2,47 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.35.1 — 2026-11-13 — Phone: the viewer's caption across the width, the pencil over it; no subtitle on home
+- **What:** the full-screen viewer's caption (number, frame, words) spans the whole width at the
+  foot and the pencil sits just over it, whatever the caption's height. The home screen's title
+  has no "Reviews stay on this device" under it (the list's foot says it already).
+- **Where:** `mobile/js/app.js` `viewer` (`.vfoot` holds the pencil and the caption; the picture
+  boxes go in before it), `renderHome`; `mobile/index.html` (`.view .vfoot`, `.view .cap`).
+  Test: `capPlace`.
+
+## 0.35.0 — 2026-11-13 — Phone: selecting a note, controls hidden, mute on a tap
+- **What:** (1) A tap on a note's card selects it (the accent frame) and puts the player on the
+  first frame of its drawing; a tap on one of its pictures does the same, then opens it full
+  screen; a marker step that lands on a note's frame selects it. The highlight no longer follows
+  the playhead (that was the confusing part): notes on the frame shown get a lighter frame.
+  (2) The header's second row has, at its left end, a button that hides every control; a round
+  button in the top left brings them back; the gestures keep working. (3) A tap on the speaker
+  mutes / gives full volume; a drag sets the volume from where it is. (4) Canvas: the fill row
+  has only the six colours (no "the line's colour" entry; a fill follows the line until one is
+  picked).
+- **Where:** `mobile/js/app.js` — `paintCurrent` (`.cur` / `.here`), `selectNote`, the card's
+  click, `openThread`, `jumpNote`; `setClean`, `.uib` / `.fab.showui` in `buildStage`, icons
+  `hideui` / `showui`; the speaker's tap. `mobile/index.html` (`.note.here`, `.review.clean`).
+  `app/static/review-draw.js` (`fillButton`). Tests: `select`, `clean`, `mute`, `fill`.
+- **Notes:** the controls stay hidden while the review is open (`R.clean`, not kept). With the
+  panel open the bar shows as usual. Review (fresh agent): fixes in 0.35.2.
+
+## 0.34.0 — 2026-11-13 — Phone: loop / once button; the viewer's caption shows three lines of words
+- **What:** (1) The transport has a button right of the sound: *once* (stops at the end, the
+  default) or *loop*; a tap switches, kept on the device; the canvas' transport has it too.
+  (2) The full-screen viewer's caption puts the note's / reply's words on their own line under the
+  number and the frame, up to three lines; longer words scroll inside the caption (the picture is
+  not covered).
+- **Where:** `mobile/js/app.js` — `LOOP_KEY` / `loopOn` / `setLoop` / `paintLoop`, `T.loop` in
+  `makeTransport`, `v.loop` in `buildStage`, icons `loop` / `once`; `viewer` (`.cap .tx`, its
+  pointerdown / touchmove / wheel left to the words). `mobile/index.html` (`.tpi .loopb`, a
+  ≤ 360 px layout without the "fps" word, `.view .cap` wraps, `span.tx`). Tests: `loop`,
+  `capText` in `pwa_touch.cjs` / `test_pwa.py`.
+- **Notes:** the words' scroll is the browser's own (touch-action pan-y on the scroll box; the
+  viewer neither captures nor prevents those touches) — headless Chromium's synthetic touches do
+  not scroll, so the test checks the box scrolls, is hit and is not prevented. One run of the
+  PWA suite out of four ended with an error not seen again (not traced; the next three passed).
+
 ## 0.33.6 — 2026-11-13 — Canvas: the text box is a plain switch again
 - **What:** the *Text* row's box button switches the box on / off as before; switched on, its
   colours show in the second row (no "no box" entry there — the user's call: off is the switch).
