@@ -14,6 +14,19 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.33.2 — 2026-11-13 — Sight: a note's pictures as small squares, as on the phone
+- **What:** in Sight's review panel a note's pictures (its frame / picture with the drawings, the
+  other frames it was drawn on, its screenshots) and a reply's (its drawing, its pictures) are one
+  grid of equal squares, four to a row, each cut to fill — no more full-width pictures.
+- **Where:** `app/static/annotate.js` — `picGrid`, `renderPanel` / `repliesHtml` use it,
+  `previewBox` (overlay `xMidYMid slice`, the box's inline aspect overridden in the grid), CSS
+  `.an-pics`.
+- **Notes:** clicks are unchanged (they key on `.an-nprev[data-pt]`, `img[data-shot]`,
+  `img[data-rshot]`, not on the container). The squares cut the picture's sides off: a drawing
+  near the edge of a wide frame may sit outside its square (a click on the note shows them all on
+  the picture).
+  Checked on a dev server with Playwright (a picture note with screenshots and a reply).
+
 ## 0.33.1 — 2026-11-12 — Phone report: replies' drawings on the reply's own pictures
 - **What:** the phone's PDF / HTML report no longer burns a reply's drawing onto the note's frame
   (nor its extra frames, nor a picture note's picture): each reply that drew gets its own pictures
@@ -493,24 +506,3 @@ Add new entries directly below this line.
   last extra view and carried one view's look into the next; the home bin: Android's long-press
   `contextmenu` opened the menu over a lifted review, and a mouse held still before dragging lost
   the pointer (capture is now taken on lift).
-
-## 0.25.0 — 2026-11-12 — Phone app remembers the picked file
-- **What:** a review opens with its picture / video straight away: the app keeps a copy of the
-  file you picked on the device (automatically, no question) and binds it when the review opens.
-  Without a copy the stage shows *Pick the file* as before. ⋯ → *Forget the file on this device*
-  drops the copy (and stops keeping it for that review); *Remember the file…* brings it back.
-- **Where:** `mobile/js/app.js` (`autoKeep`, `openReview`, `rebind`, `paintKeep`, `dropCopy`,
-  menu), `tests/pwa_e2e.cjs` + `tests/test_pwa.py` (reload → picture and video reopen with the file).
-- **Notes:** a web app cannot keep a handle to a file picked from Photos / Files on iOS (no File
-  System Access API there), so "remember" = a copy in IndexedDB `files`; it counts against the
-  browser's storage. Skipped when the copy would take usage past 90 % of the quota (the hint then
-  says so, with *Try again*). The copy is written after the review is on screen; a review deleted
-  meanwhile drops it. `meta.keepAsked` is gone (old records keep the harmless field); `meta.noKeep`
-  replaces it. Re-picking a file (rebind) replaces the copy.
-- **Review (fresh agent):** the first version put the whole `rv.meta` back after the copy was
-  written, so a review closed and reopened meanwhile (or imported into) lost or regained `kept`
-  against what was stored; "Forget" during a running copy was undone; a failed replace left the old
-  copy bound silently. Now `store.js keepFile / dropFile` patch the stored entry by key in one
-  transaction with the file (no write for a deleted review or one marked noKeep), the open review's
-  meta follows, a failed replace drops the old copy and shows the hint, and `openReview` sets `kept`
-  from what is really in `files`.

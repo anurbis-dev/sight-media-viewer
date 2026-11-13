@@ -1575,8 +1575,7 @@ export function createAnnotator(host){
           <button type="button" class="an-ib sm${done ? " on" : ""}" data-done="${n.id}" title="${done ? "Reopen" : "Resolve"}">${ICON.check}</button>
           <button type="button" class="an-ib sm" data-del="${n.id}" title="Delete note and its drawings">${ICON.trash}</button></div>
         <div class="an-nt" title="Double-click to edit">${esc(d.text || "") || '<i class="an-empty">No text</i>'}</div>
-        ${notePreview(n)}
-        ${shots ? `<div class="an-shots">${shots}</div>` : ""}
+        ${picGrid(notePreview(n) + shots)}
         ${counts.get(n.id) || d.from ? `<div class="an-nmeta">${[counts.get(n.id) ? `${counts.get(n.id)} drawing${counts.get(n.id) > 1 ? "s" : ""}` : "", d.from ? `from ${esc(d.from.name || "previous version")}` : ""].filter(Boolean).join(" · ")}</div>` : ""}
         ${repliesHtml(n)}
       </div>`;
@@ -1601,6 +1600,9 @@ export function createAnnotator(host){
     return previewBox(n, own.filter((it) => it.data.ctx?.t == null || t0 == null || sameFrame(it.data.ctx.t, t0)), "", t0)
       + ts.map((t) => previewBox(n, own.filter((it) => it.data.ctx?.t != null && sameFrame(it.data.ctx.t, t)), " sm", t)).join("");
   }
+  // A note's / reply's pictures (its frames with the drawings, attached pictures): one grid of equal
+  // squares, each cut to fill (as the phone app shows them).
+  const picGrid = (html) => html ? `<div class="an-pics">${html}</div>` : "";
   // A reply's drawings (made on the HTML page or the phone) on the note's picture, under the reply.
   function replyPreview(n, r){
     if (S.hiddenReplies.has(r.id)) return "";
@@ -1618,7 +1620,7 @@ export function createAnnotator(host){
       const url = previewFrame(t);
       img = url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`;
     } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
-    return `<div class="an-nprev${cls}"${pt} style="aspect-ratio:${g.nw} / ${g.nh}" title="${pt ? "Go to this frame" : "Show this note's drawings"}">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="none">${RC.svgMarkup(list, numOf)}</svg></div>`;
+    return `<div class="an-nprev${cls}"${pt} style="aspect-ratio:${g.nw} / ${g.nh}" title="${pt ? "Go to this frame" : "Show this note's drawings"}">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.
@@ -1693,8 +1695,7 @@ export function createAnnotator(host){
       <span>${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
       <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span>${rdrawChip(n, r)}<button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
       ${r.text ? `<div class="an-rt" title="Double-click to edit">${esc(r.text)}</div>` : ""}
-      ${replyPreview(n, r)}
-      ${r.shots?.length ? `<div class="an-shots">${r.shots.map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join("")}</div>` : ""}</div>`).join("")}</div>`;
+      ${picGrid(replyPreview(n, r) + (r.shots || []).map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join(""))}</div>`).join("")}</div>`;
   }
   // Inline editor under a note card (new reply) or in place of a reply's text (edit).
   function replyEditor(card, anchor, initial, done){
@@ -2642,6 +2643,10 @@ function injectStyles(){
 .an-nt { white-space: pre-wrap; word-break: break-word; line-height: 1.45; user-select: text; }
 .an-empty { color: var(--subtle); }
 .an-shots { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.an-pics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 6px 0 2px; }
+.an-pics > .an-nprev, .an-pics > .an-nprev[data-pt] { aspect-ratio: 1 / 1 !important; display: block; width: 100%; margin: 0; border-radius: 5px; }
+.an-pics > .an-nprev img { object-fit: cover; }
+.an-pics > img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 5px; border: 1px solid var(--border); cursor: zoom-in; }
 .an-shots img { height: 54px; max-width: 100%; border-radius: 5px; object-fit: cover; border: 1px solid var(--border); cursor: zoom-in; }
 .an-nmeta { margin-top: 4px; color: var(--subtle); font-size: 10px; }
 .an-replies { margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--border-strong); display: flex; flex-direction: column; gap: 5px; }

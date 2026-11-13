@@ -2,6 +2,27 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.25.0 — 2026-11-12 — Phone app remembers the picked file
+- **What:** a review opens with its picture / video straight away: the app keeps a copy of the
+  file you picked on the device (automatically, no question) and binds it when the review opens.
+  Without a copy the stage shows *Pick the file* as before. ⋯ → *Forget the file on this device*
+  drops the copy (and stops keeping it for that review); *Remember the file…* brings it back.
+- **Where:** `mobile/js/app.js` (`autoKeep`, `openReview`, `rebind`, `paintKeep`, `dropCopy`,
+  menu), `tests/pwa_e2e.cjs` + `tests/test_pwa.py` (reload → picture and video reopen with the file).
+- **Notes:** a web app cannot keep a handle to a file picked from Photos / Files on iOS (no File
+  System Access API there), so "remember" = a copy in IndexedDB `files`; it counts against the
+  browser's storage. Skipped when the copy would take usage past 90 % of the quota (the hint then
+  says so, with *Try again*). The copy is written after the review is on screen; a review deleted
+  meanwhile drops it. `meta.keepAsked` is gone (old records keep the harmless field); `meta.noKeep`
+  replaces it. Re-picking a file (rebind) replaces the copy.
+- **Review (fresh agent):** the first version put the whole `rv.meta` back after the copy was
+  written, so a review closed and reopened meanwhile (or imported into) lost or regained `kept`
+  against what was stored; "Forget" during a running copy was undone; a failed replace left the old
+  copy bound silently. Now `store.js keepFile / dropFile` patch the stored entry by key in one
+  transaction with the file (no write for a deleted review or one marked noKeep), the open review's
+  meta follows, a failed replace drops the old copy and shows the hint, and `openReview` sets `kept`
+  from what is really in `files`.
+
 ## 0.24.0 — 2026-11-12 — One transform tool everywhere, clean picture for new notes, turn / mirror, phone scrub cache
 - **What:** the select / transform tool (`V`) is now in the shared drawing canvas too (HTML page,
   phone); its rotate knob follows the pointer out from the pivot (longer arm = finer turn), same in
