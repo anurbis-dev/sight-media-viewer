@@ -327,6 +327,8 @@ reply not hidden / deleted, its note still exists — a drawing of a deleted not
 `paintVisibility`): **compose** (the note field focused or filled, a stroke / shape being drawn, a
 new text, screenshots or unattached drawings waiting) shows only unattached drawings = a clean
 picture for the new note; **pin** (a note clicked) only that note's; **hover** dims the others.
+`S.cleanPic` (set by `addNote`) is the clean picture after a note is made: no note's drawings show
+until its card is hovered or pinned; compose and pin clear it (`viewMode` / `modeAllows`).
 Hit tests, the eraser, selection and "clear on screen" follow `visibleNow`; reports and exports
 use `ctxShown` (every drawing on that frame). Cards show the note's own drawings (and each reply's)
 over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset).

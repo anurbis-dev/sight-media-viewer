@@ -79,7 +79,7 @@
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
-    show; click it again or Esc to see all; hovering a note dims the others), double-click its text to edit, the clock marks it *In progress* (someone took
+    show; click it again or Esc to see all; hovering a note dims the others; right after you make a note the picture is clean, and that note's drawings come back when you hover its card), double-click its text to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it. The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening

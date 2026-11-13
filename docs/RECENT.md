@@ -14,6 +14,20 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.38.1 — 2026-11-13 — Desktop: the picture goes clean as soon as a note is made
+- **What:** in the desktop lightbox, once a note is made (Add button or Enter) its drawings and every other
+  note's drawings leave the picture at once. Before, they stayed on screen until you started a new drawing.
+  A note's drawings come back while its card is hovered or pinned (click); typing a new note, starting a
+  drawing or picking a note ends the clean picture.
+- **Where:** `app/static/annotate.js` — state `cleanPic`; `addNote` sets it; `viewMode` clears it on compose
+  or a pin; `modeAllows` hides note drawings while it is set (except the hovered / pinned note); `setAsset`
+  resets it. `MANUAL.md` (Annotations), `docs/ARCHITECTURE.md` (desktop visibility). `app/version.py`.
+- **Notes:** opening a file still shows every note's drawings (the idle default is unchanged). Checked with
+  Playwright on a scratch `SIGHT_HOME` with a few images: visible note drawings went from 1 (while
+  composing) to 0 after Add and after Enter; hovering a card shows its drawings; no page errors. The phone
+  app (`mobile/`, `.review.clean`) was not changed and was not checked for the same symptom. Not committed.
+  The fresh-agent review that CLAUDE.md asks for was not run (no subagent was requested).
+
 ## 0.38.0 — 2026-11-13 — Old video the browser cannot decode plays through a converted copy
 - **What:** old .mpg / .mpeg / .vob (MPEG-1/2 program streams), DivX / Xvid, MS-MPEG4, WMV, FLV, H.263,
   Cinepak, MJPEG, DV, Huffyuv, SVQ1 and any other video the browser gives no picture for now open: the
@@ -228,11 +242,3 @@ Add new entries directly below this line.
   viewer neither captures nor prevents those touches) — headless Chromium's synthetic touches do
   not scroll, so the test checks the box scrolls, is hit and is not prevented. One run of the
   PWA suite out of four ended with an error not seen again (not traced; the next three passed).
-
-## 0.33.6 — 2026-11-13 — Canvas: the text box is a plain switch again
-- **What:** the *Text* row's box button switches the box on / off as before; switched on, its
-  colours show in the second row (no "no box" entry there — the user's call: off is the switch).
-- **Where:** `app/static/review-draw.js` (the text row's button handler, `openSub`). Test:
-  `textSub` (on → off hides the row; on again shows six colours).
-- **Notes:** to change the box's colour later: tap it off and on again (the colours show), or pick
-  it while the box is being switched on.

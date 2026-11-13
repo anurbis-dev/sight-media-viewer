@@ -2,6 +2,14 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.33.6 — 2026-11-13 — Canvas: the text box is a plain switch again
+- **What:** the *Text* row's box button switches the box on / off as before; switched on, its
+  colours show in the second row (no "no box" entry there — the user's call: off is the switch).
+- **Where:** `app/static/review-draw.js` (the text row's button handler, `openSub`). Test:
+  `textSub` (on → off hides the row; on again shows six colours).
+- **Notes:** to change the box's colour later: tap it off and on again (the colours show), or pick
+  it while the box is being switched on.
+
 ## 0.33.5 — 2026-11-13 — Canvas: filled shapes get their own fill colour
 - **What:** on the drawing canvas (phone + HTML page) the Shapes row ends with *Fill colour*: a
   second row above it — the line's own colour (as before) or black, white, red, yellow, green,

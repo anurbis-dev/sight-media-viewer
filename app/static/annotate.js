@@ -166,7 +166,7 @@ export function createAnnotator(host){
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
-    drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null,
+    drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null, cleanPic: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
   };
@@ -542,12 +542,17 @@ export function createAnnotator(host){
       || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.composeSince);
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
     modeCache = { compose, pin: note(S.pinFocus), hover: note(S.focusNote) };
+    // S.cleanPic (set by addNote) lasts until the next compose or pick.
+    if (compose || modeCache.pin) S.cleanPic = false;
     queueMicrotask(() => { modeCache = null; });
     return modeCache;
   }
   function modeAllows(it){
     if (!it.data.note) return true;
     const m = viewMode();
+    // Right after a note is made the picture is clean: its drawings are on its card. A note's drawings
+    // come back only while that note is hovered (or pinned, below).
+    if (S.cleanPic && m.pin !== it.data.note && m.hover !== it.data.note) return false;
     return !m.compose && (!m.pin || it.data.note === m.pin);
   }
   function visibleNow(it){ return ctxShown(it) && modeAllows(it); }
@@ -1993,6 +1998,7 @@ export function createAnnotator(host){
     });
     S.pending = [];
     S.composeSince = Date.now();  // drawings on other frames from here on go into the next note
+    S.cleanPic = true;            // the picture goes clean: the drawings are on the new note's card (modeAllows)
     // Leave the field so S / Shift+S / tool keys work again straight away.
     if (inp){ inp.value = ""; inp.style.height = ""; inp.blur(); }
     S.sel.clear();
@@ -2553,7 +2559,7 @@ export function createAnnotator(host){
     S.items.clear(); S.saved.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
-    S.focusNote = S.pinFocus = null; S.hiddenReplies.clear();
+    S.focusNote = S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear();
     S.openedAt = S.composeSince = Date.now();
     resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
