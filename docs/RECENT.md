@@ -14,6 +14,21 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.36.2 — 2026-11-13 — PDF rows: pictures fill the text column
+- **What:** in both PDF reports a note's pictures were 90 pt high (70 pt for a reply's), so a 9:16
+  frame came out ~50 pt wide and four of them left the right half of the row empty. Now the
+  pictures of a row share one height, chosen so that the row spans the text column: a row takes
+  pictures while that height stays at least 120 pt (notes) / 100 pt (replies), and never goes
+  taller than 240 pt. Four phone frames to a row now come out ~118 × 209 pt each; a lone picture
+  that would be taller than 240 pt is capped there and stops short of the right edge.
+- **Where:** `app/review.py` `_pic_rows(pics, max_h, min_h, indent)` (called from `build_pdf`);
+  `mobile/js/report.js` `toPdf` → `rows(list, x0, width, maxH, minH)`.
+- **Notes:** supersedes the fixed 90 / 70 pt row heights of 0.36.0 and 0.36.1 (row heights now
+  vary by the row's pictures). Cover and captions unchanged; the HTML reports are unchanged.
+  Checked by rendering a sample desktop PDF (portrait and landscape frames, a reply) and the phone
+  PDF from the `tests/test_pwa.py` round trip; `tests.test_pwa`, `tests.test_review_page` and
+  `tests.test_merge_parity` pass. Not yet reviewed by a fresh agent.
+
 ## 0.36.1 — 2026-11-13 — PDF rows: within the text column; captions in two lines under their picture
 - **What:** fixes from the fresh-agent review of 0.36.0. Sight's PDF: rows (and the cover, as
   before) ran ~11 pt past the text column into the right margin — PyMuPDF's Story lays content
@@ -178,14 +193,3 @@ Add new entries directly below this line.
   near the edge of a wide frame may sit outside its square (a click on the note shows them all on
   the picture).
   Checked on a dev server with Playwright (a picture note with screenshots and a reply).
-
-## 0.33.1 — 2026-11-12 — Phone report: replies' drawings on the reply's own pictures
-- **What:** the phone's PDF / HTML report no longer burns a reply's drawing onto the note's frame
-  (nor its extra frames, nor a picture note's picture): each reply that drew gets its own pictures
-  — every frame it drew on, the note's own frame too (a picture review: the picture) — with only
-  its drawings, as the app shows them since 0.33.0.
-- **Where:** `mobile/js/report.js` `gatherReport` (`noteOnly`, the reply loop). Test: the video
-  HTML report has two pictures (the note's frame, the reply's) — `pwa_e2e.cjs` / `test_pwa.py`.
-- **Notes:** the cover of a picture review still shows every drawing. Sight's own PDF / HTML
-  report is unchanged: it has no reply pictures, so it still shows replies' drawings on the note's
-  frame (dropping them there would lose them).

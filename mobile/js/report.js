@@ -266,16 +266,12 @@ export async function toPdf(p){
       if (im.close) im.close();
     });
   };
-  // A note's / reply's pictures in rows (as compact as Sight's report): each whole, ROW_H high (a
-  // picture too wide for the row is scaled down to fit), as many to a row as fit; a caption under
-  // its picture. list: [{pic, cap}].
-  const rows = (list, x0, width, rowH) => {
-    const items = list.filter((x) => x && x.pic && x.pic.w && x.pic.h).map((x) => {
-      const w = Math.min(width, rowH * x.pic.w / x.pic.h);
-      return { pic: x.pic, cap: x.cap || "", w, h: w * x.pic.h / x.pic.w };
-    });
+  // A note's / reply's pictures in rows, each row filled across the text column (as Sight's report):
+  // the pictures of a row share one height, chosen so that they span the row; a row takes pictures
+  // while that height stays at least minH, and never goes taller than maxH (a lone picture then
+  // stops short of the right edge). A caption under each picture. list: [{pic, cap}].
+  const rows = (list, x0, width, maxH, minH) => {
     const GAP = 6;
-    let row = [];
     // A caption in at most two lines of its picture's width (split at words, the rest cut with "…").
     const capLines = (text, w) => {
       const fits = (t) => measure({ size: 7 }, t) <= w, cut = (t) => { while (t.length > 1 && !fits(t)) t = t.slice(0, -2) + "…"; return t; };
@@ -286,10 +282,20 @@ export async function toPdf(p){
       if (!a) return [cut(text)];
       return [a, cut(words.join(" "))].filter(Boolean);
     };
-    const flush = () => {
-      if (!row.length) return;
-      const r = row;
-      r.forEach((it) => { it.lines = it.cap ? capLines(it.cap, it.w) : []; });
+    const items = list.filter((x) => x && x.pic && x.pic.w && x.pic.h).map((x) => ({ pic: x.pic, cap: x.cap || "", a: x.pic.w / x.pic.h }));
+    const groups = [];
+    let cur = [];
+    for (const it of items){
+      const sum = cur.reduce((t, x) => t + x.a, 0);
+      // With this picture the row's shared height would drop below minH: it starts a new row.
+      if (cur.length && (width - GAP * cur.length) / (sum + it.a) < minH){ groups.push(cur); cur = []; }
+      cur.push(it);
+    }
+    if (cur.length) groups.push(cur);
+    for (const r of groups){
+      const sum = r.reduce((t, x) => t + x.a, 0);
+      const H = Math.min(maxH, (width - GAP * (r.length - 1)) / sum);
+      r.forEach((it) => { it.h = H; it.w = H * it.a; it.lines = it.cap ? capLines(it.cap, it.w) : []; });
       // The row's height: the tallest picture with its caption under it.
       const h = Math.max(...r.map((x) => x.h + (x.lines.length ? 1 + x.lines.length * 8.5 : 0)));
       gap(4);
@@ -304,15 +310,7 @@ export async function toPdf(p){
           x += it.w + GAP;
         }
       });
-      row = [];
-    };
-    let used = 0;
-    for (const it of items){
-      if (row.length && used + GAP + it.w > width){ flush(); used = 0; }
-      used += (row.length ? GAP : 0) + it.w;
-      row.push(it);
     }
-    flush();
   };
   textLines([{ text: p.title, size: 17, bold: true }], M, CW); gap(2);
   if (p.subtitle){ textLines([{ text: p.subtitle, size: 8.5, color: C.muted }], M, CW); gap(6); }
@@ -336,7 +334,7 @@ export async function toPdf(p){
     textLines(head, M, CW); gap(3);
     if (n.text){ textLines([{ text: n.text, size: 10.5, strike: done, color: done ? C.muted : C.fg }], M, CW); gap(4); }
     // Its pictures right under its words (as the HTML report), then the thread.
-    rows([{ pic: n.frame, cap: n.frameCaption }].concat(n.shots.map((s) => ({ pic: s }))), M, CW, 90);
+    rows([{ pic: n.frame, cap: n.frameCaption }].concat(n.shots.map((s) => ({ pic: s }))), M, CW, 240, 120);
     for (const r of n.replies){
       if (r.event){
         textLines([{ text: (EVENT_LABEL[r.event] || "Reopened") + (r.author ? " by " + r.author : "") + " · " + r.date, size: 8.5, color: C.muted }], M + 16, CW - 16, { bar: true });
@@ -345,7 +343,7 @@ export async function toPdf(p){
       const runs = [{ text: [r.author, r.date].filter(Boolean).join(" · "), size: 8.5, color: C.muted }];
       if (r.text) runs.push({ text: "\n" + r.text, size: 9.5 });
       textLines(runs, M + 16, CW - 16, { bar: true });
-      rows(r.shots.map((s) => ({ pic: s })), M + 16, CW - 16, 70);
+      rows(r.shots.map((s) => ({ pic: s })), M + 16, CW - 16, 240, 100);
       gap(4);
     }
   }

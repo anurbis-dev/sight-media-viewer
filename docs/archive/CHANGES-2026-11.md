@@ -2,6 +2,17 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.33.1 — 2026-11-12 — Phone report: replies' drawings on the reply's own pictures
+- **What:** the phone's PDF / HTML report no longer burns a reply's drawing onto the note's frame
+  (nor its extra frames, nor a picture note's picture): each reply that drew gets its own pictures
+  — every frame it drew on, the note's own frame too (a picture review: the picture) — with only
+  its drawings, as the app shows them since 0.33.0.
+- **Where:** `mobile/js/report.js` `gatherReport` (`noteOnly`, the reply loop). Test: the video
+  HTML report has two pictures (the note's frame, the reply's) — `pwa_e2e.cjs` / `test_pwa.py`.
+- **Notes:** the cover of a picture review still shows every drawing. Sight's own PDF / HTML
+  report is unchanged: it has no reply pictures, so it still shows replies' drawings on the note's
+  frame (dropping them there would lose them).
+
 ## 0.33.0 — 2026-11-12 — Phone: strip viewer, square note pictures, filters by swipe, text switches, home selection and moves between groups
 - **What:** (1) Note viewer: a swipe sends the picture on the way it went, fading out, and the
   next follows it in like a strip (sideways = the note's pictures, up / down = notes). (2) Notes

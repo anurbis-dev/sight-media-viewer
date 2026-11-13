@@ -144,31 +144,38 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
     return f'<img src="{name}" style="width:{width:.0f}pt"/>'
 
 
-def _pic_rows(pics: list, row_h: float, indent: float = 0.0) -> str:
-    """A note's / reply's pictures in rows: each whole, row_h pt high (scaled down when wider than the
-    row), as many to a row as fit, a caption under its picture. pics: [(name, w, h, caption)].
+def _pic_rows(pics: list, max_h: float, min_h: float, indent: float = 0.0) -> str:
+    """A note's / reply's pictures in rows, each row filled across the text column: the pictures of a
+    row share one height, chosen so that they span the row. A row takes pictures while that height
+    stays at least min_h, and never goes taller than max_h (a lone picture then stops short of the
+    right edge). A caption under each picture. pics: [(name, w, h, caption)].
     PyMuPDF's Story does not wrap a table row, so the rows are packed here."""
-    # The budget counts each cell's right padding (gap), the last one's included (it shows nothing).
-    gap = 6.0
-    cw, out, row, used = CONTENT_W - indent + gap, [], [], 0.0
+    gap = 6.0  # each cell's right padding, the last one's included (it shows nothing)
+    room_w = CONTENT_W - indent - 1.0  # 1 pt of slack against rounding
+    out: list[str] = []
+    row: list[tuple[str, float, str]] = []  # (name, aspect w/h, caption)
 
     def flush() -> None:
         if not row:
             return
-        cells = "".join(
-            f'<td style="width:{w:.1f}pt;padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
-            + (f'<p class="cap" style="width:{max(w, 1):.1f}pt;margin:1pt 0 0 0">{html.escape(str(c))}</p>' if c else "") + "</td>"
-            for n, w, c in row)
+        h = min(max_h, (room_w - gap * len(row)) / sum(a for _, a, _ in row))
+        cells = ""
+        for n, a, c in row:
+            w = h * a
+            cells += (
+                f'<td style="width:{w:.1f}pt;padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
+                + (f'<p class="cap" style="width:{w:.1f}pt;margin:1pt 0 0 0">{html.escape(str(c))}</p>' if c else "")
+                + "</td>")
         out.append(f'<table style="border-collapse:collapse;margin:4pt 0 2pt {indent:.0f}pt"><tr>{cells}</tr></table>')
         row.clear()
 
     for name, w, h, cap in pics:
-        width = min(cw - gap, row_h * w / h) if w and h else cw - gap
-        if row and used + width + gap > cw:
+        a = w / h
+        used = sum(x for _, x, _ in row)
+        # The picture starts a new row when, with it, the shared height would drop below min_h.
+        if row and (room_w - gap * (len(row) + 1)) / (used + a) < min_h:
             flush()
-            used = 0.0
-        row.append((name, width, cap or ""))
-        used += width + gap
+        row.append((name, a, cap or ""))
     flush()
     return "".join(out)
 
@@ -246,7 +253,7 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             shot = put_image(shot_bytes(str(sid)))
             if shot:
                 pics.append((*shot, ""))
-        parts.append(_pic_rows(pics, 90))
+        parts.append(_pic_rows(pics, 240, 120))
         for r in n.get("replies") or []:
             if r.get("event"):  # resolve / in progress / reopen entry in the thread
                 label = EVENT_LABEL.get(r["event"], "Reopened")
@@ -257,7 +264,7 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             text = f"<br/>{esc(r.get('text'))}" if r.get("text") else ""
             parts.append(f'<p class="reply"><span class="who">{who}</span>{text}</p>')
             rshots = [s for s in (put_image(shot_bytes(str(sid))) for sid in r.get("shots") or []) if s]
-            parts.append(_pic_rows([(*s, "") for s in rshots], 70, indent=16))
+            parts.append(_pic_rows([(*s, "") for s in rshots], 240, 100, indent=16))
         parts.append("</div>")
     story = pymupdf.Story(html="".join(parts), user_css=_PDF_CSS, archive=pymupdf.Archive(tmp))
     mediabox = pymupdf.Rect(0, 0, *PAGE)
