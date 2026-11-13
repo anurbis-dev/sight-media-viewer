@@ -14,6 +14,45 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.46.2 — 2026-11-13 — 3D: view numbers show only while a note is made, above its field
+- **What:** the numbered 3D view chips are no longer a row at the top of the review panel. They show only while a
+  note is being made (drawing, or typing in its fields), right above the note field, titled *Views of this note*,
+  and list only the views the new note will hold: those of the drawings waiting for it and the camera on screen (a
+  dimmed dashed next number when that camera is no view yet — adding the note makes it). A chip still goes to its
+  view. Added notes show their views as their pictures in the card.
+- **Where:** `app/static/annotate.js` — `.an-views` moved into `.an-compose`, `renderViews` (rewritten; called from
+  `renderPending` too; markup signature on `el.dataset.sig`), CSS `.an-views`, `.an-vchip.new`. `MANUAL.md` (3D).
+- **Notes:** a chip's `mousedown` is prevented so the note field keeps the focus (compose mode stays on). Review
+  (fresh agent): found that a module-level signature left an empty block after the panel was rebuilt (fixed: the
+  signature lives on the element) and a CSS margin on the new span (fixed). Known, left: a click on a chip while the
+  camera is still easing off a view can be lost (the chips rebuild as the current view changes). Checked in
+  Playwright with a GLB (swiftshader): hidden at rest, shown while drawing / typing, gone after Add, next-number chip
+  after an orbit.
+
+## 0.46.1 — 2026-11-13 — Annotations: drawings added to a note are editable again (0.45.0 lock lifted)
+- **What:** the owner asked to roll back 0.45.0: a drawing added to a note (or a reply) can again be moved, scaled,
+  restyled, nudged, reordered, partly erased and retyped, as before 0.45.0. Undo again reaches back over adding a
+  note; drawings it takes off a note now go to the next note instead of hanging loose (below).
+- **Where:** `app/static/annotate.js` — `baked` now returns false (the `baked` / `editable` gate and every call site
+  of 0.45.0 / 0.45.1 stay), `addNote` no longer clears undo / redo; `S.adopt`, `applyStates`, `composerBack`. `MANUAL.md`. `app/version.py`.
+- **Notes:** supersedes 0.45.0 (archived) and the lock part of 0.45.1. Kept on purpose: the gate itself, so the
+  planned lock is one function (see `docs/PLAN.md` "Note locks": an artist may not edit a supervisor's original
+  notes, only answer with their own; a resolved note is locked entirely). 0.45.1's other fixes stay: Front / Back
+  put the selection above / below every drawing, copies of a reply's drawing clear `data.reply`, the Hold selector
+  shows for an editable selection (now any). Its dashed outline for a baked selection is unreachable until a lock
+  returns. Checked in Playwright (scratch library): a note's stroke moves with the select tool and Ctrl+Z puts it back.
+  Review (fresh agent): no lock path left outside the gate; it pointed out that undo across a note leaves drawings
+  hanging, fixed here: a drawing that an undo / redo takes off its note (`applyStates`: note set before, null after)
+  goes into `S.adopt`, and `pendingDrawings` / the compose mode take it whatever frame / view it is on, so the next
+  note picks it up instead of leaving it loose on its frame. Undoing "add note" (`step.added`, `composerBack`) also
+  puts its screenshots back into the pending row and its text / picture text back into the fields (a field already
+  typed in gets it on a new line); redo takes them out again when a field still holds exactly that text, and makes
+  the picture clean as adding did. A second fresh-agent review of this found no correctness bug (the tagged step is
+  always the addNote step; stale `S.adopt` ids are harmless — every use also needs `!data.note`). Checked in Playwright (video, two frames + a screenshot: undo, then a note on a third frame took
+  both drawings and the screenshot, no loose rows left). Not cleaned: loose drawings already left in libraries by
+  earlier sessions (older than the file's opening, not on screen) still wait on their frames.
+  Front / Back keep the 0.45.1 rule (z may go below 0; storage accepts it).
+
 ## 0.46.0 — 2026-11-13 — Picture texts: each note picture has its own text, shown on a movable plate
 - **What:** a note's text is now its topic, and each of the note's own pictures (the image, a video frame, a 3D
   view, an attached screenshot) can carry a text of its own. Desktop: a second field under *Add a note…* (*Text for
@@ -312,37 +351,3 @@ Add new entries directly below this line.
   (CDP `force`, `pointerType: 'pen'`) is 8 px at 0.95 and 2 px at 0.15, so the drawing path uses pressure when the
   browser reports a pen. Not changed: a tablet that reports `pointerType: 'mouse'` (its driver in mouse mode)
   or a brush with the Pressure toggle off draws at constant width by design.
-
-## 0.41.0 — 2026-11-13 — 3D views keep the hidden meshes; numbered in the order they were made; note pick shows its drawings while drawing
-- **What:** (1) a view (camera) also records which meshes were hidden (H / Ctrl+H / Alt+H) when it was made;
-  a change of hidden meshes starts a new view; going to a view (chip, note click, Go to) shows its meshes as
-  they were. (2) The views are numbered in the order they were first made, so the chips, the "View N" labels,
-  the pictures of a note and the report agree; the pictures of a note are in view-number order. (3) Clicking
-  a note now shows its drawings even while new drawings that are not yet attached to a note are on the
-  screen (before, any such drawing hid every note's drawings until it was attached). (4) A note's drawings-count
-  caption ("N drawings") is gone; "from <name>" stays.
-- **Where:** `app/static/annotate.js` — `rebuildViews` (views sorted by first made; `hidden` from the items'
-  ctx), `curHidden` / `sameHidden` / `viewMatches` / `findVk(cam, hid)`, `ctxNow` (3D ctx carries `hidden`),
-  `view3dPic` (applies a view's meshes for its picture, restores the live ones; cache key has `hidden`),
-  `view3dPreviews` (sorted by `viewNumber`), `goView` (restores `hidden`), `tick` (mesh state in the signature),
-  `modeAllows` (a pick wins over `compose`), `renderPanel` (count caption removed). `app/static/index.html` —
-  `bindAnnot3d` host gets `getHidden` / `setHidden` from `v3dInspect.meshes`. `docs/FORMAT.md` (3D `hidden`),
-  `MANUAL.md` (3D). `app/version.py`.
-- **Notes:** the mesh index is the inspector's traversal order, so it is stable for one file only (views are
-  per asset, as before). Views made before 0.41 have no `hidden` and match any mesh state, so an old view keeps
-  its old behaviour. A 3D preview is still re-captured when the shading changes (0.40.2). Not tested in a
-  browser yet: the view-number order, the mesh restore and the pick-while-drawing case were checked by reading
-  the code and by a syntax check of annotate.js and the inline scripts of index.html.
-
-## 0.40.2 — 2026-11-13 — Video: drawings show at once after a timeline scrub
-- **What:** after a scrub or a seek that lands in the second half of a frame, the drawings of that frame were
-  not shown (a new stroke was saved but stayed invisible until the time moved again). Desktop lightbox and
-  phone both now decide "the frame on screen" with the same rule the drawings are stored with (the frame's
-  start), so the frame's drawings show at once.
-- **Where:** `app/static/annotate.js` — `frameNow()` (video: `frameStart(v.currentTime)`). `mobile/js/app.js` —
-  `stageDrawings()` (`frameStart(scrubT or currentTime)`). `app/version.py`.
-- **Notes:** `ctxVisible` (review-core.js) is a window centred on the stored time (±half a frame), and a
-  drawing is stored at `frameStart(t)` = (n + 0.01)·fd, so the frame's own time must be the stored one, not
-  the raw player time. Any new "what is on screen" check for video must pass `frameStart`, never the raw time.
-  Checked by computing `ctxVisible` on the real review-core.js: raw 2.915 s hid the drawing stored at 2.880,
-  the frame start shows it. Not yet checked in a browser with a video scrub.

@@ -2,6 +2,40 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.41.0 — 2026-11-13 — 3D views keep the hidden meshes; numbered in the order they were made; note pick shows its drawings while drawing
+- **What:** (1) a view (camera) also records which meshes were hidden (H / Ctrl+H / Alt+H) when it was made;
+  a change of hidden meshes starts a new view; going to a view (chip, note click, Go to) shows its meshes as
+  they were. (2) The views are numbered in the order they were first made, so the chips, the "View N" labels,
+  the pictures of a note and the report agree; the pictures of a note are in view-number order. (3) Clicking
+  a note now shows its drawings even while new drawings that are not yet attached to a note are on the
+  screen (before, any such drawing hid every note's drawings until it was attached). (4) A note's drawings-count
+  caption ("N drawings") is gone; "from <name>" stays.
+- **Where:** `app/static/annotate.js` — `rebuildViews` (views sorted by first made; `hidden` from the items'
+  ctx), `curHidden` / `sameHidden` / `viewMatches` / `findVk(cam, hid)`, `ctxNow` (3D ctx carries `hidden`),
+  `view3dPic` (applies a view's meshes for its picture, restores the live ones; cache key has `hidden`),
+  `view3dPreviews` (sorted by `viewNumber`), `goView` (restores `hidden`), `tick` (mesh state in the signature),
+  `modeAllows` (a pick wins over `compose`), `renderPanel` (count caption removed). `app/static/index.html` —
+  `bindAnnot3d` host gets `getHidden` / `setHidden` from `v3dInspect.meshes`. `docs/FORMAT.md` (3D `hidden`),
+  `MANUAL.md` (3D). `app/version.py`.
+- **Notes:** the mesh index is the inspector's traversal order, so it is stable for one file only (views are
+  per asset, as before). Views made before 0.41 have no `hidden` and match any mesh state, so an old view keeps
+  its old behaviour. A 3D preview is still re-captured when the shading changes (0.40.2). Not tested in a
+  browser yet: the view-number order, the mesh restore and the pick-while-drawing case were checked by reading
+  the code and by a syntax check of annotate.js and the inline scripts of index.html.
+
+## 0.40.2 — 2026-11-13 — Video: drawings show at once after a timeline scrub
+- **What:** after a scrub or a seek that lands in the second half of a frame, the drawings of that frame were
+  not shown (a new stroke was saved but stayed invisible until the time moved again). Desktop lightbox and
+  phone both now decide "the frame on screen" with the same rule the drawings are stored with (the frame's
+  start), so the frame's drawings show at once.
+- **Where:** `app/static/annotate.js` — `frameNow()` (video: `frameStart(v.currentTime)`). `mobile/js/app.js` —
+  `stageDrawings()` (`frameStart(scrubT or currentTime)`). `app/version.py`.
+- **Notes:** `ctxVisible` (review-core.js) is a window centred on the stored time (±half a frame), and a
+  drawing is stored at `frameStart(t)` = (n + 0.01)·fd, so the frame's own time must be the stored one, not
+  the raw player time. Any new "what is on screen" check for video must pass `frameStart`, never the raw time.
+  Checked by computing `ctxVisible` on the real review-core.js: raw 2.915 s hid the drawing stored at 2.880,
+  the frame start shows it. Not yet checked in a browser with a video scrub.
+
 ## 0.40.1 — 2026-11-13 — Review fixes: undecodable clips, list selection, 3D preview cache, phone menu key, PDF sizes
 - **What:** (desktop) an undecodable clip that the server cannot convert stops its preview frames at once
   (no 4 s-per-frame retries in one serial pump); (desktop) a text selection dragged out of a note card and

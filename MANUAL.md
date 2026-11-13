@@ -73,8 +73,7 @@
     the bin in the toolbar (`Shift+Delete`) clears the drawings on screen in one step (undo brings
     them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
     `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
-    A drawing already added to a note is fixed: it can be deleted from the frame, but not moved,
-    scaled, restyled, nudged, reordered, partly erased or retyped. Only drawings not yet added are editable.
+    Drawings already added to a note stay editable like any other.
   - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
     takes the drawings currently on screen that aren't attached to a note yet, plus every loose
     drawing you made since opening the file on other frames of a video or other views of a 3D
@@ -134,15 +133,19 @@
   - **3D** — a drawing belongs to the camera view it was made in, and a note also saves the shading,
     lights, explode and field of view. A view also keeps which meshes were hidden (H / Ctrl+H / Alt+H)
     when it was made: a change of hidden meshes starts a new view, and going back to a view shows its
-    meshes as they were. Orbiting away hides the drawings; the numbered *Views* chips at the top of the
-    panel, or a click on the note, bring the camera, settings and meshes back. The chips and the
-    pictures of a note are numbered in the order the views were made. A note's pictures are stills taken
+    meshes as they were. Orbiting away hides the drawings; a click on the note (or on one of its
+    view pictures) brings the camera, settings and meshes back. While you make a note (draw, or type in
+    its field), the numbered *Views of this note* chips sit right above its field: the views the new note
+    will hold — those of its waiting drawings and the camera on screen (a dimmed next number when that
+    camera is no view yet: adding the note makes it); a chip goes to its view. Once the note is added the
+    chips go; its views are its pictures in the card. Views and a note's pictures are numbered in the
+    order the views were made. A note's pictures are stills taken
     once per view: turning the light or the shading does not redraw them (the drawings on them do follow
     the view). Explode is kept too: a note's pictures and exports stay at the explode it was added at, and
     clicking the note goes back to that explode. Moving the explode slider (or Ctrl+right-drag) changes only
     the view you are on while it holds no added note; a drawing not yet added takes the slider's amount when
     its note is added. If the view already has added notes, the slider cannot move it, so a new note made at
-    the changed explode starts a new view with its own chip. Going to a view by its chip puts the view's
+    the changed explode starts a new view with its own number. Going to a view puts the view's
     explode back. An older drawing has none.
     While annotating, left-drag on
     empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D

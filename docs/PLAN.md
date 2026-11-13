@@ -28,6 +28,12 @@ the phone next, then the owner's tracker Coreline, ftrack / ShotGrid, clouds las
 
 ## Ideas, not scheduled
 
+- **Note locks** (asked 2026-11-13, after rolling back the 0.45.0 lock in 0.46.1): roles — an artist (not a
+  supervisor) may not edit original notes (text, picture texts, drawings), only answer with their own replies; and a
+  resolved (done) note is locked for any change. In Sight the drawing side is one gate, `baked(it)` in
+  `app/static/annotate.js` (every edit path already asks `editable`); note text / picture text / shots edits and the
+  phone app / HTML page need the same check. Needs a source of the role (reviewer name → role? a tracker?) — ask.
+
 - Load grid pages on demand around the scroll position instead of pulling the whole list at start
   (0.22.0 made the pull cheap — incremental id set and masonry — but a 50k library still sends
   ~125 requests). Many features rely on `state.items` holding every asset (select all, counts,

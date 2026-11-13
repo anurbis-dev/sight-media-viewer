@@ -170,7 +170,7 @@ export function createAnnotator(host){
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
-    plate: null, shotView: null,
+    plate: null, shotView: null, adopt: new Set(),
   };
 
   function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
@@ -399,9 +399,12 @@ export function createAnnotator(host){
     if (!before || !S.saved.has(id)) serverCreate(S.items.get(id));
     else serverUpdate(id);
   }
+  // A drawing that an undo / redo takes off its note (its note: null again) is not left hanging on its frame:
+  // it goes into S.adopt, which the next note picks up wherever it is (pendingDrawings), as when it was drawn.
   function applyStates(states){
     for (const [id, v] of states){
       const had = S.items.has(id);
+      if (v && v.kind !== "note" && !v.data?.note && S.items.get(id)?.data?.note) S.adopt.add(id);
       if (!v){ if (had){ S.items.delete(id); S.sel.delete(id); serverDelete(id); } continue; }
       S.items.set(id, structuredClone(v));
       if (!S.saved.has(id)) serverCreate(S.items.get(id));
@@ -412,6 +415,8 @@ export function createAnnotator(host){
     const e = S.undo.pop();
     if (!e){ toast("Nothing to undo"); return; }
     applyStates(e.before);
+    // Undoing "add note": its screenshots and words go back to the composer, its drawings wait for the next note.
+    if (e.added) composerBack(e.added, true);
     S.redo.push(e);
     afterChange();
   }
@@ -419,8 +424,26 @@ export function createAnnotator(host){
     const e = S.redo.pop();
     if (!e){ toast("Nothing to redo"); return; }
     applyStates(e.after);
+    if (e.added){
+      composerBack(e.added, false);
+      for (const id of e.after.keys()) S.adopt.delete(id);
+      S.cleanPic = true;  // as when the note was added: its drawings are on its card
+    }
     S.undo.push(e);
     afterChange();
+  }
+  // a: {text, cap, shots} of a note made by addNote. back = true: into the composer (a field already typed in
+  // gets it on a new line, so nothing is lost); false (redo): out of it again when the field still holds it.
+  function composerBack(a, back){
+    const fields = [[S.ui?.querySelector(".an-input"), a.text || ""], [S.ui?.querySelector(".an-cin"), a.cap || ""]];
+    if (back){
+      for (const sid of a.shots) if (!S.pending.some((p) => p.id === sid)) S.pending.push({ id: sid, url: `/api/review/shots/${sid}` });
+      for (const [f, v] of fields) if (f && v){ f.value = f.value.trim() ? f.value.trimEnd() + "\n" + v : v; f.style.height = "auto"; f.style.height = Math.min(160, f.scrollHeight + 2) + "px"; }
+    } else {
+      S.pending = S.pending.filter((p) => !a.shots.includes(p.id));
+      for (const [f, v] of fields) if (f && v && f.value.trim() === v){ f.value = ""; f.style.height = ""; }
+    }
+    renderPending();
   }
   let notesSig = "", notesTimer = 0;
   function afterChange(){
@@ -649,7 +672,7 @@ export function createAnnotator(host){
     // Loose drawings from before (never attached to a note) do not count: only the ones drawn since
     // this file was opened are a new note in the making.
     const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(cin && (document.activeElement === cin || cin.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
-      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.composeSince);
+      || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && ((it.data.created || 0) >= S.composeSince || S.adopt.has(it.id)));
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
     modeCache = { compose, pin: note(S.pinFocus) };
     // S.cleanPic (set by addNote) lasts until the next compose or pick.
@@ -794,10 +817,12 @@ export function createAnnotator(host){
     if (unsel && !S.drag){ renderSel(); renderProps(); }
   }
   const visibleDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && visibleNow(it));
-  // A drawing attached to a note (or to a reply) is baked into it. It can still be deleted from the frame
-  // (Delete, Shift+Delete, the eraser in full mode), but not moved, reshaped, restyled, nudged, reordered,
-  // partly erased or retyped. Only drawings not yet added to a note are editable.
-  const baked = (it) => !!it?.data?.note;
+  // The one gate for "may this drawing be edited?". 0.45.0 locked every drawing added to a note; 0.46.1 lifted
+  // that: every drawing is editable again. A future lock (an artist may not edit a supervisor's notes, only answer
+  // with their own; nothing of a resolved note changes) goes here: a `baked` drawing can still be selected and
+  // deleted from the frame, but not moved, reshaped, restyled, nudged, reordered, partly erased or retyped
+  // (onDown, editSel, eraseAt, nudge, reorder, setProp, the text tool and dblclick all ask `editable`).
+  const baked = (_it) => false;
   const editable = (it) => !!it && !baked(it);
 
   // ---- selection overlay ----------------------------------------------------------------------
@@ -1349,7 +1374,7 @@ export function createAnnotator(host){
     return true;
   }
   function reorder(dir){
-    // Only editable drawings get a new z; baked ones keep theirs. Front goes above every drawing, back below
+    // Only editable drawings get a new z (a locked one, see `baked`, keeps its own). Front goes above every drawing, back below
     // every drawing, so the values stay unique. The selection keeps its order among itself.
     const all = [...S.items.values()].filter(isDrawing);
     const sel = all.filter((it) => S.sel.has(it.id) && editable(it)).sort((a, b) => a.z - b.z);
@@ -1613,11 +1638,11 @@ export function createAnnotator(host){
         <button type="button" data-rs="approved" title="Approved">Approved</button></div></div>
       <div class="an-rsh" hidden></div>
       <div class="an-vers" hidden></div>
-      <div class="an-views"></div>
       <div class="an-filt an-seg"></div>
       <div class="an-list"></div>
       <div class="an-compose">
         <div class="an-pend"></div>
+        <div class="an-views" hidden></div>
         <textarea class="an-input" rows="2" placeholder="Add a note…  Enter adds · Shift+Enter new line"></textarea>
         <textarea class="an-input an-cin" rows="1" placeholder="Text for this picture (optional)"></textarea>
         <div class="an-crow">
@@ -1715,8 +1740,9 @@ export function createAnnotator(host){
   // Drawings waiting for the next note: loose ones shown now, and every loose one drawn since the
   // file was opened on any frame / view — a note may hold drawings on several frames of a video or
   // views of a 3D model (each drawing keeps its own ctx).
+  // (Also every drawing an undo / redo took off its note: S.adopt.)
   const pendingDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note
-    && (ctxShown(it) || (it.data.created || 0) >= S.composeSince));
+    && (ctxShown(it) || (it.data.created || 0) >= S.composeSince || S.adopt.has(it.id)));
   function renderPanel(){
     const el = S.ui;
     if (!el || el.hidden) return;
@@ -2096,14 +2122,37 @@ export function createAnnotator(host){
     const cin = el.querySelector(".an-cin");
     if (cin) cin.placeholder = `Text for this ${S.kind === "video" ? "frame" : S.kind === "model3d" ? "view" : "picture"} (optional)`;
     el.querySelector(".an-ctx").textContent = [c, n ? `+${n} drawing${n > 1 ? "s" : ""}${away ? ` (${away} on other ${S.kind === "model3d" ? "views" : "frames"})` : ""}` : ""].filter(Boolean).join("  ·  ");
+    renderViews();
   }
+  // 3D view numbers: only while a note is being made, right above its field — the views the future note will
+  // hold (those of the drawings waiting for it, and the camera on screen, where the note itself goes; a camera
+  // that is no view yet shows as the next number, dimmed: the view the note will make). A chip restores its view.
+  // Added notes show their views on their cards (the previews), so the chips are not needed then.
   function renderViews(){
     const el = S.ui?.querySelector(".an-views");
     if (!el) return;
-    if (S.kind !== "model3d" || !S.views.size){ el.innerHTML = ""; el.hidden = true; return; }
+    const show = S.kind === "model3d" && !!S.b3 && viewMode().compose;
+    let html = "";
+    if (show){
+      const vks = [];
+      for (const it of pendingDrawings()){ const k = it.data.ctx?.vk; if (k && S.views.has(k) && !vks.includes(k)) vks.push(k); }
+      const here = ctxNow(false)?.vk || null;
+      if (here && !vks.includes(here)) vks.push(here);
+      vks.sort((a, b) => viewNumber(a) - viewNumber(b));
+      html = vks.map((vk) => { const v = S.views.get(vk); return `<button type="button" class="an-vchip${vk === here ? " on" : ""}" data-vk="${vk}" title="Restore this camera${v.v3d ? ", shading and lights" : ""}${v.hidden?.length ? ", hidden meshes" : ""}">${viewNumber(vk)}</button>`; }).join("")
+        + (here ? "" : `<span class="an-vchip new" title="The camera on screen is no view yet: adding the note makes it view ${S.views.size + 1}">${S.views.size + 1}</span>`);
+    }
+    // The chips' markup is kept on the element (a new panel starts empty), rebuilt only on a change: a chip
+    // under the pointer stays clickable.
+    if (!html){ el.hidden = true; if (el.dataset.sig){ el.innerHTML = ""; el.dataset.sig = ""; } return; }
     el.hidden = false;
-    el.innerHTML = `<span>Views</span>` + [...S.views.values()].map((v, i) => `<button type="button" class="an-vchip${v.vk === S.curVk ? " on" : ""}" data-vk="${v.vk}" title="Restore this camera${v.v3d ? ", shading and lights" : ""}${v.hidden?.length ? ", hidden meshes" : ""}">${i + 1}</button>`).join("");
-    el.querySelectorAll("[data-vk]").forEach((b) => { b.onclick = () => goView(b.dataset.vk); });
+    if (html === el.dataset.sig) return;
+    el.dataset.sig = html;
+    el.innerHTML = `<span>Views of this note</span>` + html;
+    el.querySelectorAll("[data-vk]").forEach((b) => {
+      b.onmousedown = (e) => e.preventDefault();  // the note's field keeps the focus (and the compose mode)
+      b.onclick = () => goView(b.dataset.vk);
+    });
   }
   function onListClick(e){
     const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
@@ -2407,9 +2456,11 @@ export function createAnnotator(host){
         }
       }
     });
+    // Marks the step, so undoing it puts the screenshots and the words back into the composer.
+    const step = S.undo[S.undo.length - 1];
+    if (step) step.added = { text, cap: capText, shots: note.data.shots.slice() };
     S.pending = [];
-    // Undo cannot reach back over a note: an older step would take the drawings off it again (or change them).
-    S.undo = []; S.redo = [];
+    for (const it of linked) S.adopt.delete(it.id);
     S.composeSince = Date.now();  // drawings on other frames from here on go into the next note
     S.cleanPic = true;            // the picture goes clean: the drawings are on the new note's card (modeAllows)
     // Leave the field so S / Shift+S / tool keys work again straight away.
@@ -2977,7 +3028,7 @@ export function createAnnotator(host){
     S.layer = null;
     S.asset = null;
     S.items.clear(); S.saved.clear(); S.sel.clear();
-    S.undo = []; S.redo = []; S.pending = [];
+    S.undo = []; S.redo = []; S.pending = []; S.adopt.clear();
     resetPF();
     host.onModeChange?.(false);
   }
@@ -2995,7 +3046,7 @@ export function createAnnotator(host){
     S.items.clear(); S.saved.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
-    S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear();
+    S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear(); S.adopt.clear();
     S.openedAt = S.composeSince = Date.now();
     resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
@@ -3164,9 +3215,10 @@ function injectStyles(){
 .an-vrow b { color: var(--fg); font-weight: 600; }
 .an-vrow .an-ib[disabled] { opacity: .35; pointer-events: none; }
 .an-vrow.carry { padding: 5px 4px 5px 8px; border-radius: 8px; background: rgb(255 159 10 / .12); color: var(--fg); }
-.an-views { display: flex; align-items: center; gap: 4px; padding: 8px 14px 0; flex-wrap: wrap; color: var(--subtle); font-size: 11px; }
+.an-views { display: flex; align-items: center; gap: 4px; padding: 0 0 6px; flex-wrap: wrap; color: var(--subtle); font-size: 11px; }
+.an-vchip.new { display: inline-grid; place-items: center; opacity: .55; box-shadow: inset 0 0 0 1px var(--border); border-style: dashed; }
 .an-views[hidden] { display: none; }
-.an-views span { margin-right: 4px; }
+.an-views > span:first-child { margin-right: 4px; }
 .an-vchip { min-width: 24px; height: 22px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
 .an-vchip.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .an-filt { display: flex; margin: 8px 14px 0; }
