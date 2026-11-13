@@ -673,7 +673,10 @@ export function createCompare(host){
     const s0 = Math.min(W / rw, H / rh), w0 = rw * s0 * C.view.zoom, h0 = rh * s0 * C.view.zoom;
     const mx = e.clientX - r.left - W / 2, my = e.clientY - r.top - H / 2;
     const u = C.view.cx + mx / w0, v = C.view.cy + my / h0;
-    const z = clamp(C.view.zoom * Math.exp(-e.deltaY * 0.0015), 0.1, 64);
+    // The viewer-wide zoom settings (Speed, Invert) as the other viewers use them; the axis is not
+    // a wheel setting, so the wheel is the same for both drag axes.
+    const zs = host.getZoomSettings?.() || {};
+    const z = clamp(C.view.zoom * Math.exp((zs.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (zs.zoomSpeed ?? 1)), 0.1, 64);
     C.view.zoom = z;
     C.view.cx = u - mx / (rw * s0 * z);
     C.view.cy = v - my / (rh * s0 * z);

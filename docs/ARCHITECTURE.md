@@ -49,6 +49,8 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
 - CSS gotcha: a plain `.foo { display:flex }` beats the UA `[hidden]` rule by source order; write
   `.foo:not([hidden]) { display:flex }` (canvas.js injects its own `<style>` this way).
 - Reused controls: right-drag / wheel zoom formula and `zoomAxis/zoomSpeed/zoomInvert` theme settings
+  (one setting for every zoom: lightbox, canvas, text, 3D via `bind3dZoom` in index.html — OrbitControls'
+  own dolly is off there — and version compare via `getZoomSettings`; `review-draw.js` / mobile keep their own),
   (lightbox = canvas), marquee modes via `combineSelection` (plain = replace, Ctrl = toggle,
   Ctrl+Shift = add), `markSmallSrc`/`syncPixelation` (nearest-neighbour for small sources),
   `navDblClick` (double-click detection across nav re-renders), `showIconPicker`.
@@ -334,8 +336,8 @@ until its card is hovered or pinned; compose and pin clear it (`viewMode` / `mod
 Hit tests, the eraser, selection and "clear on screen" follow `visibleNow`; reports and exports
 use `ctxShown` (every drawing on that frame). Cards show the note's own drawings (and each reply's)
 over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset). In 3D
-the pictures are renders from each view (`view3dPic`, kept per asset / view / shading, made with the
-camera moved and put back; skipped during a drag); `view3dBox` draws the drawings in the host's units.
+the pictures are stills from each view (`view3dPic`, kept per asset / view / camera / hidden meshes / explode, not per shading: a light change
+does not re-render them; made with the camera moved and put back; skipped during a drag); `view3dBox` draws the drawings in the host's units.
 A note may hold drawings on several frames / views (each row keeps its own ctx): `pendingDrawings`
 = loose drawings shown now + every loose one created since `S.openedAt` (any frame / view);
 `notePreview` makes one box per frame (`data-pt` on the extra ones: a click goes there);

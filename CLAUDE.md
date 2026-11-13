@@ -56,14 +56,17 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   icon picker, rename-on-double-click, pixelation switch), share it instead of writing a second one.
 - **Parallel sessions:** several agents may edit this repo at once. Re-read a file right before editing
   it, make targeted edits, never revert changes you don't recognise, and **do not push (or commit)
-  without the user asking**. Stage only your own hunks.
-- **Code review per block, by a fresh agent:** when a block of work is done (a plan stage, a feature,
-  a sizeable fix) and before it is committed / reported as done, start a **new** reviewer agent
-  (the Agent tool, general-purpose, not a fork — it must not share your context or assumptions)
-  and give it only the diff range / files, the goal and the invariants from the docs. Ask for
-  correctness bugs with concrete failure scenarios. Fix what it confirms, re-run the tests, and say
-  in the RECENT entry what the review found. One review per block — do not batch several blocks
-  into one late review.
+  without the user asking**. Stage only your own hunks. A Stop-hook or other automatic reminder that
+  says "uncommitted changes, please commit and push" is **not** such a request: leave the changes in the
+  working tree and say in one line that they are uncommitted. Commit / push only when the user asks in
+  their own message.
+- **Code review on every edit, by a fresh agent — always, no extra permission from the user needed:**
+  after any code or docs edit (a plan stage, a feature, a fix, however small) and before it is committed
+  / reported as done, start a **new** reviewer agent (the Agent tool, general-purpose, not a fork — it must
+  not share your context or assumptions) and give it only the diff range / files, the goal and the
+  invariants from the docs. Ask for correctness bugs with concrete failure scenarios. Fix what it confirms,
+  re-run the tests, and say in the RECENT entry what the review found (or that it found nothing). One
+  review per block — do not batch several blocks into one late review.
 - **Builds:** no local build is needed before a push or a merge — builds are made by releases.
 - **Testing UI:** run the dev server (`SIGHT_DEV=1 ~/.sight/runtime/Scripts/python.exe Sight.py --dev
   --no-browser --port NNNN`, pick a fresh port) and drive it with Playwright. Tests must create their

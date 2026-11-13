@@ -327,10 +327,10 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .frame-pop[hidden] { display: none; }
 /* File info overlay (I) — Blender-style: plain text over the picture, top-left, see renderLightInfo.
    The "i" button sits in the stage's top-left corner (not in the bar), the panel opens beside it. */
-.info-fab { position: absolute; left: calc(16px + var(--uv-left, 0px)); top: 69px; z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font: italic 700 16px/1 Georgia, "Times New Roman", serif; }
+.info-fab { position: absolute; left: calc(16px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font: italic 700 16px/1 Georgia, "Times New Roman", serif; }
 .info-fab:hover { background: rgb(10 10 11 / .8); }
 .info-fab.on { color: var(--accent); border-color: var(--accent); }
-.light-info { position: absolute; left: calc(64px + var(--uv-left, 0px)); top: 69px; z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
+.light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
 .light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
 .light-info h4:first-child { margin-top: 0; }
@@ -378,10 +378,10 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .mask-chip i.circle { border-radius: 50%; }
 .frame-pop .opt.off { opacity: .4; pointer-events: none; }
 #frameBtn.on { color: var(--accent); border-color: var(--accent); }
-.v3d-gear { position: absolute; right: 16px; bottom: 16px; z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font-size: 16px; }
+.v3d-gear { position: absolute; right: calc(16px + var(--hud-in, 0px)); bottom: calc(16px + var(--hud-in, 0px)); z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font-size: 16px; }
 .v3d-gear:hover { background: rgb(10 10 11 / .8); }
 .v3d-gear.on { color: var(--accent); border-color: var(--accent); }
-.v3d-shade { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 10px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); }
+.v3d-shade { position: absolute; left: 50%; bottom: calc(16px + var(--hud-in, 0px)); transform: translateX(-50%); z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 10px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); }
 .v3d-shade button { width: 32px; height: 32px; border-radius: 7px; color: var(--muted); font-size: 15px; display: grid; place-items: center; }
 .v3d-shade button:hover { background: var(--surface-2); color: var(--fg); }
 .v3d-shade button.on { background: var(--surface-2); color: var(--accent); }
@@ -397,6 +397,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
 /* Author `display` rules above beat the UA's [hidden] — without these the per-type toolbars
    (data-tools) and the explode slider would stay visible when hidden via the attribute. */
 .v3d-gear[hidden], .v3d-shade[hidden], .v3d-explode[hidden], .v3d-sep[hidden] { display: none; }
+/* The same for the lightbox's .btn icons (mirror, annotate): .btn's display would beat [hidden]. */
+.btn[hidden] { display: none; }
 .v3d-help { padding: 6px 8px 2px; font-size: 11px; line-height: 1.55; color: var(--subtle); }
 .v3d-toast { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); z-index: 12; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--fg); background: rgb(10 10 11 / .75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease); }
 .v3d-toast.on { opacity: 1; }
@@ -425,7 +427,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .view-ph { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; user-select: none; pointer-events: none; }
 .view-media.loading { opacity: 0; }
 .view-media.reveal { transition: opacity .25s ease; }
-.view-hud { position: absolute; left: 8px; bottom: 8px; z-index: 2; pointer-events: none; font-size: 11px; color: var(--muted); background: rgb(10 10 11 / .7); border-radius: 6px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
+.view-hud { position: absolute; left: calc(8px + var(--hud-in, 0px)); bottom: calc(8px + var(--hud-in, 0px)); z-index: 2; pointer-events: none; font-size: 11px; color: var(--muted); background: rgb(10 10 11 / .7); border-radius: 6px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
 .opts { flex: none; border-top: 1px solid var(--border); padding-top: 4px; position: relative; }
 .opts .sec { margin-top: 8px; }
 .opts.expanded { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; background: var(--bg); border-top: 0; padding-top: var(--space-2); }
@@ -854,6 +856,8 @@ const annot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   toast: (text) => flashV3DToast(text),
   appVersion: () => state.meta?.version || "",
+  // The lightbox panels' shared middle-drag scroll (attachPanScroll), so the review panel scrolls the same way.
+  panScroll: (el) => attachPanScroll(el),
   getV3D: () => ({ ...state.v3d }),
   // A 3D note restores the shading / lights / explode it was written with — live, not saved, so
   // the user's own viewer settings come back with the next change they make themselves.
@@ -879,6 +883,7 @@ const annot = createAnnotator({
 const cmp = createCompare({
   api: (path, opts) => api(path, opts),
   putSetting: (k, v) => putSetting(k, v),
+  getZoomSettings: () => state.theme,
   assetById: (id) => assetById(id),
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
   openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
@@ -1001,6 +1006,9 @@ function applyLightFrame(){
   const r = document.documentElement.style;
   r.setProperty("--frame-ar", String(m[2] || 1));
   r.setProperty("--frame-r", (m[0] === "circle" ? 50 + "%" : (Number(t.maskRadius) || 0) + "px"));
+  // The HUD icons (info, 3D gear, video strip, file info) move in from the frame's corners by about the
+  // corner's reach, so the rounding does not cut them. A circle mask has no corner to clear.
+  r.setProperty("--hud-in", (m[0] === "circle" ? 0 : Math.round((Number(t.maskRadius) || 0) * 0.3)) + "px");
   const stage = light?.el.querySelector(".light-stage");
   if (!stage) return;
   stage.classList.toggle("masked", m[2] > 0);
@@ -4033,6 +4041,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
   dispose3d(elId);
   const el = hostEl || document.getElementById(elId);
   if (!el) return;
+  let explodeMap = null; // the model's explode rig once it loads; read by the annotator's stills (renderStill)
   // Paint the loading state — the asset's existing 2D thumbnail as a backdrop, a loading plate
   // on top — and yield a real frame *before* touching THREE/the model parser. Large models
   // parse synchronously on the main thread; without this yield the lightbox's own fade-in and
@@ -4126,6 +4135,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
       controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.DOLLY };
       controls.zoomToCursor = true;
+      bind3dZoom(renderer.domElement, controls);
       let live = true, mesh = null, camRig = null;
       const loop = () => {
         if (!live) return;
@@ -4165,7 +4175,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         camRig = makeCameraRig(THREE, camera, controls, aid);
         camRig.setHome(size);
         v3dCam = camRig;
-        bindAnnot3d(el, aid, camRig, controls, () => { renderer.render(scene, camera); return renderer.domElement; });
+        bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved));
         const dims = box.getSize(new THREE.Vector3());
         const f = (x) => Number(x.toPrecision(4)).toString();
         setSceneInfo({ id: aid, title: "Scene", rows: [
@@ -4277,6 +4287,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       if (val === state.v3d.explode) return;
       state.v3d.explode = val;
       saveV3D();
+      annot.explodeChanged(val);
       light?.explodeSlider?.set(val);
       flashV3DToast(`Explode ${Math.round(val * 100)}%`);
     });
@@ -4289,6 +4300,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     // + wheel zoom) — left stays orbit/rotate since 2D viewers have no equivalent for that.
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.DOLLY };
     controls.zoomToCursor = true; // zoom toward the pointer, not the orbit target
+    bind3dZoom(renderer.domElement, controls);
     // Click picking (a left click that didn't move — a drag is an orbit / pan): Ctrl+click selects
     // the mesh under the cursor (same selection as the info panel's Meshes list, Ctrl+click it
     // again to deselect); a click on empty space clears whatever is selected (mesh, material or
@@ -4315,7 +4327,6 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     });
 
     let obj = null, origMats = null, rigRadius = 5;
-    let explodeMap = null;
     let shadeApplied = { base: null, wire: null, xray: null, explode: null, solid: null };
     const D2R = Math.PI / 180;
     // Shadow frusta hug the model's bounding sphere (the old ±diagonal box wasted half the map's
@@ -4525,7 +4536,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       camRig = makeCameraRig(THREE, camera, controls, aid, { get: () => getModelTurns(aid), set: turnTo });
       camRig.setHome(size);
       v3dCam = camRig;
-      bindAnnot3d(el, aid, camRig, controls, () => { renderer.render(scene, camera); return renderer.domElement; });
+      bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved));
       onV3DRotate = () => turnTo((getModelTurns(aid) + 1) & 3);
       obj.traverse((c) => { if (c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
       skyOcc.markCasters(obj);
@@ -4561,6 +4572,86 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
 }
 
 // The lightbox 3D viewer hands its camera and a synchronous frame grab to the annotator.
+// Zoom in the 3D viewer follows the viewer-wide zoom settings (Speed, Drag axis, Invert) like the 2D viewers.
+// OrbitControls' own wheel / right-drag / pinch dolly is switched off (enableZoom); the wheel and a plain
+// right-drag call dollyOut with the same factor the 2D viewers compute (exp of the same delta), so one setting
+// changes every zoom. A two-finger pinch is handled here too (speed only: its direction is the finger gap).
+// The Ctrl / Shift right-drags are taken by their own handlers, which are bound before this one and stop the
+// event; any other right-drag (Alt included) zooms here, as OrbitControls' right-drag did.
+// Zoom toward the pointer for the splat viewer (controls.zoomToCursor), as OrbitControls did.
+function bind3dZoom(el, controls){
+  controls.enableZoom = false;
+  let rdrag = null;
+  const touches = new Map(); // touch pointers: id -> {x, y}; two of them are a pinch
+  let pinch = 0;             // finger gap at the last pinch step
+  const dolly = (d) => controls.dollyOut(Math.exp(d)); // d > 0 zooms in, as in the 2D viewers
+  const anchor = (x, y) => { if (controls.zoomToCursor) controls._updateZoomParameters?.(x, y); };
+  const gap = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const t = state.theme;
+    anchor(e.clientX, e.clientY);
+    dolly((t.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (t.zoomSpeed ?? 1));
+  }, { passive: false });
+  el.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "touch"){
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2) pinch = gap();
+      return;
+    }
+    if (e.button !== 2) return;
+    e.preventDefault();
+    rdrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch" && touches.has(e.pointerId)){
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2){
+        const g = gap();
+        if (pinch > 0 && g > 0){
+          const [a, b] = [...touches.values()];
+          anchor((a.x + b.x) / 2, (a.y + b.y) / 2);
+          dolly(Math.log(g / pinch) * (state.theme.zoomSpeed ?? 1));
+        }
+        pinch = g;
+      }
+      return;
+    }
+    if (!rdrag || e.pointerId !== rdrag.id) return;
+    const t = state.theme;
+    const raw = t.zoomAxis === "x" ? (e.clientX - rdrag.x) : (rdrag.y - e.clientY);
+    rdrag.x = e.clientX; rdrag.y = e.clientY;
+    anchor(e.clientX, e.clientY);
+    dolly((t.zoomInvert ? -raw : raw) * 0.012 * (t.zoomSpeed ?? 1));
+  });
+  const endPointer = (e) => {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) pinch = 0;
+    if (rdrag && rdrag.id === e.pointerId) rdrag = null;
+  };
+  el.addEventListener("pointerup", endPointer);
+  el.addEventListener("pointercancel", endPointer);
+}
+
+// The frame an annotator still is taken from. `ex` is a view's explode (null / undefined: the live amount).
+// When it differs, the parts are moved there and `refit` (the floor fade and shadow fit of boot3d) is run,
+// and both are put back in `finally`, so an exception cannot leave the viewer at the view's explode.
+function renderStill(renderer, scene, camera, rig, ex, refit){
+  const live = state.v3d.explode;
+  const alt = !!rig && ex != null && ex !== live;
+  if (!alt){ renderer.render(scene, camera); return renderer.domElement; }
+  try {
+    applyExplode(rig, ex);
+    refit?.();
+    renderer.render(scene, camera);
+  } finally {
+    applyExplode(rig, live);
+    refit?.();
+  }
+  return renderer.domElement;
+}
+
 function bindAnnot3d(host, aid, rig, controls, capture){
   const damp = controls.enableDamping;
   annot.bind3d({
@@ -4889,7 +4980,7 @@ function releaseMedia(free){
 // pointer back through the turn).
 const TURN_KEY = "sight.viewTurn";
 function loadTurn(id){
-  try { const m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; const v = m[id]; if (Array.isArray(v)) return { rot: ((v[0] | 0) % 360 + 360) % 360, mir: !!v[1] }; } catch {}
+  try { const m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; const v = m[id]; if (Array.isArray(v)) return { rot: ((Number(v[0]) || 0) % 360 + 360) % 360, mir: !!v[1] }; } catch {}
   return { rot: 0, mir: false };
 }
 function saveTurn(id, t){
@@ -4993,7 +5084,9 @@ function attachViewer(stage, a, src, opts = {}){
   function fitS(){
     const w = wrap.clientWidth, h = wrap.clientHeight;
     if (!vs.nat.w || !w) return 1;
-    return turn.rot % 180 ? Math.min(w / vs.nat.h, h / vs.nat.w) : Math.min(w / vs.nat.w, h / vs.nat.h);
+    // The picture's bounding box after a turn of any angle (for 90° it is the swapped box, as before).
+    const th = turn.rot * Math.PI / 180, c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
+    return Math.min(w / (vs.nat.w * c + vs.nat.h * s), h / (vs.nat.w * s + vs.nat.h * c));
   }
   function geom(){
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -5143,6 +5236,15 @@ function attachViewer(stage, a, src, opts = {}){
     else toFit();
   });
   wrap.addEventListener("pointerdown", (e) => {
+    // Alt-drag turns the picture (image or video) about its centre, to any angle. Shift snaps the angle
+    // to absolute 15° steps (0, 15, 30 …), not steps from where the drag began.
+    if (e.button === 0 && e.altKey){
+      e.preventDefault();
+      wrap.setPointerCapture(e.pointerId);
+      const r = wrap.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      vs.rotD = { cx, cy, a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
+      return;
+    }
     if (isVid && e.button === 0){
       // Click-drag on the picture scrubs the video, same as dragging the timeline. Nothing happens
       // until the pointer has moved a few px, so a plain click / double-click is untouched.
@@ -5164,6 +5266,17 @@ function attachViewer(stage, a, src, opts = {}){
     }
   });
   wrap.addEventListener("pointermove", (e) => {
+    if (vs.rotD){
+      const d = vs.rotD;
+      let delta = Math.atan2(e.clientY - d.cy, e.clientX - d.cx) * 180 / Math.PI - d.a0;
+      delta = ((delta + 540) % 360) - 180; // -180 … 180: the way the pointer went round
+      let rot = d.rot0 + delta;
+      if (e.shiftKey) rot = Math.round(rot / 15) * 15;
+      turn.rot = ((rot % 360) + 360) % 360;
+      d.moved = true;
+      if (vs.mode === "fit") toFit(); else apply();
+      return;
+    }
     if (vs.panD){
       const [dx, dy] = unturnVec(e.clientX - vs.panD.x, e.clientY - vs.panD.y);
       vs.pan = { x: vs.panD.px + dx, y: vs.panD.py + dy };
@@ -5199,6 +5312,12 @@ function attachViewer(stage, a, src, opts = {}){
   });
   const end = () => {
     const scrubbed = vs.scrubD && vs.scrubD.on;
+    // A turn drag ends with a click on the wrap: swallow it (as after a scrub), or a video would pause.
+    if (vs.rotD){
+      if (vs.rotD.moved) justScrubbed = true;
+      vs.rotD = null;
+      if (!opts.embedded) saveTurn(a.id, turn); // kept once the drag ends
+    }
     vs.panD = vs.zoomD = vs.scrubD = null;
     if (scrubbed){ wrap.style.cursor = ""; endScrub(); justScrubbed = true; }
   };
@@ -5332,7 +5451,7 @@ function toggleLight(a){
   wrap.querySelector("#v3dShade [data-act=uv]").onclick = () => toggleUV();
   light.explodeSlider = initThinSlider(wrap.querySelector("#v3dExplode"), {
     value: state.v3d.explode,
-    onChange: (v) => { state.v3d.explode = v; saveV3D(); },
+    onChange: (v) => { state.v3d.explode = v; saveV3D(); annot.explodeChanged(v); },
   });
   attachPanScroll(wrap.querySelector("#v3dPanel"));
   const framePop = wrap.querySelector("#framePop");
@@ -5385,7 +5504,10 @@ function showInLight(a){
   light.setZoom = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
   light.turn = light.mirror = null; // set by attachViewer (pictures, PSD, video)
   const flat = a.kind === "image" || a.kind === "video" || a.ext === ".psd";
+  // Icons follow what the file can do: mirror and turn need a flat picture (image, PSD, video); annotation
+  // works on those and on 3D models (annotate.js `supported`), so documents and audio hide the A button.
   light.el.querySelector("#mirBtn").hidden = !flat;
+  light.el.querySelector("#annoBtn").hidden = !(flat || a.kind === "model3d");
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
   // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
   insp.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch {} });
@@ -7617,7 +7739,7 @@ function renderOptions(){
       <label class="opt">Color <input type="color" data-color="waveColor" value="${t.waveColor}"></label>
       <label class="opt">Shape <select id="waveModeSel"><option value="mirror" ${t.waveMode === "mirror" ? "selected" : ""}>Mirrored</option><option value="vertical" ${t.waveMode === "vertical" ? "selected" : ""}>Vertical only</option></select></label>
 
-      <div class="settings-sub">Zoom (images / video)</div>
+      <div class="settings-sub">Zoom</div>
       ${sliderRow("Speed", "zoomSpeed", 0.25, 3, 0.05, "×")}
       <label class="opt">Drag axis <select id="zoomAxisSel"><option value="y" ${t.zoomAxis === "y" ? "selected" : ""}>Vertical</option><option value="x" ${t.zoomAxis === "x" ? "selected" : ""}>Horizontal</option></select></label>
       <label class="opt">Invert <input type="checkbox" data-opt="zoomInvert" ${t.zoomInvert ? "checked" : ""}></label>

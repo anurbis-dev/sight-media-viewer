@@ -14,6 +14,85 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.43.1 — 2026-11-13 — Review panel scrolls with middle-drag like the other lightbox panels
+- **What:** the review (annotation) panel's note list scrolls by middle-drag, as the info, PSD, 3D and frame
+  panels already do; the wheel still scrolls it natively.
+- **Where:** `app/static/annotate.js` — `buildPanel` calls `host.panScroll` on `.an-list`. `app/static/index.html`
+  — the `createAnnotator` options pass `panScroll: (el) => attachPanScroll(el)`. `app/version.py`.
+- **Notes:** the panel keeps its own look (docked column); only the shared scroll helper is used. The helper adds no
+  wheel handler and does not change `overflow`. Review (fresh agent): no confirmed bugs (no clash with the list's
+  click / dblclick / hover handlers or the right-button thumb zoom; `buildPanel` runs once per lightbox open, so no
+  duplicate listeners). Not tested in a browser.
+
+## 0.43.0 — 2026-11-13 — Lightbox: icons follow the file type; corner icons clear the radius; Alt-drag turns a picture to any angle
+- **What:** (1) mirror (`#mirBtn`) shows only for images, PSDs and video; the annotate button (`#annoBtn`)
+  shows for those and for 3D models, so documents and audio hide both. (The buttons used to stay visible:
+  `.btn`'s `display` beat the `hidden` attribute.) (2) With a corner radius set, the corner icons (file info,
+  3D gear, video strip, the 3D shading bar's bottom offset) move in by 0.3 × radius, so the rounding does not
+  cut them; a circle mask does not move them. (3) Alt+drag on a picture or video turns it about its centre to
+  any angle; Shift snaps the angle to absolute 15° steps (0, 15, 30 …). The angle is saved per file when the
+  drag ends. Alt+drag on a video no longer scrubs (plain drag still does). (4) The fit of a turned picture
+  uses its bounding box at any angle (for 0/90/180/270 it is as before).
+- **Where:** `app/static/index.html` — `.btn[hidden]` rule (next to `.v3d-gear[hidden]`), `.info-fab`,
+  `.light-info`, `.v3d-gear`, `.v3d-shade`, `.view-hud` (offsets use `var(--hud-in)`), `applyLightFrame()`
+  (sets `--hud-in`), the lightbox setup that sets `#mirBtn` / `#annoBtn` `hidden`, `loadTurn` (fractional
+  angle), `fitS()` (bounding box), and the viewer's `wrap` pointerdown / pointermove / `end` (`vs.rotD`).
+  `MANUAL.md` (turn, mask). `app/version.py`.
+- **Notes:** a turn drag ends with a click on the wrap, which is swallowed (`justScrubbed`) only when the angle
+  really changed, so a video does not pause after a turn. The HUD offsets are anchored to the lightbox root, not
+  to the frame: with an aspect-locked mask the frame is centred, so the inset is approximate there. The turn is
+  stored as a float angle per file (the old integer quarter turns still read back). Alt+drag with the select tool
+  in annotation mode still duplicates; Alt over a drawing tool reaches the viewer, as before.
+  Review (fresh agent): one confirmed bug, fixed (a video paused after an Alt-turn, because the click after the
+  turn drag was not swallowed). Checked and no bug: `hidden` on `#splitBtn` (now honoured, as intended), the
+  `calc()` values at 0, fitS at 0/90/180/270, the rotation direction with the mirror on, the normalisation of the
+  angle delta, the annotation capture order. Not tested in a browser: checked by reading the code and `node --check`.
+
+## 0.42.0 — 2026-11-13 — Explode belongs to the view; one zoom setting for every zoom (3D and version compare too)
+- **What:** (1) explode is kept per view. Moving the slider (or Ctrl+right-drag) at a view with drawings sets
+  that view's explode; going to the view (chip, note click, Go to) puts it back and replaces the current amount,
+  unless a row on that view was made at the current amount (then it stays). New rows store `ctx.explode`.
+  (2) A view's still and the export pictures (PDF / .srev frames of 3D notes) render at the view's explode.
+  (3) The zoom settings (Speed, Drag axis, Invert) apply to every zoom: the 3D viewer's wheel, right-drag and
+  pinch, and the version compare wheel, as they already did for images, video, text and the canvas.
+  (4) Settings header "Zoom (images / video)" is now "Zoom".
+- **Where:** `app/static/annotate.js` — `EXPL` / `EXP_TOL`, `rebuildViews` (view.explode from the newest row or
+  the slider value), `explodeChanged` (exported), `viewExplode` (used by `goView`), `viewLook` (export paths),
+  `ctxNow` (rows get `explode`), `view3dPic` (still at `v.explode`, `S.b3.capture(ex)`). `app/static/index.html`
+  — the slider `onChange` and the Ctrl-drag call `annot.explodeChanged`; `explodeMap` moved to the top of
+  `boot3d`; top-level `renderStill` (applies the view's explode, `refit` = `onExplodeMoved`, restored in
+  `finally`) and `bind3dZoom` (wheel, right-drag, pinch via `dollyOut`, `enableZoom` off); both
+  `bindAnnot3d` calls; `createCompare` gets `getZoomSettings`; the settings header. `app/static/compare.js` —
+  `onWheel` (speed, invert). `docs/FORMAT.md` (`ctx.explode`), `docs/ARCHITECTURE.md`, `MANUAL.md`. `app/version.py`.
+- **Notes:** the slider's value is kept in memory until a new row is made at that view, so a slider change with
+  no drawing is lost on reload (rows are never rewritten). A view's explode is the newest of the row values and the
+  slider value by timestamp; a phone row stamped with a clock ahead of the desktop can win over a newer desktop
+  slider. Rows from before 0.42 have no explode: their views keep the live amount. A pinch uses the speed only
+  (its direction is the finger gap). The splat viewer keeps zoom toward the pointer via OrbitControls'
+  `_updateZoomParameters` (a private method; guarded with `?.`). `review-draw.js` (exported review page) and the
+  mobile app keep their own zoom settings. Not tested in a browser: checked by reading the code, `node --check`
+  and the two review passes. Review 1 (explode): a report path used the note's unstripped explode (fixed:
+  `viewLook`); `renderStill` had no `finally` and no refit (fixed). Left as specified: any row on the target view
+  made at the current amount keeps it. Review 2 (zoom): pinch was lost with `enableZoom` off (fixed: pinch in
+  `bind3dZoom`); the modifier check blocked the right-drag in the splat viewer (fixed: only the Ctrl / Shift
+  handlers that already stop the event take it); the splat right-drag was not cursor-anchored (fixed).
+
+## 0.41.2 — 2026-11-13 — 3D note pictures are stills: a light change no longer re-renders them
+- **What:** the pictures on a 3D note's card (one per view the note's drawings were made from) were re-rendered
+  every time the shading or the lights changed, so they looked like live mini-viewports. Now each view's
+  picture is taken once and kept; moving the light or switching shading leaves it as it was. The drawings on
+  top are still vector and follow the view as before.
+- **Where:** `app/static/annotate.js` — `view3dPic` (cache key no longer includes the shading; `PIC3` maps the
+  key to the data URL), the comment above it. `docs/ARCHITECTURE.md` (3D pictures), `MANUAL.md` (3D). `app/version.py`.
+- **Notes:** supersedes the 0.40.1 / 0.40.2 decision to re-capture on a shading change. The still is the one
+  made at first use, so it shows the lights the viewer had at that moment, not the note's saved lights; a
+  still made while the light is being dragged keeps that light. Still JPEG ≤640 px at quality 0.85, unchanged.
+  Stills are per session (cleared by `resetPF`), so a reopened review takes them again with the current lights.
+  Explode stays in the key: the first version dropped it with the shading, so a note's still would show the
+  assembled model after the explode slider moved (the drawings were made over exploded parts). Found by a fresh
+  review (correctness; 1 confirmed finding, fixed; camera, asset reset and null-capture paths were checked OK).
+  Not yet checked in a browser: the change was verified by reading the code and a syntax check of annotate.js.
+
 ## 0.41.1 — 2026-11-13 — Drawing: round stroke ends, brush circle follows the pen, Alt no longer draws from the centre; 3D light on Shift+right-drag
 - **What:** (1) a brush / pencil stroke's start and end are round caps: they used to bulge into the stroke
   (a notch at both ends). (2) The brush circle follows the pointer while a stroke is being drawn (it was
@@ -214,66 +293,3 @@ Add new entries directly below this line.
   a downscaled frame, a seek timeout caching the old picture, the usdz reason for a missing file, and the
   dead `null` branch; the notes that the loading state was not endless at HEAD (an outer catch existed) are
   reflected in the wording above.
-
-## 0.36.3 — 2026-11-13 — Canvas: the Arrows / Shapes slots restyle a selection
-- **What:** with the select tool and arrows / lines (or rectangles / ellipses) selected, the Arrows
-  and Shapes rows' choices (heads / dash / line; rectangle, rounded, ellipse, filled or not) and the
-  Shapes row's fill colour now change the selected items. Before, the pick switched to drawing with
-  that tool and dropped the selection, so an arrow's heads or a shape's fill could not be edited
-  once selected. The text slot already worked this way. The rows mark the selection's own variant
-  and fill; with nothing of that kind selected, the slots behave as before.
-- **Where:** `app/static/review-draw.js` — new `groupSel`, `restyleSel`, `variantIdx`,
-  `applyVariant`, `fillSel`, `fillShown` (after `recolour`); the Arrows / Shapes slot handler and
-  its variant buttons; `setFill`; `fillButton`. The phone app gets it through `build_pwa.py`.
-- **Notes:** the rule is by kind: arrows-only selected + the Shapes slot still takes the rect tool
-  and drops the selection. A press-and-hold on the slot (550 ms) still switches tool and resets its
-  size, as the text slot does; the R / O / W keys still switch tools. `annotate.js` (desktop) is not
-  changed: its tool buttons also clear the selection in `setTool`, which was not tested here.
-  Checked in headless Chromium against the old and new file: marquee select, Filled rectangle,
-  Double arrow, green fill, Ellipse, flyout marks, the no-selection picks, a rounded rectangle
-  filled (marked as Filled rectangle), and the line-colour fill on an outlined shape.
-  Review (fresh agent): three findings, all fixed. (1) a rounded rectangle given a fill matched no
-  variant, so its flyout mark vanished: a filled one now matches Filled rectangle. (2) an outlined
-  variant left the old fill data: it now resets to a fresh outlined shape's (fill = colour, 0.2).
-  (3) the line-colour fill did nothing on outlined shapes: it now fills them; and a pick already in
-  effect no longer adds an empty undo step (`restyleSel` keeps only copies that change). Not run:
-  the radius of a Rounded pick itself (only its mark). The phone build runs in `tests.test_pwa`.
-
-## 0.36.2 — 2026-11-13 — PDF rows: pictures fill the text column
-- **What:** in both PDF reports a note's pictures were 90 pt high (70 pt for a reply's), so a 9:16
-  frame came out ~50 pt wide and four of them left the right half of the row empty. Now the
-  pictures of a row share one height, chosen so that the row spans the text column: a row takes
-  pictures while that height stays at least 120 pt (notes) / 100 pt (replies), and never goes
-  taller than 240 pt. Four phone frames to a row now come out ~118 × 209 pt each; a lone picture
-  that would be taller than 240 pt is capped there and stops short of the right edge.
-- **Where:** `app/review.py` `_pic_rows(pics, max_h, min_h, indent)` (called from `build_pdf`);
-  `mobile/js/report.js` `toPdf` → `rows(list, x0, width, maxH, minH)`.
-- **Notes:** supersedes the fixed 90 / 70 pt row heights of 0.36.0 and 0.36.1 (row heights now
-  vary by the row's pictures). Cover and captions unchanged; the HTML reports are unchanged.
-  Checked by rendering a sample desktop PDF (portrait and landscape frames, a reply) and the phone
-  PDF from the `tests/test_pwa.py` round trip; `tests.test_pwa`, `tests.test_review_page` and
-  `tests.test_merge_parity` pass. Not yet reviewed by a fresh agent.
-
-## 0.36.1 — 2026-11-13 — PDF rows: within the text column; captions in two lines under their picture
-- **What:** fixes from the fresh-agent review of 0.36.0. Sight's PDF: rows (and the cover, as
-  before) ran ~11 pt past the text column into the right margin — PyMuPDF's Story lays content
-  out in x ≈ 50..545, so pictures are sized to `CONTENT_W` = 495 pt (each cell's width set: a
-  caption no longer widens a narrow picture's cell); the row height is 90 pt (three 16:9 frames
-  still fit); a caption that is not a string no longer breaks the export. Phone PDF: a caption
-  under a narrow (portrait) picture wraps to two lines instead of being cut to "Frame 1…", and
-  sits right under its own picture (not at the row's tallest).
-- **Where:** `app/review.py` (`CONTENT_W`, `_img_tag`, `_pic_rows`), `mobile/js/report.js`
-  (`rows` → `capLines`). Checked by rendering both PDFs (portrait frames with captions, 9 pictures).
-
-## 0.36.0 — 2026-11-13 — PDF reports: a note's pictures in rows
-- **What:** in both PDF reports (Sight's and the phone app's) a note's pictures — its frame / view
-  with its caption, the other frames / views it was drawn on, its screenshots — sit side by side in
-  rows, each whole, 90 pt high (three 16:9 frames to an A4 row), a small caption under each; a
-  reply's pictures likewise at 70 pt, indented. The cover stays one big picture. A note's pictures
-  now come right under its words, before its replies (as the phone's HTML report already did).
-- **Where:** `app/review.py` `_pic_rows` (one `<table>` per row: PyMuPDF's Story does not wrap a
-  table row, so the rows are packed here) used by `build_pdf`; `mobile/js/report.js` `toPdf` →
-  `rows(list, x0, width, rowH)`.
-- **Notes:** the HTML reports are unchanged (the browser lays them out). Checked by rendering both
-  PDFs to pictures (a note with three frames and a portrait screenshot, a reply with two pictures).
-  Review (fresh agent): fixes in 0.36.1.

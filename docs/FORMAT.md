@@ -164,6 +164,9 @@ The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `pri
   **0.41+:** a 3D ctx may carry `hidden` — the indices (ascending) of the model's meshes hidden in that
   view, in the viewer's mesh order. A view matches only with the same hidden set (an absent `hidden`, a
   file from before 0.41, matches any). `[]` = nothing hidden.
+  **0.42+:** a 3D ctx may carry `explode` — the explode amount (0–1) the row was made at. Optional: rows from
+  before 0.42 have none, and an absent `explode` is not "0". A view's explode is the newest such value among its
+  rows, and the slider's last value at the view for this session (not stored in the file).
 - A drawing made later on a note's frame (a reply's drawing on the HTML page / in the app) takes
   that note's place: video `{t, hold}` copied from the note, 3D `{vk, cam}` of the note's view; a
   new note drawn on another note's frame copies that note's whole `ctx`. **0.29+:** a reply on a

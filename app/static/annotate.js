@@ -471,10 +471,15 @@ export function createAnnotator(host){
     const dt = hyp(hyp(a.t[0] - b.t[0], a.t[1] - b.t[1]), a.t[2] - b.t[2]);
     return dp < tol && dt < tol && Math.abs((a.fov || 50) - (b.fov || 50)) < 0.5 && (a.turns || 0) === (b.turns || 0);
   }
-  // A view is a camera plus the meshes shown or hidden there: {vk, cam, hidden, v3d, created}. hidden is
-  // the mesh indices hidden (null when the file predates it: any mesh state matches). The views are kept
-  // in the order they were first made, so the number a view shows (viewNumber, the chips, the pictures
-  // of a note, the report) does not depend on the order the items load in.
+  // A view is a camera plus the meshes shown or hidden there: {vk, cam, hidden, v3d, explode, created}.
+  // hidden is the mesh indices hidden (null when the file predates it: any mesh state matches). The views
+  // are kept in the order they were first made, so the number a view shows (viewNumber, the chips, the
+  // pictures of a note, the report) does not depend on the order the items load in.
+  // explode is the explode amount the view was last at: set by the slider (explodeChanged, kept in EXPL
+  // for this session) or read from the newest new row made there (a row's ctx.explode). Older rows have
+  // none. The newer of the two wins.
+  const EXPL = new Map();      // vk -> {v, at}: the slider's last value at that view
+  const EXP_TOL = 0.001;       // two explode amounts count as the same below this
   function rebuildViews(){
     const made = new Map();
     for (const it of S.items.values()){
@@ -482,14 +487,51 @@ export function createAnnotator(host){
       if (!c || !c.vk || !c.cam) continue;
       const at = it.data.created || 0;
       let v = made.get(c.vk);
-      if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, v3d: null, created: at }; made.set(c.vk, v); }
+      if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, v3d: null, explode: null, explodeAt: 0, created: at }; made.set(c.vk, v); }
       v.created = Math.min(v.created, at);
       if (Array.isArray(c.hidden) && (v.hidden == null || it.kind === "note")) v.hidden = c.hidden;
       // A note's display settings win over a drawing's bare camera (the last note's, as before).
       if (it.kind === "note" && c.v3d) v.v3d = c.v3d;
+      if (typeof c.explode === "number" && at >= v.explodeAt){ v.explode = c.explode; v.explodeAt = at; }
+    }
+    for (const v of made.values()){
+      const r = EXPL.get(v.vk);
+      if (r && r.at >= v.explodeAt){ v.explode = r.v; v.explodeAt = r.at; }
     }
     S.views.clear();
     for (const v of [...made.values()].sort((a, b) => a.created - b.created)) S.views.set(v.vk, v);
+  }
+  // The slider (or Ctrl+right-drag) moved at the view the camera is on: that view keeps the amount. Only
+  // a user change lands here; restoring a view or a note sets the amount without calling this.
+  function explodeChanged(val){
+    if (!S.b3 || typeof val !== "number") return;
+    const vk = findVk(curCam(), curHidden());
+    if (!vk) return;
+    const at = Date.now();
+    EXPL.set(vk, { v: val, at });
+    const v = S.views.get(vk);
+    if (v){ v.explode = val; v.explodeAt = at; }
+  }
+  // Going to a view puts its explode back, replacing the current one. Exception: when a row on that view
+  // was made at the current amount (not yet attached, or a note), the current amount stays.
+  function viewExplode(vk){
+    const v = S.views.get(vk);
+    if (!v || v.explode == null) return;
+    const cur = host.getV3D?.()?.explode ?? 0;
+    if (Math.abs(cur - v.explode) < EXP_TOL) return;
+    for (const it of S.items.values()){
+      const c = it.data?.ctx;
+      if (c && c.vk === vk && typeof c.explode === "number" && Math.abs(c.explode - cur) < EXP_TOL) return;
+    }
+    host.setV3D?.({ explode: v.explode });
+  }
+  // The settings a view is shown with, for the export pictures: the given shading / lights (a note's), and
+  // the view's own explode (a note keeps the explode it was made at, which may not be the view's now).
+  function viewLook(look, vk){
+    const { explode, ...rest } = look || {};
+    const v = S.views.get(vk);
+    const ex = v?.explode ?? explode;
+    return ex != null ? { ...rest, explode: ex } : rest;
   }
   function curCam(){ return S.b3?.getCam?.() || null; }
   // The meshes hidden right now (sorted indices), null with no 3D host or no inspector.
@@ -519,12 +561,15 @@ export function createAnnotator(host){
       let vk = viewMatches(cur, cam, hid) ? S.curVk : findVk(cam, hid);
       if (!vk){
         if (!make) return { vk: null, cam };
-        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, created: Date.now() }); S.curVk = vk;
+        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, explode: null, explodeAt: 0, created: Date.now() }); S.curVk = vk;
       }
       const view = S.views.get(vk);
       const c = { vk, cam: view.cam };
       if (view.hidden) c.hidden = view.hidden;
-      if (forNote) c.v3d = host.getV3D?.() || null;
+      // A new row records the explode it was made at (old rows have none, and keep none).
+      const live = host.getV3D?.() || null;
+      if (typeof live?.explode === "number") c.explode = live.explode;
+      if (forNote) c.v3d = live;
       return c;
     }
     return null;
@@ -1559,6 +1604,8 @@ export function createAnnotator(host){
       writeJSON("sight.annotate.filter", S.filter);
       renderPanel();
     });
+    // Scrolls like the other lightbox panels: the wheel (native) and middle-drag (index.html attachPanScroll).
+    host.panScroll?.(el.querySelector(".an-list"));
     el.querySelector(".an-list").addEventListener("click", onListClick);
     el.querySelector(".an-list").addEventListener("dblclick", onListDblClick);
     el.querySelector(".an-list").addEventListener("pointerover", (e) => {
@@ -1643,20 +1690,22 @@ export function createAnnotator(host){
   // ---- note previews: the clean picture / video frame with the note's drawings over it (vector,
   // nothing burned in) ---------------------------------------------------------------------------
   // A video note drawn on several frames: one preview per frame, the note's own frame first.
-  // 3D: a note's pictures are the view's render from each camera its drawings were made from (the note's
-  // own view first), the drawings over it, as a video note's frames. A render is made on demand and kept
-  // per view and shading (cleared with the video previews, resetPF); the camera goes back right after.
-  // The shading is the viewer's current one (a 3D note's shading is applied only when it is opened).
-  // One picture per view: {shade, url}. A shading change replaces the view's picture (the old shading is
-  // not kept), so the cache stays one entry per view however often the shading is moved.
+  // 3D: a note's pictures are a still of the view from each camera its drawings were made from (the note's
+  // own view first), the drawings over it, as a video note's frames. A still is taken once per view and
+  // kept (cleared with the video previews, resetPF); the camera goes back right after. A still does not
+  // follow the lights: changing the shading does not re-render it (the lights are the viewer's at the
+  // moment the still is first taken). The still is taken at the view's own explode (the live one when the
+  // view has none), so it matches the drawings made there whatever the slider says now. Explode changes
+  // the geometry, so it is in the key; lights are not. PIC3 maps asset + view + camera + hidden meshes +
+  // explode to the data URL.
   const PIC3 = new Map();
   function view3dPic(vk){
     const v = S.views.get(vk);
     if (!v || !S.b3) return null;
-    const id = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(v.hidden);
-    const shade = JSON.stringify(host.getV3D?.() || null);
+    const ex = v.explode ?? host.getV3D?.()?.explode ?? 0;
+    const id = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(v.hidden) + "|x" + ex;
     const hit = PIC3.get(id);
-    if (hit && hit.shade === shade) return hit.url;
+    if (hit) return hit;
     // No camera move while a drag (orbit, stroke) is on; the picture comes with the next refresh.
     if (S.drag) return null;
     const save = curCam();
@@ -1666,7 +1715,7 @@ export function createAnnotator(host){
     const saveHid = curHidden(), moveMeshes = v.hidden != null && !sameHidden(v.hidden, saveHid) && !!S.b3.setHidden;
     if (!same) S.b3.setCam(v.cam);
     if (moveMeshes) S.b3.setHidden(v.hidden);
-    const src = S.b3.capture();
+    const src = S.b3.capture(ex);
     if (moveMeshes) S.b3.setHidden(saveHid);
     let url = null;
     if (src?.width && src?.height){
@@ -1677,7 +1726,7 @@ export function createAnnotator(host){
       url = cv.toDataURL("image/jpeg", 0.85);
     }
     if (!same) S.b3.setCam(save);
-    if (url) PIC3.set(id, { shade, url });
+    if (url) PIC3.set(id, url);
     return url;
   }
   function view3dPreviews(n){
@@ -2092,8 +2141,10 @@ export function createAnnotator(host){
   function goView(vk, v3d){
     const v = S.views.get(vk);
     if (!v || !S.b3) return;
+    // Shading, lights and the rest come from the note (or the view's last note); explode from the view.
     const look = v3d || v.v3d;
-    if (look) host.setV3D?.(look);
+    if (look){ const { explode, ...rest } = look; host.setV3D?.(rest); }
+    viewExplode(vk);
     // The meshes the view was made with: hidden ones hidden, the rest shown (an empty list shows all).
     if (v.hidden) S.b3.setHidden?.(v.hidden);
     S.b3.setCam(v.cam);
@@ -2415,7 +2466,7 @@ export function createAnnotator(host){
         } else if (S.b3 && c?.vk){
           const view = S.views.get(c.vk);
           if (view){
-            if (c.v3d || view.v3d) host.setV3D?.(c.v3d || view.v3d);
+            if (c.v3d || view.v3d) host.setV3D?.(viewLook(c.v3d || view.v3d, c.vk));
             S.b3.setCam(view.cam);
             S.curVk = c.vk;
             await nextFrame(); await nextFrame(); await nextFrame();
@@ -2443,7 +2494,7 @@ export function createAnnotator(host){
             const view = S.views.get(vk);
             if (!view) continue;
             const look = view.v3d || keep.v3d;
-            if (look) host.setV3D?.(look);
+            if (look) host.setV3D?.(viewLook(look, vk));
             S.b3.setCam(view.cam);
             S.curVk = vk;
             await nextFrame(); await nextFrame(); await nextFrame();
@@ -2753,7 +2804,7 @@ export function createAnnotator(host){
   }
 
   return {
-    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, importFile,
+    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, importFile, explodeChanged,
     isOn: () => S.on,
     supports: () => supported(),
   };

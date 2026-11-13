@@ -2,6 +2,69 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.36.3 — 2026-11-13 — Canvas: the Arrows / Shapes slots restyle a selection
+- **What:** with the select tool and arrows / lines (or rectangles / ellipses) selected, the Arrows
+  and Shapes rows' choices (heads / dash / line; rectangle, rounded, ellipse, filled or not) and the
+  Shapes row's fill colour now change the selected items. Before, the pick switched to drawing with
+  that tool and dropped the selection, so an arrow's heads or a shape's fill could not be edited
+  once selected. The text slot already worked this way. The rows mark the selection's own variant
+  and fill; with nothing of that kind selected, the slots behave as before.
+- **Where:** `app/static/review-draw.js` — new `groupSel`, `restyleSel`, `variantIdx`,
+  `applyVariant`, `fillSel`, `fillShown` (after `recolour`); the Arrows / Shapes slot handler and
+  its variant buttons; `setFill`; `fillButton`. The phone app gets it through `build_pwa.py`.
+- **Notes:** the rule is by kind: arrows-only selected + the Shapes slot still takes the rect tool
+  and drops the selection. A press-and-hold on the slot (550 ms) still switches tool and resets its
+  size, as the text slot does; the R / O / W keys still switch tools. `annotate.js` (desktop) is not
+  changed: its tool buttons also clear the selection in `setTool`, which was not tested here.
+  Checked in headless Chromium against the old and new file: marquee select, Filled rectangle,
+  Double arrow, green fill, Ellipse, flyout marks, the no-selection picks, a rounded rectangle
+  filled (marked as Filled rectangle), and the line-colour fill on an outlined shape.
+  Review (fresh agent): three findings, all fixed. (1) a rounded rectangle given a fill matched no
+  variant, so its flyout mark vanished: a filled one now matches Filled rectangle. (2) an outlined
+  variant left the old fill data: it now resets to a fresh outlined shape's (fill = colour, 0.2).
+  (3) the line-colour fill did nothing on outlined shapes: it now fills them; and a pick already in
+  effect no longer adds an empty undo step (`restyleSel` keeps only copies that change). Not run:
+  the radius of a Rounded pick itself (only its mark). The phone build runs in `tests.test_pwa`.
+
+## 0.36.2 — 2026-11-13 — PDF rows: pictures fill the text column
+- **What:** in both PDF reports a note's pictures were 90 pt high (70 pt for a reply's), so a 9:16
+  frame came out ~50 pt wide and four of them left the right half of the row empty. Now the
+  pictures of a row share one height, chosen so that the row spans the text column: a row takes
+  pictures while that height stays at least 120 pt (notes) / 100 pt (replies), and never goes
+  taller than 240 pt. Four phone frames to a row now come out ~118 × 209 pt each; a lone picture
+  that would be taller than 240 pt is capped there and stops short of the right edge.
+- **Where:** `app/review.py` `_pic_rows(pics, max_h, min_h, indent)` (called from `build_pdf`);
+  `mobile/js/report.js` `toPdf` → `rows(list, x0, width, maxH, minH)`.
+- **Notes:** supersedes the fixed 90 / 70 pt row heights of 0.36.0 and 0.36.1 (row heights now
+  vary by the row's pictures). Cover and captions unchanged; the HTML reports are unchanged.
+  Checked by rendering a sample desktop PDF (portrait and landscape frames, a reply) and the phone
+  PDF from the `tests/test_pwa.py` round trip; `tests.test_pwa`, `tests.test_review_page` and
+  `tests.test_merge_parity` pass. Not yet reviewed by a fresh agent.
+
+## 0.36.1 — 2026-11-13 — PDF rows: within the text column; captions in two lines under their picture
+- **What:** fixes from the fresh-agent review of 0.36.0. Sight's PDF: rows (and the cover, as
+  before) ran ~11 pt past the text column into the right margin — PyMuPDF's Story lays content
+  out in x ≈ 50..545, so pictures are sized to `CONTENT_W` = 495 pt (each cell's width set: a
+  caption no longer widens a narrow picture's cell); the row height is 90 pt (three 16:9 frames
+  still fit); a caption that is not a string no longer breaks the export. Phone PDF: a caption
+  under a narrow (portrait) picture wraps to two lines instead of being cut to "Frame 1…", and
+  sits right under its own picture (not at the row's tallest).
+- **Where:** `app/review.py` (`CONTENT_W`, `_img_tag`, `_pic_rows`), `mobile/js/report.js`
+  (`rows` → `capLines`). Checked by rendering both PDFs (portrait frames with captions, 9 pictures).
+
+## 0.36.0 — 2026-11-13 — PDF reports: a note's pictures in rows
+- **What:** in both PDF reports (Sight's and the phone app's) a note's pictures — its frame / view
+  with its caption, the other frames / views it was drawn on, its screenshots — sit side by side in
+  rows, each whole, 90 pt high (three 16:9 frames to an A4 row), a small caption under each; a
+  reply's pictures likewise at 70 pt, indented. The cover stays one big picture. A note's pictures
+  now come right under its words, before its replies (as the phone's HTML report already did).
+- **Where:** `app/review.py` `_pic_rows` (one `<table>` per row: PyMuPDF's Story does not wrap a
+  table row, so the rows are packed here) used by `build_pdf`; `mobile/js/report.js` `toPdf` →
+  `rows(list, x0, width, rowH)`.
+- **Notes:** the HTML reports are unchanged (the browser lays them out). Checked by rendering both
+  PDFs to pictures (a note with three frames and a portrait screenshot, a reply with two pictures).
+  Review (fresh agent): fixes in 0.36.1.
+
 ## 0.35.5 — 2026-11-13 — Phone viewer: the incoming picture fades in as it slides
 - **What:** in the full-screen viewer the picture coming in now also comes out of transparency
   (0 → 1) while it slides, as the outgoing one fades out — it no longer shows up fully opaque at

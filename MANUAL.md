@@ -101,7 +101,10 @@
     Approved* rows that filter the library.
   - **Turn / mirror the view** — `Shift+R` turns a picture or video by 90°, the mirror button at
     the top of the viewer (`Shift+M`) mirrors it; Sight remembers it per file. Only the
-    view changes: the file and the drawings on it stay as they are.
+    view changes: the file and the drawings on it stay as they are. Mirror and the annotate
+    button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
+  - **Turn by hand** — Alt+drag on a picture or video turns it about its centre, to any angle; hold
+    Shift to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
     first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them
@@ -117,8 +120,13 @@
     when it was made: a change of hidden meshes starts a new view, and going back to a view shows its
     meshes as they were. Orbiting away hides the drawings; the numbered *Views* chips at the top of the
     panel, or a click on the note, bring the camera, settings and meshes back. The chips and the
-    pictures of a note are numbered in the order the views were made. While annotating, left-drag on
-    empty space with the select tool orbits.
+    pictures of a note are numbered in the order the views were made. A note's pictures are stills taken
+    once per view: turning the light or the shading does not redraw them (the drawings on them do follow
+    the view). Explode belongs to the view too: moving the explode slider (or Ctrl+right-drag) at a view
+    with drawings sets that view's explode, and going to the view again puts it back. A new drawing keeps
+    the explode it was made at; an older one has none. While annotating, left-drag on
+    empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
+    camera too — the wheel and right-drag — as they do to images, video, text and version compare.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
     a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; each video frame is captioned with its file name and frame number, e.g. "clip.mp4 · frame 24", and carries the frame number in its top-left corner), *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
@@ -346,7 +354,8 @@
 - **Mask and corner radius** — the ◱ button in the full-screen preview's top bar opens a popover:
   pick a mask (16:9, 4:3, 1:1, 9:16, … or Circle) to clip the preview to a frame of that shape, and
   set the frame's corner radius. "Full" with radius 0 is the plain edge-to-edge preview. Works for
-  images, video and 3D models alike; the choice is saved with the theme.
+  images, video and 3D models alike; the choice is saved with the theme. With a radius set, the corner
+  icons (info, 3D gear, video strip) move in from the corners so the rounding does not cut them.
 - **Settings are remembered** — every option (Settings panel, 3D viewer rig, saved camera views,
   tile size, inspector/sidebar sections) and the app window's position, size and maximized state
   are saved to `settings.json` in the Sight data folder (`~/.sight`, or `SIGHT_HOME`) and come
