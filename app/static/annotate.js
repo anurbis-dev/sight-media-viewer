@@ -493,7 +493,9 @@ export function createAnnotator(host){
       if (Array.isArray(c.hidden) && (v.hidden == null || it.kind === "note")) v.hidden = c.hidden;
       // A note's display settings win over a drawing's bare camera (the last note's, as before).
       if (it.kind === "note" && c.v3d) v.v3d = c.v3d;
-      if (typeof c.explode === "number" && at >= v.explodeAt){ v.explode = c.explode; v.explodeAt = at; }
+      // A note from before 0.42 has no row explode, but the viewer settings it was written with carry its amount.
+      const e = typeof c.explode === "number" ? c.explode : (it.kind === "note" && typeof c.v3d?.explode === "number" ? c.v3d.explode : undefined);
+      if (e !== undefined && at >= v.explodeAt){ v.explode = e; v.explodeAt = at; }
     }
     for (const v of made.values()){
       const r = EXPL.get(v.vk);
@@ -512,8 +514,15 @@ export function createAnnotator(host){
   // here; restoring a view or a note sets the amount without calling this.
   function explodeChanged(val){
     if (!S.b3 || typeof val !== "number") return;
-    const vk = findVk(curCam(), curHidden());
+    // The current view when it is the camera's (two views may share a camera, one per amount), else the camera's.
+    const cam = curCam(), hid = curHidden();
+    // No current view (the slider is on no view's amount): nothing to move, and a view is not picked by camera
+    // alone, which would give it the new amount.
+    const vk = viewMatches(S.views.get(S.curVk), cam, hid) ? S.curVk : null;
     if (!vk || viewCommitted(vk)) return;
+    // The amount is another view's already (same camera): the slider moves onto that view, this one keeps its own.
+    const other = findVk(cam, hid, val);
+    if (other && other !== vk) return;
     const at = Date.now();
     EXPL.set(vk, { v: val, at });
     const v = S.views.get(vk);
@@ -563,10 +572,19 @@ export function createAnnotator(host){
   // Two mesh states match; an unknown one (null) matches any.
   const sameHidden = (a, b) => a == null || b == null || (a.length === b.length && a.every((x, i) => x === b[i]));
   const viewMatches = (v, cam, hid) => !!v && camMatch(cam, v.cam) && sameHidden(v.hidden, hid);
-  function findVk(cam, hid = curHidden()){
+  // Another explode amount is another view: a view with no amount (or a call with none) matches any.
+  const explodeSame = (v, ex) => v.explode == null || typeof ex !== "number" || Math.abs(v.explode - ex) < EXP_TOL;
+  // `ex` is the explode amount to match; undefined matches the camera and meshes only.
+  // An exact amount wins over a view with no amount (a legacy one), whatever the order they were made in.
+  function findVk(cam, hid = curHidden(), ex){
     if (!cam) return null;
-    for (const v of S.views.values()) if (viewMatches(v, cam, hid)) return v.vk;
-    return null;
+    let loose = null;
+    for (const v of S.views.values()){
+      if (!viewMatches(v, cam, hid) || (ex !== undefined && !explodeSame(v, ex))) continue;
+      if (ex === undefined || v.explode != null) return v.vk;
+      if (loose == null) loose = v.vk;
+    }
+    return loose;
   }
   // The context a new object gets right now. `make` is set only where an object is really created:
   // showing the context (the panel's pending line, which runs on every camera move) must not register
@@ -581,18 +599,20 @@ export function createAnnotator(host){
       const cam = curCam();
       if (!cam) return null;
       const hid = curHidden();
+      // A view is a camera, its hidden meshes and an explode amount: a new row at another amount is another view.
+      const live = host.getV3D?.() || null;
+      const ex = typeof live?.explode === "number" ? live.explode : undefined;
       const cur = S.views.get(S.curVk);
-      let vk = viewMatches(cur, cam, hid) ? S.curVk : findVk(cam, hid);
+      let vk = viewMatches(cur, cam, hid) && explodeSame(cur, ex) ? S.curVk : findVk(cam, hid, ex);
       if (!vk){
         if (!make) return { vk: null, cam };
-        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, explode: null, explodeAt: 0, created: Date.now() }); S.curVk = vk;
+        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, explode: ex ?? null, explodeAt: 0, created: Date.now() }); S.curVk = vk;
       }
       const view = S.views.get(vk);
       const c = { vk, cam: view.cam };
       if (view.hidden) c.hidden = view.hidden;
       // A new row records the explode it was made at (old rows have none, and keep none).
-      const live = host.getV3D?.() || null;
-      if (typeof live?.explode === "number") c.explode = live.explode;
+      if (ex !== undefined) c.explode = ex;
       if (forNote) c.v3d = live;
       return c;
     }
@@ -2198,9 +2218,13 @@ export function createAnnotator(host){
       S.items.set(note.id, note);
       for (const it of linked){
         it.data.note = note.id;
-        // A drawing not yet added on this view is drawn over the picture the note is made at (the slider's
-        // amount now), so it takes that amount; the drawings of other views keep theirs.
-        if (ctx?.explode != null && it.data.ctx?.vk === ctx.vk) it.data.ctx.explode = ctx.explode;
+        // A drawing not yet added, on the note's camera and meshes, is drawn over the picture the note is made
+        // at: it takes the note's view and the amount now (drawings of other cameras keep theirs).
+        const pv = it.data.ctx ? S.views.get(it.data.ctx.vk) : null;
+        if (ctx && pv && camMatch(pv.cam, ctx.cam) && sameHidden(pv.hidden, ctx.hidden ?? null) && explodeSame(pv, ctx.explode)){
+          it.data.ctx.vk = ctx.vk;
+          if (ctx.explode != null) it.data.ctx.explode = ctx.explode;
+        }
       }
     });
     S.pending = [];
@@ -2288,11 +2312,14 @@ export function createAnnotator(host){
     if (v) sig += "|" + v.currentTime.toFixed(3);
     if (S.b3){
       const cam = curCam(), hid = curHidden();
-      const vk = S.drag ? S.curVk : findVk(cam, hid);
+      const ex = host.getV3D?.()?.explode;
+      const vk = S.drag ? S.curVk : findVk(cam, hid, typeof ex === "number" ? ex : undefined);
       if (vk !== S.curVk && !S.drag){ S.curVk = vk; renderViews(); }
       if (cam) sig += "|" + cam.p.map((x) => x.toFixed(4)).join(",") + "|" + cam.t.map((x) => x.toFixed(4)).join(",");
       // A mesh shown or hidden (H, Ctrl+H, Alt+H) moves to another view like a camera move does.
       sig += "|h" + (hid ? hid.join(",") : "-");
+      // The explode amount too: a view at another amount is another view (its drawings hide until it is the current one).
+      sig += "|e" + (typeof ex === "number" ? ex.toFixed(4) : "-");
     }
     if (sig !== S.lastSig){
       S.lastSig = sig;

@@ -14,6 +14,37 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.44.2 — 2026-11-13 — A new note at another explode is a new view
+- **What:** a view is a camera, its hidden meshes and an explode amount (within 0.001). A note or drawing made at
+  an explode different from the view it is on (the view has added notes, so the slider cannot move it) gets a new
+  view with its own chip, instead of joining the old one. Before, the new note took the old view and its picture
+  showed the old amount. Drawings not yet added on the same camera and meshes move to the new note's view when the
+  note is added, so they take its amount.
+- **Where:** `app/static/annotate.js` — `explodeSame` (new), `findVk(cam, hid, ex)` (matches the amount when given),
+  `ctxNow` (the live amount decides the view; a new view's stub carries it), `explodeChanged` (the current view
+  first, so two views on one camera do not swap), `addNote` (pending drawings on the same camera and meshes take the
+  note's view and amount), the render path (`findVk` with the live amount; the amount is in the redraw signature, so
+  a view at another amount hides its drawings until it is current). `MANUAL.md`, `docs/FORMAT.md`. `app/version.py`.
+- **Notes:** the drawings of a committed view hide while the slider is at another amount (they belong to the amount
+  they were made at); they show again when the slider goes back, or when the chip goes there. A drawing drawn on the
+  view before the slider moved, then added with the note, goes to the note's view (the new one) — its overlay was
+  drawn at the slider's amount then. The file format is unchanged (rows already carry `explode` and `vk`). Not tested
+  in a browser: checked by reading the code and `node --check`.
+  Review 1 (fresh agent, whole block): confirmed, fixed: the slider could give a view the amount another view on the
+  same camera already had (the drawing then stranded on a hidden view) — the slider now stops at that view; an
+  addNote adoption ignored the drawing's own amount (it could move a drawing of another amount into an old note's
+  view) — now it also needs the same amount; a legacy view (no row explode) now takes its notes' `v3d.explode`
+  instead of matching any amount. Left as is (low): a drawing with a hidden-mesh state unknown (null) is adopted
+  by any note on its camera; an empty stub view left in the session is dropped at the next rebuild.
+  Review 2 (fresh agent, the fixes): no new bug in the fixes. Confirmed, fixed: with no current view the slider
+  gave the first view on the camera the new amount (a jump), so now it moves nothing; `findVk` prefers an exact
+  amount over a view with no amount (a legacy one). Known, left: (a) a legacy note newer than a view's last row now
+  sets the view's amount on load (newest wins, as in 0.42); (b) on open the saved slider amount is live, so a view
+  whose camera matches but whose amount differs is not current until its chip is clicked; (c) a drawing that was
+  hidden at add time (its view at another amount) is attached to the note but keeps its own view, so it shows
+  with the "other views" count, not on the note's own picture. The last small fixes were checked by the author
+  (`node --check`, unit tests) and not re-reviewed by a fresh agent.
+
 ## 0.44.1 — 2026-11-13 — Explode: added notes keep their explode; the slider moves only the work not yet added
 - **What:** moving the 3D explode slider (or Ctrl+right-drag) no longer changes an added note, its pictures or its
   exports. A note's pictures and exports use the explode it was added at; clicking the note goes back to that
@@ -274,31 +305,3 @@ Add new entries directly below this line.
   composing) to 0 after Add and after Enter; hovering a card shows its drawings; no page errors. The phone
   app (`mobile/`, `.review.clean`) was not changed and was not checked for the same symptom. Not committed.
   The fresh-agent review that CLAUDE.md asks for was not run (no subagent was requested).
-
-## 0.38.0 — 2026-11-13 — Old video the browser cannot decode plays through a converted copy
-- **What:** old .mpg / .mpeg / .vob (MPEG-1/2 program streams), DivX / Xvid, MS-MPEG4, WMV, FLV, H.263,
-  Cinepak, MJPEG, DV, Huffyuv, SVQ1 and any other video the browser gives no picture for now open: the
-  lightbox shows "Converting for playback… N%", the server converts a copy once with ffmpeg (H.264 + AAC
-  in MP4; VP9 + Opus in WebM when the ffmpeg has no x264), and the video plays from that copy. A file that
-  cannot be converted shows "Cannot play this file: <ffmpeg's last line>". Copies are kept under
-  `thumbs/video/` and served from then on, so the next open needs no conversion.
-- **Where:** `app/library.py` — "playback copies" section before `_decode_peaks` (`playback_path`,
-  `playback_status`, `start_playback_copy`, `_run_playback_copy`, `_play_encoder`); `_migrate_asset` moves
-  copies on a rename; both delete paths drop them. `app/server.py` — `/api/file/{id}`, `/api/video/focus`
-  and `/api/video/cache` read `lib.playback_path(a)`; new `POST` / `GET /api/video/transcode`.
-  `app/static/video-playable.js` (new: `convertForPlayback`); `index.html` (`watchPlayable`, called from
-  `startVideoCache`); `annotate.js` (the note-preview player's first load); `compare.js` (video layers).
-  `tests/test_playback_copy.py`. `MANUAL.md`, `app/version.py`.
-- **Notes:** the copy is named `<aid>_<size>_<mtime_ns>.<ext>`: a changed source is never served a stale
-  copy, and the next conversion removes the older ones. One conversion runs at a time (`_play_slot`);
-  the status is kept in `_play_jobs` per asset and a failed one is tried again on the next open. The
-  fallback fires on a player error or when metadata arrives with no `videoWidth` (so an audio-only
-  "video" is converted too, harmlessly). Files the browser plays are never converted. Deinterlacing
-  (`yadif`, only frames flagged interlaced) and even dimensions are part of the conversion. The
-  copy is the thing the SlidingVideoCache window runs on, so `focus` / `cache` take the copy's path.
-  Checked: every codec in the probe set converted to H.264 and played in Playwright's Chromium through
-  `/api/file/` (`ffprobe` shows h264 + aac); the lightbox was driven end to end on an MPEG-2 file with its
-  copy removed (error → conversion → picture + playhead moving) and on a non-video .mpg (error message).
-  Not checked: the note-preview player and the compare overlay with a converted file (their code is the
-  same pattern but not driven in a browser), Safari / Firefox / Windows Chrome. The per-block review by a
-  fresh agent that CLAUDE.md asks for was not run (no subagent was requested in this session). Not committed.

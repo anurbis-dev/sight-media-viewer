@@ -2,6 +2,34 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.38.0 — 2026-11-13 — Old video the browser cannot decode plays through a converted copy
+- **What:** old .mpg / .mpeg / .vob (MPEG-1/2 program streams), DivX / Xvid, MS-MPEG4, WMV, FLV, H.263,
+  Cinepak, MJPEG, DV, Huffyuv, SVQ1 and any other video the browser gives no picture for now open: the
+  lightbox shows "Converting for playback… N%", the server converts a copy once with ffmpeg (H.264 + AAC
+  in MP4; VP9 + Opus in WebM when the ffmpeg has no x264), and the video plays from that copy. A file that
+  cannot be converted shows "Cannot play this file: <ffmpeg's last line>". Copies are kept under
+  `thumbs/video/` and served from then on, so the next open needs no conversion.
+- **Where:** `app/library.py` — "playback copies" section before `_decode_peaks` (`playback_path`,
+  `playback_status`, `start_playback_copy`, `_run_playback_copy`, `_play_encoder`); `_migrate_asset` moves
+  copies on a rename; both delete paths drop them. `app/server.py` — `/api/file/{id}`, `/api/video/focus`
+  and `/api/video/cache` read `lib.playback_path(a)`; new `POST` / `GET /api/video/transcode`.
+  `app/static/video-playable.js` (new: `convertForPlayback`); `index.html` (`watchPlayable`, called from
+  `startVideoCache`); `annotate.js` (the note-preview player's first load); `compare.js` (video layers).
+  `tests/test_playback_copy.py`. `MANUAL.md`, `app/version.py`.
+- **Notes:** the copy is named `<aid>_<size>_<mtime_ns>.<ext>`: a changed source is never served a stale
+  copy, and the next conversion removes the older ones. One conversion runs at a time (`_play_slot`);
+  the status is kept in `_play_jobs` per asset and a failed one is tried again on the next open. The
+  fallback fires on a player error or when metadata arrives with no `videoWidth` (so an audio-only
+  "video" is converted too, harmlessly). Files the browser plays are never converted. Deinterlacing
+  (`yadif`, only frames flagged interlaced) and even dimensions are part of the conversion. The
+  copy is the thing the SlidingVideoCache window runs on, so `focus` / `cache` take the copy's path.
+  Checked: every codec in the probe set converted to H.264 and played in Playwright's Chromium through
+  `/api/file/` (`ffprobe` shows h264 + aac); the lightbox was driven end to end on an MPEG-2 file with its
+  copy removed (error → conversion → picture + playhead moving) and on a non-video .mpg (error message).
+  Not checked: the note-preview player and the compare overlay with a converted file (their code is the
+  same pattern but not driven in a browser), Safari / Firefox / Windows Chrome. The per-block review by a
+  fresh agent that CLAUDE.md asks for was not run (no subagent was requested in this session). Not committed.
+
 ## 0.37.1 — 2026-11-13 — 3D: camera positions no longer become "View N" while orbiting
 - **What:** with a 3D model open and annotation on, moving the camera (orbit, zoom) added a "View N" entry
   to the panel's view chips and to the pending line for every camera position it passed, with no drawing

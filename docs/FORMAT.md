@@ -170,6 +170,9 @@ The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `pri
   not change a view that holds an added note or a drawing attached to one (0.44.1). A note's own pictures and
   exports use the `explode` of its own rows on that view (an older note, with none, uses the `v3d.explode` it was
   written with), so two notes on one view may show two amounts.
+  **0.44.2 (UI rule, not in the file):** a view is a camera, its hidden meshes and an explode amount (within
+  0.001). A new row made at another amount is another view, so it gets its own `vk`; the same camera can have
+  several views.
 - A drawing made later on a note's frame (a reply's drawing on the HTML page / in the app) takes
   that note's place: video `{t, hold}` copied from the note, 3D `{vk, cam}` of the note's view; a
   new note drawn on another note's frame copies that note's whole `ctx`. **0.29+:** a reply on a

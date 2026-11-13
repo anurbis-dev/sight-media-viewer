@@ -125,7 +125,9 @@
     the view). Explode is kept too: a note's pictures and exports stay at the explode it was added at, and
     clicking the note goes back to that explode. Moving the explode slider (or Ctrl+right-drag) changes only
     the view you are on while it holds no added note; a drawing not yet added takes the slider's amount when
-    its note is added. Going to a view by its chip puts the view's explode back. An older drawing has none.
+    its note is added. If the view already has added notes, the slider cannot move it, so a new note made at
+    the changed explode starts a new view with its own chip. Going to a view by its chip puts the view's
+    explode back. An older drawing has none.
     While annotating, left-drag on
     empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
