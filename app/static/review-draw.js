@@ -258,9 +258,10 @@ var SightReviewDraw = (function(){
       var fb = tbtn("Fill colour", ico(fillIco()), function(){
         if (sub && sub.k === "fill"){ closeSub(); return; }
         var same = tbtn("Fill: the line's colour", ico('<rect x="4" y="6" width="16" height="12" rx="2" fill="' + RC.esc(pen.color) + '" fill-opacity=".35" stroke="' + RC.esc(pen.color) + '"/>'), function(){ setFill(null); });
-        same.classList.toggle("on", !pen.fill);
+        var fs = fillShown();
+        same.classList.toggle("on", fs === null);
         subRow("fill", fb, [same].concat(TEXT_COLORS.map(function(c){
-          var sw = el("button", "swc" + (pen.fill === c ? " on" : "")); sw.type = "button"; sw.style.background = c; sw.dataset.c = c;
+          var sw = el("button", "swc" + (fs === c ? " on" : "")); sw.type = "button"; sw.style.background = c; sw.dataset.c = c;
           sw.title = "Fill " + c; sw.setAttribute("aria-label", sw.title);
           sw.onclick = function(){ setFill(c); };
           return sw;
@@ -272,7 +273,10 @@ var SightReviewDraw = (function(){
     function setFill(c){
       pen.fill = c;
       if (c && !SHAPES[pen.shape].fill) pen.shape = SHAPES[pen.shape].tool === "ellipse" ? 4 : 3;
-      savePen(); closeFly(); setTool(SHAPES[pen.shape].tool);
+      savePen(); closeFly();
+      // Selected shapes: the colour fills them (null = the line's own, for those already filled).
+      if (restyleSel("shapes", function(n){ fillSel(n.data, c); })) return;
+      setTool(SHAPES[pen.shape].tool);
     }
     function openSub(x, anchor){
       var cur = textNow();
@@ -333,14 +337,20 @@ var SightReviewDraw = (function(){
           return;
         }
         if (!grp){ closeFly(); setTool(on ? null : s); return; }
-        if (on && fly && fly.slot === s){ closeFly(); setTool(null); return; }
-        if (!on) setTool(slotTool(s));
+        // With the transform tool and such items selected, the slot's choices restyle them (as the
+        // text slot's do for texts): the tool stays, and the flyout shows the selection's variant.
+        var inSel = groupSel(s).length > 0;
+        if (fly && fly.slot === s && (on || inSel)){ closeFly(); if (on) setTool(null); return; }
+        if (!on && !inSel) setTool(slotTool(s));
+        var pick = inSel ? variantIdx(s, groupSel(s)[0]) : s === "arrows" ? pen.arrow : pen.shape;
         openFly(s, b, grp.map(function(v, i){
           var vb = tbtn(v.label, ico(v.ico), function(){
             if (s === "arrows") pen.arrow = i; else pen.shape = i;
-            closeFly(); setTool(slotTool(s));
+            savePen(); closeFly();
+            if (restyleSel(s, function(n){ applyVariant(s, n, i); return true; })) return;
+            setTool(slotTool(s));
           });
-          vb.classList.toggle("on", i === (s === "arrows" ? pen.arrow : pen.shape));
+          vb.classList.toggle("on", i === pick);
           return vb;
         }).concat(s === "shapes" ? [fillButton()] : []));
       });
@@ -530,6 +540,63 @@ var SightReviewDraw = (function(){
       sel.forEach(function(it){ var n = clone(it); if (n.data.fill != null && n.data.fill === it.data.color) n.data.fill = c; n.data.color = c; map.set(it, n); });
       sel = sel.map(function(x){ return map.get(x); });  // before change(): its paint() keeps only what is in items
       change(items.map(function(x){ return map.get(x) || x; }));
+    }
+    // The selected items an Arrows (arrows, lines) / Shapes (rectangles, ellipses) slot styles, with
+    // the transform tool only; none = the slot picks its tool as before.
+    function groupSel(s){
+      if (pen.tool !== "select") return [];
+      var kinds = s === "arrows" ? ["arrow", "line"] : ["rect", "ellipse"];
+      return sel.filter(function(it){ return it.kind === "shape" && kinds.indexOf(RC.typeOf(it)) >= 0; });
+    }
+    // Restyles the selected items of slot s's kind: fn(copy) edits a copy of each and returns true
+    // when it changed it (one undo step). False when none of those is selected.
+    function restyleSel(s, fn){
+      stopAdj();
+      var g = groupSel(s);
+      if (!g.length) return false;
+      var map = new Map();
+      // Only copies that really change make a step: a pick already in effect adds none.
+      g.forEach(function(it){ var n = clone(it); fn(n); if (JSON.stringify(n) !== JSON.stringify(it)) map.set(it, n); });
+      if (map.size){
+        sel = sel.map(function(y){ return map.get(y) || y; });  // before change(): paint() keeps only what is in items
+        change(items.map(function(y){ return map.get(y) || y; }));
+      }
+      paintBar();
+      return true;
+    }
+    // The index in slot s's list (ARROWS / SHAPES) that an item matches; -1 when none does.
+    function variantIdx(s, it){
+      var d = it.data, t = RC.typeOf(it);
+      if (s === "arrows") return ARROWS.findIndex(function(v){ return t === "line" ? !!v.line : !v.line && v.h0 === d.head0 && v.h1 === d.head1 && v.dash === d.dash; });
+      // A rounded rectangle that is filled matches the filled one (no variant is both).
+      var rounded = t === "rect" && d.radius > 0 && !d.fillOn;
+      return SHAPES.findIndex(function(v){ return v.tool === t && !!v.fill === !!d.fillOn && !!v.round === rounded; });
+    }
+    // Gives a copy n of an item the variant i of slot s, as drawing it with that variant would.
+    function applyVariant(s, n, i){
+      var d = n.data;
+      if (s === "arrows"){
+        var av = ARROWS[i];
+        n.shape_kind = av.line ? "line" : "arrow";
+        d.dash = av.dash; d.head0 = av.h0; d.head1 = av.h1;
+        return;
+      }
+      var v = SHAPES[i];
+      n.shape_kind = v.tool;
+      d.radius = v.round && v.tool === "rect" ? RC.r2(14 * kNow()) : 0;
+      // As drawing gives: an outlined one has its colour as fill at 0.2 (unseen); a filled one keeps its fill.
+      if (!v.fill){ d.fillOn = false; d.fill = d.color; d.fillOpacity = 0.2; }
+      else if (!d.fillOn) fillSel(d, pen.fill);
+    }
+    // A filled shape's fill: colour c, or null = the line's own colour (lighter), as drawing gives.
+    function fillSel(d, c){ d.fillOn = true; d.fill = c || d.color; d.fillOpacity = c ? 0.6 : 0.3; }
+    // The fill the Shapes row shows: a selected shape's (null = the line's own, undefined = not
+    // filled), else the pen's.
+    function fillShown(){
+      var g = groupSel("shapes");
+      if (!g.length) return pen.fill;
+      var d = g[0].data;
+      return !d.fillOn ? undefined : d.fill === d.color ? null : d.fill;
     }
 
     // View: the picture fitted into the free area (box BW × BH local px), then zoomed, panned,

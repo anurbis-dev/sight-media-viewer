@@ -266,7 +266,10 @@ align cycles; the box (a switch: switched on, it shows its colours `TEXT_COLORS`
 that colour at 0.6; the second row: the line's own, then six colours), saved with the pen; recolouring a selection moves a fill only when it
 followed the line (saved with the pen, used by a new text); a switch also styles
 the text being typed (`edit.it.data`, restored from `edit.before` on cancel; `commitText` compares
-`styleOf`) or, with select + texts selected, those texts (copies, one undo step). While typing,
+`styleOf`) or, with select + texts selected, those texts (copies, one undo step). The Arrows / Shapes
+slots do the same with select + arrows / lines or rects / ellipses selected (`groupSel`, `restyleSel`,
+`applyVariant`, `setFill`): the choice restyles them and the tool stays select; with nothing of that
+kind selected a pick takes the tool as before. While typing,
 `mousedown` on the slot / row is prevented so the field keeps the focus (the phone keyboard), and a
 resize does not fold the row. `closeFly` hides the row at once and removes it a tick later: the
 picking click is still on its way to the host's document handlers, and a detached target reads as

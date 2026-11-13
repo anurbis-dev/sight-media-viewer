@@ -14,6 +14,30 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.36.3 — 2026-11-13 — Canvas: the Arrows / Shapes slots restyle a selection
+- **What:** with the select tool and arrows / lines (or rectangles / ellipses) selected, the Arrows
+  and Shapes rows' choices (heads / dash / line; rectangle, rounded, ellipse, filled or not) and the
+  Shapes row's fill colour now change the selected items. Before, the pick switched to drawing with
+  that tool and dropped the selection, so an arrow's heads or a shape's fill could not be edited
+  once selected. The text slot already worked this way. The rows mark the selection's own variant
+  and fill; with nothing of that kind selected, the slots behave as before.
+- **Where:** `app/static/review-draw.js` — new `groupSel`, `restyleSel`, `variantIdx`,
+  `applyVariant`, `fillSel`, `fillShown` (after `recolour`); the Arrows / Shapes slot handler and
+  its variant buttons; `setFill`; `fillButton`. The phone app gets it through `build_pwa.py`.
+- **Notes:** the rule is by kind: arrows-only selected + the Shapes slot still takes the rect tool
+  and drops the selection. A press-and-hold on the slot (550 ms) still switches tool and resets its
+  size, as the text slot does; the R / O / W keys still switch tools. `annotate.js` (desktop) is not
+  changed: its tool buttons also clear the selection in `setTool`, which was not tested here.
+  Checked in headless Chromium against the old and new file: marquee select, Filled rectangle,
+  Double arrow, green fill, Ellipse, flyout marks, the no-selection picks, a rounded rectangle
+  filled (marked as Filled rectangle), and the line-colour fill on an outlined shape.
+  Review (fresh agent): three findings, all fixed. (1) a rounded rectangle given a fill matched no
+  variant, so its flyout mark vanished: a filled one now matches Filled rectangle. (2) an outlined
+  variant left the old fill data: it now resets to a fresh outlined shape's (fill = colour, 0.2).
+  (3) the line-colour fill did nothing on outlined shapes: it now fills them; and a pick already in
+  effect no longer adds an empty undo step (`restyleSel` keeps only copies that change). Not run:
+  the radius of a Rounded pick itself (only its mark). The phone build runs in `tests.test_pwa`.
+
 ## 0.36.2 — 2026-11-13 — PDF rows: pictures fill the text column
 - **What:** in both PDF reports a note's pictures were 90 pt high (70 pt for a reply's), so a 9:16
   frame came out ~50 pt wide and four of them left the right half of the row empty. Now the
@@ -180,16 +204,3 @@ Add new entries directly below this line.
 - **Notes:** same rule as the grid (0.9 px of size per px dragged, up = bigger), 40–320 px; the
   squares grow in steps of whole columns (the row is always filled). A right click without a drag
   does nothing there (no menu in the panel). Checked with Playwright on a dev server.
-
-## 0.33.2 — 2026-11-13 — Sight: a note's pictures as small squares, as on the phone
-- **What:** in Sight's review panel a note's pictures (its frame / picture with the drawings, the
-  other frames it was drawn on, its screenshots) and a reply's (its drawing, its pictures) are one
-  grid of equal squares, four to a row, each cut to fill — no more full-width pictures.
-- **Where:** `app/static/annotate.js` — `picGrid`, `renderPanel` / `repliesHtml` use it,
-  `previewBox` (overlay `xMidYMid slice`, the box's inline aspect overridden in the grid), CSS
-  `.an-pics`.
-- **Notes:** clicks are unchanged (they key on `.an-nprev[data-pt]`, `img[data-shot]`,
-  `img[data-rshot]`, not on the container). The squares cut the picture's sides off: a drawing
-  near the edge of a wide frame may sit outside its square (a click on the note shows them all on
-  the picture).
-  Checked on a dev server with Playwright (a picture note with screenshots and a reply).

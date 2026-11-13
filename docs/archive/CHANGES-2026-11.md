@@ -2,6 +2,19 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.33.2 — 2026-11-13 — Sight: a note's pictures as small squares, as on the phone
+- **What:** in Sight's review panel a note's pictures (its frame / picture with the drawings, the
+  other frames it was drawn on, its screenshots) and a reply's (its drawing, its pictures) are one
+  grid of equal squares, four to a row, each cut to fill — no more full-width pictures.
+- **Where:** `app/static/annotate.js` — `picGrid`, `renderPanel` / `repliesHtml` use it,
+  `previewBox` (overlay `xMidYMid slice`, the box's inline aspect overridden in the grid), CSS
+  `.an-pics`.
+- **Notes:** clicks are unchanged (they key on `.an-nprev[data-pt]`, `img[data-shot]`,
+  `img[data-rshot]`, not on the container). The squares cut the picture's sides off: a drawing
+  near the edge of a wide frame may sit outside its square (a click on the note shows them all on
+  the picture).
+  Checked on a dev server with Playwright (a picture note with screenshots and a reply).
+
 ## 0.33.1 — 2026-11-12 — Phone report: replies' drawings on the reply's own pictures
 - **What:** the phone's PDF / HTML report no longer burns a reply's drawing onto the note's frame
   (nor its extra frames, nor a picture note's picture): each reply that drew gets its own pictures
