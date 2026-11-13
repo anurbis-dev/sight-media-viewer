@@ -3104,7 +3104,12 @@ function dropDeadTextures(obj){
 // fetch() with byte-count progress, for the responses no three.js loader is in charge of.
 async function fetchBufferWithProgress(url, onProgress){
   const res = await fetch(url);
-  if (!res.ok) return null;
+  if (!res.ok){
+    // The server says why in its 404 detail (e.g. the USD library is not installed): the viewer shows it.
+    let why = "";
+    try { why = (await res.json()).detail || ""; } catch {}
+    throw new Error(why || `HTTP ${res.status}`);
+  }
   const total = Number(res.headers.get("Content-Length")) || 0;
   if (!res.body || !total || !onProgress) return await res.arrayBuffer();
   const reader = res.body.getReader();
@@ -3131,11 +3136,10 @@ async function loadModel(THREE, url, ext, onProgress, aid){
   if (low === ".usdz"){
     // three.js has no USD loader — the server converts once (via the optional
     // `pxr` USD library) into a plain .glb, which GLTFLoader then renders
-    // exactly like any other glTF asset. A 404 here means the server-side
-    // conversion isn't available or failed; the caller's null check then
-    // falls back to the "open in an external viewer" placeholder.
+    // exactly like any other glTF asset. A 404 means the server-side conversion
+    // isn't available or failed; fetchBufferWithProgress throws with the server's
+    // reason, and the caller shows it.
     const data = await fetchBufferWithProgress(`/api/model-glb/${aid}`, onProgress);
-    if (!data) return null;
     const loader = await gltfLoaderWithDecoders();
     return (await loader.parseAsync(data, "")).scene;
   }
@@ -4454,7 +4458,16 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       lightEl?.classList.remove("v3d-loading");
       return;
     }
-    obj = await loadModelCached(THREE, url, ext, onModelProgress, aid);
+    try {
+      obj = await loadModelCached(THREE, url, ext, onModelProgress, aid);
+    } catch (err){
+      // Said on the plate: left alone, a failed load would keep the loading state for ever, with no reason.
+      console.warn("3D viewer", err);
+      live = false; // stops the render loop: a canvas that will not show a model needs no frames
+      el.innerHTML = `<div class="ph">${esc(low.slice(1) || "3D")} — could not open: ${esc(String(err?.message || err))}</div>`;
+      lightEl?.classList.remove("v3d-loading");
+      return;
+    }
     if (!live) return; // viewer was torn down (asset switched / lightbox closed) mid-load
     if (!obj){
       el.innerHTML = `<div class="ph">${low.slice(1) || "3D"} — open in an external viewer</div>`;

@@ -14,6 +14,47 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.37.1 — 2026-11-13 — 3D: camera positions no longer become "View N" while orbiting
+- **What:** with a 3D model open and annotation on, moving the camera (orbit, zoom) added a "View N" entry
+  to the panel's view chips and to the pending line for every camera position it passed, with no drawing
+  in it. Now a view is recorded only when a drawing or a note is made from that camera.
+- **Where:** `app/static/annotate.js` — `ctxNow(forNote, make)`: the panel's pending line calls it without
+  `make` and gets `{vk: null, cam}` (no view registered); `newItem`, paste / duplicate and `addNote` pass
+  `make = true`.
+- **Notes:** the pending line shows no view label while the camera is off every recorded view (it used to
+  show the next number). Checked with Playwright on a GLB: an orbit leaves the chips unchanged; one brush
+  stroke adds exactly one view.
+
+## 0.37.0 — 2026-11-13 — Desktop review fixes: report names and frame numbers, previews, 3D errors, usd-core install
+- **What:** (1) Phone review app on a desktop: a mouse right-click (and Ctrl-click on a Mac) is the browser's
+  own menu. The card's menu and the speed / sound controls no longer take it; a touch or pen long press
+  still opens the app's menu. (2) PDF and web-page reports name each video frame "<file> · frame N" and burn
+  "frame N" into its top-left corner (N = the number the panel shows as "f N"); a 3D view is "<file> · View N",
+  an image note "<file>". (3) Note previews of video frames: the hidden preview player is in the document, a
+  seek counts only when the player sits on the wanted time with its seek over, a frame not decoded yet is asked
+  again (three tries), and a player that fails to load is dropped and made again. (4) A 3D model that fails to
+  load shows "<ext> — could not open: <reason>" and stops its render loop (it no longer stays in the loading
+  state). A .usdz that cannot open says why: the USD library is missing (a source run prints the pip command),
+  the file is gone from disk, or it did not convert. (5) Sight.py: the first-run install of usd-core goes
+  through the runtime's own pip when uv is absent, and a failed install is logged with its last error line.
+- **Where:** `app/static/annotate.js` (`gatherReport` + `frameNo` / `frameTitle` / `viewTitle` / `bakeFrame`;
+  `pfLoad`, `pfSeek`, `pumpPF`, `resetPF`); `app/static/index.html` (`fetchBufferWithProgress` throws the
+  server's detail, `loadModel` usdz branch, `boot3d` catch); `app/server.py` (`usdz_problem(a)` as the 404
+  detail of `/api/model-glb/{aid}`, `import sys`, `importlib.util`); `Sight.py` (bootstrap usd-core install);
+  `mobile/js/app.js` (card `contextmenu`, `vdrag`); `MANUAL.md` (export captions); `app/version.py`.
+- **Notes:** not reproduced on Linux Chromium, so no change was made for: the notes panel disappearing when
+  annotating (A / the button / 3D Shift+A all keep it), a drawing covered by the frame while drawing, and the
+  Mac marquee. The preview changes are written for WebKit (the video in the document; the position check),
+  not checked on macOS. FBX display is NOT changed: the reported FBX problem is still open (the loader waits up
+  to 20 s for textures before the model is shown; no FBX sample was available here). Runtimes made before this
+  version (their `.deps-v4` marker is set) do not retry usd-core: `python -m pip install usd-core` in the
+  runtime. The draw canvas (RMB zoom) still blocks the browser menu on a right-drag, because on a Mac the menu
+  opens at press. The phone's own PDF captions (`mobile/js/report.js`) are unchanged. Review (four fresh
+  agents, one per block): fixed the keyboard menu key being taken by the card menu, the PDF label scale after
+  a downscaled frame, a seek timeout caching the old picture, the usdz reason for a missing file, and the
+  dead `null` branch; the notes that the loading state was not endless at HEAD (an outer catch existed) are
+  reflected in the wording above.
+
 ## 0.36.3 — 2026-11-13 — Canvas: the Arrows / Shapes slots restyle a selection
 - **What:** with the select tool and arrows / lines (or rectangles / ellipses) selected, the Arrows
   and Shapes rows' choices (heads / dash / line; rectangle, rounded, ellipse, filled or not) and the
@@ -180,27 +221,3 @@ Add new entries directly below this line.
 - **Notes:** a fill of its own colour is drawn at 0.6 opacity, the line's own at 0.3 (as before).
   The colour circle recolouring a selection changes a fill only when it was the line's colour (a
   fill picked on purpose stays). FORMAT.md is unchanged (`fill` was already its own field).
-
-## 0.33.4 — 2026-11-13 — Canvas: a second row for the text's box colour and font
-- **What:** on the drawing canvas (phone + HTML page) the *Text* row's box and font switches open
-  a second row above it: the box's colour (black, white, red, yellow, green, blue; 0.33.6: no
-  "no box" in it), and
-  the five fonts each shown in itself. The box switch shows the box's colour. The outline stays a
-  plain on / off switch (the user's choice: a colour row for it is not needed).
-- **Where:** `app/static/review-draw.js` — `openSub` / `closeSub` (`.dfly.dsub`, closed with
-  the row), `applyText(patch)` / `putText(d, patch)` (was one key), `TEXT0` + `bg` /
-  `outlineColor`, `FONT_IDS`, `TEXT_COLORS`, `boxIco` / `outlineIco`, `styleOf` counts the
-  colours. Tests: `textSub` in `pwa_touch.cjs` / `test_pwa.py`.
-- **Notes:** a pick folds the second row, the text row stays. The box keeps its opacity (0.6 by
-  default) whatever colour; the outline's colour is the pen's (`outlineColor`, black), not offered.
-
-## 0.33.3 — 2026-11-13 — Sight: right-drag sizes a note's pictures
-- **What:** in the review panel a right-drag up / down on the notes list makes the notes' square
-  pictures bigger / smaller, the way a right-drag zooms the library grid's thumbnails; the size is
-  kept with the settings. As many squares to a row as fit, stretched to fill it (default: four).
-- **Where:** `app/static/annotate.js` — `bindThumbZoom` (on `.an-list`), `THUMB` / `noteThumb`,
-  setting `sight.annotate.thumb` (via `writeJSON` → `host.putSetting`), CSS `.an-pics`
-  (`repeat(auto-fill, minmax(min(var(--an-thumb), 100%), 1fr))`).
-- **Notes:** same rule as the grid (0.9 px of size per px dragged, up = bigger), 40–320 px; the
-  squares grow in steps of whole columns (the row is always filled). A right click without a drag
-  does nothing there (no menu in the panel). Checked with Playwright on a dev server.

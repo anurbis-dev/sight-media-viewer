@@ -487,8 +487,10 @@ export function createAnnotator(host){
     for (const v of S.views.values()) if (camMatch(cam, v.cam)) return v.vk;
     return null;
   }
-  // The context a new object gets right now.
-  function ctxNow(forNote){
+  // The context a new object gets right now. `make` is set only where an object is really created:
+  // showing the context (the panel's pending line, which runs on every camera move) must not register
+  // a view, or each camera position would become a "View N" with no drawing in it.
+  function ctxNow(forNote, make = false){
     if (S.kind === "video"){
       const v = video();
       if (!v) return null;
@@ -498,7 +500,10 @@ export function createAnnotator(host){
       const cam = curCam();
       if (!cam) return null;
       let vk = S.curVk || findVk(cam);
-      if (!vk){ vk = uid(); S.views.set(vk, { vk, cam, v3d: null }); S.curVk = vk; }
+      if (!vk){
+        if (!make) return { vk: null, cam };
+        vk = uid(); S.views.set(vk, { vk, cam, v3d: null }); S.curVk = vk;
+      }
       const c = { vk, cam: S.views.get(vk).cam };
       if (forNote) c.v3d = host.getV3D?.() || null;
       return c;
@@ -715,7 +720,7 @@ export function createAnnotator(host){
   const nextZ = () => Math.max(0, ...[...S.items.values()].map((it) => it.z || 0)) + 1;
 
   function newItem(kind, sub, data){
-    return { id: uid(), kind, sub, z: nextZ(), data: { ...data, ctx: ctxNow(false), note: null, created: Date.now() } };
+    return { id: uid(), kind, sub, z: nextZ(), data: { ...data, ctx: ctxNow(false, true), note: null, created: Date.now() } };
   }
   function styleDoc(t){
     // Tool style converted to doc units.
@@ -1145,7 +1150,7 @@ export function createAnnotator(host){
       const n = structuredClone(it);
       n.id = uid(); n.z = nextZ() + src.indexOf(it);
       transformItem(n, it, (x, y) => [x + off, y + off]);
-      n.data.note = null; n.data.created = Date.now(); n.data.ctx = ctxNow(false) || n.data.ctx;
+      n.data.note = null; n.data.created = Date.now(); n.data.ctx = ctxNow(false, true) || n.data.ctx;
       return n;
     });
     commit(fresh.map((n) => n.id), () => { for (const n of fresh) S.items.set(n.id, n); });
@@ -1170,7 +1175,7 @@ export function createAnnotator(host){
       const n = structuredClone(it);
       n.id = uid(); n.z = nextZ() + i;
       transformItem(n, it, (x, y) => [x + off, y + off]);
-      n.data.note = null; n.data.ctx = ctxNow(false); n.data.created = Date.now();
+      n.data.note = null; n.data.ctx = ctxNow(false, true); n.data.created = Date.now();
       return n;
     });
     S.clip = fresh.map(snap);
@@ -1651,10 +1656,10 @@ export function createAnnotator(host){
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.
-  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0 };
+  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0, tries: new Map() };
   function resetPF(){
-    if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); }
-    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++;
+    if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); PF.v.remove(); }
+    PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++; PF.tries = new Map();
   }
   function previewFrame(t){
     const key = Number(t).toFixed(3);
@@ -1665,6 +1670,43 @@ export function createAnnotator(host){
     queueMicrotask(pumpPF);
     return null;
   }
+  // The player has its first picture, or `ms` has passed: a browser that does not decode the file
+  // may stay silent, and the pump must not wait on it for ever (it then stops for good).
+  function pfLoad(v, ms){
+    return new Promise((ok, no) => {
+      let to = 0;
+      const fin = (good) => { clearTimeout(to); v.removeEventListener("loadeddata", onOk); v.removeEventListener("error", onErr); good ? ok() : no(new Error("video")); };
+      const onOk = () => fin(true), onErr = () => fin(false);
+      to = setTimeout(() => fin(false), ms);
+      v.addEventListener("loadeddata", onOk);
+      v.addEventListener("error", onErr);
+    });
+  }
+  // Seeks the preview player to t and waits until that picture is presented: "seeked" can come before
+  // the new picture is decoded (WebKit), and drawImage would then copy nothing. Four seconds at most.
+  // Resolves true only when the player sits on the wanted time with its seek over. A timeout, or a
+  // "seeked" left over from an earlier seek, is no picture of t: the caller asks again instead of
+  // caching whatever picture the element still shows.
+  function pfSeek(v, t){
+    return new Promise((ok) => {
+      let to = 0, done = false;
+      const fin = (good) => {
+        if (done) return;
+        done = true;
+        clearTimeout(to);
+        v.removeEventListener("seeked", onSeeked);
+        ok(!!good && !v.seeking && Math.abs(v.currentTime - t) < 0.05);
+      };
+      const onSeeked = () => {
+        clearTimeout(to);
+        if (typeof v.requestVideoFrameCallback === "function"){ v.requestVideoFrameCallback(() => fin(true)); to = setTimeout(() => fin(true), 1500); }
+        else fin(true);
+      };
+      v.addEventListener("seeked", onSeeked);
+      to = setTimeout(() => fin(false), 4000);
+      v.currentTime = t;
+    });
+  }
   async function pumpPF(){
     if (PF.busy || !PF.want.length || !PF.aid) return;
     PF.busy = true;
@@ -1673,21 +1715,27 @@ export function createAnnotator(host){
     try {
       if (!PF.v){
         const nv = document.createElement("video");
-        nv.muted = true; nv.preload = "auto"; nv.playsInline = true; nv.src = `/api/file/${aid}`;
+        nv.muted = true; nv.preload = "auto"; nv.playsInline = true;
+        // Kept in the document, hidden as a 1 px box: a video that is not in the page is not decoded by
+        // every browser (WebKit on macOS gave no picture for its seeks), so the seeks showed nothing.
+        nv.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+        document.body.appendChild(nv);
         PF.v = nv;
-        await new Promise((ok, no) => { nv.addEventListener("loadeddata", ok, { once: true }); nv.addEventListener("error", () => no(new Error("video")), { once: true }); });
+        nv.src = `/api/file/${aid}`;
+        await pfLoad(nv, 8000);
       }
       const v = PF.v;
       while (PF.want.length && PF.gen === gen){
         const key = PF.want.shift();
-        await new Promise((ok) => {
-          let to = 0;
-          const done = () => { clearTimeout(to); v.removeEventListener("seeked", done); ok(); };
-          v.addEventListener("seeked", done);
-          to = setTimeout(done, 4000);
-          v.currentTime = landAt(Number(key));
-        });
-        if (PF.gen !== gen || !v.videoWidth) break;
+        const landed = await pfSeek(v, landAt(Number(key)));
+        if (PF.gen !== gen) break;
+        if (!landed || !v.videoWidth || v.readyState < 2){
+          // No picture yet: asked again up to three times, then left to the next render.
+          const n = (PF.tries.get(key) || 0) + 1;
+          PF.tries.set(key, n);
+          if (n < 3) PF.want.push(key);
+          continue;
+        }
         const w = Math.min(480, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
@@ -1696,7 +1744,12 @@ export function createAnnotator(host){
         PF.cache.set(key, url);
         S.ui?.querySelectorAll(`img[data-ft="${key}"]`).forEach((im) => { im.src = url; im.removeAttribute("data-ft"); });
       }
-    } catch (e){ console.warn("note frame", e); }
+    } catch (e){
+      if (PF.gen !== gen) return; // a reset ended this run; its failure is expected
+      console.warn("note frame", e);
+      // A player that failed to load is dropped (and stops fetching), so the next request makes a new one.
+      if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); PF.v.remove(); PF.v = null; }
+    }
     finally { if (PF.gen === gen) PF.busy = false; }
   }
   const liveReplies = (n) => (n.data.replies || []).filter((r) => !r.deleted);
@@ -1922,7 +1975,7 @@ export function createAnnotator(host){
     const inp = S.ui?.querySelector(".an-input");
     const text = (inp?.value || "").trim();
     if (!text && !S.pending.length && !pendingDrawings().length){ toast("Type a note, draw, or take a screenshot first"); return; }
-    const ctx = ctxNow(true);
+    const ctx = ctxNow(true, true);
     const note = { id: uid(), kind: "note", sub: null, z: 0, data: { text, author: reviewer(), created: Date.now(), status: "open", ctx, shots: S.pending.map((p) => p.id) } };
     const linked = pendingDrawings();
     commit([note.id, ...linked.map((it) => it.id)], () => {
@@ -2169,6 +2222,27 @@ export function createAnnotator(host){
   // reviewer draw on them), so it gets the cover / frames without drawings, their pixel sizes and
   // `media` (how pictures map to doc units); picture notes get no frame of their own (the page
   // shows the cover with the note's drawings).
+  // Report pictures are named by their file (and, for a video frame, the frame number: the number the
+  // panel shows as "f N"). The frame number is also burned into the picture's corner, so it stays with
+  // the picture once it is taken out of the report.
+  const frameNo = (t) => Math.round(t * S.fps);
+  const frameTitle = (a, t) => `${a.name} · frame ${frameNo(t)}`;
+  const viewTitle = (a, vk) => `${a.name} · View ${viewNumber(vk) || ""}`.trimEnd();
+  function bakeFrame(cv, t){
+    if (!cv) return;
+    const cx = cv.getContext("2d"), text = `frame ${frameNo(t)}`;
+    const fs = Math.max(14, Math.round(cv.width * 0.035)), pad = Math.round(fs * 0.4), m = Math.round(fs * 0.6);
+    cx.save();
+    // composeNative leaves its downscale on the context: draw the label in device pixels.
+    cx.setTransform(1, 0, 0, 1, 0, 0);
+    cx.font = `600 ${fs}px system-ui, sans-serif`;
+    cx.textBaseline = "top";
+    cx.fillStyle = "rgb(0 0 0 / 0.6)";
+    cx.fillRect(m, m, cx.measureText(text).width + pad * 2, fs + pad * 2);
+    cx.fillStyle = "#fff";
+    cx.fillText(text, m + pad, m + pad);
+    cx.restore();
+  }
   async function gatherReport(forPage){
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
@@ -2191,11 +2265,12 @@ export function createAnnotator(host){
         const own = (it) => it.data.note === n.id && !replyGone(it);
         if (S.b2 && !S.b2.isVid){
           // One note on a picture: its frame would just repeat the cover.
-          if (!forPage && notes.length > 1 && [...S.items.values()].some(own)) cv = composeNative(own, 1600);
+          if (!forPage && notes.length > 1 && [...S.items.values()].some(own)){ cv = composeNative(own, 1600); cap = a.name; }
         } else if (v && c?.t != null){
           await seekTo(v, landAt(c.t));
           cv = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
-          cap = "Frame " + Math.round(c.t * S.fps) + " · " + fmtTime(c.t, S.fps);
+          bakeFrame(cv, c.t);
+          cap = frameTitle(a, c.t);
         } else if (S.b3 && c?.vk){
           const view = S.views.get(c.vk);
           if (view){
@@ -2204,6 +2279,7 @@ export function createAnnotator(host){
             S.curVk = c.vk;
             await nextFrame(); await nextFrame(); await nextFrame();
             cv = composeNative(pick((it) => it.data.ctx?.vk === c.vk && !replyGone(it)));
+            cap = viewTitle(a, c.vk);
           }
         }
         frame = toJpeg(cv);
@@ -2219,7 +2295,7 @@ export function createAnnotator(host){
           for (const t of ts){
             await seekTo(v, landAt(t));
             const cm = composeNative(pick((it) => ctxShown(it)), 1600);
-            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: "Frame " + Math.round(t * S.fps) + " · " + fmtTime(t, S.fps), ctx: { t, hold: 0 } });
+            if (cm){ bakeFrame(cm, t); more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: frameTitle(a, t), ctx: { t, hold: 0 } }); }
           }
         } else if (S.b3 && c?.vk){
           for (const vk of new Set(mine.map((it) => it.data.ctx?.vk).filter((k) => k && k !== c.vk))){
@@ -2231,7 +2307,7 @@ export function createAnnotator(host){
             S.curVk = vk;
             await nextFrame(); await nextFrame(); await nextFrame();
             const cm = composeNative(pick((it) => it.data.ctx?.vk === vk && !replyGone(it)));
-            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: "View " + (viewNumber(vk) || ""), ctx: { vk, cam: view.cam } });
+            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: viewTitle(a, vk), ctx: { vk, cam: view.cam } });
           }
         }
         out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size, frameCaption: cap, more, shots: d.shots || [],

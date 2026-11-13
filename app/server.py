@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import queue
+import sys
 import time
 from pathlib import Path
 
@@ -224,6 +226,21 @@ def open_path(path: str) -> None:
             )
         return
     subprocess.Popen(["xdg-open", path])
+
+
+def usdz_problem(a: dict | None) -> str:
+    """Why a .usdz could not be turned into glTF, for the viewer's placeholder."""
+    if not a:
+        return "this file is no longer in the library"
+    if not Path(a["path"]).exists():
+        return "this file is missing from disk"
+    # find_spec only: importing pxr here would load the whole USD runtime just to explain an error.
+    importlib.invalidate_caches()  # a usd-core installed while the server runs must be seen
+    if importlib.util.find_spec("pxr") is None:
+        if getattr(sys, "frozen", False):
+            return "USDZ needs the usd-core library, which is missing from this build"
+        return f"USDZ needs the usd-core library: {sys.executable} -m pip install usd-core"
+    return "this USDZ could not be converted"
 
 
 def media_type_for(path: str) -> str | None:
@@ -552,7 +569,9 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     def model_glb(aid: str):
         p = lib.make_usdz_glb(aid)
         if not p:
-            raise HTTPException(404)
+            # The reason goes to the viewer (index.html fetchBufferWithProgress): a missing USD library and
+            # a file that does not convert look the same otherwise.
+            raise HTTPException(404, usdz_problem(lib.get_asset(aid)))
         return FileResponse(
             p,
             media_type="model/gltf-binary",

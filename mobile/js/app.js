@@ -1007,10 +1007,12 @@ function rowGestures(row, it, o){
     if (performance.now() < eatUntil){ e.stopImmediatePropagation(); e.preventDefault(); eatUntil = 0; return; }
     tapAct(!!(e.target.closest && e.target.closest(".th")));
   });
-  // Right click / the menu key: the menu. A touch's long press is the lift above, not a menu.
+  // A mouse's right click is the browser's own menu (the app does not take it on a desktop). The menu
+  // key and a touch's long press open ours; a touch's long press is the lift above, not a menu.
   it.addEventListener("contextmenu", (e) => {
+    if (lastType === "mouse" && (e.button === 2 || e.ctrlKey)) return;  // a mouse's right / Ctrl click
     e.preventDefault();
-    if (st || mode || menuT || (lastType !== "mouse" && e.button !== 2 && performance.now() - downAt < 1500)) return;
+    if (st || mode || menuT || (e.button !== 2 && performance.now() - downAt < 1500)) return;
     o.menu();
   });
   return row;
@@ -1731,10 +1733,12 @@ function paintTransport(T){
 // A vertical drag control on a small button: begin(), move(dy since the press), tap(), hold() (½ s
 // without moving). It keeps the pointer to itself (the stage / canvas under it do not see it).
 function vdrag(b, o){
-  let st = null;
+  let st = null, ptrMouse = false;
   b.style.touchAction = "none";
-  b.addEventListener("contextmenu", (e) => e.preventDefault());  // a long press is the hold, not a menu
+  // A mouse's right click keeps the browser's menu; a touch's long press is the hold, not a menu.
+  b.addEventListener("contextmenu", (e) => { if (!(ptrMouse && (e.button === 2 || e.ctrlKey))) e.preventDefault(); });
   b.addEventListener("pointerdown", (e) => {
+    ptrMouse = e.pointerType === "mouse";
     if (st || (e.pointerType === "mouse" && e.button !== 0)) return;  // one finger at a time
     e.preventDefault(); e.stopPropagation();
     st = { id: e.pointerId, x: e.clientX, y: e.clientY, drag: false, held: false, far: false };

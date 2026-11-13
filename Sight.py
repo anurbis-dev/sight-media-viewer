@@ -157,14 +157,18 @@ def bootstrap() -> None:
                 [uv, "pip", "install", "--python", str(py), "pillow-heif"],
                 capture_output=True,
             )
-            # Optional: lets the app convert .usdz models to glTF for viewing/thumbnails
-            # (see app/usdz_convert.py). Not in DEPS/PROBE — usd-core has no wheel for
-            # every platform/Python combo, and USDZ support degrading to "open
-            # externally" shouldn't take the whole app down with it.
-            subprocess.run(
-                [uv, "pip", "install", "--python", str(py), "usd-core"],
-                capture_output=True,
-            )
+        # Optional: lets the app convert .usdz models to glTF for viewing/thumbnails
+        # (see app/usdz_convert.py). Not in DEPS/PROBE — usd-core has no wheel for
+        # every platform/Python combo, and USDZ support degrading to "open
+        # externally" shouldn't take the whole app down with it. Without uv it goes
+        # through the runtime's own pip (before, a machine without uv never got it),
+        # and a failure is said rather than swallowed.
+        usd = ([uv, "pip", "install", "--python", str(py), "usd-core"] if uv
+               else [str(py), "-m", "pip", "install", "--disable-pip-version-check", "-q", "usd-core"])
+        done = subprocess.run(usd, capture_output=True, text=True)
+        if done.returncode != 0:
+            why = (done.stderr or done.stdout or "").strip().splitlines()
+            log("usd-core could not be installed (USDZ models will not open): " + (why[-1] if why else "no output"))
     if not has_deps(py):
         sys.exit("Sight runtime is missing libraries.")
     marker.write_text("ok\n", encoding="utf-8")

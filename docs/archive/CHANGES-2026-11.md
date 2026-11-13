@@ -2,6 +2,30 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.33.4 — 2026-11-13 — Canvas: a second row for the text's box colour and font
+- **What:** on the drawing canvas (phone + HTML page) the *Text* row's box and font switches open
+  a second row above it: the box's colour (black, white, red, yellow, green, blue; 0.33.6: no
+  "no box" in it), and
+  the five fonts each shown in itself. The box switch shows the box's colour. The outline stays a
+  plain on / off switch (the user's choice: a colour row for it is not needed).
+- **Where:** `app/static/review-draw.js` — `openSub` / `closeSub` (`.dfly.dsub`, closed with
+  the row), `applyText(patch)` / `putText(d, patch)` (was one key), `TEXT0` + `bg` /
+  `outlineColor`, `FONT_IDS`, `TEXT_COLORS`, `boxIco` / `outlineIco`, `styleOf` counts the
+  colours. Tests: `textSub` in `pwa_touch.cjs` / `test_pwa.py`.
+- **Notes:** a pick folds the second row, the text row stays. The box keeps its opacity (0.6 by
+  default) whatever colour; the outline's colour is the pen's (`outlineColor`, black), not offered.
+
+## 0.33.3 — 2026-11-13 — Sight: right-drag sizes a note's pictures
+- **What:** in the review panel a right-drag up / down on the notes list makes the notes' square
+  pictures bigger / smaller, the way a right-drag zooms the library grid's thumbnails; the size is
+  kept with the settings. As many squares to a row as fit, stretched to fill it (default: four).
+- **Where:** `app/static/annotate.js` — `bindThumbZoom` (on `.an-list`), `THUMB` / `noteThumb`,
+  setting `sight.annotate.thumb` (via `writeJSON` → `host.putSetting`), CSS `.an-pics`
+  (`repeat(auto-fill, minmax(min(var(--an-thumb), 100%), 1fr))`).
+- **Notes:** same rule as the grid (0.9 px of size per px dragged, up = bigger), 40–320 px; the
+  squares grow in steps of whole columns (the row is always filled). A right click without a drag
+  does nothing there (no menu in the panel). Checked with Playwright on a dev server.
+
 ## 0.33.2 — 2026-11-13 — Sight: a note's pictures as small squares, as on the phone
 - **What:** in Sight's review panel a note's pictures (its frame / picture with the drawings, the
   other frames it was drawn on, its screenshots) and a reply's (its drawing, its pictures) are one
