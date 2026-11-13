@@ -727,9 +727,19 @@ function closeOpenRow(except){ if (openRow && openRow !== except){ openRow.shut(
 function reviewRow(m, grp){
   if (grp) return groupHead(grp);
   const row = el("div", "row"), it = btn("item", null, null), th = el("span", "th"), tx = el("span", "tx");
-  const hideB = btn("sw hide", null, () => { const h = hiddenKeys(); h.add(m.key); setHidden(h); openRow = null; renderHome(); toast("Hidden for now — Show under the list brings it back", 2400); }, "Hide for now");
+  // On a picked review the uncovered actions do it to every picked one (they slid together).
+  const hideB = btn("sw hide", null, () => {
+    const ks = homeSel.has(m.key) ? pickedInOrder() : [m.key], h = hiddenKeys();
+    ks.forEach((k) => h.add(k)); setHidden(h); if (homeSel.has(m.key)) homeSel.clear(); openRow = null; renderHome();
+    toast(ks.length > 1 ? `${ks.length} hidden for now — Show under the list brings them back` : "Hidden for now — Show under the list brings it back", 2400);
+  }, "Hide for now");
   hideB.innerHTML = ico("eyeoff", 22);
-  const delB = btn("sw del", null, () => { row._shut(); deleteReview(m); }, "Delete this review");
+  const delB = btn("sw del", null, async () => {
+    row._shut();
+    if (!homeSel.has(m.key)){ deleteReview(m); return; }
+    const all = await DB.all("reviews").catch(() => []);
+    deleteReviews(all.filter((x) => homeSel.has(x.key)));
+  }, "Delete this review");
   delB.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TRASH}</svg>`;
   row.appendChild(hideB); row.appendChild(delB); row.appendChild(it);
   row.dataset.key = m.key;
@@ -803,7 +813,11 @@ function rowGestures(row, it, o){
     it.style.transform = x ? `translateX(${x}px)` : "";
     row.classList.toggle("l", x > 0); row.classList.toggle("r", x < 0);
   };
-  function shut(){ place(0, true); if (openRow === ctl) openRow = null; }
+  // A picked review slides with the other picked ones (each placed the same way).
+  const peers = () => homeSel.has(row.dataset.key) ? [...document.querySelectorAll(".list .row.sel")].filter((r) => r !== row && r._place) : [];
+  const placeAll = (x, anim) => { place(x, anim); peers().forEach((r) => r._place(x, anim)); };
+  function shut(){ placeAll(0, true); if (openRow === ctl) openRow = null; }
+  row._place = place;
   const ctl = { shut, row };
   // st: the pointer in play; mode: null | "swipe" | "move"; eatUntil: the click a gesture ends with
   // is not a tap; menuT: the menu of a hold let go without moving, opened by that click (or a
@@ -928,8 +942,8 @@ function rowGestures(row, it, o){
     if (m0 === "swipe"){
       const x = off;
       end();
-      if (x <= -W * 0.6){ place(-W, true); openRow = ctl; }
-      else if (x >= W * 0.6){ place(W, true); openRow = ctl; }
+      if (x <= -W * 0.6){ placeAll(-W, true); openRow = ctl; }
+      else if (x >= W * 0.6){ placeAll(W, true); openRow = ctl; }
       else shut();
       return;
     }
@@ -975,7 +989,7 @@ function rowGestures(row, it, o){
     if (mode === "swipe"){
       let x = st.off + dx;
       if (Math.abs(x) > W) x = Math.sign(x) * (W + (Math.abs(x) - W) * 0.3);  // past the action: resists
-      place(x);
+      placeAll(x);
       return;
     }
     // Moving starts only past the jitter of a finger held for the menu (and only then scrolls).
@@ -1649,7 +1663,7 @@ function jumpNote(dir){
   if (t == null){ toast(dir > 0 ? "No later marker" : "No earlier marker"); return; }
   seekTo(t);
   // Landed on a note's own frame: that note is selected (its card brought into view).
-  const n = !composing() && listedNotes().find((x) => x.data.ctx && x.data.ctx.t != null && frameKey(x.data.ctx.t) === frameKey(t));
+  const n = !composing() && !R.drawS && listedNotes().find((x) => x.data.ctx && x.data.ctx.t != null && frameKey(x.data.ctx.t) === frameKey(t));
   if (n){ R.curNote = n.id; paintCurrent(); const c = els && els.notes.querySelector(`.note[data-id="${n.id}"]`); if (c) c.scrollIntoView({ block: "nearest" }); }
 }
 // Transports on screen: the player's, and the drawing canvas's while a video is drawn on.
@@ -1834,7 +1848,7 @@ function paintSnd(T){
   if (T.snd.dataset.st === name + none + volLevel) return;
   T.snd.dataset.st = name + none + volLevel;
   T.snd.classList.toggle("none", none);
-  T.snd.title = none ? "This clip has no sound" : `Volume ${Math.round(volLevel * 100)} %: drag up / down · tap: full`;
+  T.snd.title = none ? "This clip has no sound" : `Volume ${Math.round(volLevel * 100)} %: drag up / down from here · tap: full / mute`;
 }
 // The level while it is set: a thin bar at the screen's left edge, gone a moment after.
 let volBar = null, volBarT = null;
@@ -2154,10 +2168,12 @@ function paintCurrent(){
 }
 // A tap on a note's card (not on its buttons / pictures / fields): it is selected and the player
 // goes to the first frame its drawing is on (else its own frame); at = a frame of it to go to.
+// While a note / reply is being written the player stays where it is (a new note goes on the frame
+// on screen; a reply keeps its note): nothing moves, nothing is selected.
 function selectNote(n, at){
-  if (!R) return;
+  if (!R || composing()) return;
   R.curNote = n.id;
-  if (R.video && kindNow() === "video"){ const t = at != null ? at : threadFrames(n)[0]; if (t != null) seekTo(t); }
+  if (R.video && kindNow() === "video"){ const t = at != null ? at : noteFrameList(n)[0]; if (t != null) seekTo(t); }  // its own drawings' frames, not its replies'
   paintCurrent();
 }
 
@@ -2230,7 +2246,12 @@ function noteCard(n){
   const id = n.id, st = M.noteState(n), c = n.data.ctx, kind = kindNow();
   const card = el("div", "note " + st);
   card.dataset.id = id;
-  card.addEventListener("click", (e) => { if (!e.target.closest("button, a, input, textarea, label, .fw, .cmp, .x")) selectNote(n); });
+  card.addEventListener("click", (e) => {
+    if (e.target.closest("button, a, input, textarea, label, .fw, .cmp, .x")) return;
+    const sl = window.getSelection && getSelection();
+    if (sl && !sl.isCollapsed && card.contains(sl.anchorNode)) return;  // a text selection made / dropped, not a tap
+    selectNote(n);
+  });
   if (kind === "video" && c && c.t != null) card.dataset.t = String(c.t);
   const h = el("div", "nh");
   h.appendChild(el("span", "num", String(NUM.get(id) || "")));
@@ -3240,6 +3261,7 @@ function showNote(n, at){
   const c = n.data.ctx, t = at != null ? at : c && c.t;
   R.curNote = n.id;
   if (R.video && t != null) seekTo(t);
+  paintCurrent();
   const card = els && els.notes.querySelector(`.note[data-id="${n.id}"]`);
   if (card) card.scrollIntoView({ block: "nearest" });
 }

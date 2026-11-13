@@ -2,6 +2,46 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.30.0 — 2026-11-12 — Phone: review groups, tool opacity on the hold, auto full screen
+- **What:** (1) Home: a review held, dragged onto the middle of another one (it lights up) and let
+  go makes a group of the two (named by the names' common start, else "Group"); more go onto the
+  group's header. The header opens / closes on a tap, moves the whole group on hold + drag, and
+  its menu has *Open / Close*, *Rename…*, *Ungroup*; a member's menu has *Take out of the group*.
+  (2) Drawing canvas (phone + HTML page): press and hold with a tool, drag sideways = that tool's
+  opacity (up / down is still the size); the preview reads "6 px · 70 %"; a hold on the tool's
+  button resets both. (3) Settings → *Full screen*: Auto (default) / Off — Auto goes full screen
+  at the first tap in a browser tab that can, and again after the user leaves it.
+- **Where:** `mobile/js/app.js` — `loadGroups` / `saveGroups` / `tidyGroups` / `groupName` /
+  `groupOnto` / `ungroupOne` / `groupMenu` / `setGroup` / `groupRow` / `groupHead`, `reviewRow` split
+  into content + `rowGestures(row, it, o)` (drop target `.drop`, group `.folded`), `renderHome`
+  entries (reviews + `"g:<id>"`), `reviewMenu`; full screen `fsCan` / `enterFS` / `exitFS` /
+  `setFsAuto` / `fsTap`, `settings()`; `mobile/index.html` (`.row.group`, `.gm`, `.th.four`,
+  `.chev`, `.drop`, `.seg.fs`); `app/static/review-draw.js` (`OPAC0` / `OPAC`, `adjMove` axis for
+  tools, `showSize` label, new items' opacity, pen `opac`). Tests: `pwa_touch.cjs` (`opac`,
+  `brushReset`, `dropLit` / `group`, `fullscreen`).
+- **Notes:** groups and order are per device (localStorage), like the order; a review is in one
+  group at most; a group needs two existing reviews (`tidyGroups` dissolves the rest each
+  render). Only a review on its own can be dropped (no nesting; a member leaves by its menu). The
+  size hold now waits for 10 px to pick its axis (as the selection hold did). iPhone Safari has no
+  page full screen and iPad Safari limits typing in it, so iOS tabs do not try (the setting says
+  why); the installed app is full screen already; a tap that opens the file picker
+  (`label`, `[data-nofs]`) or a text field never asks.
+- **Review (fresh agents):** opacity hold — no bugs (a redundant save removed; the text field
+  while typing does not show the text opacity, left). Groups — fixed: the saved order
+  missed entries never moved by hand, so a new group (and a review taken out / a dissolved group's
+  last one) landed after them, not in the target's place — the home list now saves its whole
+  order on each render; a group with every member hidden lost its slot on a reorder (`saveOrder`
+  keeps `g:` keys); a member reorder moved hidden members to the end; *Ungroup* used a stale member
+  order; names lost a trailing "v" / stopped mid-word (`groupName`); a sideways mouse drag on a
+  header toggled it; "1 reviews". Left: rows of very different heights (an open group) shift by
+  the held row's height, so near an open group the drop light / slide can feel uneven.
+  Full screen — fixed: the clip button (opens the picker) asked for full screen; a mouse asked on
+  pointerdown (the page resized mid-click); any pointerup asked, also after a scrub, a drag, a hold
+  or with more fingers down (now only a plain one-finger tap); text fields asked (iPad limits
+  typing in full screen: iOS is left out altogether); Android's back leaves full screen first and
+  the next tap went straight back in, so every back press was eaten (now it stays off until the
+  next screen, `fsArm`).
+
 ## 0.29.0 — 2026-11-12 — Phone: a reply on a video note is written over the player, on any frame
 - **What:** *Reply* on a video note (and the viewer's pencil on one) closes the Notes Panel and
   opens the reply in the bar over the player: the player goes to the note's first frame, the

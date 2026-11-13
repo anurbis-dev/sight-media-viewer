@@ -331,10 +331,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.filterSwipe.push(await val(`${R}.filter`));
   // A tap on a note's card selects it (the accent frame) and puts the player on its first frame.
   await val(`(${R}.curNote = null, ${R}.video.currentTime = Math.max(0, ${R}.video.duration - 0.5))`); await sleep(300);
-  await ev(() => document.querySelector(".note .text").click()); await sleep(500);
-  out.select = await ev(() => { const R = window.__sightReview.R, n = R.rows.find((r) => r.kind === "note");
+  const selId = await ev(() => { const c = [...document.querySelectorAll(".note")].find((x) => x.querySelector(".text")); c.querySelector(".text").click(); return c.dataset.id; }); await sleep(500);
+  out.select = await ev(`(() => { const R = window.__sightReview.R, n = R.rows.find((r) => r.id === ${JSON.stringify(selId)});
     const ts = [n.data.ctx.t].concat(R.rows.filter((r) => r.kind === "stroke" && r.data.note === n.id && !r.data.reply).map((r) => r.data.ctx.t));
-    return [R.curNote === n.id, document.querySelector(".note").classList.contains("cur"), Math.abs(R.video.currentTime - Math.min(...ts)) < 1 / R.fps]; });
+    return [R.curNote === n.id, document.querySelector('.note[data-id="' + n.id + '"]').classList.contains("cur"), Math.abs(R.video.currentTime - Math.min(...ts)) < 1 / R.fps]; })()`);
   // The note's pictures: equal squares in one grid (4 to a row by default).
   out.pics = await ev(() => { const c = [...document.querySelectorAll(".note .pics > .fw")]; const w = c.map((x) => Math.round(x.getBoundingClientRect().width)), h = c.map((x) => Math.round(x.getBoundingClientRect().height));
     const g = document.querySelector(".note .pics"); return [c.length, w.every((x, i) => x === w[0] && Math.abs(h[i] - x) <= 1), Math.abs(w[0] * 4 + 12 - g.getBoundingClientRect().width) <= 2]; });
@@ -561,6 +561,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ev(() => [...document.querySelectorAll(".sheet .menu button")].find((b) => b.textContent.startsWith("Picture")).click()); await sleep(300);
   await ev(() => document.querySelector('.sheet .gcol[data-c="#34c759"]').click()); await sleep(400);
   out.groupPic = await p.evaluate((id) => { const t = document.querySelector(`.list .row[data-key="g:${id}"] > .item .th`); return [t.classList.contains("tint"), getComputedStyle(t).backgroundColor]; }, ng);
+  // Picked reviews slide together: two picked, one swiped right — both uncover the eye; the eye
+  // hides both.
+  for (const k of ["grp-d", "grp-b"]){ const bx = await rowBox(k); await tapN([[bx.x + bx.width - 40, bx.y + bx.height / 2]]); await sleep(150); }
+  const bd = await rowBox("grp-d");
+  await drag([bd.x + 90, bd.y + bd.height / 2], [bd.x + 250, bd.y + bd.height / 2]); await sleep(300);
+  out.swipeAll = [await ev(() => ["grp-d", "grp-b"].map((k) => document.querySelector(`.list .row[data-key="${k}"]`).classList.contains("l")))];
+  const eye2 = await p.locator('.list .row[data-key="grp-d"] .sw.hide').boundingBox();
+  await tapN([[eye2.x + 20, eye2.y + eye2.height / 2]]); await sleep(400);
+  out.swipeAll.push(await ev(() => (JSON.parse(sessionStorage.getItem("sight-review:hidden")) || []).filter((k) => k.startsWith("grp-")).sort()));
   out.log = log;
   console.log(JSON.stringify(out));
   await b.close();

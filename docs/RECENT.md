@@ -14,6 +14,24 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.35.2 — 2026-11-13 — Phone: picked reviews swipe together; fixes to note selection
+- **What:** (1) Home: a picked review swiped left / right slides with every other picked one; the
+  bin / eye uncovered on any of them deletes (one confirm) / hides all the picked ones.
+  (2) Fixes from the fresh-agent review of 0.35.0: a tap on a card or a picture while a new note
+  or a reply is being written no longer moves the player or the selection (a text-only note went
+  on the tapped note's frame; a reply's pencil drew on another note's frame); closing the viewer
+  on another note of a picture review now moves the highlight (`showNote` repaints); a note's
+  "first frame" is its own drawings' (`noteFrameList`), not its replies'; a marker step on the
+  drawing canvas does not select the note behind it; a text selection made / dropped on a card
+  is no tap; while writing over the player the hidden controls show again; the speaker's tooltip
+  says "tap: full / mute"; the `select` test clicks and checks the same card.
+- **Where:** `mobile/js/app.js` — `rowGestures` (`peers` / `placeAll`, `row._place`), the review
+  row's `.sw` buttons, `selectNote`, the card's click, `showNote`, `jumpNote`, `paintSnd`;
+  `mobile/index.html` (`.review.clean` rules `:not(.compose)`). Test: `swipeAll`.
+- **Notes:** left as reviewed: with the controls hidden a mouse has no way to the panel but the
+  round button (the swipe up is touch only); once a fill colour is picked there is no way back
+  to the line's own (the user dropped that entry).
+
 ## 0.35.1 — 2026-11-13 — Phone: the viewer's caption across the width, the pencil over it; no subtitle on home
 - **What:** the full-screen viewer's caption (number, frame, words) spans the whole width at the
   foot and the pencil sits just over it, whatever the caption's height. The home screen's title
@@ -37,7 +55,7 @@ Add new entries directly below this line.
   `hideui` / `showui`; the speaker's tap. `mobile/index.html` (`.note.here`, `.review.clean`).
   `app/static/review-draw.js` (`fillButton`). Tests: `select`, `clean`, `mute`, `fill`.
 - **Notes:** the controls stay hidden while the review is open (`R.clean`, not kept). With the
-  panel open the bar shows as usual. Review (fresh agent): see the next entry if it found anything.
+  panel open the bar shows as usual. Review (fresh agent): fixes in 0.35.2.
 
 ## 0.34.0 — 2026-11-13 — Phone: loop / once button; the viewer's caption shows three lines of words
 - **What:** (1) The transport has a button right of the sound: *once* (stops at the end, the
@@ -290,43 +308,3 @@ Add new entries directly below this line.
   every frame; a second finger on a control. Left: a tap at 1× on a clip whose measured rate is not
   a common one snaps it (e.g. 29.5 → 29.97); the MP4 sound flag counts any sound track, even an
   empty one.
-
-## 0.30.0 — 2026-11-12 — Phone: review groups, tool opacity on the hold, auto full screen
-- **What:** (1) Home: a review held, dragged onto the middle of another one (it lights up) and let
-  go makes a group of the two (named by the names' common start, else "Group"); more go onto the
-  group's header. The header opens / closes on a tap, moves the whole group on hold + drag, and
-  its menu has *Open / Close*, *Rename…*, *Ungroup*; a member's menu has *Take out of the group*.
-  (2) Drawing canvas (phone + HTML page): press and hold with a tool, drag sideways = that tool's
-  opacity (up / down is still the size); the preview reads "6 px · 70 %"; a hold on the tool's
-  button resets both. (3) Settings → *Full screen*: Auto (default) / Off — Auto goes full screen
-  at the first tap in a browser tab that can, and again after the user leaves it.
-- **Where:** `mobile/js/app.js` — `loadGroups` / `saveGroups` / `tidyGroups` / `groupName` /
-  `groupOnto` / `ungroupOne` / `groupMenu` / `setGroup` / `groupRow` / `groupHead`, `reviewRow` split
-  into content + `rowGestures(row, it, o)` (drop target `.drop`, group `.folded`), `renderHome`
-  entries (reviews + `"g:<id>"`), `reviewMenu`; full screen `fsCan` / `enterFS` / `exitFS` /
-  `setFsAuto` / `fsTap`, `settings()`; `mobile/index.html` (`.row.group`, `.gm`, `.th.four`,
-  `.chev`, `.drop`, `.seg.fs`); `app/static/review-draw.js` (`OPAC0` / `OPAC`, `adjMove` axis for
-  tools, `showSize` label, new items' opacity, pen `opac`). Tests: `pwa_touch.cjs` (`opac`,
-  `brushReset`, `dropLit` / `group`, `fullscreen`).
-- **Notes:** groups and order are per device (localStorage), like the order; a review is in one
-  group at most; a group needs two existing reviews (`tidyGroups` dissolves the rest each
-  render). Only a review on its own can be dropped (no nesting; a member leaves by its menu). The
-  size hold now waits for 10 px to pick its axis (as the selection hold did). iPhone Safari has no
-  page full screen and iPad Safari limits typing in it, so iOS tabs do not try (the setting says
-  why); the installed app is full screen already; a tap that opens the file picker
-  (`label`, `[data-nofs]`) or a text field never asks.
-- **Review (fresh agents):** opacity hold — no bugs (a redundant save removed; the text field
-  while typing does not show the text opacity, left). Groups — fixed: the saved order
-  missed entries never moved by hand, so a new group (and a review taken out / a dissolved group's
-  last one) landed after them, not in the target's place — the home list now saves its whole
-  order on each render; a group with every member hidden lost its slot on a reorder (`saveOrder`
-  keeps `g:` keys); a member reorder moved hidden members to the end; *Ungroup* used a stale member
-  order; names lost a trailing "v" / stopped mid-word (`groupName`); a sideways mouse drag on a
-  header toggled it; "1 reviews". Left: rows of very different heights (an open group) shift by
-  the held row's height, so near an open group the drop light / slide can feel uneven.
-  Full screen — fixed: the clip button (opens the picker) asked for full screen; a mouse asked on
-  pointerdown (the page resized mid-click); any pointerup asked, also after a scrub, a drag, a hold
-  or with more fingers down (now only a plain one-finger tap); text fields asked (iPad limits
-  typing in full screen: iOS is left out altogether); Android's back leaves full screen first and
-  the next tap went straight back in, so every back press was eaten (now it stays off until the
-  next screen, `fsArm`).

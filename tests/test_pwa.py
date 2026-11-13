@@ -383,6 +383,8 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(sorted(res["pick"][3]), sorted(["Two:grp-d,grp-a", "Group:grp-b,grp-c"]))
         self.assertFalse(res["pick"][4])
         self.assertEqual(res["groupPic"], [True, "rgb(52, 199, 89)"])
+        # Picked reviews slide together; the uncovered eye hides all of them.
+        self.assertEqual(res["swipeAll"], [[True, True], ["grp-b", "grp-d"]])
         self.assertEqual((res["swipeLeft"], res["covered"]), ("row r", "row"))
         self.assertEqual(res["hidden"], [0, "1 hidden for now · Show"])
 

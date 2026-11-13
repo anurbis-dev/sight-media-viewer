@@ -249,7 +249,8 @@
   size); *Merge a review file…*; *Share…* sends a finished file to Files, mail or a messenger. On the home screen, tap a review's
   picture to open it; a tap on the review itself picks it (a tick on the picture; tap again to drop
   it) — with reviews picked, the bar at the foot has *Move to…* (into a group, a new group of them,
-  out of their groups), *Hide*, the bin (delete them) and ×. Swipe a review
+  out of their groups), *Hide*, the bin (delete them) and ×; a picked review swiped left / right
+  takes the other picked ones along, and the bin / eye it uncovers deletes / hides all of them. Swipe a review
   left to uncover the bin (tap it to delete the review), right to uncover the eye (tap it to hide
   the review for now — until the app is closed, or *Show* under the list); press and hold a review
   and drag it up / down to move it in the list (the order is kept; new reviews come first); let go
