@@ -414,7 +414,6 @@ async function renderHome(){
   root.className = "home";
   const bar = el("header", "bar"), ttl = el("div", "ttl");
   ttl.appendChild(el("b", "", "Sight Review"));
-  ttl.appendChild(el("span", "", "Reviews stay on this device"));
   // The two open buttons: big ones on an empty home screen, two small icons in the bar next to
   // Settings once there is a review (renderHome picks one set when the list is in).
   const mini = el("div", "mini");
@@ -2980,7 +2979,10 @@ function viewer(o){
   const v = el("div", "view"), cap = el("div", "cap");
   const back = btn("fab back", null, () => close(), "Back"); back.innerHTML = ico("back", 24);
   const pen = btn("fab pencil", null, () => { const cur = o; close(); cur.onDraw(); }, "Draw on it"); pen.innerHTML = ico("pen", 24);
-  v.appendChild(cap); v.appendChild(back); v.appendChild(pen);
+  // The caption across the whole width at the foot, the pencil just over it (whatever its height).
+  const foot = el("div", "vfoot");
+  foot.appendChild(pen); foot.appendChild(cap);
+  v.appendChild(foot); v.appendChild(back);
   let box = null, V = { z: 1, x: 0, y: 0 }, off = [0, 0], busyNav = false;
   const close = () => {
     v.remove(); window.removeEventListener("resize", fit); document.removeEventListener("keydown", onKey, true);
@@ -2999,7 +3001,7 @@ function viewer(o){
     }
     const was = box, wasV = V, wasOff = off;
     o = no; box = nb;
-    v.insertBefore(box, cap);
+    v.insertBefore(box, foot);
     pen.hidden = !o.onDraw;
     cap.textContent = "";
     cap.className = "cap" + (o.note ? " " + M.noteState(o.note) : "");

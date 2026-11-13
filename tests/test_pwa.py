@@ -304,6 +304,7 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["viewerFade"], [True, 1])
         # The viewer's caption: three lines of words, the rest scrolls in it (no note change).
         self.assertEqual(res["capText"], [3, True, True, True, True, "fit"])
+        self.assertEqual(res["capPlace"], [True, True, True])
         # Notes list: a swipe left = the next filter (Open), right = back to All.
         self.assertEqual(res["filterSwipe"], ["open", "Open", "all"])
         # A note's pictures: equal squares, four to a row filling it.

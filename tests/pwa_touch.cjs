@@ -354,6 +354,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // caption's full width, under the number and the frame.)
   const scrolls = await ev(() => { const t = document.querySelector(".view .cap .tx"), r = t.getBoundingClientRect(), h = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
     t.scrollTop = 30; return h === t && t.scrollTop > 0 && r.width > innerWidth * 0.5; });
+  // The caption spans the width; the pencil sits over it.
+  out.capPlace = await ev(() => { const c = document.querySelector(".view .cap").getBoundingClientRect(), pn = document.querySelector(".view .fab.pencil").getBoundingClientRect();
+    return [Math.round(c.width) === innerWidth - 24, pn.bottom <= c.top, pn.right > innerWidth - 40]; });
   const notCaught = await ev(() => { const t = document.querySelector(".view .cap .tx"); const e = new TouchEvent("touchmove", { bubbles: true, cancelable: true }); t.dispatchEvent(e); return !e.defaultPrevented; });
   out.capText = [capTx[0], capTx[1], scrolls, await capNow() === out.viewer[0], notCaught,
     await ev(() => { const b = document.querySelector(".view .vb"); return !b.style.transform.includes("scale(1)") ? b.style.transform : "fit"; })];

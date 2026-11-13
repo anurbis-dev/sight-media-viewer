@@ -2,6 +2,38 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.29.0 — 2026-11-12 — Phone: a reply on a video note is written over the player, on any frame
+- **What:** *Reply* on a video note (and the viewer's pencil on one) closes the Notes Panel and
+  opens the reply in the bar over the player: the player goes to the note's first frame, the
+  note's frames are on the timeline and as chips in the bar (tap = go there), its drawings show
+  on the picture, and the pencil draws on whatever frame is on screen — several frames, e.g. one
+  the note forgot. Sending (or ×) leaves the player on the frame reached and the note lit in the
+  list. A reply's card shows each frame it drew on; its viewer swipes sideways over them. Picture
+  notes keep the inline reply under the card.
+- **Where:** `mobile/js/app.js` — `startReply`, `replyBar`, `closeReply`, `sendReply`,
+  `threadFrames`, `replyFrameTimes`, `composing()` / `composeKey()`, `R.replyTo` / `R.curNote`,
+  `paintCurrent`, `markerList`, `stageDrawings`, `drawingsOn` (reply filtered by frame),
+  `asyncFrameAt(n, t, rid)`, `noteView` (reply frames sideways, pencil); `mobile/index.html`
+  (`.newbar .frs`); `mobile/js/report.js` (frames only a reply drew on go with that reply);
+  `app/static/annotate.js` (Sight's export: live replies' drawings count for a note's extra
+  frames); `app/review.py` (the HTML page's reply thumbnail: only what it drew on that frame);
+  `docs/FORMAT.md` (reply drawings may sit on other frames). Tests: `pwa_touch.cjs` reply steps,
+  `pwa_e2e.cjs` reply through the bar.
+- **Notes:** the reply draft is keyed by the note id (as the inline one), so an inline draft and
+  the bar share it. Starting a reply closes the new-note bar but keeps its draft. A note deleted
+  or merged away while replied to drops the bar (`paintNewBar`). The drawing canvas of a reply is
+  clean (only the reply's own drawings), as before. The HTML page does not list a reply's extra
+  frames (only Sight's export does, via the note's extra frames); its reply thumbnail just no
+  longer piles other frames' drawings onto the note's frame.
+- **Review (fresh agent):** fixed — the bar's "note still there" test read `deleted` (a reply
+  field) instead of the row's `deleted_at`, so a note deleted / merged away kept the bar and took
+  the reply; the player's pencil while replying drew into a hidden new-note draft (it now opens
+  the reply's pencil); a reply drawing on the note's own frame got `{t, hold: 0}` instead of the
+  note's ctx (its hold lost); the "typing, leave it alone" guard kept a stale composer; Reply on the
+  note being replied to sent the player back to the first frame; frames are now told apart by
+  frame index (`frameKey`), and the phone report shows a frame a reply added once. Left: switching
+  to another note's reply keeps the first one's draft without asking (it comes back on its Reply).
+
 ## 0.28.1 — 2026-11-12 — Phone viewer: pictures cross-fade instead of sliding
 - **What:** in the full-screen note viewer a swipe (up / down = another note, sideways = the
   note's other frame) no longer slides the picture off and the next one in from the edge (which
