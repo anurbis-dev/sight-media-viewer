@@ -193,7 +193,9 @@
   highlighter, arrows and lines, shapes, text, eraser, the colour, undo / redo, clear, pinch / pan /
   turn), its buttons floating over the picture. A tap on *Arrows and lines* or *Shapes* takes it and
   shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
-  rectangle, rounded, ellipse, filled rectangle, filled ellipse): tap one to draw with it, or just
+  rectangle, rounded, ellipse, filled rectangle, filled ellipse — and at its end the fill colour:
+  a second row with the line's own colour or one of six; picking a colour with an outlined shape in
+  hand takes its filled kind): tap one to draw with it, or just
   draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; the box and the font open a second row above — the

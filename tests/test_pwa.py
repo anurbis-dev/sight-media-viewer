@@ -316,7 +316,9 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["penAfterScrub"], [True, True, True])  # up mid-seek; then the player's own frame
         # Tool rows: Shapes → 5, a pick folds it (the slot on, the ellipse in hand) and draws;
         # Arrows → 5, a touch on the picture folds it (the arrow kept); colour → 5, a pick sets it.
-        self.assertEqual(res["fly"][:2], [5, [False, True, "ellipse"]])
+        self.assertEqual(res["fly"][:2], [6, [False, True, "ellipse"]])  # 5 shapes + the fill colour
+        # Fill colour: a second row (the line's + 6); blue → the shape drawn is filled blue; back to the line's.
+        self.assertEqual(res["fill"], [7, ["#0a84ff", 4, False], True, None])  # the filled ellipse in hand stays
         self.assertGreaterEqual(res["fly"][2], 1)
         self.assertEqual(res["fly"][3:6], [5, [False, "arrow"], 5])
         self.assertEqual(res["fly"][6], ["rgb(255, 214, 10)", False])

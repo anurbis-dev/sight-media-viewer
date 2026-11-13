@@ -2,6 +2,19 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.26.2 — 2026-11-12 — Phone app: why updates did not arrive (address), HTTP notice
+- **What:** the app's Pages address redirects to the account's custom domain (github.io → 301 →
+  http://pixis.ink/sight-media-viewer/). A copy installed from the github.io address can never update
+  (the service worker's update check cannot follow a redirect to another origin), and over plain
+  HTTP there is no service worker at all. The home screen now says when it is opened over HTTP, with
+  an *Open over HTTPS* link; the worker is registered with `updateViaCache: "none"`.
+- **Where:** `mobile/js/app.js` (`renderHome` notice, `initSW`), docs/ARCHITECTURE.md (Address).
+- **Notes:** the right address is **https://pixis.ink/sight-media-viewer/**. Not redirected
+  automatically: IndexedDB is per origin, reviews made on another address must be exported (.srev)
+  and opened in the new one. Enforcing HTTPS is an owner setting (GitHub Pages "Enforce HTTPS" of the
+  user site / Cloudflare "Always Use HTTPS"), not something the repo can do. No review agent for this
+  small change.
+
 ## 0.26.1 — 2026-11-12 — Phone: scrub / frame steps no longer jump back before landing
 - **What:** at the end of a scrub, and on every frame step, the picture jumped back a frame and
   then onto the right one. Now it goes straight to the frame.

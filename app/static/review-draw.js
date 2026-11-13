@@ -157,13 +157,15 @@ var SightReviewDraw = (function(){
   // Opacity per tool (0.05…1), set by the hold's sideways drag, kept with the pen. The eraser has none.
   var OPAC0 = { brush: 1, marker: 0.4, arrow: 1, rect: 1, ellipse: 1, text: 1 };
   var OPAC = clone(OPAC0);
-  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
+  // pen.fill: a filled shape's fill colour, null = the line's own (lighter).
+  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, fill: null, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
     if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
     if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
     if (ps && ARROWS[ps.arrow]) pen.arrow = ps.arrow;
     if (ps && SHAPES[ps.shape]) pen.shape = ps.shape;
+    if (ps && typeof ps.fill === "string" && /^#[0-9a-f]{6}$/i.test(ps.fill)) pen.fill = ps.fill;
     if (ps && (ps.tool === "rect" || ps.tool === "ellipse") && SHAPES[pen.shape].tool !== ps.tool) pen.shape = ps.tool === "rect" ? 0 : 2;
     if (ps && ps.sizes) Object.keys(SIZE0).forEach(function(k){ var v = Number(ps.sizes[k]); if (v >= SIZE_RANGE[k][0] && v <= SIZE_RANGE[k][1]) SIZE[k] = v; });
     if (ps && ps.opac) Object.keys(OPAC0).forEach(function(k){ var v = Number(ps.opac[k]); if (v >= 0.05 && v <= 1) OPAC[k] = v; });
@@ -173,7 +175,7 @@ var SightReviewDraw = (function(){
       if (ok) pen.text[k] = v;
     });
   } catch (e) {}
-  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, text: pen.text })); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, fill: pen.fill, text: pen.text })); } catch (e) {} }
   // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
   // pinch (g: {z, r, d, a}); a quarter turn snaps within 6°.
   function pinch(g, a, b, zmin, zmax){
@@ -235,10 +237,43 @@ var SightReviewDraw = (function(){
     // The text row's second row (the box's colours, the fonts), above it: {el, k}.
     var sub = null;
     function closeSub(){ if (sub){ var f = sub.el; sub = null; f.hidden = true; setTimeout(function(){ f.remove(); }, 0); } }
-    function openSub(x, anchor){
+    // A second row of `entries` over the open row, centred on `anchor`.
+    function subRow(k, anchor, entries){
       closeSub();
-      var cur = textNow(), f = el("div", "dfly dsub rd-panel");
+      var f = el("div", "dfly dsub rd-panel");
       f.addEventListener("mousedown", keepField);
+      entries.forEach(function(e){ f.appendChild(e); });
+      root.appendChild(f);
+      var r = root.getBoundingClientRect(), a = anchor.getBoundingClientRect(), fb = fly.el.getBoundingClientRect(), w = f.offsetWidth;
+      f.style.left = Math.max(8, Math.min(r.width - w - 8, a.left - r.left + a.width / 2 - w / 2)) + "px";
+      f.style.bottom = (r.bottom - fb.top + 6) + "px";
+      sub = { el: f, k: k };
+    }
+    // The Shapes row's last button: the fill colour of filled shapes (a second row: the line's own,
+    // or a colour). A colour picked while an outlined shape is in hand takes its filled kind.
+    function fillIco(){ var c = pen.fill || pen.color; return '<rect x="4" y="6" width="16" height="12" rx="2" fill="' + RC.esc(c) + '" fill-opacity="' + (pen.fill ? 1 : 0.35) + '" stroke="' + RC.esc(pen.color) + '"/>'; }
+    function fillButton(){
+      var fb = tbtn("Fill colour", ico(fillIco()), function(){
+        if (sub && sub.k === "fill"){ closeSub(); return; }
+        var same = tbtn("Fill: the line's colour", ico('<rect x="4" y="6" width="16" height="12" rx="2" fill="' + RC.esc(pen.color) + '" fill-opacity=".35" stroke="' + RC.esc(pen.color) + '"/>'), function(){ setFill(null); });
+        same.classList.toggle("on", !pen.fill);
+        subRow("fill", fb, [same].concat(TEXT_COLORS.map(function(c){
+          var sw = el("button", "swc" + (pen.fill === c ? " on" : "")); sw.type = "button"; sw.style.background = c; sw.dataset.c = c;
+          sw.title = "Fill " + c; sw.setAttribute("aria-label", sw.title);
+          sw.onclick = function(){ setFill(c); };
+          return sw;
+        })));
+      });
+      fb.dataset.fill = "1";
+      return fb;
+    }
+    function setFill(c){
+      pen.fill = c;
+      if (c && !SHAPES[pen.shape].fill) pen.shape = SHAPES[pen.shape].tool === "ellipse" ? 4 : 3;
+      savePen(); closeFly(); setTool(SHAPES[pen.shape].tool);
+    }
+    function openSub(x, anchor){
+      var cur = textNow();
       var none = function(label, patch){
         var b = tbtn(label, ico('<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>'), function(){ closeSub(); applyText(patch); });
         b.classList.toggle("on", !cur[x.k]); return b;
@@ -256,12 +291,7 @@ var SightReviewDraw = (function(){
           var b = tbtn("Font: " + fid, ico(fontIco(fid)), function(){ closeSub(); applyText({ font: fid }); });
           b.classList.toggle("on", cur.font === fid); return b;
         });
-      entries.forEach(function(e){ f.appendChild(e); });
-      root.appendChild(f);
-      var r = root.getBoundingClientRect(), a = anchor.getBoundingClientRect(), fb = fly.el.getBoundingClientRect(), w = f.offsetWidth;
-      f.style.left = Math.max(8, Math.min(r.width - w - 8, a.left - r.left + a.width / 2 - w / 2)) + "px";
-      f.style.bottom = (r.bottom - fb.top + 6) + "px";
-      sub = { el: f, k: x.k };
+      subRow(x.k, anchor, entries);
     }
     function openFly(slot, anchor, entries){
       closeFly();
@@ -312,7 +342,7 @@ var SightReviewDraw = (function(){
           });
           vb.classList.toggle("on", i === (s === "arrows" ? pen.arrow : pen.shape));
           return vb;
-        }));
+        }).concat(s === "shapes" ? [fillButton()] : []));
       });
       b.dataset.t = s; tools.appendChild(b);
       if (s === "text") b.addEventListener("mousedown", keepField);
@@ -496,7 +526,8 @@ var SightReviewDraw = (function(){
     function recolour(c){
       stopAdj();
       var map = new Map();
-      sel.forEach(function(it){ var n = clone(it); n.data.color = c; if (n.data.fill != null) n.data.fill = c; map.set(it, n); });
+      // A fill of its own colour stays; one that followed the line follows it.
+      sel.forEach(function(it){ var n = clone(it); if (n.data.fill != null && n.data.fill === it.data.color) n.data.fill = c; n.data.color = c; map.set(it, n); });
       sel = sel.map(function(x){ return map.get(x); });  // before change(): its paint() keeps only what is in items
       change(items.map(function(x){ return map.get(x) || x; }));
     }
@@ -928,7 +959,7 @@ var SightReviewDraw = (function(){
         cur = { kind: "shape", shape_kind: av.line ? "line" : "arrow", z: ++zc, data: d };
       } else {
         var sv0 = SHAPES[pen.shape].tool === t ? SHAPES[pen.shape] : {};
-        d = { color: c, strokeOn: true, width: RC.r2(SIZE[t] * k), dash: "solid", fillOn: !!sv0.fill, fill: c, fillOpacity: sv0.fill ? 0.3 : 0.2, radius: sv0.round ? RC.r2(14 * k) : 0, opacity: OPAC[t], x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
+        d = { color: c, strokeOn: true, width: RC.r2(SIZE[t] * k), dash: "solid", fillOn: !!sv0.fill, fill: sv0.fill && pen.fill ? pen.fill : c, fillOpacity: sv0.fill ? (pen.fill ? 0.6 : 0.3) : 0.2, radius: sv0.round ? RC.r2(14 * k) : 0, opacity: OPAC[t], x: p[0], y: p[1], w: 0, h: 0, rot: 0 };
         cur = { kind: "shape", shape_kind: t, z: ++zc, data: d };
       }
       d.created = Date.now();

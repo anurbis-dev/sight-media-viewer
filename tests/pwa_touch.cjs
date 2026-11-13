@@ -201,6 +201,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     JSON.parse(localStorage.getItem("sight-review:pen")).tool]));
   await drag([cx - 40, cy - 30], [cx + 40, cy + 30], 6, 16); await sleep(100);
   out.fly.push(await ev(() => { const g = document.querySelectorAll(".draw .dbox svg > g")[1]; return g.children.length; }));
+  // The Shapes row's last button: the fill colour — a second row (the line's own + 6); blue, then a
+  // rectangle drawn is filled blue; back to the line's own.
+  await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
+  await ev(() => document.querySelector('.draw .dfly button[title="Fill colour"]').click()); await sleep(80);
+  out.fill = [await ev(() => { const r = document.querySelector(".draw .dsub:not([hidden])"); return r ? r.querySelectorAll("button").length : 0; })];
+  await ev(() => document.querySelector('.draw .dsub .swc[data-c="#0a84ff"]').click()); await sleep(80);
+  await drag([cx - 50, cy - 40], [cx + 30, cy + 20], 6, 16); await sleep(100);
+  out.fill.push(await ev(() => { const P = JSON.parse(localStorage.getItem("sight-review:pen")); return [P.fill, P.shape, !!document.querySelector(".draw .dfly:not([hidden])")]; }));
+  out.fill.push(await ev(() => { const g = document.querySelectorAll(".draw .dbox svg > g")[1]; return [...g.querySelectorAll("path")].some((x) => x.getAttribute("fill") === "#0a84ff"); }));
+  await ev(() => document.querySelector('.draw button[title="Undo"]').click());
+  await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
+  await ev(() => document.querySelector('.draw .dfly button[title="Fill colour"]').click()); await sleep(80);
+  await ev(() => document.querySelector('.draw .dsub button[title^="Fill: the line"]').click()); await sleep(80);
+  out.fill.push(await ev(() => JSON.parse(localStorage.getItem("sight-review:pen")).fill));
   // A key takes a tool: the open row folds (it would show a stale pick).
   await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
   await p.keyboard.press("KeyB"); await sleep(80);

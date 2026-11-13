@@ -14,6 +14,19 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.33.5 — 2026-11-13 — Canvas: filled shapes get their own fill colour
+- **What:** on the drawing canvas (phone + HTML page) the Shapes row ends with *Fill colour*: a
+  second row above it — the line's own colour (as before) or black, white, red, yellow, green,
+  blue. A colour picked while an outlined shape is in hand switches to its filled kind (rectangle /
+  rounded → filled rectangle, ellipse → filled ellipse). The button shows the fill.
+- **Where:** `app/static/review-draw.js` — `pen.fill` (saved with the pen), `fillButton` /
+  `fillIco` / `setFill`, `subRow` (the second row, now shared with the text's box / font rows),
+  `begin` (fill colour / opacity), `recolour`. Tests: `fill` in `pwa_touch.cjs` / `test_pwa.py`
+  (the Shapes row has 6 buttons now).
+- **Notes:** a fill of its own colour is drawn at 0.6 opacity, the line's own at 0.3 (as before).
+  The colour circle recolouring a selection changes a fill only when it was the line's colour (a
+  fill picked on purpose stays). FORMAT.md is unchanged (`fill` was already its own field).
+
 ## 0.33.4 — 2026-11-13 — Canvas: a second row for the text's box colour and font
 - **What:** on the drawing canvas (phone + HTML page) the *Text* row's box and font switches open
   a second row above it: no box / the box's colour (black, white, red, yellow, green, blue), and
@@ -430,16 +443,3 @@ Add new entries directly below this line.
   the pointer's end is heard on `window`, a second pointer is ignored, cancel puts rows back;
   `saveOrder` keeps reviews hidden for now in their slots; a non-array saved order is ignored;
   the IntersectionObserver reads the latest entry; `renderHome` drops a leftover ghost.
-
-## 0.26.2 — 2026-11-12 — Phone app: why updates did not arrive (address), HTTP notice
-- **What:** the app's Pages address redirects to the account's custom domain (github.io → 301 →
-  http://pixis.ink/sight-media-viewer/). A copy installed from the github.io address can never update
-  (the service worker's update check cannot follow a redirect to another origin), and over plain
-  HTTP there is no service worker at all. The home screen now says when it is opened over HTTP, with
-  an *Open over HTTPS* link; the worker is registered with `updateViaCache: "none"`.
-- **Where:** `mobile/js/app.js` (`renderHome` notice, `initSW`), docs/ARCHITECTURE.md (Address).
-- **Notes:** the right address is **https://pixis.ink/sight-media-viewer/**. Not redirected
-  automatically: IndexedDB is per origin, reviews made on another address must be exported (.srev)
-  and opened in the new one. Enforcing HTTPS is an owner setting (GitHub Pages "Enforce HTTPS" of the
-  user site / Cloudflare "Always Use HTTPS"), not something the repo can do. No review agent for this
-  small change.
