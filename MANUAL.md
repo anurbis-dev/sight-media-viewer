@@ -122,9 +122,11 @@
     panel, or a click on the note, bring the camera, settings and meshes back. The chips and the
     pictures of a note are numbered in the order the views were made. A note's pictures are stills taken
     once per view: turning the light or the shading does not redraw them (the drawings on them do follow
-    the view). Explode belongs to the view too: moving the explode slider (or Ctrl+right-drag) at a view
-    with drawings sets that view's explode, and going to the view again puts it back. A new drawing keeps
-    the explode it was made at; an older one has none. While annotating, left-drag on
+    the view). Explode is kept too: a note's pictures and exports stay at the explode it was added at, and
+    clicking the note goes back to that explode. Moving the explode slider (or Ctrl+right-drag) changes only
+    the view you are on while it holds no added note; a drawing not yet added takes the slider's amount when
+    its note is added. Going to a view by its chip puts the view's explode back. An older drawing has none.
+    While annotating, left-drag on
     empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —

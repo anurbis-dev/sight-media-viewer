@@ -14,6 +14,35 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.44.1 — 2026-11-13 — Explode: added notes keep their explode; the slider moves only the work not yet added
+- **What:** moving the 3D explode slider (or Ctrl+right-drag) no longer changes an added note, its pictures or its
+  exports. A note's pictures and exports use the explode it was added at; clicking the note goes back to that
+  explode. A view that holds added work (a note, or a drawing attached to one) keeps its amount, and the slider
+  does not change it. A drawing not yet added on the note's view takes the slider's amount when the note is added.
+  Pictures of two notes on one view can now show two amounts.
+- **Where:** `app/static/annotate.js` — `explodeChanged` (refuses a view with added work), `viewCommitted` (new),
+  `explodeOf(vk, rows)` (new: a row's `ctx.explode`, else a note's `v3d.explode`), `viewLook(look, ex)` (takes the
+  explode), `view3dPic(vk, explode)`, `view3dBox`, `goView(vk, v3d, ex)` (note click passes the note's explode),
+  `rebuildViews` (keeps the amount of a view with added work), `addNote` (pending drawings on the note's view take
+  its explode), the report / export own-frame and more-views code. `MANUAL.md`, `docs/FORMAT.md`. `app/version.py`.
+- **Notes:** before this, the slider changed the view's explode, and the pictures and exports of every note on that
+  view followed it. Older notes (before 0.42, no `ctx.explode`) are drawn at the `v3d.explode` they were written
+  with; a view's own amount (chips) is still set by the newest row when the file loads, so after a reload a chip
+  may go to a different amount than in the session where the view was made. Rows are not rewritten by a slider move.
+  The `explodeOf` fallback to `view.explode` remains only for a note with neither value. Not tested in a browser:
+  checked by reading the code, `node --check`, and `tests.test_merge_parity` / `tests.test_review_page` (OK).
+  Review 1 (fresh agent): two confirmed issues, fixed: `rebuildViews` moved a committed view's amount when a newer
+  note was added (kept now); the report's own-frame export was taken at the live slider when the note had no `v3d`
+  (fixed). One low-impact mismatch left as is: the preview of another view uses the drawings without replies, the
+  export uses them too, so with a reply as the first row on that view they can differ.
+  Review 2 (fresh agent): a first note on a new view kept a `null` amount from the empty view state (fixed: only a
+  real amount is kept). Legacy notes on a view with no amount could follow a newer row (resolved by the `v3d.explode`
+  fallback above).
+  Review 3 (fresh agent, delta only): no confirmed bugs; v3d.explode on older notes verified (saved since 0.19);
+  `explodeOf` filters by view. Left as design: a view with added work keeps the amount of its first note, so a
+  second note made at another amount does not move the chips' amount (`view.explode`) — its own pictures are right.
+  Not verified in a browser.
+
 ## 0.44.0 — 2026-11-13 — Reviewer page: *Download page* saves the page with your changes
 - **What:** the reviewer page (Web page for reviewers) has a *Download page* button next to *Download reply*. It
   saves the same page with this reviewer's replies, pictures, drawings, state changes and new notes already in it.
@@ -273,14 +302,3 @@ Add new entries directly below this line.
   Not checked: the note-preview player and the compare overlay with a converted file (their code is the
   same pattern but not driven in a browser), Safari / Firefox / Windows Chrome. The per-block review by a
   fresh agent that CLAUDE.md asks for was not run (no subagent was requested in this session). Not committed.
-
-## 0.37.1 — 2026-11-13 — 3D: camera positions no longer become "View N" while orbiting
-- **What:** with a 3D model open and annotation on, moving the camera (orbit, zoom) added a "View N" entry
-  to the panel's view chips and to the pending line for every camera position it passed, with no drawing
-  in it. Now a view is recorded only when a drawing or a note is made from that camera.
-- **Where:** `app/static/annotate.js` — `ctxNow(forNote, make)`: the panel's pending line calls it without
-  `make` and gets `{vk: null, cam}` (no view registered); `newItem`, paste / duplicate and `addNote` pass
-  `make = true`.
-- **Notes:** the pending line shows no view label while the camera is off every recorded view (it used to
-  show the next number). Checked with Playwright on a GLB: an orbit leaves the chips unchanged; one brush
-  stroke adds exactly one view.

@@ -2,6 +2,17 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.37.1 — 2026-11-13 — 3D: camera positions no longer become "View N" while orbiting
+- **What:** with a 3D model open and annotation on, moving the camera (orbit, zoom) added a "View N" entry
+  to the panel's view chips and to the pending line for every camera position it passed, with no drawing
+  in it. Now a view is recorded only when a drawing or a note is made from that camera.
+- **Where:** `app/static/annotate.js` — `ctxNow(forNote, make)`: the panel's pending line calls it without
+  `make` and gets `{vk: null, cam}` (no view registered); `newItem`, paste / duplicate and `addNote` pass
+  `make = true`.
+- **Notes:** the pending line shows no view label while the camera is off every recorded view (it used to
+  show the next number). Checked with Playwright on a GLB: an orbit leaves the chips unchanged; one brush
+  stroke adds exactly one view.
+
 ## 0.37.0 — 2026-11-13 — Desktop review fixes: report names and frame numbers, previews, 3D errors, usd-core install
 - **What:** (1) Phone review app on a desktop: a mouse right-click (and Ctrl-click on a Mac) is the browser's
   own menu. The card's menu and the speed / sound controls no longer take it; a touch or pen long press
