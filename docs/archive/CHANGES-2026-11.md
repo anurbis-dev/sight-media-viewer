@@ -2,6 +2,72 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.26.0 — 2026-11-12 — Phone app: full-screen player, Notes Panel, multi-frame notes, themes; multi-frame / multi-view notes in Sight
+- **What:** the review is a full-screen player: every control in a header over the picture, the
+  transport (marker / frame steps, timecode, timeline) over its foot, a thin *Notes Panel* bar that
+  slides the player up off the screen and the notes in (filters + ⌃ back). No play button in the
+  transport. Marker jumps / steps / timeline taps show the frame at once and the playhead and
+  markers line up (one seek path). The scrub on the picture runs from where the clip is at a fixed
+  pace (not the screen's width for the whole clip). Note pictures open full screen with floating
+  Back / pencil buttons; swipe up / down = next / previous note, sideways = back. The drawing
+  canvas' bars float over the picture; a tap on the tool in hand puts it down; on a video the
+  canvas has the timeline: scrub / jump to other frames and draw there, *Done* makes one note with
+  every frame drawn on. Notes are numbered by when they were made, videos too (also in Sight).
+  Light / Dark / Auto theme for the whole app. The ✎ glyph is replaced by the pencil icon (tip
+  bottom-left) on the phone and the HTML page. Home: press and hold a review, drag it onto the bin
+  that appears at the bottom to delete it (let go without moving = the menu); the footer's
+  "Nothing leaves this device…" is on its own line.
+  **One note, several pictures (video frames / 3D views), everywhere:** Sight attaches every loose
+  drawing made since the file was opened to the next note, whatever frame / view it is on (before:
+  only the ones shown now); the note card shows one preview per frame (extra ones small; a click
+  goes to that frame); the PDF / HTML report gets `notes[].more [{frame, size, caption, ctx}]` for
+  the other frames / views (PDF: after the note's frame; the page: `frameOf("<id>|<i>")`, drawn
+  over by ctx like the note's frame).
+- **Where:** `mobile/js/app.js` (review screen, `seekTo` / `snapT` / `pumpSeek` / `settle`,
+  `makeTransport`, `bindTimeline`, `bindScrub` / `scrubStep`, `setPanel`, `viewer` / `noteView`,
+  `drawVideo` / `frameNow` / `framesDraw`, `editNoteDrawing`, themes), `mobile/index.html` (CSS,
+  theme tokens), `mobile/js/model.js` (`notesSorted`, `noteFrameTimes`), `mobile/js/report.js`
+  (extra frames), `app/static/review-draw.js` (floating bars, tool off, multi-frame API),
+  `app/static/annotate.js` (`notesSorted`, `pendingDrawings`, `notePreview` / `previewBox`,
+  `gatherReport` `more`, `frameIndex` / `landAt`), `app/review.py` (pencil icons, `build_pdf` and
+  the page's `frameOf` / `noteCard` for `more`), `mobile/js/app.js` `dragToBin`, tests
+  (`pwa_unit.cjs` frame times at 23.976…120 fps).
+- **Notes:** the lag / misplaced playhead had two causes: steps / jumps set `currentTime` directly
+  while a seek was in flight (late, lost taps), and the native range input stopped updating once it
+  kept focus (`activeElement` check) and its thumb travels a narrower track than the markers'
+  percent. A note may now hold drawings on several frames (each row its own `ctx`; the note's ctx is
+  the earliest); Sight / the HTML page already show each drawing on its own frame, but Sight's
+  report shows only the note's frame (not changed). The multi-frame canvas is used for new notes
+  and *Edit the drawing* on videos; replies stay single-frame. The HTML page gets the floating bars
+  and tool-off too (same review-draw.js), in its dark default colours. Tests: `pick()` in
+  pwa_e2e.cjs takes a tool only when it is not already in hand (a second tap puts it down).
+  **Frame times:** a stored ctx.t is (n + 0.01)·fd rounded to 3 dp, which can fall just *below*
+  n·fd at 23.976 / 29.97 / 60 / 120 fps. `frameIndex` (model.js, same in annotate.js) recognises a
+  stored time and keeps it on frame n (`frameTime(frameTime(t)) === frameTime(t)`); the player is
+  sent a quarter into the frame (`pumpSeek`, annotate.js `landAt`), never to the stored time itself
+  (0.100 at 29.97 fps showed frame 2 instead of 3 — also in Sight before).
+- **Review (fresh agent):** found stepping stuck at 23.976 / 29.97 / 60 fps (re-snapping a rounded
+  stored time fell a frame back) and marker jumps landing a frame early — fixed by `frameIndex`
+  above, with a unit test; `settle()` ran from `seeked` while the next seek had already started
+  (cached frame hidden early, and in a drawing session the old picture cached under the new time) —
+  now only when not seeking, and `frameNow` refuses to grab while seeking; a frame grab finishing
+  after the user moved on switched the canvas back (`moved` bumps the grab sequence, the grab must
+  match the last time); editing a Sight drawing with `hold` lost it (an edited drawing keeps its
+  own ctx); a swipe turning into a pinch left the viewer picture offset; a double tap opened two
+  drawing sessions (`drawOpening`); `R.dragging` stuck when the canvas closed during a timeline
+  drag (`finish` ends it, `lostpointercapture`); a canvas scrub with no duration jumped to frame 0;
+  after a stylus, fingers could not scrub with no tool.
+- **Review 2 (fresh agent, multi-frame notes / bin):** `frameIndex` took some raw player times for
+  stored ones (now only a time with exactly 3 decimals can be stored); previews (Sight's `pumpPF`,
+  the phone's `getFrame` → Grabber) seeked to the raw stored time and showed the frame before (now
+  a quarter into the frame); `pendingDrawings` would have pulled old markup from other frames into
+  an unrelated note — off-screen drawings now count only since the last note (`S.composeSince`),
+  compose mode follows the same rule, and the note row says "(n on other frames)"; same-frame
+  checks use `sameFrame` (frame index), not float equality; `gatherReport` left `S.curVk` on the
+  last extra view and carried one view's look into the next; the home bin: Android's long-press
+  `contextmenu` opened the menu over a lifted review, and a mouse held still before dragging lost
+  the pointer (capture is now taken on lift).
+
 ## 0.25.0 — 2026-11-12 — Phone app remembers the picked file
 - **What:** a review opens with its picture / video straight away: the app keeps a copy of the
   file you picked on the device (automatically, no question) and binds it when the review opens.

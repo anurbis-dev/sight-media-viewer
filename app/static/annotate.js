@@ -1513,6 +1513,7 @@ export function createAnnotator(host){
       if (S.focusNote !== id && !S.pinFocus){ S.focusNote = id; paintVisibility(); }
     });
     el.querySelector(".an-list").addEventListener("pointerleave", () => { if (!S.pinFocus){ S.focusNote = null; paintVisibility(); } });
+    bindThumbZoom(el, el.querySelector(".an-list"));
     el.querySelector(".an-pend").addEventListener("click", (e) => {
       const x = e.target.closest?.("[data-rm]");
       if (x){ S.pending.splice(Number(x.dataset.rm), 1); renderPending(); return; }
@@ -1601,8 +1602,34 @@ export function createAnnotator(host){
       + ts.map((t) => previewBox(n, own.filter((it) => it.data.ctx?.t != null && sameFrame(it.data.ctx.t, t)), " sm", t)).join("");
   }
   // A note's / reply's pictures (its frames with the drawings, attached pictures): one grid of equal
-  // squares, each cut to fill (as the phone app shows them).
+  // squares, each cut to fill (as the phone app shows them), as many to a row as fit at the size
+  // set by a right-drag up / down on the list — the library grid's thumbnail zoom (×0.9 per px, up =
+  // bigger), kept with the settings ("sight.annotate.thumb").
   const picGrid = (html) => html ? `<div class="an-pics">${html}</div>` : "";
+  const THUMB = [40, 320, 62];  // min, max, default (px): four to a row in the panel
+  const clampThumb = (n) => Math.round(Math.min(THUMB[1], Math.max(THUMB[0], Number(n) || THUMB[2])));
+  let noteThumb = clampThumb(readJSON("sight.annotate.thumb", THUMB[2])), thumbSave = 0;
+  function bindThumbZoom(panel, list){
+    const apply = () => panel.style.setProperty("--an-thumb", noteThumb + "px");
+    apply();
+    let drag = null;
+    list.addEventListener("pointerdown", (e) => {
+      if (e.button !== 2 || e.pointerType !== "mouse") return;
+      e.preventDefault();
+      drag = { id: e.pointerId, y: e.clientY, size: noteThumb };
+      try { list.setPointerCapture(e.pointerId); } catch {}
+    });
+    list.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!(e.buttons & 2)){ drag = null; return; }  // let go outside the window
+      const n = clampThumb(drag.size + (drag.y - e.clientY) * 0.9);
+      if (n === noteThumb) return;
+      noteThumb = n; apply();
+      clearTimeout(thumbSave); thumbSave = setTimeout(() => writeJSON("sight.annotate.thumb", noteThumb), 300);
+    });
+    const end = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
+    list.addEventListener("pointerup", end); list.addEventListener("pointercancel", end);
+  }
   // A reply's drawings (made on the HTML page or the phone) on the note's picture, under the reply.
   function replyPreview(n, r){
     if (S.hiddenReplies.has(r.id)) return "";
@@ -2643,7 +2670,7 @@ function injectStyles(){
 .an-nt { white-space: pre-wrap; word-break: break-word; line-height: 1.45; user-select: text; }
 .an-empty { color: var(--subtle); }
 .an-shots { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
-.an-pics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 6px 0 2px; }
+.an-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--an-thumb, 62px), 100%), 1fr)); gap: 4px; margin: 6px 0 2px; }
 .an-pics > .an-nprev, .an-pics > .an-nprev[data-pt] { aspect-ratio: 1 / 1 !important; display: block; width: 100%; margin: 0; border-radius: 5px; }
 .an-pics > .an-nprev img { object-fit: cover; }
 .an-pics > img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 5px; border: 1px solid var(--border); cursor: zoom-in; }
