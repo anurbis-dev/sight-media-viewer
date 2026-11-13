@@ -2,6 +2,16 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.38.2 — 2026-11-13 — Desktop: a click on the empty notes list drops the picked note
+- **What:** in the desktop lightbox's notes panel, a click on empty space in the list (below or between
+  the cards) clears the picked note (the `.on` card, its drawings and the view), the same as Esc.
+- **Where:** `app/static/annotate.js` — `onListClick` (the no-target branch: `S.pinFocus` / `S.focusNote`
+  cleared, `paintVisibility`, `renderPanel`). `MANUAL.md` (Annotations). `app/version.py`.
+- **Notes:** a card click still picks it (and a second click on it drops it, as before). Only the note
+  pick is cleared; drawing selection is left as it was, like Esc. Checked with Playwright on the scratch
+  `SIGHT_HOME`: picked card → 1 `.on`, click on the list's bottom padding → 0, card click → 1 again; no page
+  errors. Not committed yet. The fresh-agent review CLAUDE.md asks for was not run (no subagent requested).
+
 ## 0.38.1 — 2026-11-13 — Desktop: the picture goes clean as soon as a note is made
 - **What:** in the desktop lightbox, once a note is made (Add button or Enter) its drawings and every other
   note's drawings leave the picture at once. Before, they stayed on screen until you started a new drawing.

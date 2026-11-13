@@ -791,13 +791,20 @@ export function createAnnotator(host){
     if (unsel && !S.drag){ renderSel(); renderProps(); }
   }
   const visibleDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && visibleNow(it));
+  // A drawing attached to a note (or to a reply) is baked into it. It can still be deleted from the frame
+  // (Delete, Shift+Delete, the eraser in full mode), but not moved, reshaped, restyled, nudged, reordered,
+  // partly erased or retyped. Only drawings not yet added to a note are editable.
+  const baked = (it) => !!it?.data?.note;
+  const editable = (it) => !!it && !baked(it);
 
   // ---- selection overlay ----------------------------------------------------------------------
   // The selected objects on screen now: the ones the handles (review-core xf*) work on.
   const selVisible = () => [...S.sel].map((id) => S.items.get(id)).filter((it) => it && visibleNow(it));
+  // The selected drawings that may be edited (no handles on a baked one).
+  const editSel = () => selVisible().filter(editable);
   // Handles in screen px: [id, x, y] (review-core xfHandles, mapped from doc units).
   function handles(){
-    return RC.xfHandles(selVisible(), k(), S.drag?.xf).map(([id, x, y]) => [id, ...toScreen(x, y)]);
+    return RC.xfHandles(editSel(), k(), S.drag?.xf).map(([id, x, y]) => [id, ...toScreen(x, y)]);
   }
   function renderSel(){
     const L = S.layer;
@@ -880,8 +887,9 @@ export function createAnnotator(host){
         if (e.shiftKey || e.ctrlKey || e.metaKey){
           if (S.sel.has(hit.id)) S.sel.delete(hit.id); else S.sel.add(hit.id);
         } else if (!S.sel.has(hit.id)){ S.sel.clear(); S.sel.add(hit.id); }
+        if (baked(hit)){ renderSel(); renderProps(); return; }  // selected for Delete; not dragged
         if (e.altKey && S.sel.has(hit.id)) duplicateSelection(0, true);
-        const ids = [...S.sel];
+        const ids = [...S.sel].filter((id) => editable(S.items.get(id)));
         S.drag = { move: true, x, y, ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), moved: false, hit: hit.id, plain: !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) };
         renderSel(); renderProps();
         return;
@@ -932,7 +940,7 @@ export function createAnnotator(host){
     }
     if (tool === "text"){
       const hit = hitAt(x, y);
-      if (hit && typeOf(hit) === "text"){ release(e); editText(hit); return; }
+      if (hit && typeOf(hit) === "text" && editable(hit)){ release(e); editText(hit); return; }
       release(e);
       const st = styleDoc("text");
       const it = newItem("text", null, { ...st, text: "", x, y: y - st.size * 0.6, rot: 0 });
@@ -1100,7 +1108,8 @@ export function createAnnotator(host){
     for (const it of visibleDrawings()){
       if (!hitTest(it, x, y, rad)) continue;
       const t = typeOf(it);
-      if (D.partial && STROKE_TOOLS.has(t)){
+      // A baked drawing is removed whole (a deletion) but never cut into pieces (an edit).
+      if (D.partial && STROKE_TOOLS.has(t) && !baked(it)){
         if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
         const pts = it.data.pts, keep = [];
         let cur = [];
@@ -1132,7 +1141,7 @@ export function createAnnotator(host){
   // Scale / rotate / line-end handles: review-core xfStart / xfDrag (shared with the HTML page's
   // and the phone app's drawing canvas). The rotate handle follows the pointer out from the pivot.
   function startHandleDrag(h, x, y, e){
-    const list = selVisible(), ids = list.map((it) => it.id);
+    const list = editSel(), ids = list.map((it) => it.id);
     S.drag = { handle: h, xf: RC.xfStart(h, list, x, y), ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), moved: false };
   }
   function dragHandle(D, x, y, e){
@@ -1321,7 +1330,7 @@ export function createAnnotator(host){
     return true;
   }
   function nudge(dx, dy){
-    const ids = [...S.sel];
+    const ids = [...S.sel].filter((id) => editable(S.items.get(id)));
     if (!ids.length) return false;
     const kk = k();
     commit(ids, () => {
@@ -1330,9 +1339,10 @@ export function createAnnotator(host){
     return true;
   }
   function reorder(dir){
-    const ids = [...S.sel];
+    const ids = [...S.sel].filter((id) => editable(S.items.get(id)));
     if (!ids.length) return false;
-    const all = [...S.items.values()].filter(isDrawing).sort((a, b) => a.z - b.z);
+    // Baked drawings keep their z: only the editable ones take part in the order.
+    const all = [...S.items.values()].filter((it) => isDrawing(it) && editable(it)).sort((a, b) => a.z - b.z);
     const sel = all.filter((it) => S.sel.has(it.id)), rest = all.filter((it) => !S.sel.has(it.id));
     const order = dir > 0 ? [...rest, ...sel] : [...sel, ...rest];
     commit(order.map((it) => it.id), () => order.forEach((it, i) => { it.z = i + 1; }));
@@ -1471,9 +1481,10 @@ export function createAnnotator(host){
       saveStyles();
       return;
     }
-    const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id));
+    const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
     const dv = LEN_KEYS.has(p.k) && typeof v === "number" ? v * k() : v;
     if (S.edit){ S.edit.it.data[p.k] = dv; S.edit.place(); if (p.t !== "color") S.edit.ta.focus(); return; }
+    if (!ids.length) return;
     commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[typeOf(it)]?.some((q) => q.k === p.k)) it.data[p.k] = dv; } }, merge ? "prop:" + p.k : null);
   }
   function bindProps(el, tg, list){
@@ -2218,6 +2229,8 @@ export function createAnnotator(host){
       }
     });
     S.pending = [];
+    // Undo cannot reach back over a note: an older step would take the drawings off it again (or change them).
+    S.undo = []; S.redo = [];
     S.composeSince = Date.now();  // drawings on other frames from here on go into the next note
     S.cleanPic = true;            // the picture goes clean: the drawings are on the new note's card (modeAllows)
     // Leave the field so S / Shift+S / tool keys work again straight away.
@@ -2818,7 +2831,7 @@ export function createAnnotator(host){
       if (!S.on) return;
       const [x, y] = toDoc(e);
       const hit = hitAt(x, y);
-      if (hit && typeOf(hit) === "text"){ e.stopImmediatePropagation(); e.preventDefault(); editText(hit); return; }
+      if (hit && typeOf(hit) === "text" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editText(hit); return; }
       if (S.tool !== "select"){ e.stopImmediatePropagation(); e.preventDefault(); }
     }, true);
   }

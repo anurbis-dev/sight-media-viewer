@@ -14,6 +14,24 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.45.0 — 2026-11-13 — Annotations: drawings added to a note are fixed
+- **What:** a drawing already added to a note (or to a reply) can no longer be edited. It can still be selected and
+  deleted from the frame (Delete, Shift+Delete, the bin, Ctrl+A then Delete, the eraser in full mode). Moving,
+  scaling / rotating / line-end handles, restyling (colour, width, text props), arrow nudging, Ctrl+[ / Ctrl+],
+  partial erasing and double-click text editing do nothing to it. Only drawings not yet added to a note are editable.
+- **Where:** `app/static/annotate.js` — `baked` / `editable` (new, after `visibleDrawings`), `editSel` (handles and
+  handle drags), `onDown` (select tool: a baked hit is selected but not dragged; the move drag takes editable ids
+  only), text tool and `dblclick` (only editable text opens), `eraseAt` (partial mode skips baked), `nudge`,
+  `reorder` (only editable drawings take part; baked z is kept), `setProp`, `addNote` (clears undo / redo).
+  `MANUAL.md` (Annotations).
+- **Notes:** `baked` means `data.note` is set, so replies' drawings (`data.reply`) are locked too. Copy / duplicate /
+  paste of a baked drawing make a new, editable, unattached drawing (the original stays). Deleting a whole note still
+  deletes its drawings with it (`onListClick` `data-del`), as before — that is a note action, not a drawing edit.
+  Undo: `addNote` now clears the undo and redo stacks, because an older step could otherwise detach a baked drawing
+  from its note or rewrite its fields. Known, left as is: the HTML review page and the phone app are not changed; the
+  properties panel still shows a baked drawing's values (controls do nothing to it). Not tested in a browser: checked
+  by reading the code and `node --check app/static/annotate.js`.
+
 ## 0.44.3 — 2026-11-13 — Annotations: hovering a note no longer highlights its drawings
 - **What:** in the desktop lightbox, moving the pointer over a note card in the annotation panel does nothing to the
   picture any more. Before, hover dimmed every other note's drawings and, right after a note was made, brought its
@@ -297,13 +315,3 @@ Add new entries directly below this line.
   the chip follows, the camera stays where it was after the renders, and no page errors. Not checked: a model
   with a very large canvas, Safari / Firefox, the reports (they already capture per view). Not committed. The
   fresh-agent review CLAUDE.md asks for was not run (no subagent requested).
-
-## 0.38.2 — 2026-11-13 — Desktop: a click on the empty notes list drops the picked note
-- **What:** in the desktop lightbox's notes panel, a click on empty space in the list (below or between
-  the cards) clears the picked note (the `.on` card, its drawings and the view), the same as Esc.
-- **Where:** `app/static/annotate.js` — `onListClick` (the no-target branch: `S.pinFocus` / `S.focusNote`
-  cleared, `paintVisibility`, `renderPanel`). `MANUAL.md` (Annotations). `app/version.py`.
-- **Notes:** a card click still picks it (and a second click on it drops it, as before). Only the note
-  pick is cleared; drawing selection is left as it was, like Esc. Checked with Playwright on the scratch
-  `SIGHT_HOME`: picked card → 1 `.on`, click on the list's bottom padding → 0, card click → 1 again; no page
-  errors. Not committed yet. The fresh-agent review CLAUDE.md asks for was not run (no subagent requested).

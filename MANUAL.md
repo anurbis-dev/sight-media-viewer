@@ -73,6 +73,8 @@
     the bin in the toolbar (`Shift+Delete`) clears the drawings on screen in one step (undo brings
     them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
     `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
+    A drawing already added to a note is fixed: it can be deleted from the frame, but not moved,
+    scaled, restyled, nudged, reordered, partly erased or retyped. Only drawings not yet added are editable.
   - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
     takes the drawings currently on screen that aren't attached to a note yet, plus every loose
     drawing you made since opening the file on other frames of a video or other views of a 3D
