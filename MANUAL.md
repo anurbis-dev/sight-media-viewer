@@ -237,7 +237,7 @@
   pictures, the caption telling which ("0:01.05 · f 30 · 2 / 7", "↳ Bob · Picture") with the note's /
   reply's words under it — up to three lines, more scroll inside the caption; a swipe up /
   down shows the next / previous note — the picture goes on the way you swiped, fading out, and the
-  next one follows it in like a strip; the round ← Back button leaves — no swipe does; the pencil
+  next one follows it in like a strip, fading in; the round ← Back button leaves — no swipe does; the pencil
   draws a reply on it; back in the review the player stands on the frame you left on). Settings (⚙ on
   the home screen, or ⋯ → *Settings*) has the theme: Auto (the system's), Light, Dark — the player
   and the notes share it — and *Full screen*: Auto (the default — the app goes full screen at the

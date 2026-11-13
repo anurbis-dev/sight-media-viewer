@@ -365,9 +365,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.capText = [capTx[0], capTx[1], scrolls, await capNow() === out.viewer[0], notCaught,
     await ev(() => { const b = document.querySelector(".view .vb"); return !b.style.transform.includes("scale(1)") ? b.style.transform : "fit"; })];
   await drag([320, 420], [60, 420], 8, 16);
-  // A strip: the old picture goes on to the left, fading, the new one comes in from the right.
+  // A strip: the old picture goes on to the left, fading out, the new one comes in from the right, fading in.
   out.viewerFade = [await p.waitForFunction(() => { const b = document.querySelectorAll(".view .vb"); if (b.length !== 2) return false;
-    const r0 = b[0].getBoundingClientRect(), r1 = b[1].getBoundingClientRect(); return r0.left < r1.left && Number(getComputedStyle(b[0]).opacity) < 1; }, null, { timeout: 2000, polling: 16 }).then(() => true, () => false)];
+    const r0 = b[0].getBoundingClientRect(), r1 = b[1].getBoundingClientRect(); return r0.left < r1.left && Number(getComputedStyle(b[0]).opacity) < 1 && Number(getComputedStyle(b[1]).opacity) < 1; }, null, { timeout: 2000, polling: 16 }).then(() => true, () => false)];
   await sleep(800);
   out.viewerFade.push(await ev(() => document.querySelectorAll(".view .vb").length));
   out.viewer.push(await capNow());

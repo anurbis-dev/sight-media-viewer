@@ -2,6 +2,27 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.32.1 — 2026-11-12 — One floating bar for the player and the canvas, half see-through
+- **What:** the phone player's header and transport now sit on the same floating bar as the
+  drawing canvas' top bar and tool bar (inset 8 px, rounded, blurred, half see-through); the halo
+  around the player's buttons and text is gone. The canvas' bars (phone and HTML page) are more
+  see-through too.
+- **Where:** `app/static/review-draw.js` (`.rd-panel` — the one style; `.draw .dtop` / `.dbar` only
+  place it; `SightReviewDraw.css()` exported), `mobile/js/app.js` (`DRAW.css()` at start, `hdr` /
+  `tp` get `rd-panel`, the pencil sits above the inset transport), `mobile/index.html` (`.hdr` /
+  `.tp` insets, `--halo` and the shadows removed, `--rd-ov` lighter: .66 light / .6 dark; `--rd-pop` for the popups over the picture).
+- **Notes:** change the look in `.rd-panel` only (the host sets `--rd-ov` / `--rd-fg` / `--rd-line`;
+  the HTML page uses the fallbacks). The header and transport now take touches over their whole
+  area (no taps through to the picture between buttons).
+- **Review (fresh agent):** fixed — a pinch that started on a bar zoomed the whole page
+  (`touch-action: none` on `.rd-panel`); on a bright frame in the dark theme the subtitle and the
+  timeline track nearly vanished (they now take the bar's own colour; the bar is a little less
+  see-through); the canvas' tool rows and size label followed the lighter bar (own `--rd-pop`);
+  the bars sat under a landscape notch (safe-area insets, canvas bars too); the timecode lost room
+  on 361–400 px phones (the narrow layout up to 400 px, ellipsis). Kept on purpose: the bars take
+  touches over their whole area (a visible panel; taps between its buttons no longer reach the
+  picture). Left: the pencil / viewer buttons still use the older `--ov` look.
+
 ## 0.32.0 — 2026-11-12 — Canvas tool rows and colour circle; the viewer walks the whole thread; replies editable
 - **What:** (1) Drawing canvas (phone + HTML page): *Arrows and lines* and *Shapes* are one slot
   each; a tap takes the slot and shows its kinds in a row above the bar (arrow, open, double,

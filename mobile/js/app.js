@@ -2993,7 +2993,7 @@ function playerPlace(){
 // o: {url, vb, rows, view, onDraw(), note, label (caption: which frame), nav(dir) / side(dir) →
 // Promise<o | null>, onClose(o)}
 // The next picture comes in like a strip: the swiped one goes on the way the finger sent it,
-// fading out, the next follows it in from that side, one screen behind (decoded first, at most
+// fading out, the next follows it in from that side, one screen behind, fading in (decoded first, at most
 // FADE_WAIT ms, so it never comes in blank).
 const FADE_MS = 300, FADE_WAIT = 600;
 function viewer(o){
@@ -3042,7 +3042,8 @@ function viewer(o){
     const ax = slide.axis === "x", D = (ax ? innerWidth : innerHeight) * slide.dir, k = ax ? 0 : 1;
     const at = (vv, o2, d) => `translate(${vv.x + o2[0] + (ax ? d : 0)}px,${vv.y + o2[1] + (ax ? 0 : d)}px) scale(${vv.z})`;
     const ease = "cubic-bezier(.25,.8,.3,1)";
-    box.animate([{ transform: at(V, [0, 0], D + wasOff[k]) }, { transform: at(V, [0, 0], 0) }], { duration: FADE_MS, easing: ease });
+    // The incoming one comes out of transparency as the outgoing one fades.
+    box.animate([{ transform: at(V, [0, 0], D + wasOff[k]), opacity: 0 }, { transform: at(V, [0, 0], 0), opacity: 1 }], { duration: FADE_MS, easing: ease });
     was.animate([{ transform: at(wasV, wasOff, 0), opacity: 1 }, { transform: at(wasV, [0, 0], -D), opacity: 0 }], { duration: FADE_MS, easing: ease, fill: "forwards" }).onfinish = () => was.remove();
     setTimeout(() => was.remove(), FADE_MS + 200);  // onfinish never comes for a node already gone
   }
