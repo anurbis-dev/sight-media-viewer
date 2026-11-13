@@ -64,10 +64,7 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   correctness bugs with concrete failure scenarios. Fix what it confirms, re-run the tests, and say
   in the RECENT entry what the review found. One review per block — do not batch several blocks
   into one late review.
-- **Build before every push:** when the user asks for a push, first produce a fresh build of the current
-  state (Windows: `build_exe.bat` → `dist\Sight\Sight.exe`; macOS: `build_app_macos.sh` → `dist/Sight.app`),
-  make sure it succeeds, and only then push. `dist/` is git-ignored — the build is not committed, it just
-  has to be up to date and working. If the build fails, fix it or tell the user instead of pushing.
+- **Builds:** no local build is needed before a push or a merge — builds are made by releases.
 - **Testing UI:** run the dev server (`SIGHT_DEV=1 ~/.sight/runtime/Scripts/python.exe Sight.py --dev
   --no-browser --port NNNN`, pick a fresh port) and drive it with Playwright. Tests must create their
   own boards/items by id and delete them afterwards — the live library is the user's real data.
