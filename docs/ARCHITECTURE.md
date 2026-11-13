@@ -330,9 +330,11 @@ reply not hidden / deleted, its note still exists — a drawing of a deleted not
 `visibleNow` adds the view mode (`viewMode()`, cached per microtask, reset in `afterChange` /
 `paintVisibility`): **compose** (the note field focused or filled, a stroke / shape being drawn, a
 new text, screenshots or unattached drawings waiting) shows only unattached drawings = a clean
-picture for the new note; **pin** (a note clicked) only that note's; **hover** dims the others.
-`S.cleanPic` (set by `addNote`) is the clean picture after a note is made: no note's drawings show
-until its card is hovered or pinned; compose and pin clear it (`viewMode` / `modeAllows`).
+picture for the new note; **pin** (a note clicked — its card or a video / 3D preview frame in it) only that note's; a click on a
+screenshot in a note opens it full size and does not pin.
+Hover changes nothing on the picture (0.44.3 removed the hover mode and `S.focusNote`; the only state is
+`S.pinFocus`). `S.cleanPic` (set by `addNote`) is the clean picture after a note is made: no note's drawings
+show until its card is clicked (pinned); compose and pin clear it (`viewMode` / `modeAllows`).
 Hit tests, the eraser, selection and "clear on screen" follow `visibleNow`; reports and exports
 use `ctxShown` (every drawing on that frame). Cards show the note's own drawings (and each reply's)
 over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset). In 3D

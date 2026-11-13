@@ -14,6 +14,22 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.44.3 — 2026-11-13 — Annotations: hovering a note no longer highlights its drawings
+- **What:** in the desktop lightbox, moving the pointer over a note card in the annotation panel does nothing to the
+  picture any more. Before, hover dimmed every other note's drawings and, right after a note was made, brought its
+  drawings back. Now only a click highlights: a click on the card (or a video / 3D preview frame in it) picks the
+  note, and the picture shows only its drawings, as before. A click on a screenshot still opens it full size.
+- **Where:** `app/static/annotate.js` — removed `S.focusNote`, the `pointerover` / `pointerleave` handlers on
+  `.an-list`, the `hover` field of `viewMode()`, the `dim` class in `paintVisibility` and the `.an-doc g.dim` rule;
+  `modeAllows` now lets a note's drawings back only when it is pinned (`S.pinFocus`). `MANUAL.md` (Annotations),
+  `docs/ARCHITECTURE.md` (desktop visibility). `app/version.py`.
+- **Notes:** `S.pinFocus` is the only "picked note" state now; every place that cleared `focusNote` clears
+  `pinFocus` alone. The card's own CSS hover border (`.an-note:hover`) is unchanged — it is styling, not a highlight.
+  Known, left as is: after a note is made the picture stays clean until its card is clicked (it used to come back
+  on hover). Not tested in a browser: checked by reading the code, `node --check app/static/annotate.js`, and a
+  grep that nothing reads `focusNote` / `m.hover` / `.dim` any more. Review (fresh agent, the whole diff): no
+  correctness bugs; its doc remark (a screenshot click does not pin) was applied to MANUAL and ARCHITECTURE.
+
 ## 0.44.2 — 2026-11-13 — A new note at another explode is a new view
 - **What:** a view is a camera, its hidden meshes and an explode amount (within 0.001). A note or drawing made at
   an explode different from the view it is on (the view has added notes, so the slider cannot move it) gets a new
@@ -291,17 +307,3 @@ Add new entries directly below this line.
   pick is cleared; drawing selection is left as it was, like Esc. Checked with Playwright on the scratch
   `SIGHT_HOME`: picked card → 1 `.on`, click on the list's bottom padding → 0, card click → 1 again; no page
   errors. Not committed yet. The fresh-agent review CLAUDE.md asks for was not run (no subagent requested).
-
-## 0.38.1 — 2026-11-13 — Desktop: the picture goes clean as soon as a note is made
-- **What:** in the desktop lightbox, once a note is made (Add button or Enter) its drawings and every other
-  note's drawings leave the picture at once. Before, they stayed on screen until you started a new drawing.
-  A note's drawings come back while its card is hovered or pinned (click); typing a new note, starting a
-  drawing or picking a note ends the clean picture.
-- **Where:** `app/static/annotate.js` — state `cleanPic`; `addNote` sets it; `viewMode` clears it on compose
-  or a pin; `modeAllows` hides note drawings while it is set (except the hovered / pinned note); `setAsset`
-  resets it. `MANUAL.md` (Annotations), `docs/ARCHITECTURE.md` (desktop visibility). `app/version.py`.
-- **Notes:** opening a file still shows every note's drawings (the idle default is unchanged). Checked with
-  Playwright on a scratch `SIGHT_HOME` with a few images: visible note drawings went from 1 (while
-  composing) to 0 after Add and after Enter; hovering a card shows its drawings; no page errors. The phone
-  app (`mobile/`, `.review.clean`) was not changed and was not checked for the same symptom. Not committed.
-  The fresh-agent review that CLAUDE.md asks for was not run (no subagent was requested).

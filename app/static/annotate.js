@@ -166,7 +166,7 @@ export function createAnnotator(host){
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
-    drag: null, hover: null, edit: null, region: null, pending: [], focusNote: null, cleanPic: false, altHeld: false,
+    drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
   };
@@ -637,8 +637,8 @@ export function createAnnotator(host){
   //   compose — a new note is being made (its field focused or filled, a drawing being drawn, or
   //             drawings / screenshots waiting for it): only what goes with the new note, a clean
   //             picture otherwise;
-  //   pin     — a note picked in the panel: only its drawings;
-  //   hover   — a note under the pointer in the panel: the others dimmed.
+  //   pin     — a note picked in the panel (a click on its card or a preview frame): only its drawings.
+  // Hovering a card changes nothing on the picture.
   let modeCache = null;
   function viewMode(){
     if (modeCache) return modeCache;
@@ -648,7 +648,7 @@ export function createAnnotator(host){
     const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
       || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && (it.data.created || 0) >= S.composeSince);
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
-    modeCache = { compose, pin: note(S.pinFocus), hover: note(S.focusNote) };
+    modeCache = { compose, pin: note(S.pinFocus) };
     // S.cleanPic (set by addNote) lasts until the next compose or pick.
     if (compose || modeCache.pin) S.cleanPic = false;
     queueMicrotask(() => { modeCache = null; });
@@ -658,8 +658,8 @@ export function createAnnotator(host){
     if (!it.data.note) return true;
     const m = viewMode();
     // Right after a note is made the picture is clean: its drawings are on its card. A note's drawings
-    // come back only while that note is hovered (or pinned, below).
-    if (S.cleanPic && m.pin !== it.data.note && m.hover !== it.data.note) return false;
+    // come back only when that note is picked (a click).
+    if (S.cleanPic && m.pin !== it.data.note) return false;
     // A picked note's drawings show even while a new note is being drawn (the pick is what the user asked for).
     if (m.pin) return it.data.note === m.pin;
     return !m.compose;
@@ -776,7 +776,7 @@ export function createAnnotator(host){
     const L = S.layer;
     if (!L) return;
     modeCache = null;
-    const m = viewMode(), focus = !m.compose && !m.pin ? m.hover : null;
+    const m = viewMode();
     for (const [id, g] of L.els){
       const it = S.items.get(id);
       if (!it) continue;
@@ -784,7 +784,6 @@ export function createAnnotator(host){
       const ghost = !S.hidden && !vis && ghostNow(it);
       g.style.display = vis || ghost ? "" : "none";
       g.classList.toggle("ghost", ghost);
-      g.classList.toggle("dim", !!focus && vis && it.data.note !== focus);
     }
     // What the view mode hides must not stay selected: Delete / nudge / copy would act on it unseen.
     let unsel = false;
@@ -905,7 +904,7 @@ export function createAnnotator(host){
       return;
     }
     // Drawing starts a new note: a note picked in the panel lets go (the media shows the new one).
-    if (S.pinFocus){ S.pinFocus = S.focusNote = null; renderPanel(); }
+    if (S.pinFocus){ S.pinFocus = null; renderPanel(); }
     if (STROKE_TOOLS.has(tool)){
       const st = styleDoc(tool);
       const p = pen ? clamp(e.pressure || 0.5, 0, 1) : 0.5;
@@ -1652,12 +1651,6 @@ export function createAnnotator(host){
     host.panScroll?.(el.querySelector(".an-list"));
     el.querySelector(".an-list").addEventListener("click", onListClick);
     el.querySelector(".an-list").addEventListener("dblclick", onListDblClick);
-    el.querySelector(".an-list").addEventListener("pointerover", (e) => {
-      const card = e.target.closest?.(".an-note");
-      const id = card?.dataset.id || null;
-      if (S.focusNote !== id && !S.pinFocus){ S.focusNote = id; paintVisibility(); }
-    });
-    el.querySelector(".an-list").addEventListener("pointerleave", () => { if (!S.pinFocus){ S.focusNote = null; paintVisibility(); } });
     bindThumbZoom(el, el.querySelector(".an-list"));
     el.querySelector(".an-pend").addEventListener("click", (e) => {
       const x = e.target.closest?.("[data-rm]");
@@ -1693,8 +1686,6 @@ export function createAnnotator(host){
   function renderPanel(){
     const el = S.ui;
     if (!el || el.hidden) return;
-    // The cards are rebuilt under the pointer: a hover on a card that is gone must not stay.
-    if (S.focusNote && S.focusNote !== S.pinFocus){ S.focusNote = S.pinFocus; queueMicrotask(() => paintVisibility()); }
     const all = notesSorted(), num = new Map(all.map((n, i) => [n.id, i + 1]));
     const stOf = (n) => n.data.status === "done" ? "done" : n.data.status === "progress" ? "progress" : "open";
     const tally = { all: all.length, open: 0, progress: 0, done: 0 };
@@ -2080,7 +2071,7 @@ export function createAnnotator(host){
       // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
       const sl = window.getSelection?.();
       if (sl && !sl.isCollapsed) return;
-      if (S.pinFocus){ S.pinFocus = S.focusNote = null; paintVisibility(); renderPanel(); }
+      if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); }
       return;
     }
     if (t.dataset.rdraw){
@@ -2176,7 +2167,6 @@ export function createAnnotator(host){
     const n = S.items.get(id);
     if (!n) return;
     S.pinFocus = S.pinFocus === id ? null : id;
-    S.focusNote = S.pinFocus;
     const c = n.data.ctx;
     if (c?.t != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(c.t); } }
     if (c?.vk) goView(c.vk, c.v3d, c.explode);
@@ -2670,7 +2660,7 @@ export function createAnnotator(host){
     if (want && !supported()){ toast("Annotations work on images, video and 3D models"); return false; }
     if (want === S.on) return true;
     S.on = want;
-    if (!want){ finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.focusNote = S.pinFocus = null; flush(); }
+    if (!want){ finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush(); }
     S.light?.classList.toggle("an-on", S.on);
     paintAlt();
     S.b3?.annotating?.(S.on);
@@ -2726,7 +2716,7 @@ export function createAnnotator(host){
     if (typing) return false;
     if (S.region && hotkey(e, "Escape")){ e.preventDefault(); cancelRegion(); return true; }
     const table = [
-      ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = S.focusNote = null; paintVisibility(); renderPanel(); return; } toggle(false); }],
+      ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }],
       ["KeyA", () => toggle(false)], ["Shift+KeyA", () => toggle(false)],
       ["Ctrl+KeyZ", () => undo()], ["Ctrl+Shift+KeyZ", () => redo()], ["Ctrl+KeyY", () => redo()],
       ["Delete", () => deleteSelection()], ["Shift+Delete", () => clearShown()], ["Backspace", () => deleteSelection()], ["KeyX", () => deleteSelection()],
@@ -2797,7 +2787,7 @@ export function createAnnotator(host){
     S.items.clear(); S.saved.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
-    S.focusNote = S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear();
+    S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear();
     S.openedAt = S.composeSince = Date.now();
     resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
@@ -2881,7 +2871,6 @@ function injectStyles(){
 .an-layer[hidden] { display: none; }
 .an-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .an-doc g.ghost { opacity: .22; }
-.an-doc g.dim { opacity: .25; }
 .an-active { touch-action: none; }
 .an-ui .an-selbox { fill: none; stroke: #4c9aff; stroke-width: 1; stroke-dasharray: 3 3; }
 .an-ui .an-selall { fill: none; stroke: #4c9aff; stroke-width: 1; }
