@@ -532,8 +532,8 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   `.compose` layout, `els.where`); starting a reply closes the new-note bar (its draft stays).
   Selection: `R.curNote` is the selected note, the only card `.cur` (`paintCurrent`, pictures too);
   cards on the frame shown get `.here` (lighter), so play / scrub never move the selection. Set by
-  a tap on a card (`selectNote`: seek to `threadFrames(n)[0]`), a picture tapped (`openThread`
-  selects + seeks to that frame first), a marker step landing on a note's frame (`jumpNote`), a
+  a tap on a card (`selectNote`: seek to `noteFrameList(n)[0]`), a picture tapped (`openThread`
+  selects only — no seek while the viewer is up, see RECENT 0.35.4), a marker step landing on a note's frame (`jumpNote`), a
   reply, `goTo`, `showNote`. Controls hidden: `setClean` → `.review.clean` (CSS hides `.hdr`,
   `.tp`, the pencil, `.playbig`, `.pbar` with `--pbh: 0` while the panel is closed; `.fab.showui`
   brings them back). Picture notes / no video: the inline composer in the card (`R.openReply`). A sideways drag on the stage scrubs

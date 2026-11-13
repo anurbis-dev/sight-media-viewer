@@ -170,7 +170,8 @@
   then holds the filters (All / Open / In progress / Resolved) — a swipe left / right on the list
   steps to the next / previous one; a playing video pauses where it is. A tap on a note selects it
   (the accent frame) and puts the player on the first frame of its drawing; a tap on one of its
-  pictures does the same and opens it full screen; stepping to a note's marker selects it too. A
+  pictures selects it and opens the picture full screen (Back leaves the player on the frame last
+  looked at); stepping to a note's marker selects it too. A
   lighter frame marks the notes on the frame shown now. A note's pictures (its
   frames, attached pictures; a reply's too) are equal squares in a row, each cut to fill its
   square — Settings → *Pictures in a row* (3–6, 4 by default); a reply's drawing shows on the

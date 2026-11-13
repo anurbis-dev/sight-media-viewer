@@ -2,6 +2,47 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.32.0 — 2026-11-12 — Canvas tool rows and colour circle; the viewer walks the whole thread; replies editable
+- **What:** (1) Drawing canvas (phone + HTML page): *Arrows and lines* and *Shapes* are one slot
+  each; a tap takes the slot and shows its kinds in a row above the bar (arrow, open, double,
+  dashed, line / rectangle, rounded, ellipse, filled rectangle, filled ellipse); a pick or a stroke
+  folds the row. The freed slot is a colour circle at the bar's right end with the colours in its
+  row; the palette under the tools is gone. (2) Phone: the note viewer's sideways swipe goes
+  through the whole note — its frames, its pictures, then each reply's drawings and pictures
+  (caption "↳ Bob · …" with the reply's words). (3) Phone: a reply's ⋯ — *Edit text*, *Edit the
+  drawing* / *Draw on it*, *Add pictures…*, *Remove its pictures*, *Delete reply…*; "edited" shows.
+- **Where:** `app/static/review-draw.js` (`ARROWS`, `SHAPES`, `SLOTS`, `slotOf`, `openFly` /
+  `closeFly`, `.dtools` / `.dcol` / `.dfly`, `useColour`, `begin` kinds, pen `arrow` / `shape`);
+  `mobile/js/app.js` (`threadItems`, `sameItem`, `loadItem`, `threadView`, `openThread`,
+  `shotThumbs(ids, n, rid)`, viewer per-picture `view` / `text`; `replyMenu`,
+  `editNoteDrawing(n, rid)`); `mobile/js/model.js` (`editReply`). Tests: `pwa_touch.cjs` (`fly`,
+  `thread`, `replyEdit`), `pwa_unit.cjs` (edited reply merge), `pwa_e2e.cjs` / `page_e2e.cjs`
+  (picking from a slot's row).
+- **Notes:** the line is shape_kind "line" (review-core draws and hit-tests it; Sight has it).
+  Folding the row on a pick is hidden-now / removed-next-tick on purpose (see ARCHITECTURE: the
+  HTML page's click-away handler). A reply's `edited` is the merge key, so an edit wins over an
+  older copy anywhere (Sight / the page / the app merge by it).
+- **Review (fresh agents):** Tool rows — fixed: a row stayed where it was across a
+  resize / rotation (off screen) — it folds on resize; a tool key, a hold or the top bar left a row
+  up with a stale pick — any tool change and the top bar fold it; Esc with a row up cancelled the
+  canvas — it folds the row first; on narrow screens the wrapped tools hugged the right edge (the
+  colour is now pinned at the row's end); the tests counted a hidden row. Left by design: a tap on
+  the picture that folds a row also draws (the user asked for drawing to fold it); a second tap on
+  an open slot puts the tool down; a filled ellipse hit-tests as its box (review-core, as before). Thread viewer — fixed: Back did not
+  follow the frame when the walk started on, or passed through, an attached picture (a picture
+  now carries the frame looked at before, and opening from one counts any frame as a move);
+  picture reviews: the card and the thread disagreed on the note's main picture, and up / down
+  skipped notes with no drawing — the picture is now always the first item; a picture that does
+  not decode is skipped; frames told apart by frame index everywhere (`noteFrameList`, the card). Reply editing — fixed: editing a reply's drawing re-stamped the
+  reply, so an older copy of its words could beat a newer edit made elsewhere (no stamp now: the
+  drawings merge on their own); `edited` / `deleted` always go past the reply's current stamp (a
+  clock behind the author's lost the edit); the menu writes to the note as it is then (a merge
+  meanwhile replaced the objects); an edit that would leave a reply empty offers to delete it
+  instead; a note's drawing opens on its own frame again (a reply's on its first). Left: removed
+  pictures stay in the device's picture store (freed with the review); a reply is one merge unit,
+  so the words edited in Sight and pictures changed on the phone at the same time — the later
+  edit keeps its copy of both (FORMAT.md).
+
 ## 0.31.0 — 2026-11-12 — Phone: speed and sound in the transport; the canvas settles like the player
 - **What:** (1) The transport row is ‹ ◀ **fps** timecode · frame **speaker** ▶ ›. The frame rate
   number is the speed: drag up / down = faster / slower (shown as the rate it plays at, accent

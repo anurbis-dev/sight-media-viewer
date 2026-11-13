@@ -14,6 +14,18 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.35.4 — 2026-11-13 — Phone viewer: the strip slide is smooth again (no seek on opening)
+- **What:** since 0.35.0 a tap on a note's picture also moved the player to that frame before the
+  viewer opened; on a phone the first swipes then stuttered and the next picture popped in
+  instead of sliding. Back to 0.33's behaviour: the tap selects the note and opens the viewer, the
+  player is left alone; Back puts it on the frame last looked at, as before.
+- **Where:** `mobile/js/app.js` `openThread` (no `selectNote` / seek, only `R.curNote`).
+- **Notes:** cause, as far as could be told without the device (headless Chromium slides fine
+  either way): the seek's `settle` grabs and encodes a ≤ 1600 px frame on the main thread right
+  under the first swipe, and the grabber's video competes with the player's decoder for the next
+  picture (over FADE_WAIT, it comes in blank and pops). Do not seek the player while the viewer
+  is opening.
+
 ## 0.35.3 — 2026-11-13 — Canvas: the fill row's "the line's colour" is back
 - **What:** the Shapes row's fill colour row starts again with *the line's colour* (the default: a
   fill in the line's own colour, lighter), then the six colours — the way back once a colour was
@@ -238,44 +250,3 @@ Add new entries directly below this line.
   on 361–400 px phones (the narrow layout up to 400 px, ellipsis). Kept on purpose: the bars take
   touches over their whole area (a visible panel; taps between its buttons no longer reach the
   picture). Left: the pencil / viewer buttons still use the older `--ov` look.
-
-## 0.32.0 — 2026-11-12 — Canvas tool rows and colour circle; the viewer walks the whole thread; replies editable
-- **What:** (1) Drawing canvas (phone + HTML page): *Arrows and lines* and *Shapes* are one slot
-  each; a tap takes the slot and shows its kinds in a row above the bar (arrow, open, double,
-  dashed, line / rectangle, rounded, ellipse, filled rectangle, filled ellipse); a pick or a stroke
-  folds the row. The freed slot is a colour circle at the bar's right end with the colours in its
-  row; the palette under the tools is gone. (2) Phone: the note viewer's sideways swipe goes
-  through the whole note — its frames, its pictures, then each reply's drawings and pictures
-  (caption "↳ Bob · …" with the reply's words). (3) Phone: a reply's ⋯ — *Edit text*, *Edit the
-  drawing* / *Draw on it*, *Add pictures…*, *Remove its pictures*, *Delete reply…*; "edited" shows.
-- **Where:** `app/static/review-draw.js` (`ARROWS`, `SHAPES`, `SLOTS`, `slotOf`, `openFly` /
-  `closeFly`, `.dtools` / `.dcol` / `.dfly`, `useColour`, `begin` kinds, pen `arrow` / `shape`);
-  `mobile/js/app.js` (`threadItems`, `sameItem`, `loadItem`, `threadView`, `openThread`,
-  `shotThumbs(ids, n, rid)`, viewer per-picture `view` / `text`; `replyMenu`,
-  `editNoteDrawing(n, rid)`); `mobile/js/model.js` (`editReply`). Tests: `pwa_touch.cjs` (`fly`,
-  `thread`, `replyEdit`), `pwa_unit.cjs` (edited reply merge), `pwa_e2e.cjs` / `page_e2e.cjs`
-  (picking from a slot's row).
-- **Notes:** the line is shape_kind "line" (review-core draws and hit-tests it; Sight has it).
-  Folding the row on a pick is hidden-now / removed-next-tick on purpose (see ARCHITECTURE: the
-  HTML page's click-away handler). A reply's `edited` is the merge key, so an edit wins over an
-  older copy anywhere (Sight / the page / the app merge by it).
-- **Review (fresh agents):** Tool rows — fixed: a row stayed where it was across a
-  resize / rotation (off screen) — it folds on resize; a tool key, a hold or the top bar left a row
-  up with a stale pick — any tool change and the top bar fold it; Esc with a row up cancelled the
-  canvas — it folds the row first; on narrow screens the wrapped tools hugged the right edge (the
-  colour is now pinned at the row's end); the tests counted a hidden row. Left by design: a tap on
-  the picture that folds a row also draws (the user asked for drawing to fold it); a second tap on
-  an open slot puts the tool down; a filled ellipse hit-tests as its box (review-core, as before). Thread viewer — fixed: Back did not
-  follow the frame when the walk started on, or passed through, an attached picture (a picture
-  now carries the frame looked at before, and opening from one counts any frame as a move);
-  picture reviews: the card and the thread disagreed on the note's main picture, and up / down
-  skipped notes with no drawing — the picture is now always the first item; a picture that does
-  not decode is skipped; frames told apart by frame index everywhere (`noteFrameList`, the card). Reply editing — fixed: editing a reply's drawing re-stamped the
-  reply, so an older copy of its words could beat a newer edit made elsewhere (no stamp now: the
-  drawings merge on their own); `edited` / `deleted` always go past the reply's current stamp (a
-  clock behind the author's lost the edit); the menu writes to the note as it is then (a merge
-  meanwhile replaced the objects); an edit that would leave a reply empty offers to delete it
-  instead; a note's drawing opens on its own frame again (a reply's on its first). Left: removed
-  pictures stay in the device's picture store (freed with the review); a reply is one merge unit,
-  so the words edited in Sight and pictures changed on the phone at the same time — the later
-  edit keeps its copy of both (FORMAT.md).

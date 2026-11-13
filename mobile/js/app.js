@@ -3244,10 +3244,12 @@ function threadView(n, items, i, f, from, prevAt){
       if (last.note.id !== from0.id || (t != null && (from0.t == null || frameKey(t) !== frameKey(from0.t)))) showNote(last.note, t);
     } };
 }
-// Opens note n's thread at item `at` (a frame / picture tapped in its card) — the note selected and
-// the player on that frame first (a picture: on the note's first frame).
+// Opens note n's thread at item `at` (a frame / picture tapped in its card) — the note selected; the
+// player is left alone while the viewer is up (a seek now would grab and encode a frame on the main
+// thread right under the first swipe: the slide stuttered on phones), Back puts it on the frame
+// last looked at (onClose → showNote).
 async function openThread(n, at){
-  selectNote(n, at && at.t != null ? at.t : null);
+  if (R && !composing()){ R.curNote = n.id; paintCurrent(); }
   const rv = R, items = threadItems(n);
   let i = items.findIndex((x) => sameItem(x, at));
   if (i < 0){ items.unshift(at); i = 0; }
