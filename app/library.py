@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from .fileinfo import NO_WINDOW, file_info, obj_is_binary
+from .fileinfo import NO_WINDOW, _ffprobe_text, file_info, obj_is_binary
 
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff",
@@ -896,6 +896,10 @@ class Library:
         self._drop_stale_model_thumbs()
         self._load_thumb_cache()
         self.video_cache = SlidingVideoCache()
+        self._play_lock = threading.Lock()
+        self._play_jobs: dict[str, dict] = {}  # asset id -> state of its playback copy (see start_play_copy)
+        self._play_slot = threading.Semaphore(1)  # one conversion at a time: they take every core
+        self._play_enc: dict[str, tuple[str, list[str], str] | None] = {}
         workers = max(2, min(4, os.cpu_count() or 2))
         for _ in range(workers):
             threading.Thread(target=self._worker, daemon=True).start()
@@ -1461,6 +1465,11 @@ class Library:
                 src.replace(self.thumbs / "psd" / (new_id + src.name[len(old_id):]))
             except OSError:
                 pass
+        for src in (self.thumbs / "video").glob(f"{old_id}_*"):
+            try:
+                src.replace(self.thumbs / "video" / (new_id + src.name[len(old_id):]))
+            except OSError:
+                pass
         self.execute(
             """
             UPDATE assets SET tags=?, note=?, rating=?, added_at=MIN(added_at, ?),
@@ -1558,6 +1567,7 @@ class Library:
                 self.thumbs / f"{aid}.jpg", self.thumbs / f"{aid}.png",
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
+                *(self.thumbs / "video").glob(f"{aid}_*"),
             ):
                 try:
                     p.unlink(missing_ok=True)
@@ -2120,6 +2130,165 @@ class Library:
         im.save(dest, "JPEG", quality=82)
         return w, h
 
+    # ---- playback copies: video the browser cannot decode -------------------------------------------
+    # A browser plays a few codecs only. Old MPEG-1/2 program streams (.mpg / .mpeg / .vob), MPEG-4
+    # Part 2 (DivX / Xvid), MS-MPEG4, WMV, FLV, H.263, Cinepak, MJPEG, DV ... give no picture there.
+    # For those, ffmpeg (which decodes all of them) converts a copy to H.264 in MP4 (WebM VP9 when
+    # this ffmpeg has no x264), and /api/file serves the copy from then on. The copy is named
+    # "<aid>_<size>_<mtime_ns><ext>": a changed source makes it stale without any bookkeeping.
+
+    PLAY_EXT = (".mp4", ".webm")
+    PLAY_VF = "yadif=deint=interlaced,scale=trunc(iw/2)*2:trunc(ih/2)*2"  # DVD / camcorder fields; even size
+
+    @staticmethod
+    def _play_stamp(path: str) -> str | None:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return f"{st.st_size}_{st.st_mtime_ns}"
+
+    def _play_copy(self, aid: str, stamp: str | None) -> Path | None:
+        if not stamp:
+            return None
+        for ext in self.PLAY_EXT:
+            p = self.thumbs / "video" / f"{aid}_{stamp}{ext}"
+            if p.exists():
+                return p
+        return None
+
+    def playback_path(self, a: dict) -> str:
+        """The file the player reads for asset ``a``: its current playback copy when there is one."""
+        if a.get("kind") != "video":
+            return a["path"]
+        copy = self._play_copy(a["id"], self._play_stamp(a["path"]))
+        return str(copy) if copy else a["path"]
+
+    def _play_encoder(self, ffmpeg: str) -> tuple[str, list[str], str] | None:
+        """(extension, encoder arguments, container) for the copy, or None when this ffmpeg can make
+        neither an H.264 nor a VP9 + Opus file."""
+        if ffmpeg in self._play_enc:
+            return self._play_enc[ffmpeg]
+        try:
+            listing = subprocess.run(
+                [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=20,
+                creationflags=NO_WINDOW,
+            ).stdout
+        except Exception:
+            listing = ""
+        found = None
+        if " libx264 " in listing:
+            found = (".mp4", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+                              "-g", "48", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"], "mp4")
+        elif " libvpx-vp9 " in listing and " libopus " in listing:
+            found = (".webm", ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "34", "-deadline", "realtime",
+                               "-cpu-used", "6", "-pix_fmt", "yuv420p", "-g", "48", "-c:a", "libopus",
+                               "-b:a", "128k"], "webm")
+        self._play_enc[ffmpeg] = found
+        return found
+
+    def playback_status(self, aid: str) -> dict:
+        """{state, progress, error} of asset ``aid``'s playback copy: ready / working / failed / none."""
+        a = self.get_asset(aid)
+        if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+            return {"state": "missing", "progress": 0, "error": "not a video in the library"}
+        stamp = self._play_stamp(a["path"])
+        if self._play_copy(aid, stamp):
+            return {"state": "ready", "progress": 1, "error": ""}
+        with self._play_lock:
+            job = self._play_jobs.get(aid)
+            if job and job["stamp"] == stamp:
+                return {"state": job["state"], "progress": job["progress"], "error": job["error"]}
+        return {"state": "none", "progress": 0, "error": ""}
+
+    def start_playback_copy(self, aid: str) -> dict:
+        """Starts converting asset ``aid`` for playback unless its copy is current or running. A failed
+        attempt is tried again when asked; the caller polls playback_status for the outcome."""
+        a = self.get_asset(aid)
+        if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+            return {"state": "missing", "progress": 0, "error": "not a video in the library"}
+        stamp = self._play_stamp(a["path"])
+        if self._play_copy(aid, stamp):
+            return {"state": "ready", "progress": 1, "error": ""}
+        with self._play_lock:
+            job = self._play_jobs.get(aid)
+            if job and job["stamp"] == stamp and job["state"] == "working":
+                return {"state": "working", "progress": job["progress"], "error": ""}
+        ffmpeg = self.ffmpeg_exe()
+        enc = self._play_encoder(ffmpeg) if ffmpeg else None
+        if not enc:
+            why = "ffmpeg not found" if not ffmpeg else "ffmpeg has no H.264 or VP9 encoder"
+            with self._play_lock:
+                self._play_jobs[aid] = {"stamp": stamp, "state": "failed", "progress": 0, "error": why}
+            return {"state": "failed", "progress": 0, "error": why}
+        job = {"stamp": stamp, "state": "working", "progress": 0.0, "error": ""}
+        with self._play_lock:
+            self._play_jobs[aid] = job
+        threading.Thread(
+            target=self._run_playback_copy,
+            args=(aid, a["path"], stamp, ffmpeg, enc, float(a.get("duration") or 0), job),
+            name=f"play-copy-{aid}", daemon=True,
+        ).start()
+        return {"state": "working", "progress": 0, "error": ""}
+
+    def _run_playback_copy(self, aid: str, src: str, stamp: str, ffmpeg: str,
+                           enc: tuple[str, list[str], str], duration: float, job: dict) -> None:
+        ext, enc_args, container = enc
+        d = self.thumbs / "video"
+        d.mkdir(parents=True, exist_ok=True)
+        stem = f"{aid}_{stamp}"
+        tmp = d / f"{stem}.part"  # no media extension, so no lookup ever picks it up
+        log = d / f"{stem}.log"
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src,
+            "-map", "0:v:0", "-map", "0:a:0?", "-vf", self.PLAY_VF, *enc_args, "-ac", "2",
+            "-progress", "pipe:1", "-nostats", "-f", container, str(tmp),
+        ]
+        state, error = "failed", ""
+        try:
+            if duration <= 0:  # not in the library yet: the banner gives it, for the progress figure
+                m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", _ffprobe_text(ffmpeg, Path(src)))
+                if m:
+                    duration = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
+            # stderr goes to a file: a damaged stream can print more than a pipe buffer holds, and
+            # nothing reads the pipe while the progress lines are read.
+            with self._play_slot, open(log, "w", encoding="utf-8", errors="replace") as errf:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
+                    errors="replace", creationflags=NO_WINDOW,
+                )
+                for line in proc.stdout:
+                    if line.startswith("out_time_us=") and duration > 0:
+                        try:
+                            done = int(line.split("=", 1)[1]) / 1e6 / duration
+                        except ValueError:
+                            continue
+                        with self._play_lock:
+                            job["progress"] = round(min(0.99, max(0.0, done)), 3)
+                proc.stdout.close()
+                rc = proc.wait()
+            if rc == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                final = d / f"{stem}{ext}"
+                for old in d.glob(f"{aid}_*"):  # copies of earlier versions of this file
+                    if old.name not in (final.name, log.name, tmp.name):
+                        old.unlink(missing_ok=True)
+                tmp.replace(final)
+                state = "ready"
+            else:
+                lines = [ln for ln in log.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+                error = lines[-1][:300] if lines else f"ffmpeg exited with code {rc}"
+        except Exception as e:  # ffmpeg vanished, disk full, ...
+            error = str(e)[:300] or type(e).__name__
+        finally:
+            tmp.unlink(missing_ok=True)
+            log.unlink(missing_ok=True)
+            with self._play_lock:
+                job["state"] = state
+                job["progress"] = 1.0 if state == "ready" else job["progress"]
+                job["error"] = error
+                if state == "ready" and self._play_jobs.get(aid) is job:
+                    del self._play_jobs[aid]  # the copy itself answers from now on
+
     def _decode_peaks(self, path: Path, bars: int = 96) -> tuple[list[int], int] | None:
         """Shared ffmpeg PCM decode + peak bucketing, used by both the interactive waveform
         (§make_waveform) and the audio thumbnail."""
@@ -2475,6 +2644,7 @@ class Library:
                 self.thumbs / f"{aid}.jpg", self.thumbs / f"{aid}.png",
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
+                *(self.thumbs / "video").glob(f"{aid}_*"),
             ):
                 try:
                     p.unlink(missing_ok=True)

@@ -17,6 +17,7 @@
 // camera matches that view; images: none (always visible).
 
 import { hotkey, runHotkeys } from "/static/keys.js";
+import { convertForPlayback } from "/static/video-playable.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
 import "/static/review-core.js";
@@ -1722,7 +1723,15 @@ export function createAnnotator(host){
         document.body.appendChild(nv);
         PF.v = nv;
         nv.src = `/api/file/${aid}`;
-        await pfLoad(nv, 8000);
+        // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
+        const shown = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
+        if (!shown){
+          const res = await convertForPlayback(aid, null, () => PF.gen === gen);
+          if (res.ok && PF.gen === gen){
+            nv.src = `/api/file/${aid}?copy=${Date.now()}`;
+            await pfLoad(nv, 8000).catch(() => {});
+          }
+        }
       }
       const v = PF.v;
       while (PF.want.length && PF.gen === gen){

@@ -13,6 +13,7 @@
 // open(ids, focusId) / close() / isOpen() / onKey(e) (true when the key was used).
 
 import { hotkey, runHotkeys } from "/static/keys.js";
+import { convertForPlayback } from "/static/video-playable.js";
 
 const COLORS = ["#4c9aff", "#ff9f0a", "#34c759", "#ff453a", "#af52de", "#32ade6", "#ffd60a", "#ff6482"];
 const LAYOUTS = [["swipe", "Swipe", "Digit1"], ["grid", "Tile", "Digit2"], ["row", "Row", "Digit3"], ["col", "Column", "Digit4"]];
@@ -164,6 +165,16 @@ export function createCompare(host){
         if (primary){ l.nw = m.videoWidth || l.nw; l.nh = m.videoHeight || l.nh; if (Number.isFinite(m.duration)) l.dur = m.duration; }
         place(); paintTimeline();
       });
+      // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
+      let asked = false;
+      const fallback = async () => {
+        if (asked || !C) return;
+        asked = true;
+        const res = await convertForPlayback(a.id, null, () => !!C);
+        if (res.ok && C) m.src = `/api/file/${a.id}?copy=${Date.now()}`;
+      };
+      m.addEventListener("error", fallback);
+      m.addEventListener("loadedmetadata", () => { if (!m.videoWidth) fallback(); });
     } else {
       m = document.createElement("img");
       m.decoding = "async";

@@ -607,7 +607,8 @@ import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { hotkey } from "/static/keys.js";
-const KIND = { image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
+import { convertForPlayback } from "/static/video-playable.js";
+const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
 const TILE_MIN = 48, TILE_MAX = 360, COMPACT = 72;
 const VIEW_MODE_KEY = "sight.viewMode";
@@ -4832,12 +4833,35 @@ function pushVideoFocus(el, a, minGap){
 function startVideoCache(el, a){
   releaseMedia(false);
   el.src = `/api/file/${a.id}`;
+  watchPlayable(el, a);
   pushVideoFocus(el, a, 0);
   // The window keeps filling after the focus reply, so poll to keep the strip honest.
   light.cacheTimer = setInterval(() => {
     if (!light || light.video !== el) return;
     fetch(`/api/video/cache?aid=${a.id}`).then((r) => r.json()).then((snap) => { if (light && light.video === el) applyCacheSnap(snap); }).catch(() => {});
   }, 500);
+}
+// The browser decodes only some codecs. When the file gives no picture (an error, or metadata without
+// a video size), the server makes a playback copy (video-playable.js) and the player switches to it,
+// keeping its place in the HUD line under the picture meanwhile. Asked once per opened file.
+function watchPlayable(el, a){
+  let asked = false;
+  const fallback = async () => {
+    if (asked || !light || light.video !== el) return;
+    asked = true;
+    const hud = el.parentElement?.querySelector(".view-hud");
+    const show = (text) => { if (hud) hud.textContent = text; };
+    show("Converting for playback…");
+    const res = await convertForPlayback(a.id, (p) => show(`Converting for playback… ${Math.round(p * 100)}%`),
+      () => !!light && light.video === el);
+    if (!light || light.video !== el) return;
+    if (!res.ok){ show(`Cannot play this file: ${res.error}`); return; }
+    show("");
+    el.src = `/api/file/${a.id}?copy=${Date.now()}`;
+    pushVideoFocus(el, a, 0);
+  };
+  el.addEventListener("error", fallback);
+  el.addEventListener("loadedmetadata", () => { if (!el.videoWidth) fallback(); });
 }
 // free: also drop the server-side window (player closed / moved to a non-video) so a big RAM budget
 // doesn't stay resident with nothing playing.

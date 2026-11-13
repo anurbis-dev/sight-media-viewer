@@ -593,7 +593,8 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         mt = media_type_for(a["path"])
         headers = {"Cache-Control": "private, max-age=60"}
         if a.get("kind") == "video":
-            return serve_video(request, a["path"], lib.video_cache)
+            # The playback copy once one exists (see Library.start_playback_copy), else the source.
+            return serve_video(request, lib.playback_path(a), lib.video_cache)
         if a.get("kind") in ("model3d", "font", "document"):
             # No filename= here on purpose: FileResponse then adds Content-Disposition:
             # attachment, which makes Chromium's PDF viewer refuse a <embed> of it outright
@@ -624,11 +625,12 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             duration = float(body.get("duration") or 0)
         except (TypeError, ValueError):
             t, duration = 0.0, 0.0
-        size = os.path.getsize(a["path"])
+        play = lib.playback_path(a)
+        size = os.path.getsize(play)
         pos = int(size * (t / duration)) if duration > 0 else 0
         pos = max(0, min(size, pos))
-        lib.video_cache.focus(a["path"], pos)
-        snap = lib.video_cache.snapshot(a["path"])
+        lib.video_cache.focus(play, pos)
+        snap = lib.video_cache.snapshot(play)
         snap.update({"ok": True, "pos": pos, "mb": lib.video_cache.budget_mb})
         return snap
 
@@ -639,7 +641,18 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         a = lib.get_asset(aid)
         if not a or a.get("kind") != "video":
             raise HTTPException(404)
-        return lib.video_cache.snapshot(a["path"])
+        return lib.video_cache.snapshot(lib.playback_path(a))
+
+    @app.post("/api/video/transcode")
+    async def video_transcode_start(request: Request) -> dict:
+        # Asked by the player when the browser shows no picture for the file (see index.html
+        # convertForPlayback). Returns at once; the conversion runs in the background.
+        body = await json_body(request)
+        return await asyncio.to_thread(lib.start_playback_copy, str(body.get("id") or ""))  # ffmpeg probes
+
+    @app.get("/api/video/transcode")
+    def video_transcode_state(aid: str = "") -> dict:
+        return lib.playback_status(aid)
 
     @app.get("/api/psd/{aid}/layers")
     def psd_layers(aid: str):

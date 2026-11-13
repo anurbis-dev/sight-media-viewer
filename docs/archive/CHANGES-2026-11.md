@@ -2,6 +2,19 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.33.5 — 2026-11-13 — Canvas: filled shapes get their own fill colour
+- **What:** on the drawing canvas (phone + HTML page) the Shapes row ends with *Fill colour*: a
+  second row above it — the line's own colour (as before) or black, white, red, yellow, green,
+  blue. A colour picked while an outlined shape is in hand switches to its filled kind (rectangle /
+  rounded → filled rectangle, ellipse → filled ellipse). The button shows the fill.
+- **Where:** `app/static/review-draw.js` — `pen.fill` (saved with the pen), `fillButton` /
+  `fillIco` / `setFill`, `subRow` (the second row, now shared with the text's box / font rows),
+  `begin` (fill colour / opacity), `recolour`. Tests: `fill` in `pwa_touch.cjs` / `test_pwa.py`
+  (the Shapes row has 6 buttons now).
+- **Notes:** a fill of its own colour is drawn at 0.6 opacity, the line's own at 0.3 (as before).
+  The colour circle recolouring a selection changes a fill only when it was the line's colour (a
+  fill picked on purpose stays). FORMAT.md is unchanged (`fill` was already its own field).
+
 ## 0.33.4 — 2026-11-13 — Canvas: a second row for the text's box colour and font
 - **What:** on the drawing canvas (phone + HTML page) the *Text* row's box and font switches open
   a second row above it: the box's colour (black, white, red, yellow, green, blue; 0.33.6: no

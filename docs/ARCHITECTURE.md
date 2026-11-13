@@ -102,6 +102,11 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   `fileinfo.py`); the app has no console, so each would otherwise flash a console window.
 - ffmpeg is found in a background thread at startup: read it through `lib.ffmpeg_exe()` (waits for
   the search, retries when none was found), not `lib.ffmpeg`.
+- Video playback: `/api/file/{id}` (and the focus / cache endpoints) serve `lib.playback_path(a)`, which is
+  the source or its converted copy in `thumbs/video/<aid>_<size>_<mtime_ns>.<ext>`. The copy is made
+  only when the browser fails on the source: the player calls `POST /api/video/transcode` (see
+  `app/static/video-playable.js`), then polls `GET` until `ready`. Any new `<video>` that plays library
+  files needs the same fallback (`convertForPlayback`), or it shows nothing for the codecs above.
 - `thumb_version()` is cached in memory, a missing file as 0 too (re-checked after 30 s;
   `prioritize` regenerates a has_thumb asset whose file is gone). Code that writes a thumbnail calls
   `thumb_version(aid, fresh=True)`; code that finds or writes one marks it with `_mark_thumb(aid)`

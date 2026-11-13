@@ -395,6 +395,10 @@
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
   The green strip on the timeline is the RAM cache: a window around the playhead whose size is
   set in Settings → RAM cache (32–2048 MB) and which slides as you play or scrub.
+- Video the browser cannot play (old `.mpg` / `.mpeg` / `.vob`, DivX / Xvid, WMV, FLV and similar)
+  is converted once to an H.264 copy: the viewer shows "Converting for playback… N%" and then plays
+  it. The copy is kept in the library's `thumbs/video` folder (about the size of the original), so
+  the next open is immediate. Delete a file's copy from that folder to make it again.
 - Video gets automatic thumbnail stills (needs ffmpeg — bundled in the standalone builds,
   otherwise Sight shows an "Install" banner if it can't find one). PSD opens per-layer;
   fonts get a live specimen; 3D models get an interactive viewer (drag to orbit,
