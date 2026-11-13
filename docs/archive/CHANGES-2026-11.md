@@ -2,6 +2,40 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.31.0 — 2026-11-12 — Phone: speed and sound in the transport; the canvas settles like the player
+- **What:** (1) The transport row is ‹ ◀ **fps** timecode · frame **speaker** ▶ ›. The frame rate
+  number is the speed: drag up / down = faster / slower (shown as the rate it plays at, accent
+  coloured when not the clip's own), tap = the nearest common rate (24, 25, 30, 12…), hold = the
+  clip's own. The speaker: drag up / down = volume (a thin level bar at the screen's left edge,
+  kept per device), tap = full; grey when the clip has no sound. Also on the canvas' transport.
+  No volume gesture on the picture itself (the user's choice: the swipes there stay the panel /
+  the list). (2) Drawing canvas (phone + HTML page): a pinch / pan let go smaller than the screen
+  goes back to fit with the turn to the nearest quarter, nearly at fit and straight snaps to fit
+  (eased), the wheel stops at fit — as the player does.
+- **Where:** `mobile/js/app.js` (`vdrag`, `setRate` / `snapRate` / `paintRate`, `applyVol` /
+  `setVol` / `paintSnd` / `showVolBar`, `setAudio`, transport row, video set-up, `bindFile`);
+  `mobile/js/mp4.js` (`fpsFromMoov` → `audio`); `mobile/index.html` (`.tpi .fps` / `.snd` /
+  `.tc`, `.volbar`); `app/static/review-draw.js` (`settleView`, `unease`, wheel). Tests:
+  `pwa_unit.cjs` (audio flag), `pwa_touch.cjs` (`speed`, `sound`, `canvasSettle`).
+- **Notes:** whether a clip has sound: MP4 / MOV from the container (`soun` track), Safari
+  `audioTracks`, Firefox `mozHasAudio` — final and stored (`meta.audio`); Chrome has no API before
+  decoding, so after a quarter second of unmuted play with nothing decoded it guesses "none"
+  (not stored, taken back as soon as sound decodes; muted play never guesses). iOS ignores a
+  page's volume: the drag there only mutes / unmutes. Speed is kept for the review while open
+  (`R.rate`), not stored.
+- **Review (fresh agents):** canvas settle — fixed: a settle across 0° / 360° spun the picture
+  almost a full turn (fit keeps [0, 360)); the ease stayed on for the next gesture (lag, taps
+  landing off); the box size jumped while the transform eased; a pinch cut short by the pen or
+  a text edit never settled; the wheel refit while typing. Speed / sound — fixed: a sideways slide on a
+  control counted as a tap (snapping the speed / full volume); a WebM's frame rate measured while
+  playing faster than 1× could be stored wrong (frames dropped) — measured at 1× only; a guessed
+  "no sound" did not repaint the icon; after picking another file the old "no sound" stayed (the
+  sound is learnt again on a rebind); the timecode was clipped on 320 px phones (narrow layout) and
+  jittered with a bold rate; a long press could select the number / open a menu; labels rewritten
+  every frame; a second finger on a control. Left: a tap at 1× on a clip whose measured rate is not
+  a common one snaps it (e.g. 29.5 → 29.97); the MP4 sound flag counts any sound track, even an
+  empty one.
+
 ## 0.30.0 — 2026-11-12 — Phone: review groups, tool opacity on the hold, auto full screen
 - **What:** (1) Home: a review held, dragged onto the middle of another one (it lights up) and let
   go makes a group of the two (named by the names' common start, else "Group"); more go onto the

@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.35.3 — 2026-11-13 — Canvas: the fill row's "the line's colour" is back
+- **What:** the Shapes row's fill colour row starts again with *the line's colour* (the default: a
+  fill in the line's own colour, lighter), then the six colours — the way back once a colour was
+  picked (the user's call, reversing 0.35.0).
+- **Where:** `app/static/review-draw.js` `fillButton`. Test: `fill` (7 entries, back to null).
+
 ## 0.35.2 — 2026-11-13 — Phone: picked reviews swipe together; fixes to note selection
 - **What:** (1) Home: a picked review swiped left / right slides with every other picked one; the
   bin / eye uncovered on any of them deletes (one confirm) / hides all the picked ones.
@@ -29,8 +35,7 @@ Add new entries directly below this line.
   row's `.sw` buttons, `selectNote`, the card's click, `showNote`, `jumpNote`, `paintSnd`;
   `mobile/index.html` (`.review.clean` rules `:not(.compose)`). Test: `swipeAll`.
 - **Notes:** left as reviewed: with the controls hidden a mouse has no way to the panel but the
-  round button (the swipe up is touch only); once a fill colour is picked there is no way back
-  to the line's own (the user dropped that entry).
+  round button (the swipe up is touch only). (The fill row's "the line's colour" is back in 0.35.3.)
 
 ## 0.35.1 — 2026-11-13 — Phone: the viewer's caption across the width, the pencil over it; no subtitle on home
 - **What:** the full-screen viewer's caption (number, frame, words) spans the whole width at the
@@ -274,37 +279,3 @@ Add new entries directly below this line.
   pictures stay in the device's picture store (freed with the review); a reply is one merge unit,
   so the words edited in Sight and pictures changed on the phone at the same time — the later
   edit keeps its copy of both (FORMAT.md).
-
-## 0.31.0 — 2026-11-12 — Phone: speed and sound in the transport; the canvas settles like the player
-- **What:** (1) The transport row is ‹ ◀ **fps** timecode · frame **speaker** ▶ ›. The frame rate
-  number is the speed: drag up / down = faster / slower (shown as the rate it plays at, accent
-  coloured when not the clip's own), tap = the nearest common rate (24, 25, 30, 12…), hold = the
-  clip's own. The speaker: drag up / down = volume (a thin level bar at the screen's left edge,
-  kept per device), tap = full; grey when the clip has no sound. Also on the canvas' transport.
-  No volume gesture on the picture itself (the user's choice: the swipes there stay the panel /
-  the list). (2) Drawing canvas (phone + HTML page): a pinch / pan let go smaller than the screen
-  goes back to fit with the turn to the nearest quarter, nearly at fit and straight snaps to fit
-  (eased), the wheel stops at fit — as the player does.
-- **Where:** `mobile/js/app.js` (`vdrag`, `setRate` / `snapRate` / `paintRate`, `applyVol` /
-  `setVol` / `paintSnd` / `showVolBar`, `setAudio`, transport row, video set-up, `bindFile`);
-  `mobile/js/mp4.js` (`fpsFromMoov` → `audio`); `mobile/index.html` (`.tpi .fps` / `.snd` /
-  `.tc`, `.volbar`); `app/static/review-draw.js` (`settleView`, `unease`, wheel). Tests:
-  `pwa_unit.cjs` (audio flag), `pwa_touch.cjs` (`speed`, `sound`, `canvasSettle`).
-- **Notes:** whether a clip has sound: MP4 / MOV from the container (`soun` track), Safari
-  `audioTracks`, Firefox `mozHasAudio` — final and stored (`meta.audio`); Chrome has no API before
-  decoding, so after a quarter second of unmuted play with nothing decoded it guesses "none"
-  (not stored, taken back as soon as sound decodes; muted play never guesses). iOS ignores a
-  page's volume: the drag there only mutes / unmutes. Speed is kept for the review while open
-  (`R.rate`), not stored.
-- **Review (fresh agents):** canvas settle — fixed: a settle across 0° / 360° spun the picture
-  almost a full turn (fit keeps [0, 360)); the ease stayed on for the next gesture (lag, taps
-  landing off); the box size jumped while the transform eased; a pinch cut short by the pen or
-  a text edit never settled; the wheel refit while typing. Speed / sound — fixed: a sideways slide on a
-  control counted as a tap (snapping the speed / full volume); a WebM's frame rate measured while
-  playing faster than 1× could be stored wrong (frames dropped) — measured at 1× only; a guessed
-  "no sound" did not repaint the icon; after picking another file the old "no sound" stayed (the
-  sound is learnt again on a rebind); the timecode was clipped on 320 px phones (narrow layout) and
-  jittered with a bold rate; a long press could select the number / open a menu; labels rewritten
-  every frame; a second finger on a control. Left: a tap at 1× on a clip whose measured rate is not
-  a common one snaps it (e.g. 29.5 → 29.97); the MP4 sound flag counts any sound track, even an
-  empty one.

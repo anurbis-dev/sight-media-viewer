@@ -232,6 +232,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.fill.push(await ev(() => { const P = JSON.parse(localStorage.getItem("sight-review:pen")); return [P.fill, P.shape, !!document.querySelector(".draw .dfly:not([hidden])")]; }));
   out.fill.push(await ev(() => { const g = document.querySelectorAll(".draw .dbox svg > g")[1]; return [...g.querySelectorAll("path")].some((x) => x.getAttribute("fill") === "#0a84ff"); }));
   await ev(() => document.querySelector('.draw button[title="Undo"]').click());
+  await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
+  await ev(() => document.querySelector('.draw .dfly button[title="Fill colour"]').click()); await sleep(80);
+  await ev(() => document.querySelector('.draw .dsub button[title^="Fill: the line"]').click()); await sleep(80);
+  out.fill.push(await ev(() => JSON.parse(localStorage.getItem("sight-review:pen")).fill));
   // A key takes a tool: the open row folds (it would show a stale pick).
   await ev(() => document.querySelector('.draw .dtools button[title="Shapes"]').click()); await sleep(80);
   await p.keyboard.press("KeyB"); await sleep(80);

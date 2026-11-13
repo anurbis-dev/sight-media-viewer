@@ -200,8 +200,8 @@
   turn), its buttons floating over the picture. A tap on *Arrows and lines* or *Shapes* takes it and
   shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
   rectangle, rounded, ellipse, filled rectangle, filled ellipse — and at its end the fill colour:
-  a second row of six colours — until one is picked a fill is the line's own, lighter; picking a
-  colour with an outlined shape in hand takes its filled kind): tap one to draw with it, or just
+  a second row with the line's own colour (lighter, the default) or one of six; picking a colour
+  with an outlined shape in hand takes its filled kind): tap one to draw with it, or just
   draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; switched on, the box shows its colours in a second
