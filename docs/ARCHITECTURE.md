@@ -260,7 +260,8 @@ ellipse, **text**, eraser (Ctrl held = eraser for that stroke). The bar (`.dtool
 rect / ellipse). A tap on a slot shows its row (`.dfly`, above the bar); a pick, a touch on the
 picture, another slot folds it. The rows are `.dfly.rd-panel` (the bars' own look). The *Text*
 slot's row is switches (`TEXT_OPTS`: bold, italic, underline, `bgOn`, outline = 6 % of the size,
-align and font cycle) on `pen.text` (saved with the pen, used by a new text); a switch also styles
+align cycles; the box and the font open a second row `.dsub` above it — `openSub`: none + the box
+colours `TEXT_COLORS` / `FONT_IDS`) on `pen.text` (also `bg`, `outlineColor`) (saved with the pen, used by a new text); a switch also styles
 the text being typed (`edit.it.data`, restored from `edit.before` on cancel; `commitText` compares
 `styleOf`) or, with select + texts selected, those texts (copies, one undo step). While typing,
 `mousedown` on the slot / row is prevented so the field keeps the focus (the phone keyboard), and a

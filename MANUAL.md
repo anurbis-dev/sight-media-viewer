@@ -196,7 +196,8 @@
   rectangle, rounded, ellipse, filled rectangle, filled ellipse): tap one to draw with it, or just
   draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
-  alignment (left / centre / right) and font (sans, serif, mono, hand, impact) — they style the
+  alignment (left / centre / right) and font; the box and the font open a second row above — the
+  box's colour (or no box), the fonts (sans, serif, mono, hand, impact). They style the
   text being typed and the next ones; with the select tool and texts selected, a tap on *Text*
   shows the row for those texts (the tool stays select; `T` takes the text tool). The colour is the circle at the bar's right end: a tap shows the colours above it. Opened from the player, the picture stays exactly
   where and as big as it was (zoom and turn too) — drawing only brings the tools up; closing keeps

@@ -2,6 +2,26 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.26.1 — 2026-11-12 — Phone: scrub / frame steps no longer jump back before landing
+- **What:** at the end of a scrub, and on every frame step, the picture jumped back a frame and
+  then onto the right one. Now it goes straight to the frame.
+- **Where:** `mobile/js/media.js` (`ScrubCache` rewritten: frames by media time, `fill`, `exact`),
+  `mobile/js/app.js` (`cachedAt`, `showCached`, `hideWhenShown`, `settle`).
+- **Notes:** two causes. (1) The cached picture was hidden on `seeked`, but the player paints the
+  new frame a moment later (Safari especially), so the old frame flashed up: now it is hidden after
+  rVFC reports a presented frame (250 ms fallback); a new cached picture cancels a pending hide.
+  (2) The cache was keyed on a grid of the guessed 25 fps (WebM until played), so at 29.97 fps one
+  frame in six was never cached and `near()` showed the frame before; steps now use `exact()` only
+  (else the player's current frame stays until the seek lands), drags keep `near()`, and the cache
+  is keyed by real media times with a gap-filling second pass.
+- **Review (fresh agent):** `exact()` first picked the frame by round(mt / fd), which differs from
+  what the player shows at (n + 0.25)·fd when stamps jitter (phone VFR clips) — now it takes the
+  last cached frame starting at or before that point, only if none is missing in between; the cache
+  bar ran backwards while `fill()` added early frames (progress only goes forward); "ended" could
+  start a second `fill()` (once-guard, never seek to the very end); frame 0 was never cached (the
+  start is a hole too); in a drawing session a step with no exact frame left the old picture under
+  the new frame's drawings (falls back to `near()`, dimmed).
+
 ## 0.26.0 — 2026-11-12 — Phone app: full-screen player, Notes Panel, multi-frame notes, themes; multi-frame / multi-view notes in Sight
 - **What:** the review is a full-screen player: every control in a header over the picture, the
   transport (marker / frame steps, timecode, timeline) over its foot, a thin *Notes Panel* bar that

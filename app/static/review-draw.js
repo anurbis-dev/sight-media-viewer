@@ -130,19 +130,23 @@ var SightReviewDraw = (function(){
   ];
   // The text slot's row: switches for the text being typed (or the selected texts, with the
   // transform tool), kept with the pen for the next text. Their FORMAT.md fields: bold, italic,
-  // underline, bgOn (the box behind it), outline (a width; on = 6 % of the size), align, font.
+  // underline, bgOn + bg (the box behind it, its colour), outline (a width; on = 6 % of the size) +
+  // outlineColor, align, font. The box and the font have a second row (`sub`): the box's colours or
+  // none, the fonts; the outline is a plain switch.
   var TXT = "font-size=\"16\" fill=\"currentColor\" stroke=\"none\" text-anchor=\"middle\"";
   var TEXT_OPTS = [
     { k: "bold", label: "Bold", ico: '<text x="12" y="17.5" ' + TXT + ' font-weight="800" font-family="system-ui, sans-serif">B</text>' },
     { k: "italic", label: "Italic", ico: '<text x="12" y="17.5" ' + TXT + ' font-style="italic" font-family="Georgia, serif">I</text>' },
     { k: "underline", label: "Underline", ico: '<text x="12" y="15.5" ' + TXT + ' font-family="system-ui, sans-serif">U</text><path d="M6.5 20h11"/>' },
-    { k: "bgOn", label: "Box behind the text", ico: '<rect x="3" y="4.5" width="18" height="15" rx="3.5" fill="currentColor" fill-opacity=".3"/><path d="M8.5 9h7M12 9v6.5"/>' },
-    { k: "outline", label: "Outline", ico: '<path d="M6 19.5 12 4.5l6 15M8.4 13.5h7.2" stroke-width="4" stroke-opacity=".35"/><path d="M6 19.5 12 4.5l6 15M8.4 13.5h7.2"/>' },
+    { k: "bgOn", label: "Box behind the text", sub: "box" },
+    { k: "outline", label: "Outline" },
     { k: "align", label: "Alignment", cycle: ["left", "center", "right"], icos: {
       left: '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>', center: '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>', right: '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>' } },
-    { k: "font", label: "Font", cycle: ["sans", "serif", "mono", "hand", "impact"] },
+    { k: "font", label: "Font", sub: "font" },
   ];
-  var TEXT0 = { bold: false, italic: false, underline: false, bgOn: true, outline: false, align: "left", font: "sans" };
+  var FONT_IDS = ["sans", "serif", "mono", "hand", "impact"];
+  var TEXT_COLORS = ["#000000", "#ffffff", "#ff3b30", "#ffd60a", "#34c759", "#0a84ff"];
+  var TEXT0 = { bold: false, italic: false, underline: false, bgOn: true, bg: "#000000", outline: false, outlineColor: "#000000", align: "left", font: "sans" };
   var SLOTS = ["select", "brush", "marker", "arrows", "shapes", "text", "eraser"];
   var slotOf = function(t){ return t === "arrow" ? "arrows" : t === "rect" || t === "ellipse" ? "shapes" : t; };
   // Sizes in screen px at the moment of drawing (turned into doc units by the zoom), per tool; a
@@ -163,7 +167,11 @@ var SightReviewDraw = (function(){
     if (ps && (ps.tool === "rect" || ps.tool === "ellipse") && SHAPES[pen.shape].tool !== ps.tool) pen.shape = ps.tool === "rect" ? 0 : 2;
     if (ps && ps.sizes) Object.keys(SIZE0).forEach(function(k){ var v = Number(ps.sizes[k]); if (v >= SIZE_RANGE[k][0] && v <= SIZE_RANGE[k][1]) SIZE[k] = v; });
     if (ps && ps.opac) Object.keys(OPAC0).forEach(function(k){ var v = Number(ps.opac[k]); if (v >= 0.05 && v <= 1) OPAC[k] = v; });
-    if (ps && ps.text) TEXT_OPTS.forEach(function(x){ var v = ps.text[x.k]; if (x.cycle ? x.cycle.indexOf(v) >= 0 : typeof v === "boolean") pen.text[x.k] = v; });
+    if (ps && ps.text) Object.keys(TEXT0).forEach(function(k){
+      var v = ps.text[k], ok = k === "align" ? ["left", "center", "right"].indexOf(v) >= 0 : k === "font" ? FONT_IDS.indexOf(v) >= 0
+        : k === "bg" || k === "outlineColor" ? /^#[0-9a-f]{6}$/i.test(v) : typeof v === "boolean";
+      if (ok) pen.text[k] = v;
+    });
   } catch (e) {}
   function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, text: pen.text })); } catch (e) {} }
   // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
@@ -223,7 +231,38 @@ var SightReviewDraw = (function(){
     var fly = null;
     // Hidden at once, removed a moment later: the tap that picked from it is still going up to the
     // host's document handlers, which must see it inside the canvas (a detached target is "outside").
-    function closeFly(){ if (fly){ var f = fly.el; fly = null; f.hidden = true; setTimeout(function(){ f.remove(); }, 0); } }
+    function closeFly(){ closeSub(); if (fly){ var f = fly.el; fly = null; f.hidden = true; setTimeout(function(){ f.remove(); }, 0); } }
+    // The text row's second row (the box's colours, the fonts), above it: {el, k}.
+    var sub = null;
+    function closeSub(){ if (sub){ var f = sub.el; sub = null; f.hidden = true; setTimeout(function(){ f.remove(); }, 0); } }
+    function openSub(x, anchor){
+      closeSub();
+      var cur = textNow(), f = el("div", "dfly dsub rd-panel");
+      f.addEventListener("mousedown", keepField);
+      var none = function(label, patch){
+        var b = tbtn(label, ico('<circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/>'), function(){ closeSub(); applyText(patch); });
+        b.classList.toggle("on", !cur[x.k]); return b;
+      };
+      var swatches = function(key, onKey){
+        return TEXT_COLORS.map(function(c){
+          var b = el("button", "swc" + (cur[onKey] && cur[key] === c ? " on" : "")); b.type = "button"; b.style.background = c; b.dataset.c = c;
+          b.title = "Box " + c; b.setAttribute("aria-label", b.title);
+          b.onclick = function(){ closeSub(); var pt = {}; pt[onKey] = true; pt[key] = c; applyText(pt); };
+          return b;
+        });
+      };
+      var entries = x.sub === "box" ? [none("No box", { bgOn: false })].concat(swatches("bg", "bgOn"))
+        : FONT_IDS.map(function(fid){
+          var b = tbtn("Font: " + fid, ico(fontIco(fid)), function(){ closeSub(); applyText({ font: fid }); });
+          b.classList.toggle("on", cur.font === fid); return b;
+        });
+      entries.forEach(function(e){ f.appendChild(e); });
+      root.appendChild(f);
+      var r = root.getBoundingClientRect(), a = anchor.getBoundingClientRect(), fb = fly.el.getBoundingClientRect(), w = f.offsetWidth;
+      f.style.left = Math.max(8, Math.min(r.width - w - 8, a.left - r.left + a.width / 2 - w / 2)) + "px";
+      f.style.bottom = (r.bottom - fb.top + 6) + "px";
+      sub = { el: f, k: x.k };
+    }
     function openFly(slot, anchor, entries){
       closeFly();
       var f = el("div", "dfly rd-panel");
@@ -252,7 +291,11 @@ var SightReviewDraw = (function(){
           if (fly && fly.slot === "text"){ closeFly(); if (on) setTool(null); return; }
           if (!on && !selTexts().length) setTool("text");
           openFly("text", b, TEXT_OPTS.map(function(x){
-            var tb2 = tbtn(x.label, "", function(){ textOpt(x); });
+            var tb2 = tbtn(x.label, "", function(){
+              if (!x.sub){ closeSub(); textOpt(x); return; }
+              if (sub && sub.k === x.k){ closeSub(); return; }
+              openSub(x, tb2);
+            });
             tb2.dataset.k = x.k;
             return tb2;
           }));
@@ -315,36 +358,48 @@ var SightReviewDraw = (function(){
     function textNow(){
       var d = edit ? edit.it.data : selTexts().length ? selTexts()[0].data : null;
       if (!d) return pen.text;
-      return { bold: !!d.bold, italic: !!d.italic, underline: !!d.underline, bgOn: !!d.bgOn, outline: !!d.outline, align: d.align || "left", font: d.font || "sans" };
+      return { bold: !!d.bold, italic: !!d.italic, underline: !!d.underline, bgOn: !!d.bgOn, bg: d.bg || "#000000", outline: !!d.outline,
+        outlineColor: d.outlineColor || "#000000", align: d.align || "left", font: d.font || "sans" };
     }
+    // The box / outline switches show their colour (the outline's: the pen's, black by default).
+    function boxIco(t){ return '<rect x="3" y="4.5" width="18" height="15" rx="3.5" fill="' + (t.bgOn ? RC.esc(t.bg) : "currentColor") + '" fill-opacity="' + (t.bgOn ? 1 : 0.3) + '"' + (t.bgOn ? ' stroke-opacity=".6"' : "") + '/><path d="M8.5 9h7M12 9v6.5"' + (t.bgOn ? ' stroke="' + (/^#(f|e|d)/i.test(t.bg) ? "#000" : "#fff") + '"' : "") + "/>"; }
+    function outlineIco(t){ return '<path d="M6 19.5 12 4.5l6 15M8.4 13.5h7.2" stroke-width="4.5"' + (t.outline ? ' stroke="' + RC.esc(t.outlineColor) + '"' : ' stroke-opacity=".35"') + '/><path d="M6 19.5 12 4.5l6 15M8.4 13.5h7.2"' + (t.outline && /^#(f|e|d)/i.test(t.outlineColor) ? ' stroke="#000"' : "") + "/>"; }
     function fontIco(f){ return '<text x="12" y="16.5" font-size="13" fill="currentColor" stroke="none" text-anchor="middle" font-family="' + RC.esc(RC.fontStack(f)) + '">Aa</text>'; }
     function paintTextFly(){
       if (!fly || fly.slot !== "text") return;
       var cur = textNow();
       fly.el.querySelectorAll(".tb").forEach(function(b){
         var x = TEXT_OPTS.find(function(y){ return y.k === b.dataset.k; }), v = cur[x.k];
-        var ic = x.k === "font" ? fontIco(v) : x.icos ? x.icos[v] : x.ico;
+        var ic = x.k === "font" ? fontIco(v) : x.k === "bgOn" ? boxIco(cur) : x.k === "outline" ? outlineIco(cur) : x.icos ? x.icos[v] : x.ico;
         if (b.dataset.ico !== ic){ b.innerHTML = ico(ic); b.dataset.ico = ic; }
-        b.classList.toggle("on", !x.cycle && !!v);
-        if (x.cycle){ b.title = x.label + ": " + v; b.setAttribute("aria-label", b.title); }
+        b.classList.toggle("on", !x.cycle && x.k !== "font" && !!v);
+        if (x.cycle || x.k === "font"){ b.title = x.label + ": " + v; b.setAttribute("aria-label", b.title); }
       });
     }
-    function putText(d, k, v){
-      if (k === "outline"){ d.outline = v ? RC.r2(d.size * 0.06) : 0; if (v && !d.outlineColor) d.outlineColor = "#000000"; }
-      else { d[k] = v; if (k === "bgOn" && v && !d.bg){ d.bg = "#000000"; d.bgOpacity = 0.6; } }
+    // patch: some of TEXT0's keys (outline: on / off — on keeps a width the text has, else 6 % of its size).
+    function putText(d, patch){
+      Object.keys(patch).forEach(function(k){
+        var v = patch[k];
+        if (k === "outline"){ d.outline = v ? (d.outline || RC.r2(d.size * 0.06)) : 0; if (v && !d.outlineColor) d.outlineColor = "#000000"; }
+        else { d[k] = v; if ((k === "bgOn" && v) || k === "bg"){ if (!d.bg) d.bg = "#000000"; if (d.bgOpacity == null) d.bgOpacity = 0.6; } }
+      });
     }
     function textOpt(x){
+      var cur = textNow(), pt = {};
+      pt[x.k] = x.cycle ? x.cycle[(x.cycle.indexOf(cur[x.k]) + 1) % x.cycle.length] : !cur[x.k];
+      applyText(pt);
+    }
+    function applyText(patch){
       stopAdj();  // a selection hold under way: back to its state first (its copies leave items)
-      var cur = textNow(), v = x.cycle ? x.cycle[(x.cycle.indexOf(cur[x.k]) + 1) % x.cycle.length] : !cur[x.k];
-      pen.text[x.k] = v; savePen();
+      Object.keys(patch).forEach(function(k){ pen.text[k] = patch[k]; }); savePen();
       if (edit){
-        putText(edit.it.data, x.k, v); textField();
+        putText(edit.it.data, patch); textField();
         try { edit.ta.focus({ preventScroll: true }); } catch (_){ edit.ta.focus(); }
       } else {
         var ts = selTexts();
         if (ts.length){
           var map = new Map();
-          ts.forEach(function(it){ var n = clone(it); putText(n.data, x.k, v); map.set(it, n); });
+          ts.forEach(function(it){ var n = clone(it); putText(n.data, patch); map.set(it, n); });
           sel = sel.map(function(y){ return map.get(y) || y; });
           change(items.map(function(y){ return map.get(y) || y; }));
         }
@@ -1005,8 +1060,8 @@ var SightReviewDraw = (function(){
       var k = S0.k, tol = 4 * k, hit = null;
       for (var i = items.length - 1; i >= 0; i--){ if (RC.typeOf(items[i]) === "text" && RC.hitTest(items[i], S0.x, S0.y, tol)){ hit = items[i]; break; } }
       var it = hit || { kind: "text", shape_kind: null, z: ++zc, data: { text: "", x: RC.r2(S0.x), y: RC.r2(S0.y - SIZE.text * k * 0.6), font: "sans", size: RC.r2(SIZE.text * k),
-        color: pen.color, bold: pen.text.bold, italic: pen.text.italic, underline: pen.text.underline, align: pen.text.align, bgOn: pen.text.bgOn, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: OPAC.text, rot: 0, created: Date.now() } };
-      if (!hit){ it.data.font = pen.text.font; if (pen.text.outline) putText(it.data, "outline", true); }
+        color: pen.color, bold: pen.text.bold, italic: pen.text.italic, underline: pen.text.underline, align: pen.text.align, bgOn: pen.text.bgOn, bg: pen.text.bg, bgOpacity: 0.6, outline: 0, outlineColor: pen.text.outlineColor, opacity: OPAC.text, rot: 0, created: Date.now() } };
+      if (!hit){ it.data.font = pen.text.font; if (pen.text.outline) putText(it.data, { outline: true }); }
       if (hit) sel = [];
       var ta = el("textarea", "dtext");
       ta.value = it.data.text || ""; ta.rows = 1; ta.spellcheck = false; ta.setAttribute("autocapitalize", "sentences");
@@ -1034,7 +1089,7 @@ var SightReviewDraw = (function(){
       } else e0.it.data = e0.before;
       paint(); afterText();
     }
-    function styleOf(d){ return JSON.stringify([d.color, !!d.bold, !!d.italic, !!d.underline, !!d.bgOn, d.outline || 0, d.align || "left", d.font || "sans"]); }
+    function styleOf(d){ return JSON.stringify([d.color, !!d.bold, !!d.italic, !!d.underline, !!d.bgOn, d.bg || "", d.outline || 0, d.outlineColor || "", d.align || "left", d.font || "sans"]); }
     function dropText(){ var e0 = edit; edit = null; e0.ta.remove(); if (!e0.isNew) e0.it.data = e0.before; paint(); afterText(); }
     function afterText(){ view.scrollLeft = 0; view.scrollTop = 0; if (refit){ refit = false; if (fitted) fit(false); else apply(); } }
     function onKey(e){

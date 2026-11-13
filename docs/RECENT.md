@@ -14,6 +14,18 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.33.4 — 2026-11-13 — Canvas: a second row for the text's box colour and font
+- **What:** on the drawing canvas (phone + HTML page) the *Text* row's box and font switches open
+  a second row above it: no box / the box's colour (black, white, red, yellow, green, blue), and
+  the five fonts each shown in itself. The box switch shows the box's colour. The outline stays a
+  plain on / off switch (the user's choice: a colour row for it is not needed).
+- **Where:** `app/static/review-draw.js` — `openSub` / `closeSub` (`.dfly.dsub`, closed with
+  the row), `applyText(patch)` / `putText(d, patch)` (was one key), `TEXT0` + `bg` /
+  `outlineColor`, `FONT_IDS`, `TEXT_COLORS`, `boxIco` / `outlineIco`, `styleOf` counts the
+  colours. Tests: `textSub` in `pwa_touch.cjs` / `test_pwa.py`.
+- **Notes:** a pick folds the second row, the text row stays. The box keeps its opacity (0.6 by
+  default) whatever colour; the outline's colour is the pen's (`outlineColor`, black), not offered.
+
 ## 0.33.3 — 2026-11-13 — Sight: right-drag sizes a note's pictures
 - **What:** in the review panel a right-drag up / down on the notes list makes the notes' square
   pictures bigger / smaller, the way a right-drag zooms the library grid's thumbnails; the size is
@@ -431,23 +443,3 @@ Add new entries directly below this line.
   and opened in the new one. Enforcing HTTPS is an owner setting (GitHub Pages "Enforce HTTPS" of the
   user site / Cloudflare "Always Use HTTPS"), not something the repo can do. No review agent for this
   small change.
-
-## 0.26.1 — 2026-11-12 — Phone: scrub / frame steps no longer jump back before landing
-- **What:** at the end of a scrub, and on every frame step, the picture jumped back a frame and
-  then onto the right one. Now it goes straight to the frame.
-- **Where:** `mobile/js/media.js` (`ScrubCache` rewritten: frames by media time, `fill`, `exact`),
-  `mobile/js/app.js` (`cachedAt`, `showCached`, `hideWhenShown`, `settle`).
-- **Notes:** two causes. (1) The cached picture was hidden on `seeked`, but the player paints the
-  new frame a moment later (Safari especially), so the old frame flashed up: now it is hidden after
-  rVFC reports a presented frame (250 ms fallback); a new cached picture cancels a pending hide.
-  (2) The cache was keyed on a grid of the guessed 25 fps (WebM until played), so at 29.97 fps one
-  frame in six was never cached and `near()` showed the frame before; steps now use `exact()` only
-  (else the player's current frame stays until the seek lands), drags keep `near()`, and the cache
-  is keyed by real media times with a gap-filling second pass.
-- **Review (fresh agent):** `exact()` first picked the frame by round(mt / fd), which differs from
-  what the player shows at (n + 0.25)·fd when stamps jitter (phone VFR clips) — now it takes the
-  last cached frame starting at or before that point, only if none is missing in between; the cache
-  bar ran backwards while `fill()` added early frames (progress only goes forward); "ended" could
-  start a second `fill()` (once-guard, never seek to the very end); frame 0 was never cached (the
-  start is a hole too); in a drawing session a step with no exact frame left the old picture under
-  the new frame's drawings (falls back to `near()`, dimmed).
