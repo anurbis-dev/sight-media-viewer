@@ -305,6 +305,101 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
     return total
 
 
+# ---- notes ZIP ---------------------------------------------------------------------------------
+
+STATE_LABEL = {"open": "Open", "progress": "In progress", "done": "Resolved"}
+
+
+def _zip_part(name: str, fallback: str) -> str:
+    """One path part inside the ZIP: no separators or characters Windows refuses, no trailing dot / space;
+    a long name is cut in its stem, so the extension stays."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(name or "")).strip(" .")
+    stem, ext = os.path.splitext(name)
+    if len(ext) > 6:
+        stem, ext = name, ""
+    stem = stem[:150].rstrip(" .")
+    return (stem + ext) if stem else fallback
+
+
+def _image_ext(data: bytes) -> str:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[:3] in (b"GIF",):
+        return ".gif"
+    return ".jpg"
+
+
+def build_zip(payload: dict, root: Path, out: Path, media_name: str) -> tuple[int, int]:
+    """The notes as a ZIP (the desktop's Export → Notes as ZIP): a folder per note ("Note 01") with its
+    pictures — the frames / views with every drawing burned in, then its attached pictures — each named
+    by its file and frame as under it in the report (payload `frameFile`, `more[].file`, `shotFiles`,
+    made by review-core picFileName), and "Note 01.txt": the note's text, then, under the name of each of
+    its pictures that has one, that picture's text. An image's cover (every drawing) sits at the top.
+    payload is the PDF report's (gatherReport) with those names. Returns (notes, pictures)."""
+    import zipfile
+
+    notes = [n for n in payload.get("notes") or [] if isinstance(n, dict)]
+    width = max(2, len(str(len(notes))))
+    pictures = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        used: set[str] = set()
+
+        def put(folder: str, file: str, data: bytes) -> str:
+            stem, ext = os.path.splitext(file)
+            ext = _image_ext(data) if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif", "") else ext
+            name, k = f"{stem}{ext}", 2
+            while (folder + "/" + name).lower() in used:
+                name, k = f"{stem} ({k}){ext}", k + 1
+            used.add((folder + "/" + name).lower())
+            # JPEG / PNG are packed already: store them.
+            z.writestr(zipfile.ZipInfo((folder + "/" if folder else "") + name, time.localtime()[:6]), data,
+                       compress_type=zipfile.ZIP_STORED)
+            return name
+
+        cover = decode_data_url(payload.get("cover") or "")
+        if cover:
+            put("", _zip_part(media_name, "cover") + ".jpg", cover)
+            pictures += 1
+        for i, n in enumerate(notes):
+            num = str(n.get("num") or i + 1)
+            folder = f"Note {num.zfill(width)}"
+            lines = [f"Note {num} · {STATE_LABEL.get(str(n.get('status') or 'open'), 'Open')}"]
+            by = " · ".join(str(x) for x in (n.get("ctx"), n.get("author"), n.get("date")) if x)
+            if by:
+                lines.append(by)
+            lines += ["", str(n.get("text") or "").strip() or "(no text)"]
+            texts: list[tuple[str, str]] = []
+            frame = decode_data_url(n.get("frame") or "")
+            if frame:
+                name = put(folder, _zip_part(n.get("frameFile"), f"Note {num}"), frame)
+                pictures += 1
+                texts.append((name, str(n.get("frameText") or "")))
+            for m in n.get("more") or []:
+                data = decode_data_url((m or {}).get("frame") or "") if isinstance(m, dict) else None
+                if data:
+                    name = put(folder, _zip_part(m.get("file"), f"Note {num}"), data)
+                    pictures += 1
+                    texts.append((name, str(m.get("text") or "")))
+            caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
+            files = n.get("shotFiles") if isinstance(n.get("shotFiles"), dict) else {}
+            for k, sid in enumerate(n.get("shots") or []):
+                p = shot_path(root, str(sid))
+                if not p:
+                    continue
+                name = put(folder, _zip_part(files.get(str(sid)), f"Note {num} picture {k + 1}"), p.read_bytes())
+                pictures += 1
+                texts.append((name, str(caps.get(str(sid)) or "")))
+            if n.get("picText") and not frame:
+                texts.insert(0, ("Picture", str(n["picText"])))
+            for name, text in texts:
+                if text.strip():
+                    lines += ["", f"== {name} ==", text.strip()]
+            z.writestr(f"{folder}/{folder}.txt", "\n".join(lines) + "\n")
+    return len(notes), pictures
+
+
 # ---- .srev package ----------------------------------------------------------------------------
 
 _ROW_KEYS = ("id", "kind", "shape_kind", "x", "y", "w", "h", "rotation", "z_index", "color", "data",
@@ -478,6 +573,12 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .text { white-space: pre-wrap; word-break: break-word; margin: 6px 0; font-size: 15px; }
 .frame { width: 100%; border-radius: 8px; display: block; margin: 8px 0 2px; cursor: zoom-in; }
 .cap { font-size: 11px; color: var(--muted); }
+/* Under a picture: which picture it is (and a download that names it so), its own text below in the note's style. */
+.pcap { display: flex; align-items: center; gap: 6px; margin: 3px 0 0; }
+.pcap .cap { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.dl { flex: none; width: 26px; height: 26px; border: 0; border-radius: 13px; background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.dl:hover { background: var(--chip); color: var(--fg); }
+.ptext { margin: 2px 0 8px; }
 /* Every picture in a card is shown big (full width): no extra click to read it. */
 .shots { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .shots img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
@@ -529,10 +630,11 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .zoom .zb { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .zoom .zb > img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; pointer-events: none; }
 /* The text plate (caption-plate.js): at the foot it keeps to the left, clear of the pencil. */
-.zoom .zfoot { position: absolute; inset: 0; z-index: 1; pointer-events: none; --scp-b: calc(14px + env(safe-area-inset-bottom)); --scp-t: calc(74px + env(safe-area-inset-top)); --scp-bx: 12px; --scp-bw: min(80%, calc(100% - 82px)); --scp-rb: max(10%, calc(80px + env(safe-area-inset-bottom))); --scp-lt: max(10%, calc(70px + env(safe-area-inset-top))); }
+.zoom .zfoot { position: absolute; inset: 0; z-index: 1; pointer-events: none; --scp-b: calc(14px + env(safe-area-inset-bottom)); --scp-t: calc(74px + env(safe-area-inset-top)); --scp-bx: 12px; --scp-bw: min(80%, calc(100% - 82px)); --scp-rb: max(10%, calc(80px + env(safe-area-inset-bottom))); --scp-rt: calc(70px + env(safe-area-inset-top)); --scp-lt: max(10%, calc(70px + env(safe-area-inset-top))); }
 .zfab { position: absolute; z-index: 2; width: 46px; height: 46px; border-radius: 23px; border: 1px solid rgb(255 255 255 / .18); background: rgb(28 28 32 / .6); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 4px 16px rgb(0 0 0 / .18); }
 .zfab:hover { background: rgb(48 48 54 / .75); }
 .zback { left: 12px; top: calc(12px + env(safe-area-inset-top)); }
+.zdl { right: 12px; top: calc(12px + env(safe-area-inset-top)); }
 .zpen { right: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); width: 54px; height: 54px; border-radius: 27px; }
 body.zoomed { overflow: hidden; }
 .gate { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
@@ -689,8 +791,8 @@ body.zoomed { overflow: hidden; }
     if (bar > 0){
       var mn = noteById[key.slice(0, bar)], m = mn && mn.more && mn.more[Number(key.slice(bar + 1))], mc = m && m.ctx;
       if (!m || !m.frame || !mc) return null;
-      if (M.kind === "video" && mc.t != null) return { key: key, src: m.frame, size: m.size, at: { t: mc.t, fps: M.fps || 25 }, ctx: mc };
-      if (M.kind === "model3d" && mc.vk) return { key: key, src: m.frame, size: m.size, at: { vk: mc.vk }, ctx: mc };
+      if (M.kind === "video" && mc.t != null) return { key: key, src: m.frame, size: m.size, at: { t: mc.t, fps: M.fps || 25 }, ctx: mc, title: m.title || "" };
+      if (M.kind === "model3d" && mc.vk) return { key: key, src: m.frame, size: m.size, at: { vk: mc.vk }, ctx: mc, title: m.title || "" };
       return null;
     }
     if (key === "cover") return M.kind === "image" && R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null } : null;
@@ -700,8 +802,8 @@ body.zoomed { overflow: hidden; }
     if (!n) return null;
     if (M.kind === "image") return R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null, note: key } : null;
     if (!n.frame || !c) return null;
-    if (M.kind === "video" && c.t != null) return { key: key, src: n.frame, size: n.size, at: { t: c.t, fps: M.fps || 25 }, ctx: c };
-    if (M.kind === "model3d" && c.vk) return { key: key, src: n.frame, size: n.size, at: { vk: c.vk }, ctx: c };
+    if (M.kind === "video" && c.t != null) return { key: key, src: n.frame, size: n.size, at: { t: c.t, fps: M.fps || 25 }, ctx: c, title: n.frameTitle || "" };
+    if (M.kind === "model3d" && c.vk) return { key: key, src: n.frame, size: n.size, at: { vk: c.vk }, ctx: c, title: n.frameTitle || "" };
     return null;
   }
   function vbOf(f){
@@ -785,6 +887,68 @@ body.zoomed { overflow: hidden; }
     var p = picOfEntry(e);
     return p.shot != null || !e.f ? "Picture" : p.t != null ? RC.frameLabel(p.t, M.fps || 25) : p.vk ? "View" : "Picture";
   }
+  // Which picture an entry is, as the line under it says and as its download is named (review-core
+  // picFileName): the media file's name and the frame / view ("clip.mp4 · f128 / 0:05+3"); an attached
+  // picture is "<file> · Note 3 · Picture 2" (e.title, set where it is listed).
+  var MEDIA_NAME = (PKG.asset && PKG.asset.name) || "picture";
+  function noteNumOf(nid){ var n = noteById[nid]; return n ? n.num : nid && E.notes.some(function(x){ return x.id === nid; }) ? "new" : ""; }
+  function picTitle(e){
+    if (e.title) return e.title;
+    var nn = e.nid ? noteNumOf(e.nid) : "", note = nn !== "" ? " · Note " + nn : "";
+    if (e.f){
+      if (e.f.title) return e.f.title;
+      var c = e.f.ctx;
+      if (c && c.t != null) return MEDIA_NAME + " · " + RC.frameLabel(c.t, M.fps || 25);
+      if (c && c.vk) return MEDIA_NAME + " · View" + note;
+      return MEDIA_NAME + note;
+    }
+    var n = noteById[e.nid];
+    if (n && e.src === n.frame && n.frameTitle) return n.frameTitle;
+    return MEDIA_NAME + note;
+  }
+  // The picture as a file, with the drawings shown on it burned in (review-core draws them on a
+  // canvas), named by picTitle — not the browser's "download.jpg" for an inline picture.
+  function savePic(e){
+    var src = e.f ? e.f.src : e.src, name = RC.picFileName(picTitle(e));
+    if (!src) return;
+    var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
+    function plain(){ fetch(src).then(function(r){ return r.blob(); }).then(function(b){ saveBlob(b, name); }).catch(function(){}); }
+    var img = new Image();
+    img.onload = function(){
+      var W = img.naturalWidth, H = img.naturalHeight;
+      if (!W || !H){ plain(); return; }
+      var c = document.createElement("canvas"); c.width = W; c.height = H;
+      var g = c.getContext("2d");
+      g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.drawImage(img, 0, 0, W, H);
+      if (list.length){
+        var vb = vbOf(e.f), sx = W / vb[2], sy = H / vb[3];
+        g.save(); g.setTransform(sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy);
+        try { RC.drawCanvas(g, list, numOf); } catch (_){}
+        g.restore();
+      }
+      try { c.toBlob(function(b){ if (b) saveBlob(b, name); else plain(); }, "image/jpeg", 0.92); } catch (_){ plain(); }
+    };
+    img.onerror = plain;
+    img.src = src;
+  }
+  var DL_ICON = '<path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>';
+  // [title, text] of a picture in the report; one before 0.48 has only `caption`: "<title> — <text>".
+  function capParts(title, text, caption){
+    if (title != null) return [title, text || ""];
+    var s = String(caption || ""), i = s.indexOf(" — ", s.indexOf(MEDIA_NAME) === 0 ? MEDIA_NAME.length : 0);
+    return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 3)];
+  }
+  // Under a picture: its title with a download, then its own text in the note's style.
+  function picCaption(box, e, text){
+    var row = el("div", "pcap"), b = el("button", "dl");
+    row.appendChild(el("span", "cap", picTitle(e)));
+    b.type = "button"; b.title = "Download this picture"; b.setAttribute("aria-label", "Download this picture");
+    b.appendChild(svg(DL_ICON, 16));
+    b.onclick = function(ev){ ev.stopPropagation(); savePic(e); };
+    row.appendChild(b);
+    box.appendChild(row);
+    if (text) box.appendChild(el("div", "text ptext", text));
+  }
   function replyById(nid, rid){
     var n = noteById[nid], L = (n && n.replies || []).concat(E.replies[nid] || []);
     return L.find(function(r){ return r.id === rid; }) || null;
@@ -819,7 +983,9 @@ body.zoomed { overflow: hidden; }
     back.appendChild(svg('<path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>', 24));
     var pen = el("button", "zfab zpen"); pen.type = "button"; pen.title = "Draw on this picture"; pen.setAttribute("aria-label", "Draw on this picture");
     pen.appendChild(svg('<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 20h6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>', 24));
-    v.appendChild(foot); v.appendChild(back); v.appendChild(pen);
+    var dlb = el("button", "zfab zdl"); dlb.type = "button"; dlb.title = "Download this picture"; dlb.setAttribute("aria-label", "Download this picture");
+    dlb.appendChild(svg(DL_ICON, 22));
+    v.appendChild(foot); v.appendChild(back); v.appendChild(dlb); v.appendChild(pen);
     var plate = SightCaptionPlate.createPlate(foot, { storeKey: "sight-review:plate" });
     var box = null, size = [1, 1], V = { z: 1, x: 0, y: 0 }, off = [0, 0], busy = false, cur = null, gone = false;
     function close(){
@@ -829,6 +995,7 @@ body.zoomed { overflow: hidden; }
       document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", fit);
     }
     back.onclick = function(e){ e.stopPropagation(); close(); };
+    dlb.onclick = function(e){ e.stopPropagation(); if (cur) savePic(cur.g.items[cur.k]); };
     pen.onclick = function(e){ e.stopPropagation(); var t = cur && drawTarget(cur.g.items[cur.k]); close(); if (t) t(); };
     // slide {axis: "x" | "y", dir: 1 (next: comes from the right / bottom) | -1}.
     function show(g, k, slide){
@@ -1073,10 +1240,12 @@ body.zoomed { overflow: hidden; }
     var sids = (list || []).filter(shotSrc);
     if (!sids.length) return null;
     var sh = el("div", "shots");
-    sids.forEach(function(s){
+    var nn = noteNumOf(nid);
+    sids.forEach(function(s, k){
       var src = shotSrc(s), i = el("img");
-      i.src = src; i.alt = ""; i.onclick = galAdd({ src: src, nid: nid, sid: s, rid: rid || null }); sh.appendChild(i);
-      if (caps && caps[s]) sh.appendChild(el("div", "cap", caps[s]));
+      var e = { src: src, nid: nid, sid: s, rid: rid || null, title: MEDIA_NAME + (nn !== "" ? " · Note " + nn : "") + " · " + (rid ? "Reply picture " : "Picture ") + (k + 1) };
+      i.src = src; i.alt = e.title; i.title = e.title; i.onclick = galAdd(e); sh.appendChild(i);
+      var w = el("div", ""); picCaption(w, e, caps && caps[s] || ""); sh.appendChild(w);
     });
     return sh;
   }
@@ -1208,28 +1377,30 @@ body.zoomed { overflow: hidden; }
     h.appendChild(el("span", "state " + st, local ? "New · not sent yet" : STATES[st] || "Open"));
     c.appendChild(h);
     if (n.text) c.appendChild(el("div", "text", n.text));
-    if (n.picText) c.appendChild(el("div", "cap", n.picText));
+    if (n.picText) c.appendChild(el("div", "text ptext", n.picText));
     // The note's picture: its video frame / 3D view, or (pictures) the cover when the note has
     // drawings; a new note shows the picture its drawing was made on.
-    var f = null;
+    var f = null, fe = null;
     if (local){ var lf = n.fkey && frameOf(n.fkey); if (lf) f = Object.assign({}, lf, { note: id, reply: null, local: true }); }
     else f = frameOf(id);
     if (f && (M.kind !== "image" || drawingsOf(f).length)){
       var pw = pic(f, shownOn(f));
-      pw.onclick = galAdd({ f: f, nid: id });
+      fe = { f: f, nid: id };
+      pw.onclick = galAdd(fe);
       c.appendChild(pw);
     } else if (!VEC && n.frame && !local){
-      var fi = el("img", "frame"); fi.src = n.frame; fi.alt = ""; fi.onclick = galAdd({ src: n.frame, nid: id }); c.appendChild(fi);
+      var fi = el("img", "frame"); fi.src = n.frame; fi.alt = ""; fe = { src: n.frame, nid: id }; fi.onclick = galAdd(fe); c.appendChild(fi);
     }
-    if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
+    if (fe){ var fc = capParts(n.frameTitle, n.frameText, n.frameCaption); if (fc[0] && !fe.f) fe.title = fc[0]; picCaption(c, fe, fc[1]); }
     // More frames / views the note was drawn on, smaller, with everything shown there.
     if (!local) (n.more || []).forEach(function(m, mi){
-      var mf = frameOf(id + "|" + mi), mw;
-      if (mf){ mw = pic(mf, shownOn(mf), "more"); mw.onclick = galAdd({ f: mf, nid: id }); }
-      else if (m && m.frame){ mw = el("div", "fw more"); var mi2 = el("img"); mi2.src = m.frame; mi2.alt = ""; mw.appendChild(mi2); mw.onclick = galAdd({ src: m.frame, nid: id }); }
+      var mf = frameOf(id + "|" + mi), mw, me;
+      if (mf){ mw = pic(mf, shownOn(mf), "more"); me = { f: mf, nid: id }; mw.onclick = galAdd(me); }
+      else if (m && m.frame){ mw = el("div", "fw more"); var mi2 = el("img"); mi2.src = m.frame; mi2.alt = ""; mw.appendChild(mi2); me = { src: m.frame, nid: id, title: m.title || "" }; mw.onclick = galAdd(me); }
       if (!mw) return;
       c.appendChild(mw);
-      if (m.caption) c.appendChild(el("div", "cap", m.caption));
+      var mc2 = capParts(m.title, m.text, m.caption); if (mc2[0] && !me.f) me.title = mc2[0];
+      picCaption(c, me, mc2[1]);
     });
     var sh = thumbs(n.shots, id, n.shotCaptions); if (sh) c.appendChild(sh);
     var mineL = E.replies[id] || [];

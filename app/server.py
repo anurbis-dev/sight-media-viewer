@@ -908,6 +908,22 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
         return {**res, "pages": pages}
 
+    @app.post("/api/review/export/zip")
+    async def export_review_zip(request: Request) -> dict:
+        body = await json_body(request)
+        a = lib.get_asset(str(body.get("asset_id") or ""))
+        if not a:
+            raise HTTPException(404)
+        stem = review.safe_name(f"{Path(a['name']).stem} notes")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".zip")
+        try:
+            notes, pictures = await asyncio.to_thread(review.build_zip, body, lib.root, out, a["name"])
+        except Exception as e:  # a bad picture / a full disk: report, don't 500 with a traceback
+            out.unlink(missing_ok=True)
+            raise HTTPException(500, f"ZIP export failed: {e}")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "notes": notes, "pictures": pictures}
+
     @app.post("/api/review/export/html")
     async def export_review_html(request: Request) -> dict:
         body = await json_body(request)

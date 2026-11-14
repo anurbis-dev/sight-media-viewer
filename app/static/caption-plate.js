@@ -2,11 +2,13 @@
 // shown (FORMAT.md `captions`), on a half-transparent plate. Shared by Sight's lightbox
 // (annotate.js) and the phone app's viewer (mobile/js/app.js, published as core/caption-plate.js).
 //
-//   - Bottom centre, 80 % of the width; more than five lines scroll inside it. A host may move it:
+//   - Bottom centre, 80 % of the width; more than five lines scroll inside it, with no scrollbar: while
+//     there is more text below, "…" stands under the last line shown. A host may move it:
 //     --scp-bx / --scp-bw (left edge / width at the foot; the phone puts it at the left edge and
 //     narrows it on small screens, clear of its pencil), --scp-lt (top of the plate on the left
 //     side; the phone keeps it below its Back button),
-//     --scp-rb (bottom of the plate on the right side; the phone lifts it over the pencil), and
+//     --scp-rb (bottom of the plate on the right side; the phone lifts it over the pencil), --scp-rt
+//     (the least room above it there; the reviewer page keeps it below its download button), and
 //     --scp-b / --scp-t / --scp-l / --scp-r (distance from each side).
 //   - A tap on the plate folds it into a round icon at the same side; a tap on the icon opens it.
 //   - Dragging the plate or the icon sticks it to the nearest of the four sides when let go. On the
@@ -49,7 +51,7 @@ function injectStyles(){
 .scp.t .scp-plate { top: var(--scp-t, 12px); }
 .scp.l .scp-plate, .scp.r .scp-plate { top: 10%; height: 80%; width: 25%; min-width: 96px; }
 .scp.l .scp-plate { left: var(--scp-l, 12px); top: var(--scp-lt, 10%); height: min(80%, calc(100% - var(--scp-lt, 10%) - 12px)); }
-.scp.r .scp-plate { right: var(--scp-r, 12px); top: auto; bottom: var(--scp-rb, 10%); height: min(80%, calc(100% - var(--scp-rb, 10%) - 12px)); }
+.scp.r .scp-plate { right: var(--scp-r, 12px); top: auto; bottom: var(--scp-rb, 10%); height: min(80%, calc(100% - var(--scp-rb, 10%) - var(--scp-rt, 12px))); }
 .scp-head { display: flex; align-items: center; gap: 8px; min-height: 22px; font-size: 12px; opacity: .9; }
 .scp-num { flex: none; min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box; border-radius: 10px; display: grid; place-items: center; font-weight: 700; font-size: 11.5px; background: #ff453a; color: #fff; }
 .scp-num.progress { background: #ff9f0a; color: #000; }
@@ -57,7 +59,11 @@ function injectStyles(){
 .scp-lab { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .scp-edit { flex: none; width: 26px; height: 26px; margin: -3px -6px -3px 0; border: 0; border-radius: 13px; padding: 0; display: grid; place-items: center; background: transparent; color: inherit; cursor: pointer; }
 .scp-edit:hover { background: rgb(255 255 255 / .16); }
-.scp-body { overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-overflow-scrolling: touch; }
+.scp-body { overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.scp-body::-webkit-scrollbar { display: none; }
+.scp-body.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent); mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent); }
+.scp-more { flex: none; margin-top: -2px; line-height: 1; font-weight: 700; letter-spacing: 1px; opacity: .8; }
+.scp-more[hidden] { display: none; }
 .scp.b .scp-body, .scp.t .scp-body { max-height: calc(1.35em * 5); }
 .scp.l .scp-body, .scp.r .scp-body { flex: 1 1 auto; min-height: 0; }
 .scp-body.scroll { touch-action: pan-y; cursor: auto; }
@@ -101,10 +107,10 @@ export function createPlate(parent, opts = {}){
   const root = document.createElement("div");
   root.className = "scp";
   root.hidden = true;
-  root.innerHTML = `<div class="scp-plate"><div class="scp-head"><span class="scp-num"></span><span class="scp-lab"></span><button type="button" class="scp-edit" title="Text for this picture" aria-label="Text for this picture">${ICON_EDIT}</button></div><div class="scp-body"></div></div><button type="button" class="scp-icon" title="Show the text" aria-label="Show the text">${ICON_TEXT}<i></i></button>`;
+  root.innerHTML = `<div class="scp-plate"><div class="scp-head"><span class="scp-num"></span><span class="scp-lab"></span><button type="button" class="scp-edit" title="Text for this picture" aria-label="Text for this picture">${ICON_EDIT}</button></div><div class="scp-body"></div><div class="scp-more" hidden>…</div></div><button type="button" class="scp-icon" title="Show the text" aria-label="Show the text">${ICON_TEXT}<i></i></button>`;
   const plate = root.querySelector(".scp-plate"), icon = root.querySelector(".scp-icon");
   const num = root.querySelector(".scp-num"), lab = root.querySelector(".scp-lab"), edit = root.querySelector(".scp-edit");
-  const body = root.querySelector(".scp-body"), badge = icon.querySelector("i");
+  const body = root.querySelector(".scp-body"), more = root.querySelector(".scp-more"), badge = icon.querySelector("i");
   parent.appendChild(root);
   let cur = null, sig = null, editor = null, gone = false, endedAt = 0;
 
@@ -114,7 +120,18 @@ export function createPlate(parent, opts = {}){
     paintScroll();
   };
   // A body with more text than it shows scrolls by a drag on it; otherwise the drag moves the plate.
-  function paintScroll(){ body.classList.toggle("scroll", body.scrollHeight > body.clientHeight + 1); }
+  // No scrollbar: "…" under the last line shown while there is more text below it.
+  function paintScroll(){
+    const over = body.scrollHeight > body.clientHeight + 1;
+    body.classList.toggle("scroll", over);
+    paintMore(over);
+  }
+  function paintMore(over = body.scrollHeight > body.clientHeight + 1){
+    const hide = !over || !!editor || body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
+    if (more.hidden !== hide) more.hidden = hide;
+    body.classList.toggle("more", !hide);
+  }
+  body.addEventListener("scroll", () => paintMore(), { passive: true });
 
   function render(){
     const c = cur;
@@ -160,6 +177,7 @@ export function createPlate(parent, opts = {}){
     body.textContent = "";
     body.appendChild(ta);
     editor = { ta, save: c.onSave, before: ta.value, pending: false };
+    paintMore();
     ta.focus();
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
@@ -205,8 +223,6 @@ export function createPlate(parent, opts = {}){
     if (e.pointerType === "mouse" && e.button === 1){ panDown(e); return; }
     if (g || (e.pointerType === "mouse" && e.button !== 0)) return;
     if (e.target.closest(".scp-edit, .scp-ta") || editor) return;  // (editing: a press only ends the edit)
-    // A press on the body's own scrollbar scrolls; it neither moves nor folds the plate.
-    if (e.target === body && body.scrollHeight > body.clientHeight + 1 && e.clientX - body.getBoundingClientRect().left >= body.clientWidth) return;
     const el = e.currentTarget;
     // On text that scrolls, a drag scrolls (a finger natively, by pan-y) and a tap still folds.
     // (A finger / pen pans natively only if .scroll was on when pressed: that class decides, not a fresh measure.)

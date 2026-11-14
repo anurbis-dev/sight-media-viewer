@@ -367,7 +367,10 @@ selecting it; reports and card previews drop it when the note has attached pictu
 (annotate `marks()`, phone `markerList`), the card's time, a click on the card, and the reports all
 follow it. `notePreview` makes one box per frame in time order (`data-pt`: a click goes there; `.an-fno`
 the frame number); `gatherReport` gives the note's first picture as `frame` + `frameCtx` and the rest
-as `more [{frame, size, caption, ctx}]` (review.py: PDF after the note's frame; the page's
+as `more [{frame, size, caption, title, text, file, ctx}]` (the note's first: `frameCaption`,
+`frameTitle`, `frameText`, `frameFile`; attachments `shotCaptions` / `shotFiles` by shot id — `caption`
+= "<title> — <text>" for the PDF, `title` / `text` apart for the page and the ZIP, `file` =
+`RC.picFileName(title)`, the page's download / ZIP name) (review.py: PDF after the note's frame; the page's
 `frameOf(id)` reads `frameCtx`, `frameOf("<id>|<i>")` the rest). Video labels are
 `RC.frameLabel(t, fps)` ("f128 / 0:05+3"), also burned small into the frame's corner (`bakeFrame`).
 The lightbox view's **turn / mirror** (index.html `attachViewer`: `turn {rot, mir}`, localStorage
@@ -429,7 +432,9 @@ preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for 
 /api/review/shots/{id}`, `POST /api/review/export/pdf` (client sends notes + JPEG data URLs; server
 lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK), `POST
 /api/review/export/package` (server builds the `.srev` JSON from the rows + shots; legacy `.sightreview` files still import),
-`POST /api/review/export/html` (the page's report: clean pictures + `coverSize` / `media`, see
+`POST /api/review/export/zip` (`gatherReport(false, true)` — every picture note gets its own
+picture — → `review.build_zip`: a folder per note with its pictures under their `file` names, extension
+from the bytes, and "Note NN.txt"), `POST /api/review/export/html` (the page's report: clean pictures + `coverSize` / `media`, see
 "HTML reviewer page"; the page embeds the report and the package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
 else name+size, else name+kind; 404 `{missing}` if no match). Import **merges**
 (`Library.import_annotations`, one transaction, rolled back on a malformed row): rows keep their

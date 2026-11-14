@@ -96,7 +96,8 @@
     its view), a half-transparent plate over the picture shows the note's text with the picture's
     text under it; the pencil on the plate edits that picture's text (Enter saves, Shift+Enter new
     line, Esc cancels, an empty text removes it). Click an attached screenshot of the note: the same
-    plate over it. The plate sits at the foot, 80 % wide (more than five lines scroll inside it);
+    plate over it. The plate sits at the foot, 80 % wide (more than five lines scroll inside it, with
+    no scrollbar — "…" under the last line shown says there is more);
     click it to fold it into a round icon, click the icon to open it; drag the plate or the icon to
     any of the four sides — on the left / right it is 25 % wide and 80 % high. The side and the fold
     are kept. A long text scrolls by the wheel, a drag on the text or a middle-button drag (the words
@@ -156,7 +157,11 @@
     empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
-    a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; a video note brings only the frames it has drawings or picture texts on; each video frame is captioned with its file name, frame number and timecode, e.g. "clip.mp4 · f128 / 0:05+3" — the frames after the full second — and carries that label, small, in its top-left corner), *Review file (.srev)* — one file with
+    a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; a video note brings only the frames it has drawings or picture texts on; each video frame is captioned with its file name, frame number and timecode, e.g. "clip.mp4 · f128 / 0:05+3" — the frames after the full second — and carries that label, small, in its top-left corner), *Notes as ZIP* — a folder per note ("Note 01" …) with its
+    pictures, drawings burned in, each named by the file and the frame / view as under it in the reports
+    ("clip.mp4 · f128 · 0.05+3.jpg", attached pictures "clip.mp4 · Note 1 · Picture 2.png"), and
+    "Note 01.txt": the note's text, then the text of each of its pictures that has one under that
+    picture's file name; a still picture's cover with every drawing sits at the top of the archive. *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
     (drag it onto the window, the same Export menu → Import, or the palette "Import review file")
     gets the review on the same media file, found by path, else by name and size. Importing
@@ -165,7 +170,11 @@
     other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
     in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
     note, screenshot and reply. The picture on top is the original; each note shows its frame with
-    its drawings, and every picture in a card is shown at full width. The page first asks the reviewer's name (nothing can be done
+    its drawings, and every picture in a card is shown at full width. Under each picture: which
+    picture it is (file name and frame) with a download button, and the picture's own text on the next
+    line, in the note's text size. The download (and the one at the top right of the full-screen
+    viewer) saves the picture with the drawings shown on it, named after that line —
+    "clip.mp4 · f128 · 0.05+3.jpg" — not "download.jpg". The page first asks the reviewer's name (nothing can be done
     without it; *You: … ✎* changes it). The title, who sent the page, and the *All / Open / In
     progress / Resolved* filters with their counts stay pinned at the top; tap the title (or the
     arrow) for the file details and the review-state history. *Reply* opens a message field (paper
@@ -288,7 +297,8 @@
   goes through the whole note: its frames, its attached pictures, then each reply's drawings and
   pictures; a half-transparent plate at the foot (80 % wide, at the left edge so the pencil bottom right stays free) tells which ("0:01.05 · f 30 · 2 / 7",
   "↳ Bob · Picture") with the note's / reply's words and, on the note's own pictures, the picture's
-  own text under them — more than five lines scroll inside the plate (drag the text; to move the
+  own text under them — more than five lines scroll inside the plate (no scrollbar: "…" under the last
+  line shown says there is more; drag the text; to move the
   plate then, drag its head); the pencil on the plate writes
   or changes that picture's text (the note's text stays its topic; a picture with a text has a mark
   in its corner in the card, and the PDF / HTML exports show the text under it); a tap on the plate

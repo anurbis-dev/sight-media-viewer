@@ -1659,6 +1659,7 @@ export function createAnnotator(host){
         <button type="button" data-ex="pdf">PDF report…</button>
         <button type="button" data-ex="html" title="One file that opens in any browser — the reviewer can reply, resolve and add notes, then send back a .srev">Web page for reviewers (.html)…</button>
         <button type="button" data-ex="pkg">Review file (.srev)…</button>
+        <button type="button" data-ex="zip" title="A folder per note: its pictures (named by file and frame) and a text file with the note's text and its pictures' texts">Notes as ZIP (pictures + text)…</button>
         <button type="button" data-ex="text">Copy notes as text</button>
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
@@ -1700,6 +1701,7 @@ export function createAnnotator(host){
         if (x === "pdf") exportPdf();
         else if (x === "html") exportHtml();
         else if (x === "pkg") exportPackage();
+        else if (x === "zip") exportZip();
         else if (x === "text") copyText();
         else if (x === "import") el.querySelector(".an-file").click();
       };
@@ -2782,9 +2784,10 @@ export function createAnnotator(host){
     cx.fillText(text, m + pad, m + pad);
     cx.restore();
   }
-  // "<which picture> — <its own text>" (the text alone when there is no title).
-  const withPicText = (title, d, pic) => { const t = RC.captionOf(d, pic, sameFrame); return [title, t].filter(Boolean).join(" — "); };
-  async function gatherReport(forPage){
+  // everyNote (the notes ZIP): a note on a picture gets its own picture even when it is the only note.
+  // Every picture also comes as {title, text, file}: which picture it is, its own text, and the file
+  // name it gets in the ZIP / when downloaded from the page (RC.picFileName of the title).
+  async function gatherReport(forPage, everyNote){
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
@@ -2811,16 +2814,17 @@ export function createAnnotator(host){
         // draws over them by ctx).
         // (A reply's drawing counts when its reply lives: the phone lets a reply draw on a frame the note missed.)
         const mine = [...S.items.values()].filter((it) => isDrawing(it) && own(it));
-        const pics = [];  // {cv, caption, ctx, pic}
+        const pics = [];  // {cv, caption, title, text, ctx, pic}
+        const picOf = (cv, title, p, ctx, file) => { const text = RC.captionOf(d, p, sameFrame); return { cv, caption: [title, text].filter(Boolean).join(" — "), title, text, file: RC.picFileName(file || title), ctx, pic: p }; };
         if (S.b2 && !S.b2.isVid){
           // One note on a picture: its frame would just repeat the cover.
-          if (!forPage && notes.length > 1 && [...S.items.values()].some(own)){ const cv0 = composeNative(own, 1600); if (cv0) pics.push({ cv: cv0, caption: withPicText(a.name, d, ownPic), ctx: null, pic: ownPic }); }
+          if (!forPage && (everyNote || notes.length > 1) && [...S.items.values()].some(own)){ const cv0 = composeNative(own, 1600); if (cv0) pics.push(picOf(cv0, a.name, ownPic, null, `${a.name} · Note ${i + 1}`)); }
         } else if (v && c?.t != null){
           const fb = !(d.shots || []).length;
           for (const t of RC.noteTimes(d, mine.filter((it) => !it.data.reply).map((it) => it.data.ctx?.t), sameFrame, fb)){
             await seekTo(v, landAt(t));
             const cm = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
-            if (cm){ bakeFrame(cm, t); pics.push({ cv: cm, caption: withPicText(frameTitle(a, t), d, { t }), ctx: { t, hold: 0 }, pic: { t } }); }
+            if (cm){ bakeFrame(cm, t); pics.push(picOf(cm, frameTitle(a, t), { t }, { t, hold: 0 })); }
           }
         } else if (S.b3 && c?.vk){
           const vks = [];
@@ -2837,20 +2841,25 @@ export function createAnnotator(host){
             S.curVk = vk;
             await nextFrame(); await nextFrame(); await nextFrame();
             const cm = composeNative(pick((it) => (it.data.ctx?.vk || (it.data.note === n.id ? c.vk : null)) === vk && !replyGone(it)));
-            if (cm) pics.push({ cv: cm, caption: withPicText(viewTitle(a, vk), d, { vk }), ctx: { vk, cam: view.cam }, pic: { vk } });
+            if (cm) pics.push(picOf(cm, viewTitle(a, vk), { vk }, { vk, cam: view.cam }));
           }
         }
+        let own1 = null;
         pics.forEach((p, k) => {
-          if (k){ more.push({ frame: toJpeg(p.cv), size: [p.cv.width, p.cv.height], caption: p.caption, ctx: p.ctx }); return; }
-          frame = toJpeg(p.cv); size = [p.cv.width, p.cv.height]; cap = p.caption; frameCtx = p.ctx; ownPic = p.pic;
+          if (k){ more.push({ frame: toJpeg(p.cv), size: [p.cv.width, p.cv.height], caption: p.caption, title: p.title, text: p.text, file: p.file, ctx: p.ctx }); return; }
+          frame = toJpeg(p.cv); size = [p.cv.width, p.cv.height]; cap = p.caption; frameCtx = p.ctx; ownPic = p.pic; own1 = p;
         });
         // Picture texts (FORMAT.md captions): under each picture, after which picture it is; a note with no
         // picture of its own (one note on an image: the cover is it) shows its picture's text under its words.
         const ownText = frame ? "" : RC.captionOf(d, ownPic, sameFrame);
-        const shotCaptions = {};
-        (d.shots || []).forEach((sid) => { const t = RC.captionOf(d, { shot: sid }); if (t) shotCaptions[sid] = t; });
+        const shotCaptions = {}, shotFiles = {};
+        (d.shots || []).forEach((sid, k) => {
+          const t = RC.captionOf(d, { shot: sid }); if (t) shotCaptions[sid] = t;
+          shotFiles[sid] = RC.picFileName(`${a.name} · Note ${i + 1} · Picture ${k + 1}`);
+        });
         out.push({ id: n.id, num: i + 1, ctx: ctxLabel(frameCtx || noteCtx(n)), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size, frameCtx,
-          frameCaption: cap, picText: ownText, shotCaptions, more, shots: d.shots || [],
+          frameCaption: cap, frameTitle: own1?.title || "", frameText: own1?.text || "", frameFile: own1?.file || "",
+          picText: ownText, shotCaptions, shotFiles, more, shots: d.shots || [],
           replies: liveReplies(n).map((r) => ({ id: r.id, author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
       }
     } finally {
@@ -2878,8 +2887,8 @@ export function createAnnotator(host){
     if (!S.asset) return;
     await flush();
     toast("Building PDF…", 60000);
-    const payload = await gatherReport(false);
     try {
+      const payload = await gatherReport(false);
       const r = await host.api("/api/review/export/pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       toast(`Saved <b>${esc(r.name)}</b> · ${r.pages} page${r.pages > 1 ? "s" : ""}`, 4000);
     } catch (e){
@@ -2891,13 +2900,26 @@ export function createAnnotator(host){
     if (!S.asset) return;
     await flush();
     toast("Building the web page…", 60000);
-    const payload = await gatherReport(true);
     try {
+      const payload = await gatherReport(true);
       const r = await host.api("/api/review/export/html", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       toast(`Saved <b>${esc(r.name)}</b> — opens in any browser; replies come back as a .srev file`, 5000);
     } catch (e){
       console.warn(e);
       toast("Export failed", 3000);
+    }
+  }
+  async function exportZip(){
+    if (!S.asset) return;
+    await flush();
+    toast("Building the ZIP…", 60000);
+    try {
+      const payload = await gatherReport(false, true);
+      const r = await host.api("/api/review/export/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      toast(`Saved <b>${esc(r.name)}</b> · ${r.notes} note${r.notes === 1 ? "" : "s"}, ${r.pictures} picture${r.pictures === 1 ? "" : "s"}`, 4000);
+    } catch (e){
+      console.warn(e);
+      toast("ZIP export failed", 3000);
     }
   }
   async function exportPackage(){

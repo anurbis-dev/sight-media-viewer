@@ -2,6 +2,16 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.43.1 — 2026-11-13 — Review panel scrolls with middle-drag like the other lightbox panels
+- **What:** the review (annotation) panel's note list scrolls by middle-drag, as the info, PSD, 3D and frame
+  panels already do; the wheel still scrolls it natively.
+- **Where:** `app/static/annotate.js` — `buildPanel` calls `host.panScroll` on `.an-list`. `app/static/index.html`
+  — the `createAnnotator` options pass `panScroll: (el) => attachPanScroll(el)`. `app/version.py`.
+- **Notes:** the panel keeps its own look (docked column); only the shared scroll helper is used. The helper adds no
+  wheel handler and does not change `overflow`. Review (fresh agent): no confirmed bugs (no clash with the list's
+  click / dblclick / hover handlers or the right-button thumb zoom; `buildPanel` runs once per lightbox open, so no
+  duplicate listeners). Not tested in a browser.
+
 ## 0.43.0 — 2026-11-13 — Lightbox: icons follow the file type; corner icons clear the radius; Alt-drag turns a picture to any angle
 - **What:** (1) mirror (`#mirBtn`) shows only for images, PSDs and video; the annotate button (`#annoBtn`)
   shows for those and for 3D models, so documents and audio hide both. (The buttons used to stay visible:

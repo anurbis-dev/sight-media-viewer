@@ -14,6 +14,34 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.48.0 — 2026-11-14 — Picture text plate without scrollbar; page captions on their own line, named downloads; notes as ZIP
+- **What:** (everywhere: Sight lightbox, phone, reviewer page) the picture text plate has no scrollbar; while text is
+  left below, the last shown line fades and "…" stands under it. (HTML reviewer page) under each picture: its title
+  ("clip.mp4 · f128 / 0:05+3", attachments "clip.mp4 · Note 1 · Picture 2") with a download button, the picture's own
+  text on the next line in the note's text style (15 px); the download — and a new one top right in the full-screen
+  viewer — saves the picture with the shown drawings burned in, named "clip.mp4 · f128 · 0.05+3.jpg" instead of the
+  browser's "download.jpg". (Sight) Export → *Notes as ZIP*: a folder per note ("Note 01") with its pictures (drawings
+  burned in, named as above) and "Note 01.txt" = the note's text + each picture's text under that picture's file name;
+  a still image's cover at the root.
+- **Where:** `app/static/caption-plate.js` (`.scp-more`, `paintMore`, `.scp-body.more` mask, `--scp-rt`);
+  `app/static/review-core.js` (`picFileName`); `app/static/annotate.js` (`gatherReport(forPage, everyNote)` → per picture
+  `title` / `text` / `file`, `frameTitle` / `frameText` / `frameFile`, `shotFiles`; `exportZip`, menu `data-ex="zip"`;
+  gatherReport now inside the try of every export); `app/review.py` (`build_zip`, `_zip_part`, `_image_ext`; page:
+  `picTitle`, `savePic`, `picCaption`, `capParts`, `.pcap` / `.dl` / `.ptext` / `.zdl`, `frameOf` carries `title`);
+  `app/server.py` (`POST /api/review/export/zip`); `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** a picture inside the page cannot carry a file name for the browser's own "Save image as" (inline data
+  URLs always save as "download"), so naming goes through the explicit download buttons (`<a download>` on a blob).
+  PDF captions are unchanged (`caption` / `frameCaption` = "<title> — <text>"); pre-0.48 pages split that caption
+  (`capParts`, after the media name). Page downloads draw with `RC.drawCanvas` (no SVG-to-canvas taint). In a container
+  with no UTF-8 locale headless Chromium names non-ASCII downloads "download" — run Playwright with `LANG=C.UTF-8`.
+  Checked: unit tests; the page driven in Playwright (captions, 15 px texts, download names, burned-in drawing, plate
+  "…" / no scrollbar); the ZIP exported from the real app on a temp library (names, txt, burned-in rect). Not driven:
+  video / 3D ZIP (no video in the container). Replies are not in the ZIP's txt (not asked).
+  Review (fresh agent) found, fixed: a media name of ~125+ chars lost the ".jpg" in ZIP names (`_zip_part` cut the
+  whole name — now the stem) and the frame label (`picFileName` now cuts the media name, not the frame); an old page
+  on a file named "A — B.mp4" split its caption at the wrong dash; a failing report build left the 60 s toast up. The
+  same reviewer confirmed all fixes and found nothing new.
+
 ## 0.47.0 — 2026-11-14 — No "note frame" on video; frame numbers on previews; reviewer page viewer as on the phone
 - **What:** (Sight + phone) a video note no longer marks the frame it was typed on: its big state-coloured markers
   sit on every frame its own drawings (or a picture text of it) are on; the card's time, a click on the card / a
@@ -332,13 +360,3 @@ Add new entries directly below this line.
   `$` patterns in the replace (function replacer), PKG never mutated, re-download idempotent, the .srev unchanged,
   original page KEY unchanged, Discard on a copy stays empty after reload. Dropped drafts are not in the copy (as in
   Download reply); stale attachments in E.att are embedded but filtered out by the reply.
-
-## 0.43.1 — 2026-11-13 — Review panel scrolls with middle-drag like the other lightbox panels
-- **What:** the review (annotation) panel's note list scrolls by middle-drag, as the info, PSD, 3D and frame
-  panels already do; the wheel still scrolls it natively.
-- **Where:** `app/static/annotate.js` — `buildPanel` calls `host.panScroll` on `.an-list`. `app/static/index.html`
-  — the `createAnnotator` options pass `panScroll: (el) => attachPanScroll(el)`. `app/version.py`.
-- **Notes:** the panel keeps its own look (docked column); only the shared scroll helper is used. The helper adds no
-  wheel handler and does not change `overflow`. Review (fresh agent): no confirmed bugs (no clash with the list's
-  click / dblclick / hover handlers or the right-button thumb zoom; `buildPanel` runs once per lightbox open, so no
-  duplicate listeners). Not tested in a browser.

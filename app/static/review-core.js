@@ -654,6 +654,18 @@ var SightReviewCore = (function(){
     var p = function(n){ return (n < 10 ? "0" : "") + n; };
     return "f" + F + " / " + (h ? h + ":" + p(m) : m) + ":" + p(s) + (fr ? "+" + fr : "");
   }
+  // A picture's caption title ("clip.mp4 · f128 / 0:05+3") as a file name that every system takes
+  // ("clip.mp4 · f128 · 0.05+3.jpg"): what the reviewer page's downloads and the desktop's notes ZIP
+  // call a picture. ext: ".jpg" by default.
+  function picFileName(title, ext){
+    var s = String(title == null ? "" : title).replace(/ \/ /g, " · ").replace(/:/g, ".").replace(/[\\/*?"<>|\u0000-\u001f]+/g, "_");
+    s = s.replace(/\s+/g, " ").trim();
+    // Too long: the file's name gives way, not the frame after it (pictures of one note must differ).
+    var cut = s.indexOf(" · ");
+    if (s.length > 150 && cut > 0 && s.length - cut < 120) s = s.slice(0, cut - (s.length - 150)).trim() + s.slice(cut);
+    s = s.slice(0, 150).trim().replace(/^[. ]+|[. ]+$/g, "") || "picture";
+    return s + (ext == null ? ".jpg" : ext);
+  }
   // The frames a video note stands on (0.47+: there is no "note's own frame" any more): the frames its
   // drawings are on (`times`: the caller's pick of drawing times — e.g. without replies') and the
   // frames that carry a picture text of it (captions "t:" keys), one per frame (`same`), in time
@@ -861,7 +873,7 @@ var SightReviewCore = (function(){
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
     ctxVisible: ctxVisible, drawingRow: drawingRow,
-    picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel,
+    picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel, picFileName: picFileName,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };
 })();
