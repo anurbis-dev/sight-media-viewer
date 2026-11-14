@@ -65,8 +65,10 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   / reported as done, start a **new** reviewer agent (the Agent tool, general-purpose, not a fork — it must
   not share your context or assumptions) and give it only the diff range / files, the goal and the
   invariants from the docs. Ask for correctness bugs with concrete failure scenarios. Fix what it confirms,
-  re-run the tests, and say in the RECENT entry what the review found (or that it found nothing). One
-  review per block — do not batch several blocks into one late review.
+  re-run the tests, and say in the RECENT entry what the review found (or that it found nothing). Then
+  send the fixes back to **the same reviewer agent** (SendMessage to its id: it knows its own findings)
+  and ask it to confirm each fix is right and introduced nothing new; repeat until it confirms them all,
+  and say so in the RECENT entry. One review per block — do not batch several blocks into one late review.
 - **Builds:** no local build is needed before a push or a merge — builds are made by releases.
 - **Testing UI:** run the dev server (`SIGHT_DEV=1 ~/.sight/runtime/Scripts/python.exe Sight.py --dev
   --no-browser --port NNNN`, pick a fresh port) and drive it with Playwright. Tests must create their

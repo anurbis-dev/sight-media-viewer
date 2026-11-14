@@ -255,7 +255,9 @@ FORMAT.md row (bbox columns from `boundsOf`) from an editor item.
 own text; `review-core.js` `picKey` / `captionOf` / `withCaption` read and write it (frames match by
 the caller's own frame rule). `app/static/caption-plate.js` (ES module, imports `./keys.js`, injects
 its own CSS) is the half-transparent plate shown over a full-screen picture: `createPlate(parent,
-{storeKey})` → `{set(content), destroy()}`; bottom centre 80 % wide, five lines then a scroll; a tap
+{storeKey})` → `{set(content), destroy()}` (the HTML reviewer page gets it as a plain script:
+review.py `plate_js` drops the import / export keywords of it and keys.js and defines
+`SightCaptionPlate`); bottom centre 80 % wide, five lines then a scroll; a tap
 folds it into an icon, a drag sticks it to the nearest side (sides: 25 % × 80 %), side / fold kept in
 localStorage. Text longer than the plate scrolls by a drag on it (finger: native pan-y; mouse / pen:
 `g.scroll`, words follow the pointer) and only the head moves the plate; a middle-button drag anywhere
@@ -357,9 +359,17 @@ the pictures are stills from each view (`view3dPic`, kept per asset / view / cam
 does not re-render them; made with the camera moved and put back; skipped during a drag); `view3dBox` draws the drawings in the host's units.
 A note may hold drawings on several frames / views (each row keeps its own ctx): `pendingDrawings`
 = loose drawings shown now + every loose one created since `S.openedAt` (any frame / view);
-`notePreview` makes one box per frame (`data-pt` on the extra ones: a click goes there);
-`gatherReport` adds `more [{frame, size, caption, ctx}]` per note (review.py: PDF after the
-note's frame; the page's `frameOf("<id>|<i>")`).
+**No "note's own frame" (0.47+):** a video note stands on the frames its own drawings are on plus
+those with a picture text of it — `RC.noteTimes(data, times, same, fallback)` (shared by annotate.js
+`noteFrames`, the phone's `noteTimes`, report.js); the frame it was written on (`ctx.t`, still stored
+and still the merge / hold anchor) counts only for a note with neither (`fallback`: markers,
+selecting it; reports and card previews drop it when the note has attached pictures). Timeline marks
+(annotate `marks()`, phone `markerList`), the card's time, a click on the card, and the reports all
+follow it. `notePreview` makes one box per frame in time order (`data-pt`: a click goes there; `.an-fno`
+the frame number); `gatherReport` gives the note's first picture as `frame` + `frameCtx` and the rest
+as `more [{frame, size, caption, ctx}]` (review.py: PDF after the note's frame; the page's
+`frameOf(id)` reads `frameCtx`, `frameOf("<id>|<i>")` the rest). Video labels are
+`RC.frameLabel(t, fps)` ("f128 / 0:05+3"), also burned small into the frame's corner (`bakeFrame`).
 The lightbox view's **turn / mirror** (index.html `attachViewer`: `turn {rot, mir}`, localStorage
 `sight.viewTurn`, newest 500 files) is a CSS prefix about the window centre on the media and on
 annotate's layer root (`geom().turn`); `unturn(x, y)` maps the pointer back, so pan / zoom and
@@ -375,7 +385,16 @@ review-core as an SVG overlay (`.ov`, `viewBox` in doc units: `0 0 w h` for pict
 frames are the whole media scaled; `-500·a -500 1000·a 1000` for 3D, a = frame aspect). Frames
 (`frameOf(key)`): `"cover"` = every drawing (the page shows the cover itself clean — gallery
 entry `clean: true` — the drawings are on the note pictures); a note id = picture notes: the cover filtered by
-`data.note`; video / 3D: everything `ctxVisible` at the note's `ctx`. Its drawing canvas
+`data.note`; video / 3D: everything `ctxVisible` at the note's first picture (`frameCtx`; an older
+report: its `ctx`); `"<id>|<i>"` its i-th `more` picture. **Viewer** (`zoom(group, k)`): `GAL` is
+rebuilt by `renderList` — the cover's group, then one group per listed note (`curG` while its card
+is built; `galAdd(entry)` returns the click handler): its frames, shots, then each reply's drawings
+(per frame key, `noteFrameKeys`) and shots. Left / right walks a group, up / down the groups; the
+step is the phone viewer's strip slide (WAAPI, `SLIDE_MS` / `SLIDE_WAIT`); floating `.zfab` Back /
+pencil (`drawTarget`: cover → new note, any note picture → `startReply(id, frameKey)`, a shot →
+`replyFlat`); the plate is caption-plate.js (`SightCaptionPlate`, review.py `plate_js`), the
+picture's text from the note row's `captions` (`picOfEntry`). A reply draft may be drawn on any of
+the note's frame keys (`drawFrames`). Its drawing canvas
 (`drawSheet`) edits items in the same doc units, on the clean picture (`base: []`) for a new note
 or reply, and opens turned / mirrored as last left (localStorage `sight-review:view:<asset id>`); drafts keep `{frame, items}`; sending turns them
 into rows in `E.rows` (localStorage) with `data.note`, `data.reply` (a reply) and the frame's ctx
@@ -618,8 +637,8 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   wrong tag).
 - **Viewer**: no bar — floating `.fab` Back / pencil; no swipe closes it (Back, Esc, system back
   do). At fit, up / down calls `o.nav(±1)` (note frames: the next note in the list's order with a
-  picture), left / right `o.side(±1)` (a video note's frames, `noteFrameList` = its ctx frame +
-  `M.noteFrameTimes`, by r3; the caption's `.fr` says `time · f N · i / n`). `from0` (where it was
+  picture), left / right `o.side(±1)` (a video note's frames, `noteFrameList` = its picture-text frames +
+  `M.noteFrameTimes` through `noteTimes`; the caption's `.fr` says `time · f N · i / n`). `from0` (where it was
   opened) travels through nav / side; closing on another note or frame brings it forward
   (`showNote(n, t)`: seeks there, scrolls the card). The step is a strip slide — the only one,
   `show(no, {axis, dir})`: the next `.vb` is built and its image decoded (≤ `SLIDE_WAIT`) before
@@ -647,8 +666,8 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   the file is bound its probed size wins — rotation applied — over a stored one).
 - **Exports** (`report.js`): `gatherReport` = Sight's `gatherReport(false)` content (cover with
   every drawing for pictures; a picture note's own frame only when there are several notes and it
-  has drawings; video: the frame at the note's time with everything visible there except replies'
-  drawings; each reply that drew: its frames — the note's own too — / the picture with only its
+  has drawings; video: each frame of `RC.noteTimes` (the first as the note's frame) with everything
+  visible there except replies' drawings; each reply that drew: its frames — the note's own too — / the picture with only its
   drawings; replies, pictures). HTML: one file, data-URL images, no script. PDF: A4 laid out in points, each page
   drawn on a canvas at 2 px/pt with the device's fonts (any script) and stored as one JPEG per page
   (`pdf.js`, objects: catalog, pages, info, then page / content / image per page). Files are

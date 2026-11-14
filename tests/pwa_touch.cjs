@@ -337,7 +337,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await val(`(${R}.curNote = null, ${R}.video.currentTime = Math.max(0, ${R}.video.duration - 0.5))`); await sleep(300);
   const selId = await ev(() => { const c = [...document.querySelectorAll(".note")].find((x) => x.querySelector(".text")); c.querySelector(".text").click(); return c.dataset.id; }); await sleep(500);
   out.select = await ev(`(() => { const R = window.__sightReview.R, n = R.rows.find((r) => r.id === ${JSON.stringify(selId)});
-    const ts = [n.data.ctx.t].concat(R.rows.filter((r) => r.kind === "stroke" && r.data.note === n.id && !r.data.reply).map((r) => r.data.ctx.t));
+    const dr = R.rows.filter((r) => r.kind === "stroke" && r.data.note === n.id && !r.data.reply).map((r) => r.data.ctx.t), ts = dr.length ? dr : [n.data.ctx.t];
     return [R.curNote === n.id, document.querySelector('.note[data-id="' + n.id + '"]').classList.contains("cur"), Math.abs(R.video.currentTime - Math.min(...ts)) < 1 / R.fps]; })()`);
   // The note's pictures: equal squares in one grid (4 to a row by default).
   out.pics = await ev(() => { const c = [...document.querySelectorAll(".note .pics > .fw")]; const w = c.map((x) => Math.round(x.getBoundingClientRect().width)), h = c.map((x) => Math.round(x.getBoundingClientRect().height));

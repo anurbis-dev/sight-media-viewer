@@ -1642,16 +1642,17 @@ function markerList(){
   // A reply over the player: the note's frames (its tick, dots for the frames drawn on) + the reply's.
   const rn = R.replyTo && R.rows.find((r) => r.id === R.replyTo && r.deleted_at == null);
   if (rn){
-    const c0 = rn.data.ctx && rn.data.ctx.t;
-    threadFrames(rn).forEach((t) => { seen.add(r3(t)); out.push({ t, cls: c0 != null && r3(t) === r3(c0) ? M.noteState(rn) : "dr" }); });
+    const own = noteTimes(rn);
+    threadFrames(rn).forEach((t) => { seen.add(r3(t)); out.push({ t, cls: own.some((x) => frameKey(x) === frameKey(t)) ? M.noteState(rn) : "dr" }); });
     mine.forEach((t) => out.push({ t, cls: "mine" }));
     return out;
   }
-  M.notesSorted(R.rows, "video").forEach((n) => {
-    const t = n.data.ctx && n.data.ctx.t;
-    if (t == null) return;
+  // A note: a mark on each frame it stands on (noteTimes: its drawings' and picture texts' frames —
+  // not the frame it was written on).
+  M.notesSorted(R.rows, "video").forEach((n) => noteTimes(n).forEach((t) => {
+    if (seen.has(r3(t))) return;
     seen.add(r3(t)); out.push({ t, cls: M.noteState(n) });
-  });
+  }));
   M.drawings(R.rows).forEach((r) => {
     const t = r.data.ctx && r.data.ctx.t;
     if (t == null || seen.has(r3(t))) return;
@@ -1667,8 +1668,8 @@ function jumpNote(dir){
   const t = dir > 0 ? ts.find((x) => x > cur + eps) : ts.reverse().find((x) => x < cur - eps);
   if (t == null){ toast(dir > 0 ? "No later marker" : "No earlier marker"); return; }
   seekTo(t);
-  // Landed on a note's own frame: that note is selected (its card brought into view).
-  const n = !composing() && !R.drawS && listedNotes().find((x) => x.data.ctx && x.data.ctx.t != null && frameKey(x.data.ctx.t) === frameKey(t));
+  // Landed on a frame a note stands on: that note is selected (its card brought into view).
+  const n = !composing() && !R.drawS && listedNotes().find((x) => noteTimes(x).some((y) => frameKey(y) === frameKey(t)));
   if (n){ R.curNote = n.id; paintCurrent(); const c = els && els.notes.querySelector(`.note[data-id="${n.id}"]`); if (c) c.scrollIntoView({ block: "nearest" }); }
 }
 // Transports on screen: the player's, and the drawing canvas's while a video is drawn on.
@@ -2174,13 +2175,13 @@ function paintCurrent(){
   });
 }
 // A tap on a note's card (not on its buttons / pictures / fields): it is selected and the player
-// goes to the first frame its drawing is on (else its own frame); at = a frame of it to go to.
+// goes to the first frame it stands on (noteTimes); at = a frame of it to go to.
 // While a note / reply is being written the player stays where it is (a new note goes on the frame
 // on screen; a reply keeps its note): nothing moves, nothing is selected.
 function selectNote(n, at){
   if (!R || composing()) return;
   R.curNote = n.id;
-  if (R.video && kindNow() === "video"){ const t = at != null ? at : noteFrameList(n)[0]; if (t != null) seekTo(t); }  // its own drawings' frames, not its replies'
+  if (R.video && kindNow() === "video"){ const t = at != null ? at : noteTimes(n)[0]; if (t != null) seekTo(t); }  // its own drawings' frames, not its replies'
   paintCurrent();
 }
 
@@ -2193,8 +2194,9 @@ async function noteFrame(n){
     return url ? { url, vb, ctx: null, at: null, note: n.id } : null;
   }
   if (kindNow() === "video" && c && c.t != null){
-    const f = await getFrame(c.t);
-    return f ? { url: f.url, vb, ctx: c, at: { t: c.t, fps: R.fps } } : null;
+    // Its first frame (noteTimes); the note's own ctx (its hold) when that is the frame it was written on.
+    const t = noteTimes(n)[0], f = await getFrame(t);
+    return f ? { url: f.url, vb, ctx: frameKey(t) === frameKey(c.t) ? c : { t, hold: 0 }, at: { t, fps: R.fps } } : null;
   }
   return null;
 }
@@ -2226,13 +2228,15 @@ function asyncPic(n, list, cls, onTap){
   });
   return ph;
 }
-// One more frame of a video note (or of a reply: rid, its drawings only), filled in once it is there.
-function asyncFrameAt(n, t, rid){
-  const rv = R, ph = el("div", "fw sm wait", "…");
+// A frame's number in its thumbnail's top-left corner.
+function fnoTag(box, t){ box.appendChild(el("span", "fno", "f" + Math.round(t * R.fps))); return box; }
+// One frame of a video note (or of a reply: rid, its drawings only), filled in once it is there.
+function asyncFrameAt(n, t, rid, cls = "sm"){
+  const rv = R, ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
   getFrame(t).then((fr) => {
     if (R !== rv || !fr){ ph.remove(); return; }
     const f = { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t, hold: 0 }, at: { t, fps: R.fps } };
-    const box = picBox(f, rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), "sm");
+    const box = fnoTag(picBox(f, rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), cls), t);
     if (!rid) markCap(box, n, { t });
     box.onclick = () => openThread(n, rid ? { kind: "frame", t, rid } : { kind: "frame", t });
     ph.replaceWith(box);
@@ -2267,11 +2271,12 @@ function noteCard(n){
     if (sl && !sl.isCollapsed && card.contains(sl.anchorNode)) return;  // a text selection made / dropped, not a tap
     selectNote(n);
   });
-  if (kind === "video" && c && c.t != null) card.dataset.t = String(c.t);
+  const ts = kind === "video" && c && c.t != null ? noteTimes(n) : [];
+  if (ts.length) card.dataset.t = String(ts[0]);
   const h = el("div", "nh");
   h.appendChild(el("span", "num", String(NUM.get(id) || "")));
-  if (kind === "video" && c && c.t != null){
-    const b = btn("ctx", fmtTime(c.t, R.fps), () => goTo(n), "Go to this frame");
+  if (ts.length){
+    const b = btn("ctx", fmtTime(ts[0], R.fps), () => goTo(n), "Go to this frame");
     h.appendChild(b);
   }
   h.appendChild(el("span", "who", [n.data.author, fmtDate(n.data.created)].filter(Boolean).join(" · ") + (n.data.edited_at ? " · edited" : "")));
@@ -2279,21 +2284,20 @@ function noteCard(n){
   h.appendChild(ibtn("more", "Note actions", () => noteMenu(n), 18));
   card.appendChild(h);
   if (n.data.text) card.appendChild(el("div", "text", n.data.text));
-  // Its pictures in one grid: the video frame with what is drawn there (a picture note: only when
-  // it has drawings), the other frames it was drawn on (time order), then its attached pictures.
+  // Its pictures in one grid: a video note's frames (noteFrameList: those with its drawings or a
+  // picture text, in time order, each with its number; a picture note: the picture when it has
+  // drawings), then its attached pictures.
   const pics = el("div", "pics");
   const own = M.drawings(R.rows).filter((r) => r.data.note === id && !r.data.reply);
-  if (kind === "video" ? (c && c.t != null) : own.length){
-    const mf = kind === "video" ? memFrame(c.t) : null;
-    if (mf){
-      const f = { url: mf.url, vb: [0, 0, docW(), docH()], ctx: c, at: { t: c.t, fps: R.fps } };
-      const box = markCap(picBox(f, drawingsOn(f), ""), n, { t: c.t });
-      box.onclick = () => openThread(n, { kind: "frame", t: c.t });
-      pics.appendChild(box);
-    } else pics.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
-  }
-  if (kind === "video" && c && c.t != null)
-    M.noteFrameTimes(R.rows, n).filter((t) => frameKey(t) !== frameKey(c.t)).forEach((t) => pics.appendChild(asyncFrameAt(n, t)));
+  if (kind === "video") noteFrameList(n).forEach((t, i) => {
+    const mf = memFrame(t), cls = i ? "sm" : "";
+    if (!mf){ pics.appendChild(asyncFrameAt(n, t, null, cls)); return; }
+    const f = { url: mf.url, vb: [0, 0, docW(), docH()], ctx: { t, hold: 0 }, at: { t, fps: R.fps } };
+    const box = markCap(fnoTag(picBox(f, drawingsOn(f), cls), t), n, { t });
+    box.onclick = () => openThread(n, { kind: "frame", t });
+    pics.appendChild(box);
+  });
+  else if (own.length) pics.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
   shotThumbs(n.data.shots, n, null, pics);
   if (pics.children.length) card.appendChild(pics);
   const reps = (n.data.replies || []).filter((r) => r && !r.deleted);
@@ -2321,15 +2325,21 @@ async function quickState(n, s){
   M.setNoteState(n, s, who);
   dirty();
 }
-// Every frame a video note's thread is on: its own frame, the frames it was drawn on and the ones
-// its replies drew on, in time order (one time per frame, by r3).
+// Every frame a video note's thread is on: the frames it stands on (noteTimes) and the ones its
+// replies drew on, in time order (one time per frame).
 // One key per frame (by index when the rate is known: two stored times a hair apart are one frame).
 const frameKey = (t) => R.fpsKnown ? frameIdx(t) : r3(t);
 // Two frame times on one frame (a picture's text is found by its frame, FORMAT.md captions).
 const sameFrameT = (a, b) => R ? frameKey(a) === frameKey(b) : Math.abs(a - b) < 5e-4;
+// The frames a video note stands on (RC.noteTimes, 0.47+): those its own drawings are on and those
+// with a picture text of it — not the frame it was written on (a note with neither keeps that one when
+// `fallback`, so it still has a place on the timeline).
+function noteTimes(n, fallback = true){
+  return RC.noteTimes(n.data, M.noteFrameTimes(R.rows, n), sameFrameT, fallback);
+}
 function threadFrames(n){
-  const c = n.data.ctx, by = new Map();
-  if (c && c.t != null) by.set(frameKey(c.t), c.t);
+  const by = new Map();
+  noteTimes(n).forEach((t) => { if (!by.has(frameKey(t))) by.set(frameKey(t), t); });
   M.drawings(R.rows).forEach((r) => { const t = r.data.note === n.id && r.data.ctx ? r.data.ctx.t : null; if (typeof t === "number" && !by.has(frameKey(t))) by.set(frameKey(t), t); });
   return [...by.values()].sort((a, b) => a - b);
 }
@@ -2391,8 +2401,8 @@ function replyEntry(n, r){
   if (r.text) d.appendChild(el("div", "rt", r.text));
   const rt = replyFrameTimes(n, r.id), c = n.data.ctx, pics = el("div", "pics");
   if (rt){
-    // A video reply drawn on several frames: each of them (the note's own frame through noteFrame).
-    if (rt.length > 1 || (rt.length && !(c && c.t != null && frameKey(rt[0]) === frameKey(c.t)))) rt.forEach((t) => pics.appendChild(asyncFrameAt(n, t, r.id)));
+    // A video reply: each frame it drew on (a picture: the picture through noteFrame).
+    if (rt.length) rt.forEach((t) => pics.appendChild(asyncFrameAt(n, t, r.id)));
     else pics.appendChild(asyncPic(n, (f) => drawingsOn(f, { reply: r.id }), "sm", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t, rid: r.id } : { kind: "frame", rid: r.id })));
   }
   shotThumbs(r.shots, n, r.id, pics);
@@ -2503,8 +2513,8 @@ async function editNoteDrawing(n, rid){
   if (kindNow() === "video" && rv.video && c && c.t != null){
     const groups = new Map();
     own.forEach((r) => { const tt = frameStart(r.data.ctx && r.data.ctx.t != null ? r.data.ctx.t : c.t), k = frameTag(tt); if (!groups.has(k)) groups.set(k, { frame: { ctx: { t: tt, hold: 0 } }, items: [] }); groups.get(k).items.push(asItem(r)); });
-    // From its first frame (a reply's may not be the note's).
-    const first = rid ? [...groups.values()].map((g) => g.frame.ctx.t).sort((a, b) => a - b)[0] : null;
+    // From its first frame.
+    const first = [...groups.values()].map((g) => g.frame.ctx.t).sort((a, b) => a - b)[0];
     seekTo(first != null ? first : c.t);
     await whenSettled(rv);
     if (R !== rv) return;
@@ -2539,7 +2549,7 @@ function goTo(n){
   const c = n.data.ctx, v = R.video;
   if (!v || !c || c.t == null){ if (!v && kindNow() === "video") toast("Pick the video again to play it"); return; }
   R.curNote = n.id;
-  seekTo(c.t);
+  seekTo(noteTimes(n)[0]);
   setPanel(false);
 }
 function focusLater(key){
@@ -3195,9 +3205,9 @@ async function openPicture(){
 function noteFrameList(n){
   const c = n.data.ctx;
   if (kindNow() !== "video" || !c || c.t == null) return [];
-  const by = new Map();
-  [c.t, ...M.noteFrameTimes(R.rows, n)].forEach((t) => { if (!by.has(frameKey(t))) by.set(frameKey(t), t); });
-  return [...by.values()].sort((a, b) => a - b);
+  // Frames with its drawings / picture texts; the frame it was written on only for a note with nothing
+  // else to show (no attached pictures either).
+  return noteTimes(n, !(n.data.shots || []).length);
 }
 // Items: {kind: "frame", t?, rid?} (t: a video frame; rid: a reply's drawing) | {kind: "shot", id, rid?}.
 function threadItems(n){
@@ -3299,7 +3309,7 @@ async function openThread(n, at){
 // Brings a note forward: its card into view in the list, the player onto its frame (or the frame
 // of it given: one of its other frames).
 function showNote(n, at){
-  const c = n.data.ctx, t = at != null ? at : c && c.t;
+  const c = n.data.ctx, t = at != null ? at : c && c.t != null && kindNow() === "video" ? noteTimes(n)[0] : null;
   R.curNote = n.id;
   if (R.video && t != null) seekTo(t);
   paintCurrent();

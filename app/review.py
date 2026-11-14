@@ -360,6 +360,8 @@ def parse_package(raw: bytes) -> dict:
 
 CORE_JS = Path(__file__).resolve().parent / "static" / "review-core.js"
 DRAW_JS = Path(__file__).resolve().parent / "static" / "review-draw.js"
+KEYS_JS = Path(__file__).resolve().parent / "static" / "keys.js"
+PLATE_JS = Path(__file__).resolve().parent / "static" / "caption-plate.js"
 _inline_src: dict[str, str] = {}
 
 
@@ -385,6 +387,22 @@ def draw_js() -> str:
     return _inline_js(DRAW_JS)
 
 
+def plate_js() -> str:
+    """caption-plate.js (the text plate over a full-screen picture) as a plain script for the page:
+    the module and the keys.js it imports, their import / export keywords dropped, in one function
+    scope that defines the global `SightCaptionPlate` ({createPlate})."""
+    key = "plate"
+    if key not in _inline_src:
+        keys = _inline_js(KEYS_JS)
+        plate = _inline_js(PLATE_JS)
+        plate = re.sub(r"^import\s[^\n]*\n", "", plate, flags=re.M)
+        body = re.sub(r"^export\s+", "", keys, flags=re.M) + "\n" + re.sub(r"^export\s+", "", plate, flags=re.M)
+        if re.search(r"^\s*(import|export)\b", body, re.M):
+            raise ValueError("caption-plate.js / keys.js: an import / export the page cannot inline")
+        _inline_src[key] = 'var SightCaptionPlate = (function(){\n"use strict";\n' + body + "\nreturn { createPlate: createPlate };\n})();\n"
+    return _inline_src[key]
+
+
 def build_html(report: dict, pkg: dict) -> str:
     """One self-contained page: the report (cover, per-note frames, notes, replies, screenshots)
     plus the .srev package it came from. After giving their name the reviewer can reply (with
@@ -396,8 +414,8 @@ def build_html(report: dict, pkg: dict) -> str:
     data = json.dumps({"report": report, "package": pkg}, ensure_ascii=False).replace("<", "\\u003c")
     title = html.escape(str(report.get("title") or "Review"))
     # One pass, so a note text or title that happens to contain a placeholder stays as it is.
-    parts = {"TITLE": title, "DATA": data, "CORE": core_js(), "DRAW": draw_js()}
-    return re.sub(r"%%(TITLE|DATA|CORE|DRAW)%%", lambda m: parts[m.group(1)], _HTML_TEMPLATE)
+    parts = {"TITLE": title, "DATA": data, "CORE": core_js(), "DRAW": draw_js(), "PLATE": plate_js()}
+    return re.sub(r"%%(TITLE|DATA|CORE|DRAW|PLATE)%%", lambda m: parts[m.group(1)], _HTML_TEMPLATE)
 
 
 _HTML_TEMPLATE = r"""<!doctype html>
@@ -507,9 +525,15 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .foot div { max-width: 980px; margin: 0 auto; padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px; }
 .foot span { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .foot .btn { white-space: nowrap; }
-.zoom { position: fixed; inset: 0; background: rgb(0 0 0 / .88); display: grid; place-items: center; cursor: zoom-out; z-index: 10; touch-action: none; overscroll-behavior: contain; user-select: none; -webkit-user-select: none; }
-.zoom img { max-width: 96vw; max-height: 96vh; -webkit-user-drag: none; pointer-events: none; will-change: transform; }
-.zoom .zn { position: absolute; left: 0; right: 0; bottom: calc(14px + env(safe-area-inset-bottom)); text-align: center; color: #fff; opacity: .8; font-size: 13px; pointer-events: none; }
+.zoom { position: fixed; inset: 0; background: #000; z-index: 10; overflow: hidden; touch-action: none; overscroll-behavior: contain; user-select: none; -webkit-user-select: none; }
+.zoom .zb { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.zoom .zb > img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; pointer-events: none; }
+/* The text plate (caption-plate.js): at the foot it keeps to the left, clear of the pencil. */
+.zoom .zfoot { position: absolute; inset: 0; z-index: 1; pointer-events: none; --scp-b: calc(14px + env(safe-area-inset-bottom)); --scp-t: calc(74px + env(safe-area-inset-top)); --scp-bx: 12px; --scp-bw: min(80%, calc(100% - 82px)); --scp-rb: max(10%, calc(80px + env(safe-area-inset-bottom))); --scp-lt: max(10%, calc(70px + env(safe-area-inset-top))); }
+.zfab { position: absolute; z-index: 2; width: 46px; height: 46px; border-radius: 23px; border: 1px solid rgb(255 255 255 / .18); background: rgb(28 28 32 / .6); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 4px 16px rgb(0 0 0 / .18); }
+.zfab:hover { background: rgb(48 48 54 / .75); }
+.zback { left: 12px; top: calc(12px + env(safe-area-inset-top)); }
+.zpen { right: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); width: 54px; height: 54px; border-radius: 27px; }
 body.zoomed { overflow: hidden; }
 .gate { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
 .sheet { width: 100%; max-width: 360px; background: var(--card); border-radius: 16px; padding: 18px; box-shadow: 0 20px 60px rgb(0 0 0 / .35); }
@@ -538,9 +562,6 @@ body.zoomed { overflow: hidden; }
 .vwrap { position: relative; flex: none; }
 .vmenu { position: absolute; right: 0; top: 40px; z-index: 6; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; box-shadow: 0 8px 30px rgb(0 0 0 / .2); white-space: nowrap; font-size: 13px; }
 .vmenu label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
-.zoom .zw { position: relative; will-change: transform; pointer-events: none; }
-.zoom .zw img { display: block; }
-.zoom .zd { display: inline-flex; align-items: center; gap: 4px; position: absolute; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 1; background: rgb(255 255 255 / .14); border-color: rgb(255 255 255 / .3); color: #fff; padding: 7px 14px; }
 /* The full-screen drawing canvas (.draw) styles itself: review-draw.js. */
 .pick { position: fixed; inset: 0; z-index: 25; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 16px; }
 .pick .sheet { max-width: 560px; max-height: 85vh; overflow: auto; }
@@ -566,6 +587,9 @@ body.zoomed { overflow: hidden; }
 </script>
 <script>
 %%DRAW%%
+</script>
+<script>
+%%PLATE%%
 </script>
 <script>
 (function(){
@@ -670,7 +694,9 @@ body.zoomed { overflow: hidden; }
       return null;
     }
     if (key === "cover") return M.kind === "image" && R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null } : null;
-    var n = noteById[key], c = (rows[key] && rows[key].data && rows[key].data.ctx) || null;
+    // A note's picture: its first frame / view (report frameCtx, 0.47+: one it has drawings or a text
+    // on), else (an older report) the one it was written on.
+    var n = noteById[key], c = (n && n.frameCtx) || (rows[key] && rows[key].data && rows[key].data.ctx) || null;
     if (!n) return null;
     if (M.kind === "image") return R.cover ? { key: key, src: R.cover, size: R.coverSize, at: null, ctx: null, note: key } : null;
     if (!n.frame || !c) return null;
@@ -726,147 +752,268 @@ body.zoomed { overflow: hidden; }
     });
   }
 
-  // Full-screen picture viewer over a gallery: a horizontal swipe (or arrow key) goes to the
-  // neighbour in the same gallery, a vertical swipe, a tap or Esc closes. The overlay takes every
-  // touch itself (touch-action: none, body scroll locked), so dragging never scrolls the page.
-  // Galleries: the cover + every shown note frame; a note's own attachments + its replies'.
-  // Entries: {f: frame} (drawn with its drawings) or {src, note}. Drawing is a separate mode: the
-  // Draw button, never a gesture here.
-  var frameGal = [], noteGal = null;
-  function zoom(gal, at){
-    var z = el("div", "zoom"), w = el("div", "zw"), i = el("img"), cnt = el("div", "zn"), idx = at, ov = null;
-    // Zoom as in Sight's viewer: right-drag (mouse or the pen's side button) zooms about where it
-    // started, the wheel zooms, a drag pans while zoomed in; a double-click toggles 2.5×.
-    var zs = { z: 1, x: 0, y: 0 }, zd = null;
-    function paintZ(){ w.style.transformOrigin = "0 0"; w.style.transform = zs.z === 1 ? "" : "translate(" + zs.x + "px," + zs.y + "px) scale(" + zs.z + ")"; z.style.cursor = zs.z > 1 ? "grab" : ""; }
-    function zoomAt(nz, cx, cy){
-      nz = Math.min(12, Math.max(1, nz));
-      var r = w.getBoundingClientRect(), bx = r.left - zs.x, by = r.top - zs.y;  // the untransformed corner
-      var qx = (cx - bx - zs.x) / zs.z, qy = (cy - by - zs.y) / zs.z;
-      zs = nz <= 1.01 ? { z: 1, x: 0, y: 0 } : { z: nz, x: cx - bx - nz * qx, y: cy - by - nz * qy };
-      w.style.transition = "none";
-      paintZ();
+  // ---- full-screen viewer --------------------------------------------------------------------
+  // GAL: the page's pictures in groups, rebuilt with the list (renderList): the cover on its own,
+  // then one group per note shown, in the list's order — the note's frames / views, its attached
+  // pictures, then each reply's drawings and pictures (the phone's viewer walks a thread the same
+  // way). An entry: {f, nid, rid} (a picture of the media with what is drawn there; clean: nothing)
+  // or {src, nid, sid, rid} (an attached picture).
+  var GAL = [], curG = null, coverG = null;
+  function galAdd(e){
+    var g = curG;
+    if (!g) return function(){};
+    var k = g.items.push(e) - 1;
+    return function(){ zoom(g, k); };
+  }
+  function noteFrameKeys(nid){
+    var n = noteById[nid], out = [];
+    if (!n) return out;
+    if (frameOf(nid)) out.push(nid);
+    (n.more || []).forEach(function(m, i){ if (frameOf(nid + "|" + i)) out.push(nid + "|" + i); });
+    return out;
+  }
+  var sameT = function(a, b){ return Math.abs(a - b) < 0.5 / (M.fps || 25); };
+  // Which picture an entry is, for its label and its own text (FORMAT.md captions).
+  function picOfEntry(e){
+    if (e.sid != null) return { shot: String(e.sid) };
+    var c = e.f && e.f.ctx;
+    if (c && c.t != null) return { t: c.t };
+    if (c && c.vk) return { vk: c.vk };
+    return {};
+  }
+  function entryLabel(e){
+    var p = picOfEntry(e);
+    return p.shot != null || !e.f ? "Picture" : p.t != null ? RC.frameLabel(p.t, M.fps || 25) : p.vk ? "View" : "Picture";
+  }
+  function replyById(nid, rid){
+    var n = noteById[nid], L = (n && n.replies || []).concat(E.replies[nid] || []);
+    return L.find(function(r){ return r.id === rid; }) || null;
+  }
+  // What the pencil does for an entry: the cover → a new note drawn on it; any picture of a note's
+  // (its frames / views, a reply's drawing on one) → a reply to it drawn on that picture; an
+  // attached picture → a reply carrying a copy of it drawn over (a flat picture: attachments are not
+  // the media). Null = no pencil.
+  function drawTarget(e){
+    if (!e) return null;
+    if (e.f){
+      if (e.f.local) return null;
+      if (e.f.key === "cover" && !e.nid) return function(){ startNew("cover"); };
+      if (e.nid && noteById[e.nid] && frameOf(e.f.key)) return function(){ startReply(e.nid, e.f.key); };
+      return null;
     }
-    var db = el("button", "btn zd"); db.type = "button"; db.title = "Draw on this picture";
-    db.appendChild(svg('<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>', 16)); db.appendChild(document.createTextNode(" Draw"));
-    w.appendChild(i); z.appendChild(w); z.appendChild(cnt); z.appendChild(db);
-    function showAt(){
-      var g = gal[idx];
-      i.src = g.f ? g.f.src : g.src;
-      if (ov){ ov.remove(); ov = null; }
-      if (g.f && !g.clean){ var list = shownOn(g.f); if (list.length){ ov = overlay(g.f, list); w.appendChild(ov); } }
-      zs = { z: 1, x: 0, y: 0 }; paintZ();
-      cnt.textContent = gal.length > 1 ? (idx + 1) + " / " + gal.length : "";
-      db.hidden = !drawTarget(g);
+    if (e.sid != null && e.src && e.nid && noteById[e.nid]) return function(){ replyFlat(e.nid, e.src); };
+    return null;
+  }
+  // A picture with its drawings, full screen: Back (or Esc) leaves; the pencil (when it can be drawn
+  // on) answers on it; wheel / pinch / double-click / right-drag zoom, a drag pans while zoomed in. At
+  // fit a swipe (or the arrow keys) goes sideways to the note's next / previous picture, up / down to
+  // the next / previous note. The next picture comes in like a strip: the swiped one goes on the way
+  // the finger sent it, fading out, the next follows it in from that side, fading in (decoded first,
+  // at most SLIDE_WAIT ms) — as on the phone.
+  var SLIDE_MS = 300, SLIDE_WAIT = 600;
+  function zoom(g0, k0){
+    var gal = GAL, gi = gal.indexOf(g0);
+    if (gi < 0 || !g0.items[k0]) return;
+    var v = el("div", "zoom"), foot = el("div", "zfoot");
+    var back = el("button", "zfab zback"); back.type = "button"; back.title = "Back (Esc)"; back.setAttribute("aria-label", "Back");
+    back.appendChild(svg('<path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>', 24));
+    var pen = el("button", "zfab zpen"); pen.type = "button"; pen.title = "Draw on this picture"; pen.setAttribute("aria-label", "Draw on this picture");
+    pen.appendChild(svg('<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 20h6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>', 24));
+    v.appendChild(foot); v.appendChild(back); v.appendChild(pen);
+    var plate = SightCaptionPlate.createPlate(foot, { storeKey: "sight-review:plate" });
+    var box = null, size = [1, 1], V = { z: 1, x: 0, y: 0 }, off = [0, 0], busy = false, cur = null, gone = false;
+    function close(){
+      if (gone) return;
+      gone = true;
+      plate.destroy(); v.remove(); document.body.classList.remove("zoomed");
+      document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", fit);
     }
-    function close(){ clearTimeout(tapT); z.remove(); document.body.classList.remove("zoomed"); document.removeEventListener("keydown", onKey, true); }
-    db.onclick = function(e){ e.stopPropagation(); var t = drawTarget(gal[idx]); close(); if (t) t(); };
-    function go(d, fromX){
-      var j = idx + d;
-      if (j < 0 || j >= gal.length){ if (zs.z > 1) return; w.style.transition = "transform .2s"; w.style.transform = ""; return; }
-      idx = j; showAt();
-      w.style.transition = "none"; w.style.transform = "translateX(" + (fromX || d * 40) + "px)";
-      void w.offsetWidth;
-      w.style.transition = "transform .2s"; w.style.transform = "";
+    back.onclick = function(e){ e.stopPropagation(); close(); };
+    pen.onclick = function(e){ e.stopPropagation(); var t = cur && drawTarget(cur.g.items[cur.k]); close(); if (t) t(); };
+    // slide {axis: "x" | "y", dir: 1 (next: comes from the right / bottom) | -1}.
+    function show(g, k, slide){
+      var e = g.items[k], nb = el("div", "zb"), img = el("img");
+      img.alt = ""; img.draggable = false; img.src = e.f ? e.f.src : e.src; nb.appendChild(img);
+      var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
+      if (list.length) nb.appendChild(overlay(e.f, list));
+      var ready = Promise.race([img.decode ? img.decode().catch(function(){}) : Promise.resolve(), new Promise(function(r){ setTimeout(r, SLIDE_WAIT); })]);
+      return ready.then(function(){
+        if (gone) return;
+        var was = box, wasV = V, wasOff = off;
+        var vb = e.f ? vbOf(e.f) : null;
+        size = img.naturalWidth && img.naturalHeight ? [img.naturalWidth, img.naturalHeight] : vb ? [vb[2], vb[3]] : [4, 3];
+        cur = { g: g, k: k }; box = nb;
+        v.insertBefore(box, foot);
+        pen.hidden = !drawTarget(e);
+        paintPlate();
+        off = [0, 0];
+        fit();
+        if (!was) return;
+        if (!slide || !was.animate){ was.remove(); return; }
+        // Along the swipe's axis: the old one from where it was let go to a screen away, the new one
+        // from a screen (minus that) behind it to its place — the two move as one strip.
+        var ax = slide.axis === "x", D = (ax ? innerWidth : innerHeight) * slide.dir, kk = ax ? 0 : 1;
+        var at = function(vv, o2, d){ return "translate(" + (vv.x + o2[0] + (ax ? d : 0)) + "px," + (vv.y + o2[1] + (ax ? 0 : d)) + "px) scale(" + vv.z + ")"; };
+        var ease = "cubic-bezier(.25,.8,.3,1)";
+        box.animate([{ transform: at(V, [0, 0], D + wasOff[kk]), opacity: 0 }, { transform: at(V, [0, 0], 0), opacity: 1 }], { duration: SLIDE_MS, easing: ease });
+        var an = was.animate([{ transform: at(wasV, wasOff, 0), opacity: 1 }, { transform: at(wasV, [0, 0], -D), opacity: 0 }], { duration: SLIDE_MS, easing: ease, fill: "forwards" });
+        an.onfinish = function(){ was.remove(); };
+        setTimeout(function(){ was.remove(); }, SLIDE_MS + 200);
+      });
     }
+    // The plate: the note's number, which picture, the note's text (a reply's picture: the reply's
+    // words) and the picture's own text.
+    function paintPlate(){
+      var g = cur.g, e = g.items[cur.k];
+      if (!g.id){ plate.set(null); return; }
+      var n = g.n, rep = e.rid ? replyById(g.id, e.rid) : null;
+      var lab = (rep ? "↳ " + (rep.author || "Reply") + " · " : "") + entryLabel(e) + (g.items.length > 1 ? " · " + (cur.k + 1) + " / " + g.items.length : "");
+      var text = rep || !rows[g.id] ? "" : RC.captionOf(rows[g.id].data, picOfEntry(e), sameT);
+      plate.set({ key: g.id + "|" + cur.k + "|" + lab, num: g.local ? "+" : n.num, cls: g.local ? "open" : statusOf(g.id), label: lab,
+        theme: rep ? rep.text || "" : n.text || "", text: text });
+    }
+    function fit(){
+      if (!box) return;
+      var W = innerWidth, H = innerHeight, a = size[0] / size[1], w = W, h = W / a;
+      if (h > H){ h = H; w = H * a; }
+      box.style.width = w + "px"; box.style.height = h + "px";
+      V = { z: 1, x: (W - w) / 2, y: (H - h) / 2 };
+      apply();
+    }
+    function apply(anim){
+      if (!box) return;
+      box.style.transition = anim ? "transform .2s ease-out" : "";
+      box.style.transform = "translate(" + (V.x + off[0]) + "px," + (V.y + off[1]) + "px) scale(" + V.z + ")";
+    }
+    function zoomAt(x, y, z){
+      z = Math.min(12, Math.max(1, z));
+      var lx = (x - V.x) / V.z, ly = (y - V.y) / V.z;
+      V = { z: z, x: x - lx * z, y: y - ly * z };
+      if (z <= 1.01) fit(); else apply();
+    }
+    function navigate(dir, axis){
+      if (busy || !cur){ off = [0, 0]; apply(true); return; }
+      var g = cur.g, k = cur.k, ng = null, nk = 0;
+      if (axis === "x"){ if (g.items[k + dir]){ ng = g; nk = k + dir; } }
+      else for (var j = gal.indexOf(g) + dir; j >= 0 && j < gal.length; j += dir) if (gal[j].items.length){ ng = gal[j]; break; }
+      if (!ng){ off = [0, 0]; apply(true); return; }
+      busy = true;
+      show(ng, nk, { axis: axis, dir: dir }).then(function(){ setTimeout(function(){ busy = false; }, SLIDE_MS); });
+    }
+    var pts = new Map(), gs = null, sw = null, zd = null, lastTap = 0;
+    function start(){
+      var p = Array.from(pts.values());
+      if (!p.length){ gs = null; return; }
+      var m = p.length > 1 ? [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2] : [p[0].x, p[0].y];
+      if (sw && sw.axis && (off[0] || off[1])){ off = [0, 0]; apply(true); }  // a swipe that became a pinch
+      gs = { v: { z: V.z, x: V.x, y: V.y }, m: m, d: p.length > 1 ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0 };
+      sw = p.length === 1 && V.z <= 1.01 ? { x: p[0].x, y: p[0].y, axis: null } : null;
+    }
+    v.addEventListener("pointerdown", function(e){
+      if (e.target.closest(".zfab, .scp-plate, .scp-icon")) return;  // (the plate has its own gestures)
+      try { v.setPointerCapture(e.pointerId); } catch (_){}
+      // Right-drag (mouse, or the pen's side button) zooms about where it started; middle-drag pans.
+      if (e.button === 2 || e.button === 1){
+        e.preventDefault();
+        zd = { id: e.pointerId, x: e.clientX, y: e.clientY, z0: V.z, mid: e.button === 1, vx: V.x, vy: V.y };
+        return;
+      }
+      if (e.button !== 0) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, mouse: e.pointerType === "mouse" });
+      start();
+    });
+    v.addEventListener("pointermove", function(e){
+      if (zd && e.pointerId === zd.id){
+        if (zd.mid){ if (V.z > 1){ V = { z: V.z, x: zd.vx + e.clientX - zd.x, y: zd.vy + e.clientY - zd.y }; apply(); } }
+        else zoomAt(zd.x, zd.y, zd.z0 * Math.exp((zd.y - e.clientY) * 0.012));
+        return;
+      }
+      var q = pts.get(e.pointerId);
+      if (!q || !gs) return;
+      q.x = e.clientX; q.y = e.clientY;
+      if (sw){
+        var dx = q.x - sw.x, dy = q.y - sw.y;
+        if (!sw.axis && Math.abs(dx) + Math.abs(dy) > 10) sw.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        if (sw.axis){ off = sw.axis === "x" ? [dx, 0] : [0, dy]; apply(); }
+        return;
+      }
+      var p = Array.from(pts.values());
+      var m = p.length > 1 ? [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2] : [p[0].x, p[0].y];
+      var z = p.length > 1 && gs.d ? Math.min(12, Math.max(1, gs.v.z * Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) / gs.d)) : gs.v.z;
+      var lx = (gs.m[0] - gs.v.x) / gs.v.z, ly = (gs.m[1] - gs.v.y) / gs.v.z;
+      V = { z: z, x: m[0] - lx * z, y: m[1] - ly * z };
+      apply();
+    });
+    function up(e){
+      if (zd && e.pointerId === zd.id){ zd = null; return; }
+      if (!pts.has(e.pointerId)) return;
+      var q = pts.get(e.pointerId), moved = gs && Math.abs(q.x - gs.m[0]) + Math.abs(q.y - gs.m[1]) > 10;
+      pts.delete(e.pointerId);
+      if (sw && sw.axis && e.type === "pointerup"){
+        var dx = q.x - sw.x, dy = q.y - sw.y;
+        sw = null;
+        if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy)){ navigate(dx < 0 ? 1 : -1, "x"); start(); return; }
+        if (Math.abs(dy) > 70){ navigate(dy < 0 ? 1 : -1, "y"); start(); return; }
+        off = [0, 0]; apply(true);
+      } else if (sw && sw.axis){ sw = null; off = [0, 0]; apply(true); }
+      // A double tap (a finger) toggles 2.5×; a mouse has its own dblclick.
+      if (!pts.size && !moved && e.type === "pointerup" && !q.mouse){
+        var t = Date.now();
+        if (t - lastTap < 320){ zoomAt(e.clientX, e.clientY, V.z > 1.2 ? 1 : 2.5); lastTap = 0; } else lastTap = t;
+      }
+      if (V.z <= 1.01 && !off[0] && !off[1]) fit();
+      start();
+    }
+    v.addEventListener("pointerup", up); v.addEventListener("pointercancel", up);
+    var inText = function(e){ return !!(e.target.closest && e.target.closest(".scp-plate, .scp-icon")); };
+    v.addEventListener("dblclick", function(e){ if (inText(e) || e.target.closest(".zfab")) return; e.preventDefault(); zoomAt(e.clientX, e.clientY, V.z > 1.2 ? 1 : 2.5); });
+    v.addEventListener("contextmenu", function(e){ e.preventDefault(); });
+    v.addEventListener("wheel", function(e){ if (inText(e)) return; e.preventDefault(); zoomAt(e.clientX, e.clientY, V.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016))); }, { passive: false });
+    v.addEventListener("touchmove", function(e){ if (!inText(e)) e.preventDefault(); }, { passive: false });
     function onKey(e){
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      if (e.key === "Escape"){ close(); }
-      else if (e.key === "ArrowRight"){ go(1); }
-      else if (e.key === "ArrowLeft"){ go(-1); }
+      if (e.target && e.target.closest && e.target.closest(".scp-ta")) return;  // (the plate's own editor)
+      if (e.key === "Escape") close();
+      else if (e.key === "ArrowRight") navigate(1, "x");
+      else if (e.key === "ArrowLeft") navigate(-1, "x");
+      else if (e.key === "ArrowDown") navigate(1, "y");
+      else if (e.key === "ArrowUp") navigate(-1, "y");
       else return;
       e.preventDefault(); e.stopPropagation();
     }
-    var p0 = null, tap = false;
-    // A tap closes (zoomed in: back to fit) — after the double-click interval, so a double-click
-    // can still zoom instead.
-    var tapT = 0;
-    z.onclick = function(){
-      if (tap){ clearTimeout(tapT); tapT = setTimeout(function(){ if (zs.z > 1){ zs = { z: 1, x: 0, y: 0 }; paintZ(); } else close(); }, 280); }
-      tap = false;
-    };
-    z.addEventListener("contextmenu", function(e){ e.preventDefault(); });
-    z.addEventListener("wheel", function(e){ e.preventDefault(); zoomAt(zs.z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016)), e.clientX, e.clientY); }, { passive: false });
-    z.addEventListener("dblclick", function(e){ if (e.target.closest(".zd")) return; e.preventDefault(); clearTimeout(tapT); zoomAt(zs.z > 1.2 ? 1 : 2.5, e.clientX, e.clientY); });
-    z.addEventListener("pointerdown", function(e){
-      if (e.target.closest(".zd")) return;  // the Draw button gets its own click
-      try { z.setPointerCapture(e.pointerId); } catch (_){}
-      if (e.button === 2 || e.button === 1){
-        e.preventDefault();
-        zd = { id: e.pointerId, y: e.clientY, x: e.clientX, z0: zs.z, mid: e.button === 1, px: zs.x, py: zs.y };
-        return;
-      }
-      p0 = { x: e.clientX, y: e.clientY, id: e.pointerId, px: zs.x, py: zs.y }; w.style.transition = "none";
-    });
-    z.addEventListener("pointermove", function(e){
-      if (zd && e.pointerId === zd.id){
-        if (zd.mid){ if (zs.z > 1){ zs.x = zd.px + e.clientX - zd.x; zs.y = zd.py + e.clientY - zd.y; paintZ(); } }  // nothing to pan at fit
-        else zoomAt(zd.z0 * Math.exp((zd.y - e.clientY) * 0.012), zd.x, zd.y);
-        return;
-      }
-      if (!p0 || e.pointerId !== p0.id) return;
-      if (zs.z > 1){ zs.x = p0.px + e.clientX - p0.x; zs.y = p0.py + e.clientY - p0.y; paintZ(); return; }
-      var dx = e.clientX - p0.x, dy = e.clientY - p0.y;
-      w.style.transform = Math.abs(dx) > Math.abs(dy) ? "translateX(" + dx + "px)" : "translateY(" + dy + "px)";
-      z.style.background = Math.abs(dy) > Math.abs(dx) ? "rgb(0 0 0 / " + Math.max(.3, .88 - Math.abs(dy) / 600) + ")" : "";
-    });
-    function end(e){
-      if (zd && e.pointerId === zd.id){ zd = null; return; }
-      if (!p0 || e.pointerId !== p0.id) return;
-      var dx = e.clientX - p0.x, dy = e.clientY - p0.y; p0 = null;
-      z.style.background = "";
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8){ tap = true; return; }
-      if (zs.z > 1) return;  // that was a pan
-      if (Math.abs(dy) > Math.abs(dx)){ if (Math.abs(dy) > 60) close(); else { w.style.transition = "transform .2s"; w.style.transform = ""; } return; }
-      if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1, dx < 0 ? window.innerWidth / 3 : -window.innerWidth / 3);
-      else { w.style.transition = "transform .2s"; w.style.transform = ""; }
-    }
-    z.addEventListener("pointerup", end);
-    z.addEventListener("pointercancel", function(e){ if (zd && e.pointerId === zd.id) zd = null; if (p0 && e.pointerId === p0.id){ p0 = null; z.style.background = ""; w.style.transition = "transform .2s"; w.style.transform = ""; } });
-    z.addEventListener("touchmove", function(e){ e.preventDefault(); }, { passive: false });
     document.addEventListener("keydown", onKey, true);
-    showAt();
+    window.addEventListener("resize", fit);
     document.body.classList.add("zoomed");
-    document.body.appendChild(z);
-  }
-  // What the viewer's Draw button does for a gallery entry: the cover → a new note drawn on it; a
-  // note's frame (or a reply's drawing on it) → a reply to that note with a drawing; an attached
-  // picture → a reply carrying a copy of the picture drawn over (a flat picture: attachments are
-  // not the media, so a vector drawing on them has no place in the format). Null = no button.
-  function drawTarget(g){
-    if (g.f){
-      if (g.f.local) return null;
-      if (g.f.key === "cover") return function(){ startNew("cover"); };
-      if (noteById[g.f.key]) return function(){ startReply(g.f.key); };
-      return null;
-    }
-    if (g.src && g.note && noteById[g.note]) return function(){ replyFlat(g.note, g.src); };
-    return null;
+    document.body.appendChild(v);
+    show(g0, k0);
   }
   function newDraft(){ return { text: "", shots: [], state: "", draw: null }; }
-  function startReply(id){ openReply[id] = true; drafts[id] = drafts[id] || newDraft(); render(); editDraw(id, id); }
+  // fkey: the picture of the note's to draw on (its first frame / view when not given).
+  function startReply(id, fkey){ openReply[id] = true; drafts[id] = drafts[id] || newDraft(); render(); editDraw(id, fkey || noteFrameKeys(id)[0]); }
   function startNew(fkey){ newOpen = true; drafts["+new"] = drafts["+new"] || newDraft(); render(); editDraw("+new", fkey); }
   function replyFlat(id, src){
     openReply[id] = true; var dr = drafts[id] = drafts[id] || newDraft(); render();
     drawFlat(src, function(out){ dr.shots.push({ id: uid(), src: out }); render(); });
   }
-  // Frames a draft can draw on: a reply — its note's frame; a new note — the cover (pictures) or
-  // any note's frame (video / 3D: the new note then sits on that frame / view).
+  // Frames a draft can draw on: a reply — any of its note's frames / views; a new note — the cover
+  // (pictures) or any note's frame / view (video / 3D: the new note then sits on that frame / view).
   function drawFrames(dkey){
     if (!VEC) return [];
-    if (dkey !== "+new") return frameOf(dkey) ? [dkey] : [];
+    if (dkey !== "+new") return noteFrameKeys(dkey);
     if (M.kind === "image") return frameOf("cover") ? ["cover"] : [];
-    return (R.notes || []).filter(function(n){ return frameOf(n.id); }).map(function(n){ return n.id; });
+    var out = [];
+    (R.notes || []).forEach(function(n){ out = out.concat(noteFrameKeys(n.id)); });
+    return out;
   }
   function pickFrame(keys, done){
     if (keys.length === 1){ done(keys[0]); return; }
     var p = el("div", "pick"), sh = el("div", "sheet"), g = el("div", "grid");
     sh.appendChild(el("h2", "", "Draw on which frame?"));
-    sh.appendChild(el("p", "", "The new note goes on the frame you draw on."));
+    sh.appendChild(el("p", "", "The drawing goes on the frame you pick."));
     keys.forEach(function(k){
-      var n = noteById[k], f = frameOf(k), b = el("button"); b.type = "button";
+      var n = noteById[String(k).split("|")[0]], f = frameOf(k), b = el("button"); b.type = "button";
       var im = el("img"); im.src = f.src; im.alt = ""; b.appendChild(im);
-      b.appendChild(document.createTextNode("#" + n.num + (n.ctx ? " · " + n.ctx : "")));
+      b.appendChild(document.createTextNode((n ? "#" + n.num + " · " : "") + entryLabel({ f: f })));
       b.onclick = function(){ p.remove(); done(k); };
       g.appendChild(b);
     });
@@ -921,13 +1068,14 @@ body.zoomed { overflow: hidden; }
 
   function shotSrc(sid){ return (PKG.shots || {})[sid] || E.att[sid] || ""; }
   // caps: a note's picture texts by shot id (FORMAT.md captions), shown under each picture.
-  function thumbs(list, nid, caps){
+  // rid: a reply's pictures.
+  function thumbs(list, nid, caps, rid){
     var sids = (list || []).filter(shotSrc);
     if (!sids.length) return null;
-    var sh = el("div", "shots"), gal = noteGal || [];
+    var sh = el("div", "shots");
     sids.forEach(function(s){
-      var src = shotSrc(s), k = gal.push({ src: src, note: nid }) - 1, i = el("img");
-      i.src = src; i.alt = ""; i.onclick = function(){ zoom(gal, k); }; sh.appendChild(i);
+      var src = shotSrc(s), i = el("img");
+      i.src = src; i.alt = ""; i.onclick = galAdd({ src: src, nid: nid, sid: s, rid: rid || null }); sh.appendChild(i);
       if (caps && caps[s]) sh.appendChild(el("div", "cap", caps[s]));
     });
     return sh;
@@ -1038,23 +1186,21 @@ body.zoomed { overflow: hidden; }
     var d2 = el("div", "rep" + (mine ? " mine" : ""));
     d2.appendChild(el("div", "rh", [r.author, r.date].filter(Boolean).join(" · ")));
     if (r.text) d2.appendChild(el("div", "rt", r.text));
-    // The reply's drawing, on its note's frame.
-    var f = r.id && frameOf(nid);
-    if (f){
-      var rf = Object.assign({}, f, { reply: r.id }), list = drawingsOf(rf);
-      if (list.length){
-        var gal = noteGal || [], k = gal.push({ f: rf }) - 1, th = pic(rf, list, "sm");
-        th.onclick = function(){ zoom(gal, k); };
-        d2.appendChild(th);
-      }
-    }
-    var sh = thumbs(r.shots, nid); if (sh) d2.appendChild(sh);
+    // The reply's drawings, on each of its note's frames / views it drew on.
+    if (r.id) noteFrameKeys(nid).forEach(function(key){
+      var rf = Object.assign({}, frameOf(key), { reply: r.id }), list = drawingsOf(rf);
+      if (!list.length) return;
+      var th = pic(rf, list, "sm");
+      th.onclick = galAdd({ f: rf, nid: nid, rid: r.id });
+      d2.appendChild(th);
+    });
+    var sh = thumbs(r.shots, nid, null, r.id); if (sh) d2.appendChild(sh);
     return d2;
   }
   function noteCard(n, local){
     var id = n.id, st = local ? "open" : statusOf(id);
     var c = el("div", "note " + st);
-    noteGal = [];
+    curG = { id: id, n: n, local: !!local, items: [] }; GAL.push(curG);
     var h = el("div", "nh");
     h.appendChild(el("span", "num", local ? "+" : String(n.num)));
     if (n.ctx) h.appendChild(el("span", "ctx", n.ctx));
@@ -1069,18 +1215,18 @@ body.zoomed { overflow: hidden; }
     if (local){ var lf = n.fkey && frameOf(n.fkey); if (lf) f = Object.assign({}, lf, { note: id, reply: null, local: true }); }
     else f = frameOf(id);
     if (f && (M.kind !== "image" || drawingsOf(f).length)){
-      var fk = frameGal.push({ f: f }) - 1, pw = pic(f, shownOn(f));
-      pw.onclick = function(){ zoom(frameGal, fk); };
+      var pw = pic(f, shownOn(f));
+      pw.onclick = galAdd({ f: f, nid: id });
       c.appendChild(pw);
     } else if (!VEC && n.frame && !local){
-      var fi = el("img", "frame"), fk2 = frameGal.push({ src: n.frame }) - 1; fi.src = n.frame; fi.alt = ""; fi.onclick = function(){ zoom(frameGal, fk2); }; c.appendChild(fi);
+      var fi = el("img", "frame"); fi.src = n.frame; fi.alt = ""; fi.onclick = galAdd({ src: n.frame, nid: id }); c.appendChild(fi);
     }
     if (n.frameCaption) c.appendChild(el("div", "cap", n.frameCaption));
     // More frames / views the note was drawn on, smaller, with everything shown there.
     if (!local) (n.more || []).forEach(function(m, mi){
       var mf = frameOf(id + "|" + mi), mw;
-      if (mf){ var mk = frameGal.push({ f: mf }) - 1; mw = pic(mf, shownOn(mf), "more"); mw.onclick = function(){ zoom(frameGal, mk); }; }
-      else if (m && m.frame){ var mk2 = frameGal.push({ src: m.frame }) - 1; mw = el("div", "fw more"); var mi2 = el("img"); mi2.src = m.frame; mi2.alt = ""; mw.appendChild(mi2); mw.onclick = function(){ zoom(frameGal, mk2); }; }
+      if (mf){ mw = pic(mf, shownOn(mf), "more"); mw.onclick = galAdd({ f: mf, nid: id }); }
+      else if (m && m.frame){ mw = el("div", "fw more"); var mi2 = el("img"); mi2.src = m.frame; mi2.alt = ""; mw.appendChild(mi2); mw.onclick = galAdd({ src: m.frame, nid: id }); }
       if (!mw) return;
       c.appendChild(mw);
       if (m.caption) c.appendChild(el("div", "cap", m.caption));
@@ -1142,8 +1288,8 @@ body.zoomed { overflow: hidden; }
     app.textContent = "";
     var cf = frameOf("cover");
     // The picture on top is the original: the drawings are on the notes' pictures below.
-    if (cf){ var cw = pic(cf, [], "cover-w"); cw.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cw); }
-    else if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ zoom(frameGal, 0); }; app.appendChild(cv); }
+    if (cf){ var cw = pic(cf, [], "cover-w"); cw.onclick = function(){ if (coverG) zoom(coverG, 0); }; app.appendChild(cw); }
+    else if (R.cover){ var cv = el("img", "cover"); cv.src = R.cover; cv.alt = ""; cv.onclick = function(){ if (coverG) zoom(coverG, 0); }; app.appendChild(cv); }
     var list = el("div", ""); list.id = "list"; app.appendChild(list);
     if (newOpen){
       var comp = el("div", "compose"), h3 = el("h3"), x = el("button", "", "×");
@@ -1180,20 +1326,21 @@ body.zoomed { overflow: hidden; }
   }
   function stateOfShown(n){ return n.local ? "open" : statusOf(n.id); }
   function allNotes(){
-    return (R.notes || []).concat(E.notes.map(function(n){ return { id: n.id, text: n.text, author: n.author, date: fmt(n.created), shots: n.shots, fkey: n.frame, ctx: n.frame && noteById[n.frame] ? noteById[n.frame].ctx : "", local: true }; }));
+    return (R.notes || []).concat(E.notes.map(function(n){ return { id: n.id, text: n.text, author: n.author, date: fmt(n.created), shots: n.shots, fkey: n.frame, ctx: n.frame && frameOf(n.frame) ? entryLabel({ f: frameOf(n.frame) }) : "", local: true }; }));
   }
   function renderList(){
     var list = document.getElementById("list");
     list.textContent = "";
     var cf = frameOf("cover");
-    frameGal = cf ? [{ f: cf, clean: true }] : R.cover ? [{ src: R.cover }] : [];
+    coverG = cf ? { id: null, items: [{ f: cf, clean: true }] } : R.cover ? { id: null, items: [{ src: R.cover }] } : null;
+    GAL = coverG ? [coverG] : [];
     var ql = query.trim().toLowerCase();
     allNotes().filter(function(n){
       if (filter !== "all" && stateOfShown(n) !== filter) return false;
       if (!ql) return true;
       var hay = [n.text, n.author, n.ctx].concat((n.replies || []).map(function(r){ return r.text || ""; }), (E.replies[n.id] || []).map(function(r){ return r.text || ""; })).join(" ").toLowerCase();
       return hay.indexOf(ql) >= 0;
-    }).forEach(function(n){ list.appendChild(noteCard(n, !!n.local)); noteGal = null; });
+    }).forEach(function(n){ list.appendChild(noteCard(n, !!n.local)); curG = null; });
     if (!list.childNodes.length) list.appendChild(el("p", "empty", "No notes here."));
   }
   function paintSeg(){

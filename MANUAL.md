@@ -127,8 +127,11 @@
     first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them
     and *Compare*. When the previous version still has open notes, *Copy here* brings them over
     with their drawings (scaled if the size changed; the note says where it came from).
-  - **Video** — drawings and notes belong to the frame they were made on, and show as markers on the
-    timeline (red = note, orange = in progress, green = resolved, yellow = drawing). Click a marker to go there. `,` / `.`
+  - **Video** — drawings belong to the frame they were made on. A note has a marker on each frame
+    its drawings (or a text of one of its pictures) are on — not on the frame where it was typed; a
+    note with nothing but words keeps the frame it was written on (red = note, orange = in progress,
+    green = resolved, yellow = a drawing with no note). The note's previews in the panel show each
+    of those frames, numbered in the top-left corner. Click a marker to go there. `,` / `.`
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
     whole clip; the onion button shows drawings within ±1 s faded.
@@ -153,7 +156,7 @@
     empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
-    a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; each video frame is captioned with its file name and frame number, e.g. "clip.mp4 · frame 24", and carries the frame number in its top-left corner), *Review file (.srev)* — one file with
+    a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; a video note brings only the frames it has drawings or picture texts on; each video frame is captioned with its file name, frame number and timecode, e.g. "clip.mp4 · f128 / 0:05+3" — the frames after the full second — and carries that label, small, in its top-left corner), *Review file (.srev)* — one file with
     all drawings, notes and screenshots to send by mail or messenger; whoever opens it in Sight
     (drag it onto the window, the same Export menu → Import, or the palette "Import review file")
     gets the review on the same media file, found by path, else by name and size. Importing
@@ -170,13 +173,18 @@
     above it — a state can be sent alone or with the reply, and is logged in the thread like in
     Sight. A field left empty closes when you tap anywhere else. A new note starts from the blue
     *+* in the bottom bar (one at a time; it can carry pictures too). Unsent entries have × to take
-    them back. Tap a picture to view it full screen: swipe left / right (or ← / →) for the next
-    or previous one — the picture and the note frames form one row, a note's attachments (its own
-    and its replies') another — and swipe up / down, tap or Esc to close. Right-drag (mouse, or the pen's side button) zooms
-    as in Sight, so do the wheel and a double-click; drag to pan while zoomed in. **Drawing**: the pencil
-    in a message field (or *✎ Draw* in the full-screen viewer) opens a full-screen canvas over the
-    note's frame (a new note: over the picture, or — video / 3D — over a note frame you pick; the
-    new note then sits on that frame). A new note or a reply is drawn on the clean picture. Tools:
+    them back. Tap a picture to view it full screen, as on the phone: swipe left / right (or ← / →)
+    for the note's next / previous picture (its frames, its attachments, then its replies'), swipe up
+    / down (or ↑ / ↓) for the next / previous note — the picture goes on the way you swiped, fading
+    out, and the next one follows it in like a strip; the round ← Back button (or Esc) leaves. A
+    half-transparent plate at the foot shows the note's number, which picture it is, the note's text
+    and the picture's own text (tap it to fold it into an icon, drag it to another side). Right-drag
+    (mouse, or the pen's side button) zooms as in Sight, so do the wheel, a pinch and a double-click;
+    drag to pan while zoomed in. **Drawing**: the pencil in a message field (or the round pencil in
+    the full-screen viewer, bottom right) opens a full-screen canvas over the picture — a reply can be
+    drawn on any of the note's pictures (any of its frames / views; an attached picture gives a
+    drawn-over copy), a new note over the picture or — video / 3D — over a note frame you pick; the
+    new note then sits on that frame. A new note or a reply is drawn on the clean picture. Tools:
     select / transform (`V`: tap or drag a box to select, drag to move, handles scale, the round knob
     rotates and follows your finger out from the centre for finer turns; a colour recolours the
     selection), brush (pen pressure), highlighter, arrow, rectangle, ellipse, text (tap where it
@@ -264,7 +272,8 @@
   step and marker buttons to another frame — or tap the picture to play and tap again to stop on
   a frame (the drawings of each frame show as it plays; taking a tool up stops it) — take a tool
   again and draw there — as many frames as
-  you like; *Done* makes them one note (its card shows every frame drawn on). Each note has
+  you like; *Done* makes them one note (its card shows every frame drawn on, each with its frame number in the
+  corner; the note's markers are on those frames, not on the frame where it was typed). Each note has
   *Reply* (text, pictures, a drawing, *Mark as In progress / Resolved / Reopen*; on a video note
   the panel goes and the reply is written in the bar over the player, which stands on the note's
   first frame — its frames are on the timeline and as chips to tap, and the pencil draws on any

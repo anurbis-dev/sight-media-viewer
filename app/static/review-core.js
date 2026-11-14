@@ -645,6 +645,32 @@ var SightReviewCore = (function(){
     return Object.keys(caps).length ? caps : null;
   }
 
+  // A video frame's short label: "f<frame> / <m:ss>" and "+<frames>" when it is not on a full second
+  // ("f128 / 0:05+3" at 25 fps; "f125 / 0:05"; an hour on: "h:mm:ss").
+  function frameLabel(t, fps){
+    var r = Math.max(1, Math.round(fps || 25)), F = Math.max(0, Math.round(Number(t) * (fps || 25)));
+    if (!Number.isFinite(F)) return "";
+    var sec = Math.floor(F / r), fr = F % r, s = sec % 60, m = Math.floor(sec / 60) % 60, h = Math.floor(sec / 3600);
+    var p = function(n){ return (n < 10 ? "0" : "") + n; };
+    return "f" + F + " / " + (h ? h + ":" + p(m) : m) + ":" + p(s) + (fr ? "+" + fr : "");
+  }
+  // The frames a video note stands on (0.47+: there is no "note's own frame" any more): the frames its
+  // drawings are on (`times`: the caller's pick of drawing times — e.g. without replies') and the
+  // frames that carry a picture text of it (captions "t:" keys), one per frame (`same`), in time
+  // order. `fallback`: a note with none of those (text only) gets the frame it was written on, so it
+  // still has a place on the timeline.
+  function noteTimes(data, times, same, fallback){
+    var eq = same || sameT, out = [];
+    function add(t){ t = Number(t); if (Number.isFinite(t) && !out.some(function(x){ return eq(x, t); })) out.push(t); }
+    (times || []).forEach(function(t){ if (t != null) add(t); });
+    var caps = data && data.captions;
+    if (isObj(caps)) Object.keys(caps).forEach(function(k){ if (k.slice(0, 2) === "t:" && typeof caps[k] === "string" && caps[k].trim()) add(k.slice(2)); });
+    out.sort(function(a, b){ return a - b; });
+    var c = data && data.ctx;
+    if (!out.length && fallback && c && c.t != null && Number.isFinite(Number(c.t))) out.push(Number(c.t));
+    return out;
+  }
+
   // A drawing as a review row (FORMAT.md "Rows"): `it` = {id, kind, sub | shape_kind, z | z_index,
   // data}; the bounding box columns come from its geometry. `at` = created / updated stamp.
   function drawingRow(it, at){
@@ -835,7 +861,7 @@ var SightReviewCore = (function(){
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
     ctxVisible: ctxVisible, drawingRow: drawingRow,
-    picKey: picKey, captionOf: captionOf, withCaption: withCaption,
+    picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };
 })();

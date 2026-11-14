@@ -2,6 +2,30 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.43.0 — 2026-11-13 — Lightbox: icons follow the file type; corner icons clear the radius; Alt-drag turns a picture to any angle
+- **What:** (1) mirror (`#mirBtn`) shows only for images, PSDs and video; the annotate button (`#annoBtn`)
+  shows for those and for 3D models, so documents and audio hide both. (The buttons used to stay visible:
+  `.btn`'s `display` beat the `hidden` attribute.) (2) With a corner radius set, the corner icons (file info,
+  3D gear, video strip, the 3D shading bar's bottom offset) move in by 0.3 × radius, so the rounding does not
+  cut them; a circle mask does not move them. (3) Alt+drag on a picture or video turns it about its centre to
+  any angle; Shift snaps the angle to absolute 15° steps (0, 15, 30 …). The angle is saved per file when the
+  drag ends. Alt+drag on a video no longer scrubs (plain drag still does). (4) The fit of a turned picture
+  uses its bounding box at any angle (for 0/90/180/270 it is as before).
+- **Where:** `app/static/index.html` — `.btn[hidden]` rule (next to `.v3d-gear[hidden]`), `.info-fab`,
+  `.light-info`, `.v3d-gear`, `.v3d-shade`, `.view-hud` (offsets use `var(--hud-in)`), `applyLightFrame()`
+  (sets `--hud-in`), the lightbox setup that sets `#mirBtn` / `#annoBtn` `hidden`, `loadTurn` (fractional
+  angle), `fitS()` (bounding box), and the viewer's `wrap` pointerdown / pointermove / `end` (`vs.rotD`).
+  `MANUAL.md` (turn, mask). `app/version.py`.
+- **Notes:** a turn drag ends with a click on the wrap, which is swallowed (`justScrubbed`) only when the angle
+  really changed, so a video does not pause after a turn. The HUD offsets are anchored to the lightbox root, not
+  to the frame: with an aspect-locked mask the frame is centred, so the inset is approximate there. The turn is
+  stored as a float angle per file (the old integer quarter turns still read back). Alt+drag with the select tool
+  in annotation mode still duplicates; Alt over a drawing tool reaches the viewer, as before.
+  Review (fresh agent): one confirmed bug, fixed (a video paused after an Alt-turn, because the click after the
+  turn drag was not swallowed). Checked and no bug: `hidden` on `#splitBtn` (now honoured, as intended), the
+  `calc()` values at 0, fitS at 0/90/180/270, the rotation direction with the mirror on, the normalisation of the
+  angle delta, the annotation capture order. Not tested in a browser: checked by reading the code and `node --check`.
+
 ## 0.42.0 — 2026-11-13 — Explode belongs to the view; one zoom setting for every zoom (3D and version compare too)
 - **What:** (1) explode is kept per view. Moving the slider (or Ctrl+right-drag) at a view with drawings sets
   that view's explode; going to the view (chip, note click, Go to) puts it back and replaces the current amount,

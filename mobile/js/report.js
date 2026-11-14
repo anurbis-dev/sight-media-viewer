@@ -75,16 +75,17 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
       if (frame && pt) frame = Object.assign({}, frame, { text: pt });
       else picText = pt;
     } else if (kind === "video" && c && c.t != null){
-      const f = await src.frameAt(c.t);
-      if (f) frame = await burn(f, W || f.w, H || f.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t: c.t, fps })), numOf);
-      if (frame) frame = Object.assign({}, frame, { text: RC().captionOf(d, { t: c.t }, sameT) });
-      cap = "Frame " + Math.round(c.t * fps) + " · " + fmtTime(c.t, fps);
-      // More frames the note was drawn on: with its pictures, first.
-      for (const t of noteFrameTimes(rows, n)){
-        if (Math.abs(t - c.t) < 5e-4) continue;
+      // The frames the note stands on (RC.noteTimes, 0.47+): those with its drawings or a picture text,
+      // in time order — not the frame it was written on (a note with nothing else, no attached
+      // pictures either, keeps that one). The first is the note's frame, the rest go with its pictures.
+      const ts = RC().noteTimes(d, noteFrameTimes(rows, n), sameT, !(d.shots || []).length);
+      for (const t of ts){
         const g = await src.frameAt(t);
-        const bg = g ? await burn(g, W || g.w, H || g.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf) : null;
-        if (bg) more.push(Object.assign({}, bg, { text: RC().captionOf(d, { t }, sameT) }));
+        let bg = g ? await burn(g, W || g.w, H || g.h, noteOnly.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf) : null;
+        if (!bg) continue;
+        bg = Object.assign({}, bg, { text: RC().captionOf(d, { t }, sameT) });
+        if (!frame){ frame = bg; cap = RC().frameLabel(t, fps); }
+        else more.push(Object.assign(bg, { text: [RC().frameLabel(t, fps), bg.text].filter(Boolean).join(" — ") }));
       }
     }
     // A reply's drawing: with that reply, on each frame it drew on (the note's own frame too) — only
@@ -104,7 +105,8 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
       }
       replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: pics.filter(Boolean).concat(await shotPics(r.shots)) });
     }
-    out.push({ num: i + 1, ctx: c && c.t != null ? fmtTime(c.t, fps) + "  ·  f " + Math.round(c.t * fps) : "", author: d.author || "", date: fmtDate(d.created),
+    const t0 = kind === "video" && c && c.t != null ? RC().noteTimes(d, noteFrameTimes(rows, n), sameT, true)[0] : null;
+    out.push({ num: i + 1, ctx: t0 != null ? fmtTime(t0, fps) + "  ·  f " + Math.round(t0 * fps) : "", author: d.author || "", date: fmtDate(d.created),
       text: d.text || "", picText, status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots, d)), replies });
   }
   const st = reviewState(rows);

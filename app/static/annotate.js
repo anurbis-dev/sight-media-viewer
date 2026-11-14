@@ -719,6 +719,20 @@ export function createAnnotator(host){
     return "";
   }
   function viewNumber(vk){ return [...S.views.keys()].indexOf(vk) + 1; }
+  // The frames a video note stands on (RC.noteTimes, 0.47+): its own drawings' frames and the frames
+  // with a picture text of it — not the frame it was written on (a text-only note keeps that one when
+  // `fallback`, so it is still on the timeline).
+  function noteFrames(n, fallback = true){
+    const ts = [];
+    for (const it of S.items.values()) if (isDrawing(it) && it.data.note === n.id && !it.data.reply && it.data.ctx?.t != null) ts.push(it.data.ctx.t);
+    return RC.noteTimes(n.data, ts, sameFrame, fallback);
+  }
+  // Where a note's card points: its first frame (video), else its own place (3D view).
+  function noteCtx(n){
+    if (S.kind !== "video") return n.data.ctx || null;
+    const t = noteFrames(n)[0];
+    return t != null ? { t } : null;
+  }
 
   function notesSorted(){
     const notes = [...S.items.values()].filter((it) => it.kind === "note");
@@ -1780,7 +1794,7 @@ export function createAnnotator(host){
       const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
       const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<img src="/api/review/shots/${sid}" data-src="/api/review/shots/${sid}" data-shot="${sid}"${ct ? ` class="an-hascap" title="${esc(ct)}"` : ""} alt="" loading="lazy">`; }).join("");
-      const ctx = ctxLabel(d.ctx);
+      const ctx = ctxLabel(noteCtx(n));
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
           <button type="button" class="an-ib sm" data-reply="${n.id}" title="Reply">${ICON.reply}</button>
@@ -1803,7 +1817,8 @@ export function createAnnotator(host){
   }
   // ---- note previews: the clean picture / video frame with the note's drawings over it (vector,
   // nothing burned in) ---------------------------------------------------------------------------
-  // A video note drawn on several frames: one preview per frame, the note's own frame first.
+  // A video note drawn on several frames: one preview per frame, in time order (each with its frame
+  // number in the corner).
   // 3D: a note's pictures are a still of the view from each camera its drawings were made from (the note's
   // own view first), the drawings over it, as a video note's frames. A still is taken once per view and
   // kept (cleared with the video previews, resetPF); the camera goes back right after. A still does not
@@ -1869,11 +1884,8 @@ export function createAnnotator(host){
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
     const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
     if (S.kind !== "video") return previewBox(n, own, "");
-    const t0 = n.data.ctx?.t, ts = [];
-    own.forEach((it) => { const t = it.data.ctx?.t; if (t != null && (t0 == null || !sameFrame(t, t0)) && !ts.some((x) => sameFrame(x, t))) ts.push(t); });
-    ts.sort((a, b) => a - b);
-    return previewBox(n, own.filter((it) => it.data.ctx?.t == null || t0 == null || sameFrame(it.data.ctx.t, t0)), "", t0)
-      + ts.map((t) => previewBox(n, own.filter((it) => it.data.ctx?.t != null && sameFrame(it.data.ctx.t, t)), " sm", t)).join("");
+    // (A frame with only a picture text, and a text-only note's frame, show too: keep.)
+    return noteFrames(n, !(n.data.shots || []).length).map((t) => previewBox(n, own.filter((it) => it.data.ctx?.t != null && sameFrame(it.data.ctx.t, t)), "", t, true)).join("");
   }
   // A note's / reply's pictures (its frames with the drawings, attached pictures): one grid of equal
   // squares, each cut to fill (as the phone app shows them), as many to a row as fit at the size
@@ -1907,19 +1919,25 @@ export function createAnnotator(host){
   // A reply's drawings (made on the HTML page or the phone) on the note's picture, under the reply.
   function replyPreview(n, r){
     if (S.hiddenReplies.has(r.id)) return "";
-    return previewBox(n, replyDrawings(n.id, r.id), " sm");
+    const list = replyDrawings(n.id, r.id);
+    if (S.kind !== "video") return previewBox(n, list, " sm");
+    // Video: one picture per frame the reply drew on (a drawing with no time: the note's frame).
+    const tOf = (it) => it.data.ctx?.t ?? n.data.ctx?.t, ts = [];
+    list.forEach((it) => { const t = tOf(it); if (t != null && !ts.some((x) => sameFrame(x, t))) ts.push(t); });
+    return ts.sort((a, b) => a - b).map((t) => previewBox(n, list.filter((it) => sameFrame(tOf(it), t)), " sm", t)).join("");
   }
-  function previewBox(n, list, cls, at){
+  // keep: shown with no drawings too (a note's frame that has only a picture text).
+  function previewBox(n, list, cls, at, keep){
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
     const g = geom();
-    if (!list.length || !g?.nw || !g?.nh) return "";
+    if ((!list.length && !keep) || !g?.nw || !g?.nh) return "";
     let img, pt = "";
     if (S.kind === "video"){
       const t = at ?? n.data.ctx?.t;
-      if (at != null && (n.data.ctx?.t == null || !sameFrame(at, n.data.ctx.t))) pt = ` data-pt="${t}"`;
       if (t == null) return "";
+      if (at != null) pt = ` data-pt="${t}"`;
       const url = previewFrame(t);
-      img = url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`;
+      img = (url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`) + (at != null ? `<span class="an-fno">f${frameNo(t)}</span>` : "");
     } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
     // A note's own picture with a text of its own gets a mark (a reply's picture: list = its drawings, at = null).
     const tt = S.kind === "video" ? at ?? n.data.ctx?.t : null;
@@ -2197,7 +2215,15 @@ export function createAnnotator(host){
     if (t.dataset.reply){ startReply(t.dataset.reply); return; }
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
     if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
-    if (t.classList.contains("an-rep")) return;
+    if (t.classList.contains("an-rep")){
+      // A reply's frame picture: the note picked, the clip on that frame.
+      const rp = e.target.closest?.(".an-nprev[data-pt]"), card = t.closest(".an-note");
+      if (rp && card){
+        if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id);
+        const v = video(); if (v){ v.pause(); v.currentTime = landAt(Number(rp.dataset.pt)); }
+      }
+      return;
+    }
     if (t.classList.contains("an-cap")){
       // A picture's text: the note picked (a second click does not drop it: double-click edits), the
       // clip / camera on that picture.
@@ -2314,8 +2340,8 @@ export function createAnnotator(host){
     const n = S.items.get(id);
     if (!n) return;
     S.pinFocus = S.pinFocus === id ? null : id;
-    const c = n.data.ctx;
-    if (c?.t != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(c.t); } }
+    const c = n.data.ctx, t0 = S.kind === "video" ? noteFrames(n)[0] : null;
+    if (t0 != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(t0); } }
     if (c?.vk) goView(c.vk, c.v3d, c.explode);
     S.sel = new Set();
     renderSel(); renderProps(); renderPanel(); paintVisibility();
@@ -2410,7 +2436,8 @@ export function createAnnotator(host){
     return `<div class="an-caps">${list.map((c) => `<div class="an-cap" data-cap="${esc(c.k)}" title="Double-click to edit"><b>${esc(picLabel(n, c.p))}</b><span>${esc(c.v)}</span></div>`).join("")}</div>`;
   }
   // The picture of picked note n that is on screen, or null: the image itself; a video frame the note
-  // is on (its own frame, a frame it drew on, a frame with a text); a 3D view of it.
+  // is on (a frame it drew on, a frame with a text; a text-only note: the frame it was written on); a
+  // 3D view of it.
   function platePic(n){
     if (S.kind === "image" || S.kind === "psd") return { pic: {}, label: "Picture" };
     const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
@@ -2418,8 +2445,7 @@ export function createAnnotator(host){
     if (S.kind === "video"){
       const f = frameNow();
       if (!f) return null;
-      const ts = [n.data.ctx?.t, ...own.map((it) => it.data.ctx?.t), ...keys.map((p) => p.t)].filter((t) => t != null && Number.isFinite(Number(t)));
-      const hit = ts.find((t) => sameFrame(Number(t), f.t));
+      const hit = noteFrames(n).find((t) => sameFrame(t, f.t));
       return hit != null ? { pic: { t: Number(hit) }, label: ctxLabel({ t: Number(hit) }) } : null;
     }
     if (S.kind === "model3d"){
@@ -2510,32 +2536,39 @@ export function createAnnotator(host){
         if (!m) return;
         e.stopPropagation(); e.preventDefault();
         const vid = video();
-        if (vid){ vid.pause(); vid.currentTime = landAt(Number(m.dataset.t)); }
         if (!S.on) toggle(true);
-        if (m.dataset.note) goNote(m.dataset.note);
+        // The note first (it goes to its first frame), then this mark's frame: a note has a mark on each.
+        if (m.dataset.note && S.pinFocus !== m.dataset.note) goNote(m.dataset.note);
+        if (vid){ vid.pause(); vid.currentTime = landAt(Number(m.dataset.t)); }
       });
     }
-    const notes = notesSorted();
-    const seen = new Set();
     let html = "";
-    notes.forEach((n, i) => {
-      const t = n.data.ctx?.t;
-      if (t == null) return;
-      seen.add(t);
-      html += `<i class="an-mk note${n.data.status === "done" ? " done" : n.data.status === "progress" ? " prog" : ""}" data-t="${t}" data-note="${n.id}" style="left:${(t / dur * 100).toFixed(3)}%" title="${esc(i + 1 + ". " + (n.data.text || "").slice(0, 80))}"></i>`;
+    marks().forEach((m) => {
+      const n = m.note, t = m.t;
+      html += n ? `<i class="an-mk note${n.data.status === "done" ? " done" : n.data.status === "progress" ? " prog" : ""}" data-t="${t}" data-note="${n.id}" style="left:${(t / dur * 100).toFixed(3)}%" title="${esc(m.num + ". " + (n.data.text || "").slice(0, 80))}"></i>`
+        : `<i class="an-mk" data-t="${t}" style="left:${(t / dur * 100).toFixed(3)}%" title="Drawing at ${fmtTime(t, S.fps)}"></i>`;
     });
-    for (const it of S.items.values()){
-      const t = it.data.ctx?.t;
-      if (!isDrawing(it) || t == null || seen.has(t)) continue;
-      seen.add(t);
-      html += `<i class="an-mk" data-t="${t}" style="left:${(t / dur * 100).toFixed(3)}%" title="Drawing at ${fmtTime(t, S.fps)}"></i>`;
-    }
     box.innerHTML = html;
   }
+  // The timeline's marks: {t, note?, num?}. A note has a mark on each frame it stands on (noteFrames:
+  // its drawings' and its picture texts' frames — not the frame it was written on); a frame with only
+  // loose drawings or a reply's has a plain one.
+  function marks(){
+    const out = [], seen = [];
+    const has = (t) => seen.some((x) => sameFrame(x, t));
+    notesSorted().forEach((n, i) => noteFrames(n).forEach((t) => {
+      if (has(t)) return;
+      seen.push(t); out.push({ t, note: n, num: i + 1 });
+    }));
+    for (const it of S.items.values()){
+      const t = it.data.ctx?.t;
+      if (!isDrawing(it) || t == null || has(t)) continue;
+      seen.push(t); out.push({ t });
+    }
+    return out;
+  }
   function markerTimes(){
-    const ts = new Set();
-    for (const it of S.items.values()){ const t = it.data.ctx?.t; if (t != null) ts.add(t); }
-    return [...ts].sort((a, b) => a - b);
+    return marks().map((m) => m.t).sort((a, b) => a - b);
   }
   function stepFrame(n){
     const v = video();
@@ -2728,16 +2761,16 @@ export function createAnnotator(host){
   // reviewer draw on them), so it gets the cover / frames without drawings, their pixel sizes and
   // `media` (how pictures map to doc units); picture notes get no frame of their own (the page
   // shows the cover with the note's drawings).
-  // Report pictures are named by their file (and, for a video frame, the frame number: the number the
-  // panel shows as "f N"). The frame number is also burned into the picture's corner, so it stays with
+  // Report pictures are named by their file (and, for a video frame, RC.frameLabel: the frame number the
+  // panel shows, and the timecode). That label is also burned into the picture's corner, so it stays with
   // the picture once it is taken out of the report.
   const frameNo = (t) => Math.round(t * S.fps);
-  const frameTitle = (a, t) => `${a.name} · frame ${frameNo(t)}`;
+  const frameTitle = (a, t) => `${a.name} · ${RC.frameLabel(t, S.fps)}`;
   const viewTitle = (a, vk) => `${a.name} · View ${viewNumber(vk) || ""}`.trimEnd();
   function bakeFrame(cv, t){
     if (!cv) return;
-    const cx = cv.getContext("2d"), text = `frame ${frameNo(t)}`;
-    const fs = Math.max(14, Math.round(cv.width * 0.035)), pad = Math.round(fs * 0.4), m = Math.round(fs * 0.6);
+    const cx = cv.getContext("2d"), text = RC.frameLabel(t, S.fps);
+    const fs = Math.max(11, Math.round(cv.width * 0.022)), pad = Math.round(fs * 0.4), m = Math.round(fs * 0.6);
     cx.save();
     // composeNative leaves its downscale on the context: draw the label in device pixels.
     cx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2768,64 +2801,56 @@ export function createAnnotator(host){
       if (cv) coverSize = [cv.width, cv.height];
       for (const [i, n] of notes.entries()){
         const d = n.data, c = d.ctx || null;
-        let frame = null, cap = "";
-        cv = null;
+        let frame = null, cap = "", size = null, frameCtx = null, ownPic = picOfCtx(c);
+        const more = [];
         const own = (it) => it.data.note === n.id && !replyGone(it);
+        // A video note's / 3D note's pictures are the frames / views it has drawings or a picture text on
+        // (0.47+: not the frame / view it was written on — a note with nothing there but its words keeps
+        // that one, unless it has attached pictures). The first is the note's `frame` (frameCtx: where it
+        // is), the rest `more`: {frame, size, caption, ctx}, each with everything shown there (the page
+        // draws over them by ctx).
+        // (A reply's drawing counts when its reply lives: the phone lets a reply draw on a frame the note missed.)
+        const mine = [...S.items.values()].filter((it) => isDrawing(it) && own(it));
+        const pics = [];  // {cv, caption, ctx, pic}
         if (S.b2 && !S.b2.isVid){
           // One note on a picture: its frame would just repeat the cover.
-          if (!forPage && notes.length > 1 && [...S.items.values()].some(own)){ cv = composeNative(own, 1600); cap = a.name; }
+          if (!forPage && notes.length > 1 && [...S.items.values()].some(own)){ const cv0 = composeNative(own, 1600); if (cv0) pics.push({ cv: cv0, caption: withPicText(a.name, d, ownPic), ctx: null, pic: ownPic }); }
         } else if (v && c?.t != null){
-          await seekTo(v, landAt(c.t));
-          cv = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
-          bakeFrame(cv, c.t);
-          cap = frameTitle(a, c.t);
-        } else if (S.b3 && c?.vk){
-          const view = S.views.get(c.vk);
-          if (view){
-            const look = c.v3d || view.v3d, ex = explodeOf(c.vk, [n]) ?? view.explode;
-            if (look || ex != null) host.setV3D?.(viewLook(look, ex));
-            S.b3.setCam(view.cam);
-            S.curVk = c.vk;
-            await nextFrame(); await nextFrame(); await nextFrame();
-            cv = composeNative(pick((it) => it.data.ctx?.vk === c.vk && !replyGone(it)));
-            cap = viewTitle(a, c.vk);
-          }
-        }
-        frame = toJpeg(cv);
-        const size = cv ? [cv.width, cv.height] : null;
-        // More frames / views the note was drawn on, each with everything shown there:
-        // {frame, size, caption, ctx} (the page draws over them by ctx).
-        // (A reply's drawing counts when its reply lives: the phone lets a reply draw on a frame the note missed.)
-        const more = [], mine = [...S.items.values()].filter((it) => isDrawing(it) && own(it) && !replyGone(it));
-        if (v && c?.t != null){
-          const ts = [];
-          mine.forEach((it) => { const t = it.data.ctx?.t; if (t != null && !sameFrame(t, c.t) && !ts.some((x) => sameFrame(x, t))) ts.push(t); });
-          ts.sort((a, b) => a - b);
-          for (const t of ts){
+          const fb = !(d.shots || []).length;
+          for (const t of RC.noteTimes(d, mine.filter((it) => !it.data.reply).map((it) => it.data.ctx?.t), sameFrame, fb)){
             await seekTo(v, landAt(t));
-            const cm = composeNative(pick((it) => ctxShown(it)), 1600);
-            if (cm){ bakeFrame(cm, t); more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: withPicText(frameTitle(a, t), d, { t }), ctx: { t, hold: 0 } }); }
+            const cm = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
+            if (cm){ bakeFrame(cm, t); pics.push({ cv: cm, caption: withPicText(frameTitle(a, t), d, { t }), ctx: { t, hold: 0 }, pic: { t } }); }
           }
         } else if (S.b3 && c?.vk){
-          for (const vk of new Set(mine.map((it) => it.data.ctx?.vk).filter((k) => k && k !== c.vk))){
+          const vks = [];
+          const addVk = (k) => { if (k && !vks.includes(k) && S.views.has(k)) vks.push(k); };
+          mine.forEach((it) => { if (!it.data.reply) addVk(it.data.ctx?.vk || c.vk); });
+          Object.keys(d.captions || {}).forEach((k) => { const p = picOfKey(k); if (p.vk && RC.captionOf(d, p)) addVk(p.vk); });
+          if (!vks.length && !(d.shots || []).length) addVk(c.vk);
+          vks.sort((x, y) => viewNumber(x) - viewNumber(y));
+          for (const vk of vks){
             const view = S.views.get(vk);
-            if (!view) continue;
-            const look = view.v3d || keep.v3d;
-            if (look) host.setV3D?.(viewLook(look, explodeOf(vk, mine) ?? view.explode));
+            const look = vk === c.vk ? c.v3d || view.v3d : view.v3d || keep.v3d, ex = explodeOf(vk, vk === c.vk ? [n] : mine) ?? view.explode;
+            if (look || ex != null) host.setV3D?.(viewLook(look, ex));
             S.b3.setCam(view.cam);
             S.curVk = vk;
             await nextFrame(); await nextFrame(); await nextFrame();
-            const cm = composeNative(pick((it) => it.data.ctx?.vk === vk && !replyGone(it)));
-            if (cm) more.push({ frame: toJpeg(cm), size: [cm.width, cm.height], caption: withPicText(viewTitle(a, vk), d, { vk }), ctx: { vk, cam: view.cam } });
+            const cm = composeNative(pick((it) => (it.data.ctx?.vk || (it.data.note === n.id ? c.vk : null)) === vk && !replyGone(it)));
+            if (cm) pics.push({ cv: cm, caption: withPicText(viewTitle(a, vk), d, { vk }), ctx: { vk, cam: view.cam }, pic: { vk } });
           }
         }
-        // Picture texts (FORMAT.md captions): under each picture, after which picture it is; the note's own
-        // picture with no frame of its own (one note on an image: the cover is it) under the note's text.
-        const ownPic = picOfCtx(c), ownText = RC.captionOf(d, ownPic, sameFrame);
+        pics.forEach((p, k) => {
+          if (k){ more.push({ frame: toJpeg(p.cv), size: [p.cv.width, p.cv.height], caption: p.caption, ctx: p.ctx }); return; }
+          frame = toJpeg(p.cv); size = [p.cv.width, p.cv.height]; cap = p.caption; frameCtx = p.ctx; ownPic = p.pic;
+        });
+        // Picture texts (FORMAT.md captions): under each picture, after which picture it is; a note with no
+        // picture of its own (one note on an image: the cover is it) shows its picture's text under its words.
+        const ownText = frame ? "" : RC.captionOf(d, ownPic, sameFrame);
         const shotCaptions = {};
         (d.shots || []).forEach((sid) => { const t = RC.captionOf(d, { shot: sid }); if (t) shotCaptions[sid] = t; });
-        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(c), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size,
-          frameCaption: frame ? withPicText(cap, d, ownPic) : cap, picText: frame ? "" : ownText, shotCaptions, more, shots: d.shots || [],
+        out.push({ id: n.id, num: i + 1, ctx: ctxLabel(frameCtx || noteCtx(n)), author: d.author || "", date: fmtDate(d.created), text: d.text || "", status: d.status, frame, size, frameCtx,
+          frameCaption: cap, picText: ownText, shotCaptions, more, shots: d.shots || [],
           replies: liveReplies(n).map((r) => ({ id: r.id, author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: r.shots || [] })) });
       }
     } finally {
@@ -3252,6 +3277,7 @@ function injectStyles(){
 .an-nprev[data-pt] { display: inline-block; width: calc(50% - 3px); margin-right: 6px; vertical-align: top; cursor: pointer; }
 .an-nprev[data-vk] { cursor: pointer; }
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.an-nprev .an-fno { position: absolute; left: 3px; top: 3px; z-index: 1; padding: 0 4px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; font: 600 10px/15px system-ui, sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 .an-hint { color: var(--subtle); padding: 10px 8px; line-height: 1.5; }
 .an-hint p { margin: 0 0 8px; }

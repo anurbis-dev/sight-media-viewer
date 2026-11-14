@@ -228,6 +228,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .pics > .fw.wait { height: auto; font-size: 11px; }
 .pics > .fw.shot { background: var(--chip); }
 /* A picture with its own text: three lines in its corner (the text shows on the full-screen plate). */
+.fw .fno { position: absolute; left: 4px; top: 4px; padding: 0 5px; border-radius: 5px; background: rgb(0 0 0 / .6); color: #fff; font-size: 10.5px; font-weight: 600; line-height: 16px; font-variant-numeric: tabular-nums; pointer-events: none; }
 .fw.hascap::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 18px; height: 18px; border-radius: 5px; background: rgb(0 0 0 / .6) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M5 7h14M5 12h14M5 17h9'/%3E%3C/svg%3E") center / 13px no-repeat; pointer-events: none; }
 .pics:empty { display: none; }  /* every picture failed to load */
 .replies { margin: 10px 0 0; padding-left: 12px; border-left: 2px solid var(--line); }

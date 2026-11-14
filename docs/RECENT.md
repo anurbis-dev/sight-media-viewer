@@ -14,6 +14,41 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.47.0 — 2026-11-14 — No "note frame" on video; frame numbers on previews; reviewer page viewer as on the phone
+- **What:** (Sight + phone) a video note no longer marks the frame it was typed on: its big state-coloured markers
+  sit on every frame its own drawings (or a picture text of it) are on; the card's time, a click on the card / a
+  marker step go to those frames; PDF / HTML / phone reports carry only those frames (a note with only words keeps
+  the frame it was written on as a fallback — on the timeline always, in reports / card previews only when it has
+  no attached pictures either). Note previews (desktop panel, phone cards) show the frame number top left.
+  (HTML reviewer page) the full-screen viewer is the phone's: round Back + pencil (no "✎ Draw" button), the
+  caption plate with the note's text and the picture's own text, a strip slide sideways through the note's pictures
+  and up / down between notes (keys ←→↑↓, Esc); the pencil answers on any picture of the note (any frame / view; an
+  attachment → a drawn-over copy). Frame labels are "f128 / 0:05+3" (frames after the full second), burned smaller.
+- **Where:** `app/static/review-core.js` (`noteTimes`, `frameLabel`); `app/static/annotate.js` (`noteFrames`,
+  `noteCtx`, `marks()` / `markerTimes`, marker click, `goNote`, `notePreview` / `previewBox(keep)` / `.an-fno`,
+  `replyPreview` per frame, `platePic`, `gatherReport` → `frameCtx` + `more`, `bakeFrame` / `frameTitle`);
+  `mobile/js/app.js` (`noteTimes`, `markerList`, `jumpNote`, `noteFrame`, `noteCard`, `fnoTag`, `asyncFrameAt(cls)`,
+  `threadFrames`, `noteFrameList`, `selectNote` / `goTo` / `showNote`, `replyEntry`), `mobile/js/report.js`,
+  `mobile/index.html` (`.fno`); `app/review.py` (`plate_js`, `%%PLATE%%`, viewer `zoom(group, k)` / `GAL` / `galAdd`
+  / `drawTarget` / `noteFrameKeys`, `frameOf` reads `frameCtx`, `drawFrames`, `pickFrame`); `tests/pwa_touch.cjs`
+  (selection expectation); `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** no format change: `data.ctx` of a note is still written and still the merge / hold anchor; only where
+  it is *shown* changed. Reply drawings never pick a note's frames (timeline, both reports, phone) — they show with
+  their reply. 3D desktop report likewise uses only views with drawings / texts (fallback: the note's own view).
+  The page inlines caption-plate.js + keys.js with their import / export keywords stripped (`plate_js` refuses to
+  build if any other import / export appears); the page cannot edit picture texts. On the page a tap no longer
+  closes the viewer (Back / Esc do, as on the phone). Checked: unit / PWA / page tests pass; the page viewer driven
+  in Playwright (swipes, keys, plate, pencil on a second frame → reply row at that frame). The desktop markers /
+  report were not driven in a browser (no video in the container) — read and reviewed only.
+  Review (fresh agent) found, fixed: a click on a note's later marker jumped back to its first frame (goNote's
+  seek won); a reply's preview drew all its drawings over the typed-on frame (now one preview per frame it drew on);
+  caption-only frames had no desktop preview; the phone's card tap ignored the fallback frame for a note with
+  shots; the page's pencil offered a flat "reply copy" on a media frame image (now only on attachments); the desktop
+  report counted reply drawings when picking a note's frames (video and 3D). A second pass of the same reviewer
+  over the fixes confirmed them and found one more, fixed: a click on a reply's frame picture did nothing (the
+  `.an-rep` early return in `onListClick`; it now picks the note and seeks there). Left: a drag during a pending slide offsets the
+  outgoing picture (cosmetic); 3D labels on the page are a bare "View".
+
 ## 0.46.5 — 2026-11-14 — Picture text plate: drag scrolls the text; the head moves the plate
 - **What:** the text on the picture plate (lightbox, attached-picture view, phone viewer) scrolls the same way
   everywhere: a middle-button drag moves the words with the mouse (no browser autoscroll), and when the text is
@@ -307,27 +342,3 @@ Add new entries directly below this line.
   wheel handler and does not change `overflow`. Review (fresh agent): no confirmed bugs (no clash with the list's
   click / dblclick / hover handlers or the right-button thumb zoom; `buildPanel` runs once per lightbox open, so no
   duplicate listeners). Not tested in a browser.
-
-## 0.43.0 — 2026-11-13 — Lightbox: icons follow the file type; corner icons clear the radius; Alt-drag turns a picture to any angle
-- **What:** (1) mirror (`#mirBtn`) shows only for images, PSDs and video; the annotate button (`#annoBtn`)
-  shows for those and for 3D models, so documents and audio hide both. (The buttons used to stay visible:
-  `.btn`'s `display` beat the `hidden` attribute.) (2) With a corner radius set, the corner icons (file info,
-  3D gear, video strip, the 3D shading bar's bottom offset) move in by 0.3 × radius, so the rounding does not
-  cut them; a circle mask does not move them. (3) Alt+drag on a picture or video turns it about its centre to
-  any angle; Shift snaps the angle to absolute 15° steps (0, 15, 30 …). The angle is saved per file when the
-  drag ends. Alt+drag on a video no longer scrubs (plain drag still does). (4) The fit of a turned picture
-  uses its bounding box at any angle (for 0/90/180/270 it is as before).
-- **Where:** `app/static/index.html` — `.btn[hidden]` rule (next to `.v3d-gear[hidden]`), `.info-fab`,
-  `.light-info`, `.v3d-gear`, `.v3d-shade`, `.view-hud` (offsets use `var(--hud-in)`), `applyLightFrame()`
-  (sets `--hud-in`), the lightbox setup that sets `#mirBtn` / `#annoBtn` `hidden`, `loadTurn` (fractional
-  angle), `fitS()` (bounding box), and the viewer's `wrap` pointerdown / pointermove / `end` (`vs.rotD`).
-  `MANUAL.md` (turn, mask). `app/version.py`.
-- **Notes:** a turn drag ends with a click on the wrap, which is swallowed (`justScrubbed`) only when the angle
-  really changed, so a video does not pause after a turn. The HUD offsets are anchored to the lightbox root, not
-  to the frame: with an aspect-locked mask the frame is centred, so the inset is approximate there. The turn is
-  stored as a float angle per file (the old integer quarter turns still read back). Alt+drag with the select tool
-  in annotation mode still duplicates; Alt over a drawing tool reaches the viewer, as before.
-  Review (fresh agent): one confirmed bug, fixed (a video paused after an Alt-turn, because the click after the
-  turn drag was not swallowed). Checked and no bug: `hidden` on `#splitBtn` (now honoured, as intended), the
-  `calc()` values at 0, fitS at 0/90/180/270, the rotation direction with the mirror on, the normalisation of the
-  angle delta, the annotation capture order. Not tested in a browser: checked by reading the code and `node --check`.
