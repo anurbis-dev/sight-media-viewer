@@ -257,7 +257,9 @@ the caller's own frame rule). `app/static/caption-plate.js` (ES module, imports 
 its own CSS) is the half-transparent plate shown over a full-screen picture: `createPlate(parent,
 {storeKey})` → `{set(content), destroy()}`; bottom centre 80 % wide, five lines then a scroll; a tap
 folds it into an icon, a drag sticks it to the nearest side (sides: 25 % × 80 %), side / fold kept in
-localStorage. It stops pointer / wheel / touch events from reaching the host (the host's
+localStorage. Text longer than the plate scrolls by a drag on it (finger: native pan-y; mouse / pen:
+`g.scroll`, words follow the pointer) and only the head moves the plate; a middle-button drag anywhere
+on it scrolls the same way (`pan`, like index.html `attachPanScroll`, no browser autoscroll). It stops pointer / wheel / touch events from reaching the host (the host's
 capture-phase listeners must skip `.scp` targets themselves — annotate.js `onDown` / dblclick do).
 Used by annotate.js (on the lightbox surface while a note is picked and one of its pictures is on
 screen — `paintPlate` runs every tick — and over an attached picture in `showShot`; `onSave` edits in

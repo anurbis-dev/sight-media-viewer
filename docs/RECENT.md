@@ -14,6 +14,22 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.46.5 — 2026-11-14 — Picture text plate: drag scrolls the text; the head moves the plate
+- **What:** the text on the picture plate (lightbox, attached-picture view, phone viewer) scrolls the same way
+  everywhere: a middle-button drag moves the words with the mouse (no browser autoscroll), and when the text is
+  longer than the plate a plain drag on the text scrolls it too (a finger natively) — the plate is then moved
+  only by its head (number / label). Short text: a drag anywhere still moves the plate. A tap still folds it.
+- **Where:** `app/static/caption-plate.js` — `pan` / `panDown` / `panEnd` (middle drag; the edit field's own
+  scroll while editing), `g.scroll` in `down` / `move` / `up`, `.scp-pan` cursor, auxclick / lostpointercapture.
+- **Notes:** same feel as index.html `attachPanScroll` (direct follow, no inertia) — the module can't import it
+  (the phone has no index.html). Finger scroll stays native (`touch-action: pan-y` → pointercancel). Tests drag
+  the plate by its head already.
+  Review (fresh agent) found, all fixed: a middle press while the left button was held fired no pointerdown, so
+  its mousedown still started autoscroll / paste (a `mousedown` guard now); a stale `.scroll` class (layout change
+  without a window resize) could make a finger drag do nothing (touch decides by the class; a ResizeObserver keeps it
+  fresh); a pen both panned natively and by script (only the mouse scrolls by script); new text mid-drag jumped
+  (the drag scrolls by the step since the last move). Left as is: a middle press on the pencil / scrollbar also pans.
+
 ## 0.46.4 — 2026-11-13 — Annotations: dragging a value of a selected drawing no longer stops at the field's edge
 - **What:** with the select tool (V) and a line / shape / text selected, dragging a number in the bar (Width, Size,
   Opacity, Radius…) stopped as soon as the pointer left the field. It now goes on until the button is let go, as it
@@ -315,32 +331,3 @@ Add new entries directly below this line.
   turn drag was not swallowed). Checked and no bug: `hidden` on `#splitBtn` (now honoured, as intended), the
   `calc()` values at 0, fitS at 0/90/180/270, the rotation direction with the mirror on, the normalisation of the
   angle delta, the annotation capture order. Not tested in a browser: checked by reading the code and `node --check`.
-
-## 0.42.0 — 2026-11-13 — Explode belongs to the view; one zoom setting for every zoom (3D and version compare too)
-- **What:** (1) explode is kept per view. Moving the slider (or Ctrl+right-drag) at a view with drawings sets
-  that view's explode; going to the view (chip, note click, Go to) puts it back and replaces the current amount,
-  unless a row on that view was made at the current amount (then it stays). New rows store `ctx.explode`.
-  (2) A view's still and the export pictures (PDF / .srev frames of 3D notes) render at the view's explode.
-  (3) The zoom settings (Speed, Drag axis, Invert) apply to every zoom: the 3D viewer's wheel, right-drag and
-  pinch, and the version compare wheel, as they already did for images, video, text and the canvas.
-  (4) Settings header "Zoom (images / video)" is now "Zoom".
-- **Where:** `app/static/annotate.js` — `EXPL` / `EXP_TOL`, `rebuildViews` (view.explode from the newest row or
-  the slider value), `explodeChanged` (exported), `viewExplode` (used by `goView`), `viewLook` (export paths),
-  `ctxNow` (rows get `explode`), `view3dPic` (still at `v.explode`, `S.b3.capture(ex)`). `app/static/index.html`
-  — the slider `onChange` and the Ctrl-drag call `annot.explodeChanged`; `explodeMap` moved to the top of
-  `boot3d`; top-level `renderStill` (applies the view's explode, `refit` = `onExplodeMoved`, restored in
-  `finally`) and `bind3dZoom` (wheel, right-drag, pinch via `dollyOut`, `enableZoom` off); both
-  `bindAnnot3d` calls; `createCompare` gets `getZoomSettings`; the settings header. `app/static/compare.js` —
-  `onWheel` (speed, invert). `docs/FORMAT.md` (`ctx.explode`), `docs/ARCHITECTURE.md`, `MANUAL.md`. `app/version.py`.
-- **Notes:** the slider's value is kept in memory until a new row is made at that view, so a slider change with
-  no drawing is lost on reload (rows are never rewritten). A view's explode is the newest of the row values and the
-  slider value by timestamp; a phone row stamped with a clock ahead of the desktop can win over a newer desktop
-  slider. Rows from before 0.42 have no explode: their views keep the live amount. A pinch uses the speed only
-  (its direction is the finger gap). The splat viewer keeps zoom toward the pointer via OrbitControls'
-  `_updateZoomParameters` (a private method; guarded with `?.`). `review-draw.js` (exported review page) and the
-  mobile app keep their own zoom settings. Not tested in a browser: checked by reading the code, `node --check`
-  and the two review passes. Review 1 (explode): a report path used the note's unstripped explode (fixed:
-  `viewLook`); `renderStill` had no `finally` and no refit (fixed). Left as specified: any row on the target view
-  made at the current amount keeps it. Review 2 (zoom): pinch was lost with `enableZoom` off (fixed: pinch in
-  `bind3dZoom`); the modifier check blocked the right-drag in the splat viewer (fixed: only the Ctrl / Shift
-  handlers that already stop the event take it); the splat right-drag was not cursor-anchored (fixed).

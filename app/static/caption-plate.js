@@ -10,7 +10,11 @@
 //     --scp-b / --scp-t / --scp-l / --scp-r (distance from each side).
 //   - A tap on the plate folds it into a round icon at the same side; a tap on the icon opens it.
 //   - Dragging the plate or the icon sticks it to the nearest of the four sides when let go. On the
-//     left / right side the plate is 80 % high and 25 % wide.
+//     left / right side the plate is 80 % high and 25 % wide. While the text is longer than the plate
+//     shows, a drag on the text scrolls it and only the head (number / label) moves the plate.
+//   - The text scrolls by the wheel, a drag on it (finger natively; mouse / pen move the words with the
+//     pointer), or a middle-button drag anywhere on the plate (as Sight's other lightbox panels, index.html attachPanScroll) instead of the browser's
+//     autoscroll.
 //   - Side and folded state are a per-device convenience (localStorage, `storeKey`).
 //
 // createPlate(parent, {storeKey}) → {el, set(c), destroy(), editing()}. `parent` must be positioned;
@@ -37,6 +41,7 @@ function injectStyles(){
 .scp[hidden] { display: none; }
 .scp-plate, .scp-icon { position: absolute; pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; box-sizing: border-box; color: #fff; background: rgb(16 16 18 / var(--scp-a)); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 4px 18px rgb(0 0 0 / .25); cursor: grab; }
 .scp-drag { cursor: grabbing; transition: none !important; }
+.scp-pan, .scp-pan * { cursor: grabbing !important; }
 .scp-plate { display: flex; flex-direction: column; gap: 3px; padding: 7px 12px 9px; border-radius: 12px; font: 13.5px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .scp.b .scp-plate, .scp.t .scp-plate { left: 10%; width: 80%; }
 .scp.b .scp-plate { left: var(--scp-bx, 10%); width: var(--scp-bw, 80%); }
@@ -55,7 +60,7 @@ function injectStyles(){
 .scp-body { overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-overflow-scrolling: touch; }
 .scp.b .scp-body, .scp.t .scp-body { max-height: calc(1.35em * 5); }
 .scp.l .scp-body, .scp.r .scp-body { flex: 1 1 auto; min-height: 0; }
-.scp-body.scroll { touch-action: pan-y; }
+.scp-body.scroll { touch-action: pan-y; cursor: auto; }
 .scp-theme { opacity: .78; }
 .scp-theme.solo { opacity: 1; }
 .scp-text { font-weight: 600; }
@@ -108,7 +113,7 @@ export function createPlate(parent, opts = {}){
     root.classList.toggle("min", st.min);
     paintScroll();
   };
-  // A body with more text than it shows scrolls by a vertical finger drag; otherwise the drag moves the plate.
+  // A body with more text than it shows scrolls by a drag on it; otherwise the drag moves the plate.
   function paintScroll(){ body.classList.toggle("scroll", body.scrollHeight > body.clientHeight + 1); }
 
   function render(){
@@ -177,32 +182,63 @@ export function createPlate(parent, opts = {}){
   edit.addEventListener("click", (e) => { e.stopPropagation(); if (performance.now() - endedAt > 400) startEdit(); });
 
   // ---- tap / drag ------------------------------------------------------------------------------
-  let g = null;
+  let g = null, pan = null;
   const stop = (e) => e.stopPropagation();
+  // Middle-button drag: the words follow the pointer (the open edit field's own when editing).
+  function panDown(e){
+    e.preventDefault();  // no browser autoscroll
+    if (g || pan || e.currentTarget !== plate) return;
+    const sc = editor ? editor.ta : body;
+    pan = { id: e.pointerId, sc, y: e.clientY, top: sc.scrollTop };
+    plate.classList.add("scp-pan");
+    try { plate.setPointerCapture(e.pointerId); } catch {}
+  }
+  function panEnd(e){
+    if (!pan || e.pointerId !== pan.id) return false;
+    pan = null;
+    plate.classList.remove("scp-pan");
+    try { plate.releasePointerCapture(e.pointerId); } catch {}
+    return true;
+  }
   function down(e){
     e.stopPropagation();
+    if (e.pointerType === "mouse" && e.button === 1){ panDown(e); return; }
     if (g || (e.pointerType === "mouse" && e.button !== 0)) return;
     if (e.target.closest(".scp-edit, .scp-ta") || editor) return;  // (editing: a press only ends the edit)
     // A press on the body's own scrollbar scrolls; it neither moves nor folds the plate.
     if (e.target === body && body.scrollHeight > body.clientHeight + 1 && e.clientX - body.getBoundingClientRect().left >= body.clientWidth) return;
     const el = e.currentTarget;
-    g = { id: e.pointerId, el, x: e.clientX, y: e.clientY, moved: false };
+    // On text that scrolls, a drag scrolls (a finger natively, by pan-y) and a tap still folds.
+    // (A finger / pen pans natively only if .scroll was on when pressed: that class decides, not a fresh measure.)
+    const scroll = el === plate && body.contains(e.target) &&
+      (e.pointerType === "mouse" ? body.scrollHeight > body.clientHeight + 1 : body.classList.contains("scroll"));
+    g = { id: e.pointerId, el, x: e.clientX, y: e.clientY, ly: e.clientY, moved: false, scroll };
     try { el.setPointerCapture(e.pointerId); } catch {}
   }
   function move(e){
     e.stopPropagation();
+    if (pan && e.pointerId === pan.id){ pan.sc.scrollTop = pan.top - (e.clientY - pan.y); return; }
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x, dy = e.clientY - g.y;
     if (!g.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
+    if (g.scroll){
+      if (!g.moved){ g.moved = true; plate.classList.add("scp-pan"); }
+      // Mouse only: a finger / pen pans natively (pan-y). By the step since the last move, so new text mid-drag doesn't jump.
+      if (e.pointerType === "mouse") body.scrollTop -= e.clientY - g.ly;
+      g.ly = e.clientY;
+      return;
+    }
     if (!g.moved){ g.moved = true; g.el.classList.add("scp-drag"); }
     g.el.style.transform = `translate(${dx}px,${dy}px)`;
   }
   function up(e){
     e.stopPropagation();
+    if (panEnd(e)) return;
     if (!g || e.pointerId !== g.id) return;
     const d = g;
     g = null;
     try { d.el.releasePointerCapture(e.pointerId); } catch {}
+    if (d.scroll && d.moved){ plate.classList.remove("scp-pan"); return; }
     if (e.type === "pointercancel" || !d.moved){
       d.el.style.transform = ""; d.el.classList.remove("scp-drag");
       if (e.type === "pointerup" && !d.moved){
@@ -236,6 +272,13 @@ export function createPlate(parent, opts = {}){
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
+    el.addEventListener("lostpointercapture", (e) => {
+      if (panEnd(e)) return;
+      if (g?.scroll && e.pointerId === g.id){ g = null; plate.classList.remove("scp-pan"); }
+    });
+    // A middle press while another button is held fires no pointerdown: its mousedown still must not autoscroll / paste.
+    el.addEventListener("mousedown", (e) => { e.stopPropagation(); if (e.button === 1) e.preventDefault(); });
+    el.addEventListener("auxclick", (e) => { e.stopPropagation(); if (e.button === 1) e.preventDefault(); });  // (no paste / new tab)
     // The host's own gestures (zoom, swipe, drawing, play / pause) stay off the plate; the body still
     // scrolls natively (wheel, finger).
     ["click", "dblclick", "wheel", "touchstart", "touchmove"].forEach((t) => el.addEventListener(t, stop, { passive: true }));
@@ -243,6 +286,9 @@ export function createPlate(parent, opts = {}){
   }
   const onResize = () => paintScroll();
   window.addEventListener("resize", onResize);
+  // The body's size also changes with the host's layout / fonts / CSS vars, not only the window.
+  const ro = typeof ResizeObserver === "function" ? new ResizeObserver(onResize) : null;
+  ro?.observe(body);
   paintState();
 
   return {
@@ -253,6 +299,7 @@ export function createPlate(parent, opts = {}){
       gone = true;
       if (editor){ const ed = editor; editor = null; const v = ed.ta.value.trim(); if (v !== ed.before.trim()) ed.save(v); }
       window.removeEventListener("resize", onResize);
+      ro?.disconnect();
       root.remove();
     },
   };

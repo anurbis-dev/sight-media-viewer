@@ -99,7 +99,8 @@
     plate over it. The plate sits at the foot, 80 % wide (more than five lines scroll inside it);
     click it to fold it into a round icon, click the icon to open it; drag the plate or the icon to
     any of the four sides — on the left / right it is 25 % wide and 80 % high. The side and the fold
-    are kept. In the note card the texts are listed under its pictures (a mark in a preview's
+    are kept. A long text scrolls by the wheel, a drag on the text or a middle-button drag (the words
+    follow the mouse); then only the plate's head (number / label) moves the plate. In the note card the texts are listed under its pictures (a mark in a preview's
     corner shows which have one); click one to go to that frame / view, double-click to edit it.
     The PDF report and the reviewer page show them under the pictures. The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
@@ -278,7 +279,8 @@
   goes through the whole note: its frames, its attached pictures, then each reply's drawings and
   pictures; a half-transparent plate at the foot (80 % wide, at the left edge so the pencil bottom right stays free) tells which ("0:01.05 · f 30 · 2 / 7",
   "↳ Bob · Picture") with the note's / reply's words and, on the note's own pictures, the picture's
-  own text under them — more than five lines scroll inside the plate; the pencil on the plate writes
+  own text under them — more than five lines scroll inside the plate (drag the text; to move the
+  plate then, drag its head); the pencil on the plate writes
   or changes that picture's text (the note's text stays its topic; a picture with a text has a mark
   in its corner in the card, and the PDF / HTML exports show the text under it); a tap on the plate
   folds it into a round icon, a tap on the icon opens it; drag the plate or the icon to any side of

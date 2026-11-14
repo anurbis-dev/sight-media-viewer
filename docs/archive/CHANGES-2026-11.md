@@ -2,6 +2,35 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.42.0 — 2026-11-13 — Explode belongs to the view; one zoom setting for every zoom (3D and version compare too)
+- **What:** (1) explode is kept per view. Moving the slider (or Ctrl+right-drag) at a view with drawings sets
+  that view's explode; going to the view (chip, note click, Go to) puts it back and replaces the current amount,
+  unless a row on that view was made at the current amount (then it stays). New rows store `ctx.explode`.
+  (2) A view's still and the export pictures (PDF / .srev frames of 3D notes) render at the view's explode.
+  (3) The zoom settings (Speed, Drag axis, Invert) apply to every zoom: the 3D viewer's wheel, right-drag and
+  pinch, and the version compare wheel, as they already did for images, video, text and the canvas.
+  (4) Settings header "Zoom (images / video)" is now "Zoom".
+- **Where:** `app/static/annotate.js` — `EXPL` / `EXP_TOL`, `rebuildViews` (view.explode from the newest row or
+  the slider value), `explodeChanged` (exported), `viewExplode` (used by `goView`), `viewLook` (export paths),
+  `ctxNow` (rows get `explode`), `view3dPic` (still at `v.explode`, `S.b3.capture(ex)`). `app/static/index.html`
+  — the slider `onChange` and the Ctrl-drag call `annot.explodeChanged`; `explodeMap` moved to the top of
+  `boot3d`; top-level `renderStill` (applies the view's explode, `refit` = `onExplodeMoved`, restored in
+  `finally`) and `bind3dZoom` (wheel, right-drag, pinch via `dollyOut`, `enableZoom` off); both
+  `bindAnnot3d` calls; `createCompare` gets `getZoomSettings`; the settings header. `app/static/compare.js` —
+  `onWheel` (speed, invert). `docs/FORMAT.md` (`ctx.explode`), `docs/ARCHITECTURE.md`, `MANUAL.md`. `app/version.py`.
+- **Notes:** the slider's value is kept in memory until a new row is made at that view, so a slider change with
+  no drawing is lost on reload (rows are never rewritten). A view's explode is the newest of the row values and the
+  slider value by timestamp; a phone row stamped with a clock ahead of the desktop can win over a newer desktop
+  slider. Rows from before 0.42 have no explode: their views keep the live amount. A pinch uses the speed only
+  (its direction is the finger gap). The splat viewer keeps zoom toward the pointer via OrbitControls'
+  `_updateZoomParameters` (a private method; guarded with `?.`). `review-draw.js` (exported review page) and the
+  mobile app keep their own zoom settings. Not tested in a browser: checked by reading the code, `node --check`
+  and the two review passes. Review 1 (explode): a report path used the note's unstripped explode (fixed:
+  `viewLook`); `renderStill` had no `finally` and no refit (fixed). Left as specified: any row on the target view
+  made at the current amount keeps it. Review 2 (zoom): pinch was lost with `enableZoom` off (fixed: pinch in
+  `bind3dZoom`); the modifier check blocked the right-drag in the splat viewer (fixed: only the Ctrl / Shift
+  handlers that already stop the event take it); the splat right-drag was not cursor-anchored (fixed).
+
 ## 0.41.2 — 2026-11-13 — 3D note pictures are stills: a light change no longer re-renders them
 - **What:** the pictures on a 3D note's card (one per view the note's drawings were made from) were re-rendered
   every time the shading or the lights changed, so they looked like live mini-viewports. Now each view's
