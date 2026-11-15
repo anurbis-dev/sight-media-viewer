@@ -136,11 +136,18 @@ export function drawCtx(c){
     const o = { vk: c.vk, cam: c.cam };
     if (Array.isArray(c.hidden)) o.hidden = c.hidden.slice();
     if (typeof c.explode === "number") o.explode = c.explode;
+    const an = animOf(c);
+    if (an) o.anim = an;
     return o;
   }
   return null;
 }
-// The 3D views a review's rows stand on (FORMAT.md 3D ctx), oldest first: {vk, cam, hidden, explode,
+// A 3D ctx's animation pose {clip, t} (FORMAT.md, 0.51+), or null (a static model, an older row).
+export function animOf(c){
+  const a = c && c.anim;
+  return a && typeof a === "object" ? { clip: a.clip | 0, t: Number(a.t) || 0 } : null;
+}
+// The 3D views a review's rows stand on (FORMAT.md 3D ctx), oldest first: {vk, cam, hidden, explode, anim,
 // created} — Sight's rebuildViews (annotate.js), so the numbers match ("View 1" is the first one made):
 // a row's time is data.created; hidden = a note's list, else the first given (null: none, matches any);
 // explode = the newest row's ctx.explode, or a pre-0.42 note's v3d.explode, else null.
@@ -151,7 +158,8 @@ export function views3d(rows){
     if (!c || !c.vk || !c.cam || !Array.isArray(c.cam.p) || !Array.isArray(c.cam.t)) return;
     const at = r.data.created || 0;
     let v = out.get(c.vk);
-    if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, explode: null, explodeAt: 0, created: at }; out.set(c.vk, v); }
+    if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, explode: null, explodeAt: 0, anim: null, created: at }; out.set(c.vk, v); }
+    if (!v.anim) v.anim = animOf(c);
     v.created = Math.min(v.created, at);
     if (Array.isArray(c.hidden) && (v.hidden == null || r.kind === "note")) v.hidden = c.hidden.slice();
     const e = typeof c.explode === "number" ? c.explode : r.kind === "note" && c.v3d && typeof c.v3d.explode === "number" ? c.v3d.explode : undefined;

@@ -116,7 +116,9 @@ def make_gltf_with_bin(path: Path) -> Path:
     return path
 
 
-def make_glb(path: Path) -> Path:
+def make_glb(path: Path, anim: bool = False) -> Path:
+    """anim: also UVs on both boxes and a 2 s clip "Lift" that moves Box 2 up by 1 and back (linear,
+    keys at 0 / 1 / 2 s)."""
     meshes, bufs, views, accs, offset = [], [], [], [], 0
     for i, (cx, col) in enumerate(((-0.6, [0.9, 0.3, 0.2, 1]), (0.6, [0.2, 0.5, 0.9, 1]))):
         pos, idx = box(cx, 0.0, 0.0, 0.45)
@@ -132,9 +134,31 @@ def make_glb(path: Path) -> Path:
         meshes.append({"name": f"Box {i + 1}", "primitives": [{"attributes": {"POSITION": 2 * i}, "indices": 2 * i + 1, "material": i}]})
         bufs.append(pb + ib)
         offset += len(pb) + len(ib)
+    extra = {}
+    if anim:
+        uv = struct.pack("<48f", *([0, 0, 1, 0, 1, 1, 0, 1] * 6))
+        for i in range(2):
+            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(uv), "target": 34962})
+            accs.append({"bufferView": len(views) - 1, "componentType": 5126, "count": 24, "type": "VEC2"})
+            meshes[i]["primitives"][0]["attributes"]["TEXCOORD_0"] = len(accs) - 1
+            bufs.append(uv)
+            offset += len(uv)
+        tb = struct.pack("<3f", 0, 1, 2)
+        vb = struct.pack("<9f", 0, 0, 0, 0, 1, 0, 0, 0, 0)
+        for b, typ, cnt, mm in ((tb, "SCALAR", 3, ([0], [2])), (vb, "VEC3", 3, None)):
+            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(b)})
+            a = {"bufferView": len(views) - 1, "componentType": 5126, "count": cnt, "type": typ}
+            if mm:
+                a["min"], a["max"] = mm
+            accs.append(a)
+            bufs.append(b)
+            offset += len(b)
+        n = len(accs)
+        extra["animations"] = [{"name": "Lift", "samplers": [{"input": n - 2, "output": n - 1, "interpolation": "LINEAR"}],
+                                "channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}}]}]
     blob = b"".join(bufs)
     gltf = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0, 1]}],
-            "nodes": [{"mesh": 0, "name": "Box 1"}, {"mesh": 1, "name": "Box 2"}], "meshes": meshes,
+            "nodes": [{"mesh": 0, "name": "Box 1"}, {"mesh": 1, "name": "Box 2"}], "meshes": meshes, **extra,
             "materials": [{"doubleSided": True, "pbrMetallicRoughness": {"baseColorFactor": c, "metallicFactor": 0.1, "roughnessFactor": 0.6}}
                           for c in ([0.9, 0.3, 0.2, 1], [0.2, 0.5, 0.9, 1])],
             "accessors": accs, "bufferViews": views, "buffers": [{"byteLength": len(blob)}]}
@@ -149,5 +173,5 @@ if __name__ == "__main__":
     import sys
     d = Path(sys.argv[1])
     for f in (make_glb(d / "boxes_v001.glb"), make_obj(d / "boxes.obj"), make_stl(d / "boxes.stl"), make_fbx(d / "boxes.fbx"),
-              make_gltf_with_bin(d / "boxes.gltf")):
+              make_gltf_with_bin(d / "boxes.gltf"), make_glb(d / "lift_v001.glb", anim=True)):
         print(f)

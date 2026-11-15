@@ -605,6 +605,15 @@ var SightReviewCore = (function(){
     return true;
   }
 
+  // A view's animation pose ({clip, t}, FORMAT.md 3D ctx `anim`) and the live one are the same: the same
+  // clip and times within 1.5 ms (stored to 3 dp). A view with none (a static model, an older file) matches
+  // any pose; so does a model shown without animation (live null: a viewer that found no clips — Sight's
+  // server conversion and the phone's loader may differ — still shows the view's drawings).
+  function animMatch(view, live){
+    if (!view || !live) return true;
+    return (view.clip | 0) === (live.clip | 0) && Math.abs((Number(view.t) || 0) - (Number(live.t) || 0)) < 0.0015;
+  }
+
   // Two 3D cameras ({p, t, fov, turns}, FORMAT.md 3D ctx) are one view: position and target within
   // 0.4 % of a's camera distance, the same fov (0.5°) and quarter-turn count.
   function camMatch(a, b){
@@ -882,7 +891,7 @@ var SightReviewCore = (function(){
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
-    ctxVisible: ctxVisible, camMatch: camMatch, drawingRow: drawingRow,
+    ctxVisible: ctxVisible, camMatch: camMatch, animMatch: animMatch, drawingRow: drawingRow,
     picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel, picFileName: picFileName,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };

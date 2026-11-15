@@ -115,6 +115,7 @@ class RoundTrip(unittest.TestCase):
         ImageDraw.Draw(im).ellipse([700, 300, 1200, 800], fill=(250, 200, 40))
         im.save(media / "shot_v001.png")
         make_glb(media / "boxes_v001.glb")
+        make_glb(media / "lift_v001.glb", anim=True)
         cls.video = bool(shutil.which("ffmpeg"))
         if cls.video:  # VP9: Playwright's Chromium has no H.264
             subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=24:duration=4",
@@ -294,6 +295,35 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(stats["added"], len(rows))
         srect = next(x for x in self.lib.annotations_for_asset(a["id"]) if x["kind"] == "shape" and x["shape_kind"] == "rect")
         self.assertEqual(srect["data"]["ctx"], rect["data"]["ctx"])
+
+    def test_model_tools(self) -> None:
+        """Phone 3D tools: mesh pick / hide / solo / UV, shading / light / grid rows, animation and its view pose."""
+        r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_3d_tools.cjs"), self.base, str(self.media / "lift_v001.glb")],
+                           capture_output=True, text=True, timeout=600, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertEqual(res["log"], [])
+        self.assertEqual(res["openButtons"], 1)
+        self.assertEqual([c["name"] for c in res["clips"]], ["Lift"])
+        self.assertIsNotNone(res["picked"])
+        self.assertTrue(res["picked"]["selRow"])
+        self.assertEqual(res["afterEmptyTap"]["sel"], -1)
+        self.assertGreater(res["uvShown"], 0)
+        self.assertEqual(len(res["solo"]["hidden"]), 1)
+        self.assertEqual(len(res["hid"]["hidden"]), 1)
+        self.assertEqual(res["hid"]["sel"], -1)
+        self.assertEqual(res["shown"]["hidden"], [])
+        self.assertEqual((res["look"]["shading"], res["look"]["light"], res["look"]["grid"]),
+                         ({"base": "solid", "wire": True, "xray": False}, "head", "axes"))
+        self.assertEqual(res["stored"], {"base": "solid", "wire": True, "xray": False, "grid": "axes", "light": "head"})
+        self.assertEqual(res["rowClosed"], 0)
+        self.assertTrue(res["played"]["playing"])
+        self.assertGreater(res["played"]["anim"]["t"], 0)
+        self.assertFalse(res["paused"]["playing"])
+        self.assertEqual(res["noteCtx"]["anim"], {"clip": 0, "t": 1})
+        self.assertEqual(res["onNote"]["vk"], res["noteCtx"]["vk"])
+        self.assertIsNone(res["away"]["vk"])
+        self.assertEqual((res["back"]["vk"], res["back"]["anim"]), (res["noteCtx"]["vk"], {"clip": 0, "t": 1}))
 
     def test_model_formats(self) -> None:
         d = self.tmp / "fmt"

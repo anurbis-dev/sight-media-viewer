@@ -336,3 +336,374 @@ export function usdAsSight(THREE, group){
   root.updateMatrixWorld(true);
   return root;
 }
+
+// ---- Shading (the lightbox's Shade bar and the phone's shading row) ------------------------------
+
+// The environment gradients of the lightbox's "Environment light" presets (buildEnvTexture bakes one).
+export const ENV_PRESETS = {
+  studio:   { top: 0xcfe0ff, horizon: 0x8a8f9a, bottom: 0x1c1c20 },
+  sunset:   { top: 0xffb37a, horizon: 0xff8a5c, bottom: 0x1a1420 },
+  overcast: { top: 0xc7cdd6, horizon: 0xaeb4bd, bottom: 0x6b7078 },
+  night:    { top: 0x0c1830, horizon: 0x101828, bottom: 0x02050c },
+};
+
+// Base shading swap (Blender-style: solid / vertex color / textured / normal), always starting
+// from `origMats` (Map mesh -> the materials the model actually loaded with) so repeated switches never
+// compound. Wireframe and x-ray are separate overlay passes below — they layer on top of
+// whichever base is active instead of being mutually exclusive with it. solid: {color, rough, metal}
+// of the Solid mode's material.
+export function applyBaseMaterial(THREE, obj, origMats, mode, solid = {}){
+  if (!obj || !origMats) return;
+  obj.traverse((c) => {
+    if (!c.isMesh || !origMats.has(c)) return;
+    const cur = c.material;
+    if (cur && cur.userData && cur.userData._v3dTemp) cur.dispose();
+    let mat;
+    if (mode === "solid"){
+      mat = new THREE.MeshStandardMaterial({ color: solid.color ?? "#b7bdc7", roughness: solid.rough ?? 0.85, metalness: solid.metal ?? 0.05 });
+      mat.userData._v3dSolid = true;
+    }
+    else if (mode === "vertex"){
+      const hasColor = !!c.geometry.attributes.color;
+      mat = new THREE.MeshBasicMaterial({ vertexColors: hasColor, color: hasColor ? 0xffffff : 0x555555 });
+    } else if (mode === "normal") mat = new THREE.MeshNormalMaterial();
+    else mat = origMats.get(c); // "textured"
+    if (mat !== origMats.get(c)){
+      mat.userData._v3dTemp = true;
+      // A double-sided original stays double-sided (an open shell or inward faces must not vanish).
+      const o0 = [].concat(origMats.get(c))[0];
+      if (o0 && o0.side != null) mat.side = o0.side;
+    }
+    c.material = mat;
+  });
+}
+// Mutates the *current* material's transparency in place (instead of swapping to a dedicated
+// x-ray material) so it layers over whatever base mode is active; the original opacity is
+// stashed on first use and restored when toggled back off. Multi-material meshes carry an array
+// (textured mode restores it from origMats) — every entry is handled.
+export function applyXray(obj, on){
+  if (!obj) return;
+  obj.traverse((c) => {
+    if (!c.isMesh || !c.material) return;
+    for (const m of Array.isArray(c.material) ? c.material : [c.material]) xrayMaterial(m, on);
+  });
+}
+function xrayMaterial(m, on){
+  if (!m) return;
+  if (on){
+    if (m.userData._xraySaved === undefined){
+      m.userData._xraySaved = { opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite };
+    }
+    m.transparent = true;
+    m.opacity = 0.3;
+    m.depthWrite = false;
+  } else if (m.userData._xraySaved !== undefined){
+    Object.assign(m, m.userData._xraySaved);
+    delete m.userData._xraySaved;
+  }
+  m.needsUpdate = true;
+}
+// A sibling LineSegments per mesh — toggling `.wireframe` on the base material would *replace*
+// its solid fill instead of drawing edges on top of it, so this adds a real overlay mesh.
+export function setWireOverlay(THREE, obj, on){
+  if (!obj) return;
+  const list = [];
+  obj.traverse((c) => { if (c.isMesh && !c.userData._uvOverlay) list.push(c); });
+  for (const c of list){
+    let ov = c.userData._wireOverlay;
+    if (on){
+      if (!ov){
+        const wg = new THREE.WireframeGeometry(c.geometry);
+        ov = new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x9fb4c7, transparent: true, opacity: 0.55 }));
+        ov.raycast = () => {};
+        c.add(ov);
+        c.userData._wireOverlay = ov;
+      }
+      ov.visible = true;
+    } else if (ov) ov.visible = false;
+  }
+}
+
+// ---- Selection highlight (the lightbox's inspector and the phone's mesh pick) --------------------
+// Blender's selection orange: a theme accent can be near-white and vanish on light textures.
+export const HIGHLIGHT_COLOR = 0xff8a1f;
+// The highlight's two layers (a fill and a faint wire), to be disposed by the caller.
+export function highlightMaterials(THREE){
+  return [
+    new THREE.MeshBasicMaterial({ color: HIGHLIGHT_COLOR, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }),
+    new THREE.MeshBasicMaterial({ color: HIGHLIGHT_COLOR, wireframe: true, transparent: true, opacity: 0.18, depthWrite: false }),
+  ];
+}
+// An overlay mesh drawing `c`'s geometry with `mat` (a material or an array, one per group), to be added
+// to the *scene* (not the model: the shading modes traverse the model and would restyle it). It copies
+// c's world matrix every frame, so explode, turns and animation carry it along; a skinned mesh binds to
+// the same skeleton, morph targets follow.
+export function meshHighlight(THREE, c, mat){
+  const h = c.isSkinnedMesh ? new THREE.SkinnedMesh(c.geometry, mat) : new THREE.Mesh(c.geometry, mat);
+  if (c.isSkinnedMesh){ h.bind(c.skeleton, c.bindMatrix); h.bindMode = c.bindMode; }
+  if (c.morphTargetInfluences){ h.morphTargetInfluences = c.morphTargetInfluences; h.morphTargetDictionary = c.morphTargetDictionary; }
+  h.matrixAutoUpdate = false;
+  h.frustumCulled = false;
+  h.renderOrder = 10;
+  h.raycast = () => {};
+  h.updateMatrixWorld = () => {
+    h.visible = c.visible;  // a hidden mesh takes its highlight with it
+    h.matrixWorld.copy(c.matrixWorld);
+    if (h.isSkinnedMesh) h.bindMatrixInverse.copy(c.bindMatrixInverse);
+  };
+  h.updateWorldMatrix = h.updateMatrixWorld;
+  return h;
+}
+
+// ---- UV picture (the lightbox's UV pane and the phone's UV sheet) ---------------------------------
+// The geometry drawn with gl_Position = uv (wireframe + faint fill), over a texture on a quad, read back
+// from a render target. Render targets come out linear without tone mapping, so sRGB is encoded here by
+// hand (skipped for non-color textures such as normal maps, which are shown raw). glTF puts v = 0 at the
+// image top (flipY false); other loaders at the bottom.
+
+const UV_NAMES = ["uv", "uv1", "uv2", "uv3"];
+export const uvSetCount = (g) => { let k = 0; while (k < UV_NAMES.length && g && g.attributes[UV_NAMES[k]]) k++; return k; };
+let srgbLut = null;
+// Renders `sc` with `cam` into `target` (W × H) and returns a 2D canvas of it (encode: linear → sRGB).
+export function readbackCanvas(THREE, renderer, sc, cam, target, W, H, encode){
+  if (!srgbLut){
+    srgbLut = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++){ const c = i / 255; srgbLut[i] = Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055)); }
+  }
+  const lut = srgbLut;
+  const prevRT = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
+  const prevShadow = renderer.shadowMap.autoUpdate;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.setRenderTarget(target);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(sc, cam);
+  const px = new Uint8Array(W * H * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, W, H, px);
+  renderer.setRenderTarget(prevRT);
+  renderer.setClearColor(prevColor, prevAlpha);
+  renderer.shadowMap.autoUpdate = prevShadow;
+  const cv = document.createElement("canvas");
+  cv.width = W;
+  cv.height = H;
+  const ctx = cv.getContext("2d");
+  const data = ctx.createImageData(W, H), out = data.data;
+  for (let y = 0; y < H; y++){
+    let si = (H - 1 - y) * W * 4, di = y * W * 4; // GL rows are bottom-up
+    for (let x = 0; x < W; x++, si += 4, di += 4){
+      out[di] = encode ? lut[px[si]] : px[si];
+      out[di + 1] = encode ? lut[px[si + 1]] : px[si + 1];
+      out[di + 2] = encode ? lut[px[si + 2]] : px[si + 2];
+      out[di + 3] = px[si + 3];
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+  return cv;
+}
+// A quad filling a W × H picture with `tex` (its own aspect kept, its flipY honoured).
+export function textureQuad(THREE, tex, W, H){
+  const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  const ar = W / H, iar = tex.image && tex.image.width && tex.image.height ? tex.image.width / tex.image.height : ar;
+  q.scale.set(Math.min(1, iar / ar), Math.min(1, ar / iar) * (tex.flipY ? 1 : -1), 1);
+  return q;
+}
+const uvShader = (THREE, color, alpha, wire) => new THREE.ShaderMaterial({
+  wireframe: wire, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+  uniforms: { uFlip: { value: 1 }, uColor: { value: new THREE.Color(color) }, uAlpha: { value: alpha } },
+  vertexShader: "attribute vec2 uvSel; uniform float uFlip; void main(){ vec2 p = uvSel * 2.0 - 1.0; p.y *= uFlip; gl_Position = vec4(p, 0.0, 1.0); }",
+  fragmentShader: "uniform vec3 uColor; uniform float uAlpha; void main(){ gl_FragColor = vec4(uColor, uAlpha); }",
+});
+// Texture under the UVs, one channel at a time. sRGB textures arrive linear from the sampler and
+// the readback encodes back to sRGB, so R/G/B show the stored values; alpha is not colour-managed,
+// so it is pre-decoded here to survive that encode. RGBA composites over a checker.
+const UV_CHAN = { rgb: 0, rgba: 1, r: 2, g: 3, b: 4, a: 5 };
+const uvBgShader = (THREE, tex, chan, srgb, W) => new THREE.ShaderMaterial({
+  depthTest: false, depthWrite: false,
+  uniforms: { map: { value: tex }, uChan: { value: UV_CHAN[chan] ?? 0 }, uSrgb: { value: srgb ? 1 : 0 }, uCell: { value: Math.max(8, Math.round(W / 32)) } },
+  vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+  fragmentShader: `uniform sampler2D map; uniform int uChan; uniform float uSrgb; uniform float uCell; varying vec2 vUv;
+    float lin(float c){ return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+    void main(){
+      vec4 t = texture2D(map, vUv);
+      float a = uSrgb > 0.5 ? lin(t.a) : t.a;
+      vec2 q = floor(gl_FragCoord.xy / uCell);
+      float ck = mod(q.x + q.y, 2.0) > 0.5 ? 0.18 : 0.06;
+      vec3 c = t.rgb;
+      if (uChan == 1) c = mix(vec3(uSrgb > 0.5 ? ck : sqrt(ck)), t.rgb, t.a);
+      else if (uChan == 2) c = vec3(t.r);
+      else if (uChan == 3) c = vec3(t.g);
+      else if (uChan == 4) c = vec3(t.b);
+      else if (uChan == 5) c = vec3(a);
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+});
+// One painter per renderer: a light geometry per (mesh, UV set) that shares the mesh's buffers but exposes
+// the chosen set as "uvSel", cached for the painter's lifetime and never disposed (disposing a geometry frees
+// the GL buffers of its attributes, which the model itself still uses; the context goes with the viewer).
+// paint(list, o) → {canvas, w, h, sets, set} | null. list: [{c: mesh, om: its original material(s), mats:
+// Set of the material instances whose groups count, or null = the whole mesh}]. o: {bg: texture | null,
+// set: the UV set wanted, chan: "rgb" | "rgba" | "r" | "g" | "b" | "a", color, fillA, wireA, gltf: the model is
+// a glTF (v = 0 at the top when there is no texture to say), max: the long side when there is no texture}.
+export function createUvPainter(THREE, renderer){
+  const uvGeo = new Map();
+  function uvGeometry(c, set){
+    const key = c.uuid + ":" + set;
+    let g = uvGeo.get(key);
+    if (!g){
+      const src = c.geometry;
+      g = new THREE.BufferGeometry();
+      if (src.index) g.setIndex(src.index);
+      g.setAttribute("position", src.attributes.position);
+      g.setAttribute("uvSel", src.attributes[UV_NAMES[set]]);
+      for (const gr of src.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
+      uvGeo.set(key, g);
+    }
+    return g;
+  }
+  const camQ = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 2);
+  camQ.position.z = 1;
+  const pick = (om, mats, layer, hiddenMat) => Array.isArray(om) ? om.map((m) => (!mats || mats.has(m) ? layer : hiddenMat)) : layer;
+  function paint(list, o = {}){
+    list = list.filter((t) => t.c.geometry && t.c.geometry.attributes.uv);
+    if (!list.length) return null;
+    const sets = Math.max(...list.map((t) => uvSetCount(t.c.geometry)));
+    const set = Math.min(o.set || 0, sets - 1);
+    const bg = o.bg || null;
+    const iw = bg?.image?.width || 0, ih = bg?.image?.height || 0;
+    const big = Math.min(4096, Math.max(o.max || 2048, iw, ih));
+    const W = iw && ih ? Math.round(iw >= ih ? big : big * iw / ih) : big;
+    const H = iw && ih ? Math.round(ih >= iw ? big : big * ih / iw) : big;
+    const target = new THREE.WebGLRenderTarget(W, H);
+    const sc = new THREE.Scene();
+    sc.background = null;
+    const tmp = [];
+    const srgb = !bg || bg.colorSpace === THREE.SRGBColorSpace;
+    if (bg){
+      const q = textureQuad(THREE, bg, W, H);
+      q.material.dispose();
+      q.material = uvBgShader(THREE, bg, o.chan || "rgb", srgb, W);
+      q.renderOrder = 0;
+      sc.add(q);
+      tmp.push(q);
+    } else {
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ color: 0x2a2a30 }));
+      sc.add(q);
+      tmp.push(q);
+    }
+    const vTop = bg ? !bg.flipY : !!o.gltf;
+    const color = o.color ?? 0xffffff;
+    const fill = uvShader(THREE, color, o.fillA ?? 0.06, false), wire = uvShader(THREE, color, o.wireA ?? 0.55, true);
+    for (const m of [fill, wire]) m.uniforms.uFlip.value = vTop ? -1 : 1;
+    const hiddenUV = new THREE.MeshBasicMaterial({ visible: false });
+    for (const { c, om, mats } of list){
+      if (uvSetCount(c.geometry) <= set) continue; // this mesh has no such set
+      for (const [layer, order] of [[fill, 1], [wire, 2]]){
+        const me = new THREE.Mesh(uvGeometry(c, set), pick(om || c.material, mats || null, layer, hiddenUV));
+        me.frustumCulled = false;
+        me.renderOrder = order;
+        sc.add(me);
+      }
+    }
+    let cv;
+    try { cv = readbackCanvas(THREE, renderer, sc, camQ, target, W, H, srgb); }
+    finally {
+      target.dispose();
+      fill.dispose(); wire.dispose(); hiddenUV.dispose();
+      for (const q of tmp){ q.geometry.dispose(); q.material.dispose(); }
+    }
+    return { canvas: cv, w: W, h: H, sets, set };
+  }
+  return { paint };
+}
+
+// ---- Animation (both viewers) ---------------------------------------------------------------------
+// A model's animation clips (glTF / FBX; the loaders put them on the root as `animations`) played by one
+// AnimationMixer on the model root. A review view keeps the clip and the time it was made at (FORMAT.md
+// 3D ctx `anim` {clip, t}), so a drawing on a moving model shows on the pose it was drawn on.
+// Explode: the explode rig moves its parts from their positions (it.pos); an animated part's position is
+// the animation's at each moment, so every apply puts the rig's parts back at their rest positions, lets
+// the mixer pose the model, takes those positions as the rig's bases and explodes from there.
+
+// Clips worth playing: some length and at least one track.
+export const modelClips = (obj) => ((obj && obj.animations) || []).filter((c) => c && c.duration > 0 && c.tracks && c.tracks.length);
+// (A view's anim matches a live pose by review-core.js animMatch.)
+// null when the model has no clip. o: {rig: () => the explode rig or null, explode: () => its amount now,
+// onChange()}. The model is put at the first clip's time 0 at once.
+export function createAnimator(THREE, obj, o = {}){
+  const clips = modelClips(obj);
+  if (!clips.length) return null;
+  const mixer = new THREE.AnimationMixer(obj);
+  let ci = 0, t = 0, playing = false, action = null, restRig = null;
+  const rig = () => (o.rig ? o.rig() : null);
+  // The rig's rest positions, taken the first time (before the mixer moves anything).
+  const rigRest = () => {
+    const r = rig();
+    if (!r) return null;
+    if (!restRig || restRig.rig !== r){
+      restRig = { rig: r, pos: new Map() };
+      for (const [c, it] of r.list) restRig.pos.set(c, it.pos.clone());
+    }
+    return restRig;
+  };
+  const toRest = () => { const rr = rigRest(); if (rr) for (const [c, p] of rr.pos) c.position.copy(p); };
+  const apply = () => {
+    const r = rig();
+    toRest();
+    mixer.setTime(t);
+    if (r){
+      for (const [c, it] of r.list) it.pos.copy(c.position);
+      applyExplode(r, o.explode ? o.explode() : 0);
+    }
+    obj.updateMatrixWorld(true);
+  };
+  const use = (i) => {
+    toRest();
+    if (action) action.stop();
+    ci = Math.min(clips.length - 1, Math.max(0, i | 0));
+    action = mixer.clipAction(clips[ci]);
+    action.play();
+  };
+  // The last pose is just before the clip's end (a looping action at exactly its duration shows time 0);
+  // on the 3 dp grid a view stores.
+  const tMax = () => Math.max(0, Math.floor((clips[ci].duration - 0.001) * 1000) / 1000);
+  const clampT = (x) => { x = Number(x) || 0; return x < 0 ? 0 : Math.min(x, tMax()); };
+  use(0);
+  apply();
+  const api = {
+    clips: clips.map((c, i) => ({ name: c.name || `Animation ${i + 1}`, duration: c.duration })),
+    get clip(){ return ci; }, get time(){ return t; }, get playing(){ return playing; },
+    get duration(){ return tMax(); },
+    // The pose now, as a view stores it.
+    state: () => ({ clip: ci, t: Math.round(t * 1000) / 1000 }),
+    // Puts the model at {clip, t} (stops playing). Returns true when the pose changed.
+    set(s){
+      if (!s) return false;
+      const want = Math.min(clips.length - 1, Math.max(0, s.clip | 0)), was = playing;
+      playing = false;
+      let moved = false;
+      if (want !== ci){ use(want); moved = true; }
+      const nt = clampT(s.t);
+      if (moved || Math.abs(nt - t) > 1e-9){ t = nt; apply(); moved = true; }
+      if ((moved || was) && o.onChange) o.onChange();
+      return moved;
+    },
+    seek(x){ t = clampT(x); apply(); if (o.onChange) o.onChange(); },
+    setClip(i){ if ((i | 0) === ci) return; use(i); t = 0; apply(); if (o.onChange) o.onChange(); },
+    play(){ if (playing) return; if (t >= tMax() - 1e-4) t = 0; playing = true; if (o.onChange) o.onChange(); },
+    pause(){ if (!playing) return; playing = false; if (o.onChange) o.onChange(); },
+    toggle(){ if (playing) api.pause(); else api.play(); },
+    // Advances a playing clip by dt seconds (looping). true when the model moved.
+    tick(dt){
+      if (!playing || !(dt > 0)) return false;
+      const d = clips[ci].duration;
+      t += Math.min(dt, 0.25);
+      if (t >= d) t = t % d;
+      apply();
+      return true;
+    },
+    // Re-applies the pose (after the explode amount changed).
+    refresh: apply,
+    dispose(){ playing = false; try { mixer.stopAllAction(); mixer.uncacheRoot(obj); } catch {} },
+  };
+  return api;
+}

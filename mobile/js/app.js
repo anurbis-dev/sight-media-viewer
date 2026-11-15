@@ -47,6 +47,14 @@ const ICONS = {
   send: '<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor" stroke="none"/>',
   fit: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', up: '<path d="m6 15 6-6 6 6"/>',
+  shade: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" opacity=".55"/>',
+  grid: '<path d="M6 8h16l-4 12H2z"/><path d="M4 14h16"/><path d="m10 8-2 12"/><path d="m16 8-2 12"/>',
+  light: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
+  explode: '<rect x="9" y="9" width="6" height="6" rx="1"/><path d="M4 4l3.5 3.5M20 4l-3.5 3.5M4 20l3.5-3.5M20 20l-3.5-3.5"/><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/>',
+  hidemesh: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M3 3l18 18"/>',
+  solo: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+  uv: '<rect x="3.5" y="3.5" width="17" height="17" rx="1.5"/><path d="M3.5 12h17M12 3.5v17" opacity=".6"/><path d="m7 16 4-8 6 6z"/>',
+  showall: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/><circle cx="19" cy="19" r="3.2" fill="currentColor" stroke="none"/>',
   turn: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>', mirror: '<path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/>',
 };
 function ico(name, size = 20){ return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
@@ -266,7 +274,10 @@ async function openAny(files){
   const f = files.find((x) => kindOf(x) === "model3d") || files[0], k = kindOf(f);
   if (k === "review") return importReviewFile(f, null);
   if (k === "model3d") return openMedia(f, extrasOf(files, f));
-  if (k === "image" || k === "video") return openMedia(f);
+  if (k === "image" || k === "video"){
+    if (files.length > 1) toast(`Opened ${f.name} — one picture or video at a time`, 3500);
+    return openMedia(f);
+  }
   toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD) and Sight review files (.srev)", 4000);
 }
 async function openMedia(file, extras){
@@ -432,26 +443,28 @@ async function renderHome(){
   root.className = "home";
   const bar = el("header", "bar"), ttl = el("div", "ttl");
   ttl.appendChild(el("b", "", "Sight Review"));
-  // The two open buttons: big ones on an empty home screen, two small icons in the bar next to
-  // Settings once there is a review (renderHome picks one set when the list is in).
+  // One open button for every kind (a picture, a video, a 3D model with its textures, a .srev): a big one on
+  // an empty home screen, a small "Open" one in the bar next to Settings once there is a review (renderHome
+  // keeps one of them when the list is in). No accept filter: iOS / Android then offer the photo library,
+  // the camera and Files in one menu. Labels carry pick-file and pick-media (tests use either).
+  const OPEN_SUB = "Picture · video · 3D model · Sight review (.srev)";
   const mini = el("div", "mini");
-  [["photo", "Photo or video", "image/*,video/*", "pick-media"], ["file", "Open a file…", "", "pick-file"]].forEach(([icon, title, accept, cls]) => {
-    const l = el("label", "ib " + cls); l.title = title; l.setAttribute("aria-label", title);
-    l.innerHTML = ico(icon, 20);
-    l.appendChild(picker(accept, cls === "pick-file", openAny));
-    mini.appendChild(l);
-  });
+  const ml = el("label", "obtn pick-file pick-media"); ml.title = "Open a picture, video, 3D model or Sight review"; ml.setAttribute("aria-label", ml.title);
+  ml.innerHTML = ico("plus", 18) + "<span>Open</span>";
+  ml.appendChild(picker("", true, openAny));
+  mini.appendChild(ml);
   mini.hidden = true;
   bar.appendChild(el("span")); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
   const main = el("main");
   const opens = el("div", "opens");
-  const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
-  l1.appendChild(el("b", "", "Photo or video")); l1.appendChild(el("small", "", "from the library or camera roll"));
-  l1.appendChild(picker("image/*,video/*", false, openAny));
-  l2.appendChild(el("b", "", "Open a file…")); l2.appendChild(el("small", "", "Files: media, a 3D model (with its textures), or a .srev review"));
-  l2.appendChild(picker("", true, openAny));
-  opens.appendChild(l1); opens.appendChild(l2);
+  const l1 = el("label", "main pick-file pick-media");
+  l1.innerHTML = ico("plus", 26);
+  l1.appendChild(el("b", "", "Open a file"));
+  l1.appendChild(el("small", "", OPEN_SUB));
+  l1.appendChild(el("small", "", "3D: pick the model together with its textures"));
+  l1.appendChild(picker("", true, openAny));
+  opens.appendChild(l1);
   opens.hidden = true;
   main.appendChild(opens);
   // Opened over plain HTTP (a custom domain without HTTPS enforced): no service worker there, so no
@@ -485,7 +498,7 @@ async function renderHome(){
   // One set of open buttons in the page: the big ones only while there is no review at all.
   (all.length ? opens : mini).remove();
   mini.hidden = opens.hidden = false;
-  if (!all.length){ list.appendChild(el("p", "empty", "No reviews yet. Open a picture or a video to start one, or open a .srev file someone sent you.")); return; }
+  if (!all.length){ list.appendChild(el("p", "empty", "No reviews yet. Open a picture, a video or a 3D model to start one, or a .srev file someone sent you.")); return; }
   const hidden = hiddenKeys(), groups = tidyGroups(all.map((m) => m.key)), byKey = new Map(all.map((m) => [m.key, m]));
   const inGroup = new Set(groups.flatMap((g) => g.keys));
   // The list's entries: reviews on their own and groups (each placed as one, "g:<id>").
@@ -1446,7 +1459,7 @@ function viewsNow(){
   const m = new Map(R.views);
   Object.values(R.drafts).forEach((d) => drawFrames(d && d.draw).forEach((x) => {
     const c = x.frame && x.frame.ctx;
-    if (c && c.vk && c.cam && !m.has(c.vk)) m.set(c.vk, { vk: c.vk, cam: c.cam, hidden: Array.isArray(c.hidden) ? c.hidden : null, explode: typeof c.explode === "number" ? c.explode : null, created: Infinity });
+    if (c && c.vk && c.cam && !m.has(c.vk)) m.set(c.vk, { vk: c.vk, cam: c.cam, hidden: Array.isArray(c.hidden) ? c.hidden : null, explode: typeof c.explode === "number" ? c.explode : null, anim: M.animOf(c), created: Infinity });
   }));
   return m;
 }
@@ -1454,12 +1467,12 @@ const viewOrder = () => [...R.views.keys()];
 const viewNo = (vk) => viewOrder().indexOf(vk) + 1;
 const viewName = (vk) => viewNo(vk) ? "View " + viewNo(vk) : "New view";
 const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-function liveLook(){ const V = R && R.v3d; return V ? { cam: V.getView(), hidden: V.getHidden(), explode: V.explode } : null; }
+function liveLook(){ const V = R && R.v3d; return V ? { cam: V.getView(), hidden: V.getHidden(), explode: V.explode, anim: V.anim ? V.anim.state() : null } : null; }
 // The view a live camera (with its hidden meshes and explode) is on, or null. A view with no hidden
 // list / explode (an older Sight file) matches any; one that has them, only the same.
 // A view matches a live look (the view's own camera, hidden list and explode; none = any).
 function viewFits(v, look){
-  return !!v && RC.camMatch(look.cam, v.cam) && (!v.hidden || sameList(v.hidden, look.hidden)) && (v.explode == null || Math.abs(v.explode - look.explode) < EX_TOL);
+  return !!v && RC.camMatch(look.cam, v.cam) && (!v.hidden || sameList(v.hidden, look.hidden)) && RC.animMatch(v.anim, look.anim) && (v.explode == null || Math.abs(v.explode - look.explode) < EX_TOL);
 }
 function findVk(look){
   if (!look) return null;
@@ -1467,7 +1480,7 @@ function findVk(look){
   if (R.curVk && viewFits(viewsNow().get(R.curVk), look)) return R.curVk;
   let loose = null;
   for (const v of viewsNow().values()){
-    if (!RC.camMatch(look.cam, v.cam) || (v.hidden && !sameList(v.hidden, look.hidden))) continue;
+    if (!RC.camMatch(look.cam, v.cam) || (v.hidden && !sameList(v.hidden, look.hidden)) || !RC.animMatch(v.anim, look.anim)) continue;
     if (v.explode == null){ if (!loose) loose = v.vk; continue; }
     if (Math.abs(v.explode - look.explode) < EX_TOL) return v.vk;
   }
@@ -1482,6 +1495,9 @@ function ctx3d(make){
   const v = viewsNow().get(vk);
   const c = { vk, cam: v ? v.cam : look.cam, explode: v && v.explode != null ? v.explode : look.explode };
   if (!v || v.hidden) c.hidden = (v ? v.hidden : look.hidden).slice();  // (an older Sight view has no list: none added)
+  // The animation pose a view was made at (a static model, an older view: none).
+  const an = v ? v.anim : look.anim;
+  if (an) c.anim = { clip: an.clip, t: an.t };
   return c;
 }
 // Called on every camera move (the viewer's onMove) and after the rows change.
@@ -1499,6 +1515,7 @@ function goView(vk){
   if (!v || !V) return false;
   if (v.hidden) V.setHidden(v.hidden);
   if (v.explode != null) V.setExplode(v.explode);
+  if (v.anim && V.anim) V.anim.set(v.anim);
   V.setView(v.cam);
   R.curVk = vk;
   paintOverlay(); paintCurrent(); paint3dTools();
@@ -1522,11 +1539,11 @@ async function viewPic(vk, rv = R, ex){
   const v = rv.views.get(vk) || (rv === R ? viewsNow().get(vk) : null);
   if (!v) return null;
   const x = typeof ex === "number" ? ex : v.explode != null ? v.explode : 0, hid = v.hidden || [];
-  const a = viewAspect(vk, rv), tag = `vk=${vk}|a${a}|x${x.toFixed(3)}|h${hid.join(",")}`;
+  const a = viewAspect(vk, rv), tag = `vk=${vk}|a${a}|x${x.toFixed(3)}|h${hid.join(",")}` + (v.anim ? `|p${v.anim.clip}:${v.anim.t}` : "");
   const f = await cachedFrame(rv, tag, async () => {
     const V = await rv.v3dReady;
     if (!V || R !== rv) return null;
-    const c = V.still(v.cam, { hidden: hid, explode: x, aspect: a });
+    const c = V.still(v.cam, { hidden: hid, explode: x, anim: v.anim, aspect: a });
     const blob = await canvasBlob(c, "image/jpeg", 0.88), out = { blob, w: c.width, h: c.height };
     dropCanvas(c);
     return out;
@@ -1537,6 +1554,7 @@ async function viewPic(vk, rv = R, ex){
 async function frame3dNow(rv = R){
   const V = rv.v3d;
   if (!V) return null;
+  if (V.anim) V.anim.pause();  // a drawing belongs to the pose it is drawn on (ctx.anim): the model stops
   const ctx = ctx3d(true), a = V.aspect(), c = V.still(null, { aspect: a });
   const blob = await canvasBlob(c, "image/jpeg", 0.88), w = c.width, h = c.height;
   dropCanvas(c);
@@ -1587,21 +1605,138 @@ async function drawModel({ frames = [], onDone, noPlace }){
   const frame = mine ? Object.assign({}, fr, { ctx: mine.frame.ctx }) : fr;
   drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: mine ? mine.items : [], noPlace, onDone: (items) => onDone(items.length ? rest.concat([{ frame, items }]) : rest) });
 }
-// The 3D controls in the header: turn (which way is up), frame the model, the explode slider (a
-// model with parts), "show all" while a view's meshes are hidden.
+// The 3D controls. Header: turn (which way is up), frame the model; under them, while a mesh is picked (a
+// tap on it; a tap on nothing lets it go) or meshes are hidden, a row: the mesh's name, Hide, Only this,
+// UV, Show all. Bottom bar (els.tp, as a video's transport): Shading / Grid / Light / Explode icons, each
+// opening its choices in a row above (R.opt3d, as the drawing tools' rows); a model with animation adds a
+// play / pause button and a time slider. Shading, grid and light are this device's (sight-review:v3d), not
+// the review's; hidden meshes, explode and the animation pose are a view's.
+const V3D_KEY = "sight-review:v3d";
+function look3d(){ try { return JSON.parse(localStorage.getItem(V3D_KEY) || "{}") || {}; } catch { return {}; } }
+function saveLook3d(V){ try { localStorage.setItem(V3D_KEY, JSON.stringify({ ...V.shading, grid: V.grid, light: V.light })); } catch {} }
+function applyLook3d(V){
+  const l = look3d();
+  V.setShading({ base: l.base || "textured", wire: !!l.wire, xray: !!l.xray });
+  V.setGrid(l.grid || "off");
+  V.setLight(l.light || "studio");
+}
+const SHADE_LABEL = { solid: "Solid", vertex: "Vertex", textured: "Textured", normal: "Normal" };
+const LIGHT_LABEL = { studio: "Studio", sunset: "Sunset", overcast: "Overcast", night: "Night", head: "Headlight", flat: "Flat" };
+const GRID_LABEL = { off: "Off", grid: "Grid", axes: "Grid + axes" };
+function chip(label, on, fn, title){ const b = btn("chip3" + (on ? " on" : ""), label, fn, title || label); return b; }
 function paint3dTools(){
-  if (!els || !els.t3d || !R) return;
-  const box = els.t3d, V = R.v3d;
-  box.textContent = "";
-  if (!V) return;
-  if (V.canExplode){
-    const r = el("input", "explode"); r.type = "range"; r.min = "0"; r.max = "1"; r.step = "0.01"; r.value = String(V.explode);
-    r.title = "Explode"; r.setAttribute("aria-label", "Explode");
-    r.oninput = () => { V.setExplode(Number(r.value)); updateCurVk(); };
-    box.appendChild(r);
+  if (!els || !R || !is3d()) return;
+  const V = R.v3d;
+  paintSel3d(V);
+  const tp = els.tp;
+  if (!tp) return;
+  tp.textContent = "";
+  tp.hidden = !V;
+  els.animUi = null;
+  if (!V){ applyStageView(); return; }
+  const box = el("div", "tpi b3d");
+  const opt = R.opt3d;
+  if (opt){
+    const row = el("div", "row opts");
+    const set = (fn) => () => { fn(); saveLook3d(V); paint3dTools(); };
+    if (opt === "shade"){
+      const sh = V.shading;
+      Object.keys(SHADE_LABEL).forEach((k) => row.appendChild(chip(SHADE_LABEL[k], sh.base === k, set(() => V.setShading({ base: k })))));
+      row.appendChild(el("span", "sep3"));
+      row.appendChild(chip("Wire", sh.wire, set(() => V.setShading({ wire: !V.shading.wire })), "Wireframe over the model"));
+      row.appendChild(chip("X-ray", sh.xray, set(() => V.setShading({ xray: !V.shading.xray })), "See through the model"));
+    } else if (opt === "grid"){
+      Object.keys(GRID_LABEL).forEach((k) => row.appendChild(chip(GRID_LABEL[k], V.grid === k, set(() => V.setGrid(k)))));
+    } else if (opt === "light"){
+      Object.keys(LIGHT_LABEL).forEach((k) => row.appendChild(chip(LIGHT_LABEL[k], V.light === k, set(() => V.setLight(k)))));
+    } else if (opt === "explode" && V.canExplode){
+      const r = el("input", "explode"); r.type = "range"; r.min = "0"; r.max = "1"; r.step = "0.01"; r.value = String(V.explode);
+      r.title = "Explode"; r.setAttribute("aria-label", "Explode");
+      const pc = el("span", "val3", Math.round(V.explode * 100) + "%");
+      r.oninput = () => { V.setExplode(Number(r.value)); pc.textContent = Math.round(V.explode * 100) + "%"; updateCurVk(); };
+      row.appendChild(r); row.appendChild(pc);
+    }
+    box.appendChild(row);
   }
-  const hid = V.getHidden().length;
-  if (hid) box.appendChild(btn("btn sm", `Show all (${hid} hidden)`, () => { V.setHidden([]); paint3dTools(); updateCurVk(); }, "Show the meshes this view hides"));
+  const A = V.anim;
+  if (A){
+    const row = el("div", "row anim");
+    const play = ibtn(A.playing ? "pause" : "play", "Play / pause the animation", () => { A.toggle(); });
+    const r = el("input", "atime"); r.type = "range"; r.min = "0"; r.max = String(A.duration || 0); r.step = "any"; r.value = String(A.time);
+    r.title = "Animation time"; r.setAttribute("aria-label", "Animation time");
+    r.oninput = () => { A.pause(); A.seek(Number(r.value)); };
+    const tl = el("span", "val3");
+    row.appendChild(play); row.appendChild(r); row.appendChild(tl);
+    if (A.clips.length > 1){
+      const cb = btn("chip3", A.clips[A.clip].name, () => { A.setClip((A.clip + 1) % A.clips.length); paint3dTools(); }, "Next animation");
+      cb.classList.add("clipb");
+      row.appendChild(cb);
+    }
+    box.appendChild(row);
+    els.animUi = { play, r, tl };
+    paintAnim();
+  }
+  const icons = el("div", "row icons");
+  const tool = (k, icon, title) => {
+    const b = ibtn(icon, title, () => { R.opt3d = R.opt3d === k ? null : k; paint3dTools(); });
+    b.classList.toggle("on", R.opt3d === k);
+    icons.appendChild(b);
+  };
+  tool("shade", "shade", "Shading");
+  tool("grid", "grid", "Grid");
+  tool("light", "light", "Light");
+  if (V.canExplode) tool("explode", "explode", "Explode");
+  box.appendChild(icons);
+  tp.appendChild(box);
+  applyStageView();
+}
+// The animation row's play button, slider and time follow the model (every frame while it plays).
+function paintAnim(){
+  const u = els && els.animUi, A = R && R.v3d && R.v3d.anim;
+  if (!u || !A) return;
+  const playing = A.playing;
+  if (u.play.dataset.p !== String(playing)){ u.play.dataset.p = String(playing); u.play.innerHTML = ico(playing ? "pause" : "play"); u.play.classList.toggle("on", playing); }
+  if (document.activeElement !== u.r || playing) u.r.value = String(A.time);
+  u.tl.textContent = A.time.toFixed(2) + " s";
+}
+// The picked mesh's row (in the header) — or Show all while meshes are hidden.
+function paintSel3d(V){
+  const row = els.sel3d;
+  if (!row) return;
+  row.textContent = "";
+  const i = V ? V.selected : -1, hid = V ? V.getHidden() : [];
+  row.hidden = !V || (i < 0 && !hid.length);
+  if (row.hidden) return;
+  if (i >= 0){
+    row.appendChild(el("span", "mname", V.meshName(i)));
+    const act = (icon, title, fn) => row.appendChild(ibtn(icon, title, fn));
+    act("hidemesh", "Hide this mesh", () => { V.setHidden([...new Set(V.getHidden().concat([i]))].sort((a, b) => a - b)); V.select(-1); after3dChange(); });
+    act("solo", "Show only this mesh (hide the others)", () => { V.setHidden(Array.from({ length: V.meshCount }, (_, k) => k).filter((k) => k !== i)); after3dChange(); });
+    act("uv", "Show this mesh's UVs", () => showUv(i));
+  } else row.appendChild(el("span", "mname", `${hid.length} mesh${hid.length > 1 ? "es" : ""} hidden`));
+  if (hid.length) row.appendChild(ibtn("showall", `Show all (${hid.length} hidden)`, () => { V.setHidden([]); after3dChange(); }));
+  if (i >= 0) row.appendChild(ibtn("x", "Let the mesh go", () => { V.select(-1); paintSel3d(V); }));
+}
+function after3dChange(){ paint3dTools(); updateCurVk(); }
+// A tap on the model: picks the mesh under it, a tap on nothing lets it go.
+function tap3d(x, y){
+  const V = R && R.v3d;
+  if (!V) return;
+  const i = V.pick(x, y);
+  if (i === V.selected) return;
+  V.select(i);
+  paintSel3d(V);
+}
+async function showUv(i){
+  const V = R && R.v3d;
+  if (!V) return;
+  let r = null;
+  try { r = V.uvPicture(i); } catch (e){ console.warn("UV", e); }
+  if (!r){ toast("This mesh has no UVs"); return; }
+  const blob = await canvasBlob(r.canvas, "image/png");
+  dropCanvas(r.canvas);
+  const url = URL.createObjectURL(blob);
+  viewer({ url, vb: [0, 0, r.w, r.h], rows: [], label: `UV · ${V.meshName(i)}`, onClose: () => URL.revokeObjectURL(url) });
 }
 function turnModel(){
   const V = R && R.v3d;
@@ -1622,9 +1757,12 @@ function buildStage3d(stage, missing){
   stage.appendChild(wait);
   if (!rv.v3dReady){
     // Only the latest load counts: a file picked again meanwhile (rebind) starts another one.
-    const p = rv.v3dReady = createViewer(host, rv.file, { name: rv.meta.asset.name, extras: rv.extras, turns: rv.meta.turns || 0, onMove: () => { if (R === rv) updateCurVk(); } })
+    const p = rv.v3dReady = createViewer(host, rv.file, { name: rv.meta.asset.name, extras: rv.extras, turns: rv.meta.turns || 0,
+      onMove: () => { if (R === rv) updateCurVk(); }, onTap: (x, y) => { if (R === rv) tap3d(x, y); },
+      onAnim: () => { if (R === rv) paintAnim(); } })
       .then((V) => {
         if (R !== rv || rv.v3dReady !== p){ V.dispose(); return null; }
+        applyLook3d(V);
         rv.v3d = V;
         return V;
       }, (e) => { console.warn("3D", e); if (rv.v3dReady === p) rv.v3dError = e.message || String(e); return null; });
@@ -1663,7 +1801,8 @@ function buildStage(){
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
   if (a.kind !== "model3d") bindStage(stage);  // (3D: the model takes the fingers, model3d.js)
-  els.t3d = null; els.m3d = null;
+  els.m3d = null; els.animUi = null;
+  if (els.sel3d){ els.sel3d.remove(); els.sel3d = null; }
   if (a.kind === "model3d") buildStage3d(stage, missing);
   else if (a.kind === "image"){
     const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; sv.appendChild(img); sv.appendChild(svg); stage.appendChild(sv); paintOverlay(); applyStageView(); };
@@ -1742,9 +1881,11 @@ function buildStage(){
   tools.appendChild(eye);
   if (a.kind === "model3d"){
     tools.appendChild(ibtn("turn", "Turn the model a quarter (which way is up)", turnModel));
-    const t3 = el("div", "t3d");
-    els.t3d = t3;
-    tools.appendChild(t3);
+    // The picked mesh's row, under the header's icons (paintSel3d).
+    const sr = el("div", "row sel3d");
+    sr.hidden = true;
+    els.sel3d = sr;
+    tools.parentNode.appendChild(sr);
     paint3dTools();
   } else {
     const mirB = ibtn("mirror", "Mirror the view", () => setView({ rot: viewOf().rot, mirror: !viewOf().mirror }));
@@ -2458,7 +2599,7 @@ async function noteFrame(n){
   if (is3d()){
     // Its first view (noteVks) as a picture, with that view's ctx.
     const vk = noteVks(n)[0], v = vk && viewsNow().get(vk), f = vk ? await viewPic(vk, R, picExplode(n, vk)) : null;
-    return f && v ? { url: f.url, vb: f.vb, ctx: M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode }), at: { vk } } : null;
+    return f && v ? { url: f.url, vb: f.vb, ctx: M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode, anim: v.anim }), at: { vk } } : null;
   }
   if (!vb[2] || !vb[3]) return null;
   if (kindNow() === "image"){
@@ -2809,7 +2950,7 @@ async function editNoteDrawing(n, rid){
     const vk = vks.length > 1 ? await new Promise((ok) => menu("Which view?", vks.map((k) => ({ label: viewName(k), fn: () => ok(k) })).concat([{ label: "Cancel", fn: () => ok(null) }]))) : vks[0];
     if (!vk || R !== rv) return;
     const others = [...groups.entries()].filter(([k]) => k !== vk).map(([k, rs]) => ({ ctx: rs[0].data.ctx, items: rs.map(asItem) }));
-    const v = viewsNow().get(vk), vctx = v ? M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode }) : c;
+    const v = viewsNow().get(vk), vctx = v ? M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode, anim: v.anim }) : c;
     let f = null;
     if (rv.v3d && goView(vk)) f = await frame3dNow(rv);
     if (!f) f = await viewPic(vk, rv);
@@ -3798,4 +3939,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel };
+window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView };

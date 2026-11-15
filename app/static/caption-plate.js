@@ -3,13 +3,15 @@
 // (annotate.js) and the phone app's viewer (mobile/js/app.js, published as core/caption-plate.js).
 //
 //   - Bottom centre, 80 % of the width; more than five lines scroll inside it, with no scrollbar: while
-//     there is more text below, "…" stands under the last line shown. A host may move it:
+//     there is more text below, the last line shown fades out (a mask: the plate's size never changes with
+//     the scroll). A host may move it:
 //     --scp-bx / --scp-bw (left edge / width at the foot; the phone puts it at the left edge and
 //     narrows it on small screens, clear of its pencil), --scp-lt (top of the plate on the left
 //     side; the phone keeps it below its Back button),
 //     --scp-rb (bottom of the plate on the right side; the phone lifts it over the pencil), --scp-rt
 //     (the least room above it there; the reviewer page keeps it below its download button), and
-//     --scp-b / --scp-t / --scp-l / --scp-r (distance from each side).
+//     --scp-b / --scp-t / --scp-l / --scp-r (distance from each side), --scp-bmax (the widest a resized bottom
+//     plate may be; default the host less 24 px), --scp-bxmin (its leftmost edge; default 4 px).
 //   - A tap on the plate folds it into a round icon at the same side; a tap on the icon opens it.
 //   - Dragging the plate or the icon sticks it to the nearest of the four sides when let go. On the
 //     left / right side the plate is 80 % high and 25 % wide. While the text is longer than the plate
@@ -17,7 +19,13 @@
 //   - The text scrolls by the wheel, a drag on it (finger natively; mouse / pen move the words with the
 //     pointer), or a middle-button drag anywhere on the plate (as Sight's other lightbox panels, index.html attachPanScroll) instead of the browser's
 //     autoscroll.
-//   - Side and folded state are a per-device convenience (localStorage, `storeKey`).
+//   - Resizable: a small bar just outside the middle of the plate's free edge (towards the picture's middle):
+//     dragging it moves that edge and corner as the pointer goes — up / down sets a top / bottom plate's height
+//     and sideways its width (it stays centred, so it grows on both sides); on a side plate sideways sets the
+//     width, up / down the height. Never past the host's room (--scp-bmax: the widest a bottom plate may be). One size for
+//     the top / bottom sides, one for left / right, in shares of the host (so it follows the window); a
+//     double click / double tap on the grip puts the default size back.
+//   - Side, folded state and size are a per-device convenience (localStorage, `storeKey`).
 //
 // createPlate(parent, {storeKey}) → {el, set(c), destroy(), editing()}. `parent` must be positioned;
 // the plate fills it (pointer-transparent except the plate / icon). c = null hides it, else
@@ -61,10 +69,38 @@ function injectStyles(){
 .scp-edit:hover { background: rgb(255 255 255 / .16); }
 .scp-body { overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .scp-body::-webkit-scrollbar { display: none; }
-.scp-body.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent); mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent); }
-.scp-more { flex: none; margin-top: -2px; line-height: 1; font-weight: 700; letter-spacing: 1px; opacity: .8; }
-.scp-more[hidden] { display: none; }
+.scp-body.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 1.2em), transparent); mask-image: linear-gradient(#000 calc(100% - 1.2em), transparent); }
 .scp.b .scp-body, .scp.t .scp-body { max-height: calc(1.35em * 5); }
+/* A size set by the grip (.sz; --scp-uw / --scp-uh, shares of the host), never past the host's room: a bottom
+   plate at most --scp-bmax wide (the phone / reviewer page keep their pencil / button free) and clear of
+   --scp-t above; a side plate leaves 90 px of the picture. While editing, the plate takes the field's height. */
+.scp.b.sz .scp-plate { width: min(var(--scp-uw), var(--scp-bmax, calc(100% - 24px))); left: max(var(--scp-bxmin, 4px), calc(var(--scp-bx, 10%) + (var(--scp-bw, 80%) - min(var(--scp-uw), var(--scp-bmax, calc(100% - 24px)))) / 2)); height: min(var(--scp-uh), calc(100% - var(--scp-b, 12px) - var(--scp-t, 12px))); }
+.scp.t.sz .scp-plate { width: min(var(--scp-uw), calc(100% - 2 * var(--scp-bxmin, 12px))); left: max(var(--scp-bxmin, 4px), calc(50% - min(var(--scp-uw), calc(100% - 2 * var(--scp-bxmin, 12px))) / 2)); height: min(var(--scp-uh), calc(100% - var(--scp-b, 12px) - var(--scp-t, 12px))); }
+.scp.b.sz .scp-body, .scp.t.sz .scp-body { max-height: none; flex: 1 1 auto; min-height: 0; }
+.scp.l.sz .scp-plate { width: min(var(--scp-uw), calc(100% - var(--scp-l, 12px) - 90px)); min-width: 0; height: min(var(--scp-uh), calc(100% - var(--scp-lt, 10%) - 12px)); }
+.scp.r.sz .scp-plate { width: min(var(--scp-uw), calc(100% - var(--scp-r, 12px) - 90px)); min-width: 0; height: min(var(--scp-uh), calc(100% - var(--scp-rb, 10%) - var(--scp-rt, 12px))); }
+.scp.b.sz.editing .scp-plate, .scp.t.sz.editing .scp-plate { height: auto; }
+.scp.b.sz.editing .scp-body, .scp.t.sz.editing .scp-body { flex: none; }
+/* The grip: a small bar just outside the middle of the free edge (the head / text under it keep their taps). */
+.scp-grip { position: absolute; touch-action: none; z-index: 1; }
+.scp-grip::after { content: ""; position: absolute; left: 50%; top: 50%; border-radius: 2px; background: rgb(255 255 255 / .55); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); transform: translate(-50%, -50%); }
+.scp-grip:hover::after { background: rgb(255 255 255 / .9); }
+.scp.b .scp-grip, .scp.t .scp-grip { left: calc(50% - 26px); width: 52px; height: 16px; cursor: ns-resize; }
+.scp.b .scp-grip { top: -16px; }
+.scp.t .scp-grip { bottom: -16px; }
+.scp.b .scp-grip::after, .scp.t .scp-grip::after { width: 34px; height: 4px; }
+.scp.l .scp-grip, .scp.r .scp-grip { top: calc(50% - 26px); height: 52px; width: 16px; cursor: ew-resize; }
+.scp.l .scp-grip { right: -16px; }
+.scp.r .scp-grip { left: -16px; }
+.scp.l .scp-grip::after, .scp.r .scp-grip::after { width: 4px; height: 34px; }
+@media (pointer: coarse) {
+  .scp.b .scp-grip, .scp.t .scp-grip { height: 26px; }
+  .scp.b .scp-grip { top: -26px; }
+  .scp.t .scp-grip { bottom: -26px; }
+  .scp.l .scp-grip, .scp.r .scp-grip { width: 26px; }
+  .scp.l .scp-grip { right: -26px; }
+  .scp.r .scp-grip { left: -26px; }
+}
 .scp.l .scp-body, .scp.r .scp-body { flex: 1 1 auto; min-height: 0; }
 .scp-body.scroll { touch-action: pan-y; cursor: auto; }
 .scp-theme { opacity: .78; }
@@ -92,9 +128,14 @@ function injectStyles(){
 function readState(key){
   try {
     const v = JSON.parse(localStorage.getItem(key));
-    if (v && typeof v === "object") return { side: SIDES.includes(v.side) ? v.side : "b", min: !!v.min };
+    if (v && typeof v === "object") return { side: SIDES.includes(v.side) ? v.side : "b", min: !!v.min, hz: sizeOf(v.hz), vt: sizeOf(v.vt) };
   } catch {}
-  return { side: "b", min: false };
+  return { side: "b", min: false, hz: null, vt: null };
+}
+// A stored size {w, h} (shares of the host), or null.
+function sizeOf(v){
+  const ok = (x) => typeof x === "number" && x > 0 && x <= 1;
+  return v && ok(v.w) && ok(v.h) ? { w: v.w, h: v.h } : null;
 }
 function writeState(key, s){ try { localStorage.setItem(key, JSON.stringify(s)); } catch {} }
 
@@ -107,28 +148,35 @@ export function createPlate(parent, opts = {}){
   const root = document.createElement("div");
   root.className = "scp";
   root.hidden = true;
-  root.innerHTML = `<div class="scp-plate"><div class="scp-head"><span class="scp-num"></span><span class="scp-lab"></span><button type="button" class="scp-edit" title="Text for this picture" aria-label="Text for this picture">${ICON_EDIT}</button></div><div class="scp-body"></div><div class="scp-more" hidden>…</div></div><button type="button" class="scp-icon" title="Show the text" aria-label="Show the text">${ICON_TEXT}<i></i></button>`;
+  root.innerHTML = `<div class="scp-plate"><div class="scp-head"><span class="scp-num"></span><span class="scp-lab"></span><button type="button" class="scp-edit" title="Text for this picture" aria-label="Text for this picture">${ICON_EDIT}</button></div><div class="scp-body"></div><span class="scp-grip" title="Drag to resize (double-click: default size)"></span></div><button type="button" class="scp-icon" title="Show the text" aria-label="Show the text">${ICON_TEXT}<i></i></button>`;
   const plate = root.querySelector(".scp-plate"), icon = root.querySelector(".scp-icon");
   const num = root.querySelector(".scp-num"), lab = root.querySelector(".scp-lab"), edit = root.querySelector(".scp-edit");
-  const body = root.querySelector(".scp-body"), more = root.querySelector(".scp-more"), badge = icon.querySelector("i");
+  const body = root.querySelector(".scp-body"), grip = root.querySelector(".scp-grip"), badge = icon.querySelector("i");
   parent.appendChild(root);
   let cur = null, sig = null, editor = null, gone = false, endedAt = 0;
 
+  const orient = () => (st.side === "l" || st.side === "r" ? "vt" : "hz");
+  const paintSize = () => {
+    const z = st[orient()];
+    root.classList.toggle("sz", !!z);
+    if (z){ root.style.setProperty("--scp-uw", (z.w * 100).toFixed(2) + "%"); root.style.setProperty("--scp-uh", (z.h * 100).toFixed(2) + "%"); }
+  };
   const paintState = () => {
     SIDES.forEach((s) => root.classList.toggle(s, s === st.side));
     root.classList.toggle("min", st.min);
+    paintSize();
     paintScroll();
   };
   // A body with more text than it shows scrolls by a drag on it; otherwise the drag moves the plate.
-  // No scrollbar: "…" under the last line shown while there is more text below it.
+  // No scrollbar: the last line shown fades out while there is more text below it.
   function paintScroll(){
     const over = body.scrollHeight > body.clientHeight + 1;
     body.classList.toggle("scroll", over);
     paintMore(over);
   }
+  // (Only a mask on the body: nothing is added or removed, so the plate keeps its size while scrolling.)
   function paintMore(over = body.scrollHeight > body.clientHeight + 1){
     const hide = !over || !!editor || body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
-    if (more.hidden !== hide) more.hidden = hide;
     body.classList.toggle("more", !hide);
   }
   body.addEventListener("scroll", () => paintMore(), { passive: true });
@@ -177,6 +225,7 @@ export function createPlate(parent, opts = {}){
     body.textContent = "";
     body.appendChild(ta);
     editor = { ta, save: c.onSave, before: ta.value, pending: false };
+    root.classList.add("editing");
     paintMore();
     ta.focus();
     ta.addEventListener("keydown", (e) => {
@@ -190,6 +239,7 @@ export function createPlate(parent, opts = {}){
     const ed = editor;
     if (!ed) return;
     editor = null;
+    root.classList.remove("editing");
     endedAt = performance.now();
     const v = ed.ta.value.trim();
     sig = null;  // the body was replaced: draw it again whatever the content
@@ -200,7 +250,7 @@ export function createPlate(parent, opts = {}){
   edit.addEventListener("click", (e) => { e.stopPropagation(); if (performance.now() - endedAt > 400) startEdit(); });
 
   // ---- tap / drag ------------------------------------------------------------------------------
-  let g = null, pan = null;
+  let g = null, pan = null, lastGripTap = 0;
   const stop = (e) => e.stopPropagation();
   // Middle-button drag: the words follow the pointer (the open edit field's own when editing).
   function panDown(e){
@@ -224,6 +274,15 @@ export function createPlate(parent, opts = {}){
     if (g || (e.pointerType === "mouse" && e.button !== 0)) return;
     if (e.target.closest(".scp-edit, .scp-ta") || editor) return;  // (editing: a press only ends the edit)
     const el = e.currentTarget;
+    if (el === plate && e.target === grip){
+      const r = plate.getBoundingClientRect(), h = root.getBoundingClientRect();
+      // (Captured by the grip itself: its events still reach the plate's handlers.)
+      const lh = parseFloat(getComputedStyle(body).lineHeight) || 18;
+      const minH = plate.offsetHeight - body.offsetHeight + 2 * lh + 2;
+      g = { id: e.pointerId, el: grip, x: e.clientX, y: e.clientY, moved: false, resize: { w: r.width, h: r.height, W: h.width || 1, H: h.height || 1, minH } };
+      try { grip.setPointerCapture(e.pointerId); } catch {}
+      return;
+    }
     // On text that scrolls, a drag scrolls (a finger natively, by pan-y) and a tap still folds.
     // (A finger / pen pans natively only if .scroll was on when pressed: that class decides, not a fresh measure.)
     const scroll = el === plate && body.contains(e.target) &&
@@ -236,6 +295,20 @@ export function createPlate(parent, opts = {}){
     if (pan && e.pointerId === pan.id){ pan.sc.scrollTop = pan.top - (e.clientY - pan.y); return; }
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (g.resize){
+      if (!g.moved && Math.abs(dx) + Math.abs(dy) < (e.pointerType === "mouse" ? 3 : 8)) return;
+      g.moved = true;
+      // The grip's corner follows the pointer: a top / bottom plate is centred (its width grows on both sides).
+      const z = g.resize, sd = st.side;
+      const w = z.w + (sd === "b" || sd === "t" ? 2 * dx : sd === "l" ? dx : -dx);
+      const hh = z.h + (sd === "b" || sd === "r" ? -dy : dy);
+      // At least 120 px wide and the head + two lines high.
+      const wf = Math.min(0.98, Math.max(Math.min(0.98, 120 / z.W), w / z.W)), hf = Math.min(0.95, Math.max(Math.min(0.95, z.minH / z.H), hh / z.H));
+      st[orient()] = { w: wf, h: hf };
+      paintSize();
+      paintScroll();
+      return;
+    }
     if (!g.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
     if (g.scroll){
       if (!g.moved){ g.moved = true; plate.classList.add("scp-pan"); }
@@ -254,6 +327,16 @@ export function createPlate(parent, opts = {}){
     const d = g;
     g = null;
     try { d.el.releasePointerCapture(e.pointerId); } catch {}
+    if (d.resize){
+      if (d.moved) writeState(storeKey, st);
+      else if (e.type === "pointerup"){
+        // A second tap on the grip soon after the first: the default size.
+        const t = performance.now();
+        if (t - lastGripTap < 400){ st[orient()] = null; writeState(storeKey, st); paintState(); lastGripTap = 0; }
+        else lastGripTap = t;
+      }
+      return;
+    }
     if (d.scroll && d.moved){ plate.classList.remove("scp-pan"); return; }
     if (e.type === "pointercancel" || !d.moved){
       d.el.style.transform = ""; d.el.classList.remove("scp-drag");
@@ -290,7 +373,14 @@ export function createPlate(parent, opts = {}){
     el.addEventListener("pointercancel", up);
     el.addEventListener("lostpointercapture", (e) => {
       if (panEnd(e)) return;
-      if (g?.scroll && e.pointerId === g.id){ g = null; plate.classList.remove("scp-pan"); }
+      // The capture went without an up / cancel reaching us (the plate hidden mid-drag…): end the gesture, or
+      // `g` would stay set and block every later one (a finger brings a new pointer id each time).
+      if (!g || e.pointerId !== g.id) return;
+      const d = g;
+      g = null;
+      plate.classList.remove("scp-pan");
+      if (d.resize){ if (d.moved) writeState(storeKey, st); return; }
+      if (!d.scroll){ d.el.style.transform = ""; d.el.classList.remove("scp-drag"); }
     });
     // A middle press while another button is held fires no pointerdown: its mousedown still must not autoscroll / paste.
     el.addEventListener("mousedown", (e) => { e.stopPropagation(); if (e.button === 1) e.preventDefault(); });

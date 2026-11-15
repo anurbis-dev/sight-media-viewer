@@ -364,7 +364,13 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-frame > .split-handle { width: 5px; cursor: col-resize; }
 .uv-pane { position: relative; min-width: 0; height: 100%; overflow: hidden; background: #1b1b1f; }
 /* With the UV split on, the 3D shading bar centres on the model's half (--uv-left = split edge). */
-#v3dShade { left: calc(50% + var(--uv-left, 0px) / 2); }
+#v3dShade, #v3dAnim { left: calc(50% + var(--uv-left, 0px) / 2); }
+/* The animation bar (a model with clips): above the shading bar. */
+#v3dAnim { bottom: calc(64px + var(--hud-in, 0px)); align-items: center; }
+.v3d-anim .v3d-explode { width: 260px; cursor: pointer; }
+.v3d-anim .v3d-atime { min-width: 96px; padding: 0 6px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.v3d-anim select { max-width: 160px; height: 28px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.v3d-anim select[hidden] { display: none; }
 .uv-pane .uv-bar { align-items: center; }
 .uv-pane .uv-bar select { height: 32px; border-radius: 7px; }
 .uv-pane .uv-wait { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 12px; }
@@ -611,7 +617,8 @@ import { createCompare, comparable, flash } from "/static/compare.js";
 import { hotkey } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
-  dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, FBX_TEXTURE_WAIT_MS } from "/static/model3d-core.js";
+  dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
+  setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
 const TILE_MIN = 48, TILE_MAX = 360, COMPACT = 72;
@@ -935,6 +942,8 @@ let onV3DEnvPresetChange = null, onV3DEnvFile = null, onV3DRotate = null;
 let v3dCam = null;
 // Lightbox 3D inspector (materials, textures, highlight) — see makeModelInspector().
 let v3dInspect = null;
+// The lightbox model's animation ({aid, a: createAnimator from model3d-core.js}; null: no clips), set by boot3d.
+let v3dAnim = null;
 const camKeys = new Set();
 const CAM_MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
 // showInLight() sets this from the extension alone (a synchronous best guess); boot3d() corrects
@@ -3028,7 +3037,7 @@ function dispose3d(elId, defer){
   // onV3DEnvPresetChange/onV3DEnvFile are lightbox-only (the settings panel's environment
   // picker) — only clear them when it's the lightbox's own viewer being torn down, not the
   // inspector's, or closing the inspector preview would break the still-open lightbox's picker.
-  if (elId === "light3d"){ onV3DEnvPresetChange = null; onV3DEnvFile = null; onV3DRotate = null; v3dCam = null; camKeys.clear(); v3dInspect?.dispose(); v3dInspect = null; }
+  if (elId === "light3d"){ onV3DEnvPresetChange = null; onV3DEnvFile = null; onV3DRotate = null; v3dCam = null; camKeys.clear(); v3dInspect?.dispose(); v3dInspect = null; v3dAnim?.a.dispose(); v3dAnim = null; paintAnimBar(); }
   const ctl = threeCtls.get(elId);
   if (!ctl) return null;
   try { ctl.stop(); } catch {}
@@ -3126,7 +3135,9 @@ async function loadModel(THREE, url, ext, onProgress, aid){
   if (low === ".glb" || low === ".gltf"){
     const { manager } = makeModelManager(THREE, aid);
     const loader = await gltfLoaderWithDecoders(manager);
-    return (await loader.loadAsync(url, onProgress)).scene;
+    const g = await loader.loadAsync(url, onProgress);
+    g.scene.animations = g.animations || [];  // the clips go with the model (cache clones keep them)
+    return g.scene;
   }
   if (low === ".usdz"){
     // three.js has no USD loader — the server converts once (via the optional
@@ -3136,7 +3147,9 @@ async function loadModel(THREE, url, ext, onProgress, aid){
     // reason, and the caller shows it.
     const data = await fetchBufferWithProgress(`/api/model-glb/${aid}`, onProgress);
     const loader = await gltfLoaderWithDecoders();
-    return (await loader.parseAsync(data, "")).scene;
+    const g = await loader.parseAsync(data, "");
+    g.scene.animations = g.animations || [];
+    return g.scene;
   }
   if (low === ".obj"){
     const { OBJLoader } = await import("three/addons/loaders/OBJLoader.js");
@@ -3414,12 +3427,7 @@ function makeCameraRig(THREE, camera, controls, aid, turns){
 
 // A few built-in procedural "sky" presets (no bundled HDRI, so nothing to fetch) plus support
 // for loading any image from disk as an equirectangular environment map.
-const ENV_PRESETS = {
-  studio:   { top: 0xcfe0ff, horizon: 0x8a8f9a, bottom: 0x1c1c20 },
-  sunset:   { top: 0xffb37a, horizon: 0xff8a5c, bottom: 0x1a1420 },
-  overcast: { top: 0xc7cdd6, horizon: 0xaeb4bd, bottom: 0x6b7078 },
-  night:    { top: 0x0c1830, horizon: 0x101828, bottom: 0x02050c },
-};
+// ENV_PRESETS (the environment gradients) come from model3d-core.js, shared with the phone app.
 // buildEnvTexture (model3d-core.js) bakes one of them into the env map of the lightbox 3D panel's
 // "Environment light" (null on failure: the env toggle becomes a no-op).
 // "Load any [image] from disk" — a regular equirectangular photo/render works fine through
@@ -3441,76 +3449,8 @@ async function buildEnvTextureFromImage(THREE, renderer, url){
   }
 }
 
-// Base shading swap (Blender-style: solid / vertex color / textured / normal), always starting
-// from `origMats` (the materials the model actually loaded with) so repeated switches never
-// compound. Wireframe and x-ray are separate overlay passes below — they layer on top of
-// whichever base is active instead of being mutually exclusive with it.
-function applyBaseMaterial(THREE, obj, origMats, mode){
-  if (!obj || !origMats) return;
-  obj.traverse((c) => {
-    if (!c.isMesh) return;
-    const cur = c.material;
-    if (cur && cur.userData && cur.userData._v3dTemp) cur.dispose();
-    let mat;
-    if (mode === "solid"){
-      const v = state.v3d;
-      mat = new THREE.MeshStandardMaterial({ color: v.solidColor, roughness: v.solidRough, metalness: v.solidMetal });
-      mat.userData._v3dSolid = true;
-    }
-    else if (mode === "vertex"){
-      const hasColor = !!c.geometry.attributes.color;
-      mat = new THREE.MeshBasicMaterial({ vertexColors: hasColor, color: hasColor ? 0xffffff : 0x555555 });
-    } else if (mode === "normal") mat = new THREE.MeshNormalMaterial();
-    else mat = origMats.get(c); // "textured"
-    if (mat !== origMats.get(c)) mat.userData._v3dTemp = true;
-    c.material = mat;
-  });
-}
-// Mutates the *current* material's transparency in place (instead of swapping to a dedicated
-// x-ray material) so it layers over whatever base mode is active; the original opacity is
-// stashed on first use and restored when toggled back off. Multi-material meshes carry an array
-// (textured mode restores it from origMats) — every entry is handled.
-function applyXray(obj, on){
-  if (!obj) return;
-  obj.traverse((c) => {
-    if (!c.isMesh || !c.material) return;
-    for (const m of Array.isArray(c.material) ? c.material : [c.material]) xrayMaterial(m, on);
-  });
-}
-function xrayMaterial(m, on){
-  if (!m) return;
-  if (on){
-    if (m.userData._xraySaved === undefined){
-      m.userData._xraySaved = { opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite };
-    }
-    m.transparent = true;
-    m.opacity = 0.3;
-    m.depthWrite = false;
-  } else if (m.userData._xraySaved !== undefined){
-    Object.assign(m, m.userData._xraySaved);
-    delete m.userData._xraySaved;
-  }
-  m.needsUpdate = true;
-}
-// A sibling LineSegments per mesh — toggling `.wireframe` on the base material would *replace*
-// its solid fill instead of drawing edges on top of it, so this adds a real overlay mesh.
-function setWireOverlay(THREE, obj, on){
-  if (!obj) return;
-  obj.traverse((c) => {
-    if (!c.isMesh) return;
-    let ov = c.userData._wireOverlay;
-    if (on){
-      if (!ov){
-        const wg = new THREE.WireframeGeometry(c.geometry);
-        ov = new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x9fb4c7, transparent: true, opacity: 0.55 }));
-        ov.raycast = () => {};
-        c.add(ov);
-        c.userData._wireOverlay = ov;
-      }
-      ov.visible = true;
-    } else if (ov) ov.visible = false;
-  });
-}
+// Base shading (applyBaseMaterial), x-ray (applyXray) and the wireframe overlay (setWireOverlay) live in
+// model3d-core.js, shared with the phone app.
 // ---- Soft shadows for the lightbox 3D viewer ----------------------------------------------------
 // three's own filters blur by a fixed number of shadow-map texels, so a low-res map shows stair
 // steps and there is no notion of a light's size. The viewer runs BasicShadowMap (raw depth) and
@@ -4178,7 +4118,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       scene.environmentRotation.y = v.lightYaw * D2R;
       if (obj){
         if (shadeApplied.base !== v.shadeBase){
-          applyBaseMaterial(THREE, obj, origMats, v.shadeBase);
+          applyBaseMaterial(THREE, obj, origMats, v.shadeBase, { color: v.solidColor, rough: v.solidRough, metal: v.solidMetal });
           shadeApplied.base = v.shadeBase;
           shadeApplied.xray = null; // materials were just swapped — force xray to reapply onto them
           shadeApplied.solid = null;
@@ -4211,11 +4151,14 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       }
     }
 
-    let live = true, camRig = null;
+    let live = true, camRig = null, lastT = performance.now();
     const loop = () => {
       if (!live) return;
       requestAnimationFrame(loop);
       syncSize();
+      const now = performance.now(), dt = (now - lastT) / 1000;
+      lastT = now;
+      if (isLightbox && v3dAnim && v3dAnim.aid === aid && v3dAnim.a.tick(dt)) paintAnimBar();
       if (isLightbox) syncRig();
       camRig?.step(performance.now());
       controls.update();
@@ -4301,6 +4244,11 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       // than offer a control that does nothing.
       $("v3dExplode").hidden = !explodeMap;
       $("v3dExplodeSep").hidden = !explodeMap;
+      // Animation clips (glTF / FBX): played by the shared animator, which keeps the explode rig on the pose.
+      v3dAnim?.a.dispose();
+      const anim = createAnimator(THREE, obj, { rig: () => explodeMap, explode: () => state.v3d.explode, onChange: () => paintAnimBar() });
+      v3dAnim = anim ? { aid, a: anim } : null;
+      paintAnimBar();
       shadeApplied = { base: null, wire: null, xray: null, explode: null, solid: null }; // force the next syncRig() to (re)apply everything
       syncRig();
       v3dInspect = makeModelInspector(THREE, renderer, scene, obj, origMats, aid);
@@ -4423,6 +4371,20 @@ function bindAnnot3d(host, aid, rig, controls, capture){
     },
     // While annotating, orbit damping is off: the camera must stop exactly where the drawing was made.
     annotating: (on) => { controls.enableDamping = on ? false : damp; },
+    // The animation pose ({clip, t}; null: no clips) — a view keeps the one it was made at (FORMAT.md ctx.anim).
+    getAnim: () => (v3dAnim && v3dAnim.aid === aid ? v3dAnim.a.state() : null),
+    setAnim: (s) => { if (v3dAnim && v3dAnim.aid === aid) v3dAnim.a.set(s); },
+    // fn() with the model at pose s, then the live pose back (playing again if it was).
+    withAnim: (s, fn) => {
+      const A = v3dAnim && v3dAnim.aid === aid ? v3dAnim.a : null;
+      if (!A || !s) return fn();
+      const keep = { clip: A.clip, t: A.time, playing: A.playing };
+      A.set(s);
+      try { return fn(); } finally { A.set(keep); if (keep.playing) A.play(); }
+    },
+    getAnimState: () => { const A = v3dAnim && v3dAnim.aid === aid ? v3dAnim.a : null; return A ? { clip: A.clip, t: A.time, playing: A.playing } : null; },
+    pauseAnim: () => { if (v3dAnim && v3dAnim.aid === aid) v3dAnim.a.pause(); },
+    setAnimState: (k) => { const A = v3dAnim && v3dAnim.aid === aid ? v3dAnim.a : null; if (A && k){ A.set(k); if (k.playing) A.play(); } },
   });
 }
 
@@ -5174,6 +5136,12 @@ function toggleLight(a){
       <span class="v3d-sep" id="v3dExplodeSep"></span>
       <div class="v3d-explode" id="v3dExplode" title="Explode parts (Ctrl+right-drag)"><i></i></div>
     </div>
+    <div class="v3d-shade v3d-anim" id="v3dAnim" hidden>
+      <button type="button" data-act="play" title="Play / pause the animation">▶</button>
+      <div class="v3d-explode" id="v3dAnimTrack" title="Animation time — drag to scrub"><i></i></div>
+      <span class="v3d-atime" id="v3dAnimTime"></span>
+      <select id="v3dAnimClip" title="Animation clip" hidden></select>
+    </div>
     <div class="v3d-panel" id="v3dPanel" hidden></div>
     <button class="v3d-gear" id="psdBtn" data-tools="psd" type="button" title="Layers (D)" hidden>☰</button>
     <div class="v3d-panel" id="psdPanel" hidden></div>
@@ -5210,6 +5178,17 @@ function toggleLight(a){
     onChange: (v) => { state.v3d.explode = v; saveV3D(); annot.explodeChanged(v); },
   });
   attachPanScroll(wrap.querySelector("#v3dPanel"));
+  // The animation bar (shared animator, model3d-core.js createAnimator): play / pause, scrub, clip.
+  const animNow = () => (v3dAnim && light && v3dAnim.aid === light.id ? v3dAnim.a : null);
+  wrap.querySelector("#v3dAnim [data-act=play]").onclick = () => animNow()?.toggle();
+  light.animSlider = initThinSlider(wrap.querySelector("#v3dAnimTrack"), {
+    value: 0,
+    onChange: (v) => { const A = animNow(); if (A){ A.pause(); A.seek(v * A.duration); } },
+  });
+  wrap.querySelector("#v3dAnimClip").onchange = (e) => {
+    animNow()?.setClip(Number(e.target.value));
+    e.target.blur(); // a focused <select> would swallow WASD / F in the 3D view
+  };
   const framePop = wrap.querySelector("#framePop");
   const frameBtn = wrap.querySelector("#frameBtn");
   frameBtn.onclick = () => {
@@ -5282,6 +5261,7 @@ function showInLight(a){
   currentAssetIsSplat = SPLAT_EXT.has((a.ext || "").toLowerCase());
   // A PSD is a "design" asset, but only PSDs have layers — they get their own toolbar key.
   syncLightTools(a.ext === ".psd" ? "psd" : a.kind); // gear opens the settings panel — splats get their own panel content
+  paintAnimBar(); // (its own rule: only a model with animation clips)
   $("psdPanel").hidden = true;
   $("psdBtn").classList.remove("on");
   if (a.ext === ".psd") loadPsdLayers(a.id);
@@ -5506,6 +5486,26 @@ function onLightInfoClick(e){
   const kind = b.dataset.kind, i = Number(b.dataset.i);
   const cur = v3dInspect.sel;
   setInspectSel(cur && cur.kind === kind && cur.i === i ? null : { kind, i });
+}
+// The lightbox's animation bar for the model on screen (hidden when it has no clips).
+function paintAnimBar(){
+  const bar = document.getElementById("v3dAnim");
+  if (!bar) return;
+  const A = v3dAnim && light && v3dAnim.aid === light.id ? v3dAnim.a : null;
+  bar.hidden = !A;
+  if (!A) return;
+  const play = bar.querySelector("[data-act=play]");
+  play.textContent = A.playing ? "❚❚" : "▶";
+  play.classList.toggle("on", A.playing);
+  const sel = bar.querySelector("#v3dAnimClip");
+  if (sel._anim !== A){  // another model: its own clip names
+    sel._anim = A;
+    sel.innerHTML = A.clips.map((c, i) => `<option value="${i}">${esc(c.name)}</option>`).join("");
+  }
+  sel.hidden = A.clips.length < 2;
+  sel.value = String(A.clip);
+  light?.animSlider?.set(A.duration ? A.time / A.duration : 0);
+  bar.querySelector("#v3dAnimTime").textContent = `${A.time.toFixed(2)} / ${A.duration.toFixed(2)} s`;
 }
 // One entry point for the inspector selection (info panel list clicks, Ctrl+click in the 3D view):
 // highlight, list marks, UV pane. `reveal`: open the entry's section in the info panel (if the panel
@@ -5732,45 +5732,9 @@ function makeModelInspector(THREE, renderer, scene, obj, origMats, aid){
     ["Bounds", d ? `${f(d.x)} × ${f(d.y)} × ${f(d.z)}` : null],
   ] };
 
-  // --- render-target readback (thumbnails, UV picture) ---
-  const lut = new Uint8ClampedArray(256);
-  for (let i = 0; i < 256; i++){ const c = i / 255; lut[i] = Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055)); }
-  function renderToCanvas(sc, cam, target, W, H, encode){
-    const prevRT = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
-    const prevShadow = renderer.shadowMap.autoUpdate;
-    renderer.shadowMap.autoUpdate = false;
-    renderer.setRenderTarget(target);
-    renderer.setClearColor(0x000000, 0);
-    renderer.clear();
-    renderer.render(sc, cam);
-    const px = new Uint8Array(W * H * 4);
-    renderer.readRenderTargetPixels(target, 0, 0, W, H, px);
-    renderer.setRenderTarget(prevRT);
-    renderer.setClearColor(prevColor, prevAlpha);
-    renderer.shadowMap.autoUpdate = prevShadow;
-    const cv = document.createElement("canvas");
-    cv.width = W;
-    cv.height = H;
-    const ctx = cv.getContext("2d");
-    const data = ctx.createImageData(W, H), out = data.data;
-    for (let y = 0; y < H; y++){
-      let si = (H - 1 - y) * W * 4, di = y * W * 4; // GL rows are bottom-up
-      for (let x = 0; x < W; x++, si += 4, di += 4){
-        out[di] = encode ? lut[px[si]] : px[si];
-        out[di + 1] = encode ? lut[px[si + 1]] : px[si + 1];
-        out[di + 2] = encode ? lut[px[si + 2]] : px[si + 2];
-        out[di + 3] = px[si + 3];
-      }
-    }
-    ctx.putImageData(data, 0, 0);
-    return cv;
-  }
-  const quadFor = (tex, W, H) => {
-    const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-    const ar = W / H, iar = tex.image && tex.image.width && tex.image.height ? tex.image.width / tex.image.height : ar;
-    q.scale.set(Math.min(1, iar / ar), Math.min(1, ar / iar) * (tex.flipY ? 1 : -1), 1);
-    return q;
-  };
+  // --- render-target readback (thumbnails, UV picture): model3d-core.js ---
+  const renderToCanvas = (sc, cam, target, W, H, encode) => readbackCanvas(THREE, renderer, sc, cam, target, W, H, encode);
+  const quadFor = (tex, W, H) => textureQuad(THREE, tex, W, H);
   const camQ = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 2);
   camQ.position.z = 1;
 
@@ -5862,10 +5826,9 @@ function makeModelInspector(THREE, renderer, scene, obj, origMats, aid){
   const pick = (om, mats, layer, hiddenMat) => Array.isArray(om) ? om.map((m) => (!mats || mats.has(m) ? layer : hiddenMat)) : layer;
 
   // --- highlight ---
-  // Blender's selection orange: the theme accent can be near-white and vanish on light textures.
-  const accent = 0xff8a1f;
-  const hlMat = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
-  const hlWire = new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: 0.18, depthWrite: false });
+  // The selection's look (model3d-core.js, shared with the phone's mesh pick).
+  const accent = HIGHLIGHT_COLOR;
+  const [hlMat, hlWire] = highlightMaterials(THREE);
   const hidden = new THREE.MeshBasicMaterial({ visible: false });
   let overlays = [];
   function clearHighlight(){
@@ -5878,82 +5841,20 @@ function makeModelInspector(THREE, renderer, scene, obj, origMats, aid){
     if (!sel || disposed) return;
     for (const { c, om, mats } of targets(sel)){
       for (const layer of [hlMat, hlWire]){
-        const mat = pick(om, mats, layer, hidden);
-        const h = c.isSkinnedMesh ? new THREE.SkinnedMesh(c.geometry, mat) : new THREE.Mesh(c.geometry, mat);
-        if (c.isSkinnedMesh){ h.bind(c.skeleton, c.bindMatrix); h.bindMode = c.bindMode; }
-        if (c.morphTargetInfluences){ h.morphTargetInfluences = c.morphTargetInfluences; h.morphTargetDictionary = c.morphTargetDictionary; }
-        h.matrixAutoUpdate = false;
-        h.frustumCulled = false;
-        h.renderOrder = 10;
-        h.updateMatrixWorld = () => {
-          h.matrixWorld.copy(c.matrixWorld);
-          if (h.isSkinnedMesh) h.bindMatrixInverse.copy(c.bindMatrixInverse);
-        };
-        h.updateWorldMatrix = h.updateMatrixWorld;
+        const h = meshHighlight(THREE, c, pick(om, mats, layer, hidden));
         scene.add(h);
         overlays.push(h);
       }
     }
   }
 
-  // --- UV picture ---
-  const uvShader = (color, alpha, wire) => new THREE.ShaderMaterial({
-    wireframe: wire, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: { uFlip: { value: 1 }, uColor: { value: new THREE.Color(color) }, uAlpha: { value: alpha } },
-    vertexShader: "attribute vec2 uvSel; uniform float uFlip; void main(){ vec2 p = uvSel * 2.0 - 1.0; p.y *= uFlip; gl_Position = vec4(p, 0.0, 1.0); }",
-    fragmentShader: "uniform vec3 uColor; uniform float uAlpha; void main(){ gl_FragColor = vec4(uColor, uAlpha); }",
-  });
-  // Texture under the UVs, one channel at a time. sRGB textures arrive linear from the sampler and
-  // the readback encodes back to sRGB, so R/G/B show the stored values; alpha is not colour-managed,
-  // so it is pre-decoded here to survive that encode. RGBA composites over a checker.
-  const CHAN = { rgb: 0, rgba: 1, r: 2, g: 3, b: 4, a: 5 };
-  const bgShader = (tex, chan, srgb, W) => new THREE.ShaderMaterial({
-    depthTest: false, depthWrite: false,
-    uniforms: { map: { value: tex }, uChan: { value: CHAN[chan] ?? 0 }, uSrgb: { value: srgb ? 1 : 0 }, uCell: { value: Math.max(8, Math.round(W / 32)) } },
-    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
-    fragmentShader: `uniform sampler2D map; uniform int uChan; uniform float uSrgb; uniform float uCell; varying vec2 vUv;
-      float lin(float c){ return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
-      void main(){
-        vec4 t = texture2D(map, vUv);
-        float a = uSrgb > 0.5 ? lin(t.a) : t.a;
-        vec2 q = floor(gl_FragCoord.xy / uCell);
-        float ck = mod(q.x + q.y, 2.0) > 0.5 ? 0.18 : 0.06;
-        vec3 c = t.rgb;
-        if (uChan == 1) c = mix(vec3(uSrgb > 0.5 ? ck : sqrt(ck)), t.rgb, t.a);
-        else if (uChan == 2) c = vec3(t.r);
-        else if (uChan == 3) c = vec3(t.g);
-        else if (uChan == 4) c = vec3(t.b);
-        else if (uChan == 5) c = vec3(a);
-        gl_FragColor = vec4(c, 1.0);
-      }`,
-  });
-  // A light geometry per (mesh, UV set) that shares the mesh's buffers but exposes the chosen set as
-  // "uvSel". Cached for the viewer's lifetime and never disposed: disposing a geometry frees the GL
-  // buffers of its attributes, which the model itself still uses (the context goes with the viewer).
-  const UV_NAMES = ["uv", "uv1", "uv2", "uv3"];
-  const uvCount = (g) => { let k = 0; while (k < UV_NAMES.length && g.attributes[UV_NAMES[k]]) k++; return k; };
-  const uvGeo = new Map();
-  function uvGeometry(c, set){
-    const key = c.uuid + ":" + set;
-    let g = uvGeo.get(key);
-    if (!g){
-      const src = c.geometry;
-      g = new THREE.BufferGeometry();
-      if (src.index) g.setIndex(src.index);
-      g.setAttribute("position", src.attributes.position);
-      g.setAttribute("uvSel", src.attributes[UV_NAMES[set]]);
-      for (const gr of src.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
-      uvGeo.set(key, g);
-    }
-    return g;
-  }
+  // --- UV picture (model3d-core.js createUvPainter, shared with the phone) ---
+  const uvPainter = createUvPainter(THREE, renderer);
   const gltf = [".glb", ".gltf"].includes((assetById(aid)?.ext || "").toLowerCase());
   async function renderUV(sel, chan){
     if (disposed || !hasUV) return null;
     const list = targets(sel).filter((t) => t.c.geometry.attributes.uv);
     if (!list.length) return null;
-    const sets = Math.max(...list.map((t) => uvCount(t.c.geometry)));
-    const set = Math.min(ins.uvSet || 0, sets - 1);
     // Background: the selection's base color (or the texture itself); with nothing selected, the
     // model's base color only if it has exactly one material.
     let bg = null;
@@ -5962,48 +5863,11 @@ function makeModelInspector(THREE, renderer, scene, obj, origMats, aid){
     else if (sel?.kind === "mesh") bg = meshes[sel.i]?.arr.find((m) => m.map)?.map;
     else if (materials.length === 1) bg = materials[0].rep.map;
     bg = bg || null;
-    const iw = bg?.image?.width || 0, ih = bg?.image?.height || 0;
-    const big = Math.min(4096, Math.max(2048, iw, ih));
-    const W = iw && ih ? Math.round(iw >= ih ? big : big * iw / ih) : big;
-    const H = iw && ih ? Math.round(ih >= iw ? big : big * ih / iw) : big;
-    const target = new THREE.WebGLRenderTarget(W, H);
-    const sc = new THREE.Scene();
-    sc.background = null;
-    const tmp = [];
-    const srgb = !bg || bg.colorSpace === THREE.SRGBColorSpace;
-    if (bg){
-      const q = quadFor(bg, W, H);
-      q.material.dispose();
-      q.material = bgShader(bg, chan, srgb, W);
-      q.renderOrder = 0;
-      sc.add(q);
-      tmp.push(q);
-    } else {
-      const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ color: 0x2a2a30 }));
-      sc.add(q);
-      tmp.push(q);
-    }
-    const vTop = bg ? !bg.flipY : gltf;
-    const color = sel ? accent : 0xffffff;
-    const fill = uvShader(color, sel ? 0.14 : 0.06, false), wire = uvShader(color, sel ? 0.9 : 0.55, true);
-    for (const m of [fill, wire]) m.uniforms.uFlip.value = vTop ? -1 : 1;
-    const hiddenUV = new THREE.MeshBasicMaterial({ visible: false });
-    for (const { c, om, mats } of list){
-      if (uvCount(c.geometry) <= set) continue; // this mesh has no such set
-      for (const [layer, order] of [[fill, 1], [wire, 2]]){
-        const me = new THREE.Mesh(uvGeometry(c, set), pick(om, mats, layer, hiddenUV));
-        me.frustumCulled = false;
-        me.renderOrder = order;
-        sc.add(me);
-      }
-    }
-    const cv = renderToCanvas(sc, camQ, target, W, H, srgb);
-    target.dispose();
-    fill.dispose(); wire.dispose(); hiddenUV.dispose();
-    for (const q of tmp){ q.geometry.dispose(); q.material.dispose(); }
-    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const r = uvPainter.paint(list, { bg, set: ins.uvSet || 0, chan, gltf, color: sel ? accent : 0xffffff, fillA: sel ? 0.14 : 0.06, wireA: sel ? 0.9 : 0.55 });
+    if (!r) return null;
+    const blob = await new Promise((res) => r.canvas.toBlob(res, "image/png"));
     if (!blob || disposed) return null;
-    return { url: URL.createObjectURL(blob), w: W, h: H, sets, set, hasBg: !!bg };
+    return { url: URL.createObjectURL(blob), w: r.w, h: r.h, sets: r.sets, set: r.set, hasBg: !!bg };
   }
 
   function dispose(){

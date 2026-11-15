@@ -491,7 +491,9 @@ export function createAnnotator(host){
   // 0.100 at 29.97 fps is just before frame 3's start and would show frame 2).
   const landAt = (t) => S.fpsKnown ? (frameIndex(t) + 0.25) * frameDur() : t;
   const camMatch = RC.camMatch;  // shared with the phone app (review-core.js)
-  // A view is a camera plus the meshes shown or hidden there: {vk, cam, hidden, v3d, explode, created}.
+  // A view is a camera plus the meshes shown or hidden there: {vk, cam, hidden, v3d, explode, anim, created}.
+  // anim is the animation pose ({clip, t}) of an animated model the view was made at (null: a static model or
+  // an older file — any pose matches); like hidden it is fixed when the view is made.
   // hidden is the mesh indices hidden (null when the file predates it: any mesh state matches). The views
   // are kept in the order they were first made, so the number a view shows (viewNumber, the chips, the
   // pictures of a note, the report) does not depend on the order the items load in.
@@ -508,7 +510,8 @@ export function createAnnotator(host){
       if (!c || !c.vk || !c.cam) continue;
       const at = it.data.created || 0;
       let v = made.get(c.vk);
-      if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, v3d: null, explode: null, explodeAt: 0, created: at }; made.set(c.vk, v); }
+      if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, v3d: null, explode: null, explodeAt: 0, anim: null, created: at }; made.set(c.vk, v); }
+      if (!v.anim && c.anim && typeof c.anim === "object") v.anim = { clip: c.anim.clip | 0, t: Number(c.anim.t) || 0 };
       v.created = Math.min(v.created, at);
       if (Array.isArray(c.hidden) && (v.hidden == null || it.kind === "note")) v.hidden = c.hidden;
       // A note's display settings win over a drawing's bare camera (the last note's, as before).
@@ -589,9 +592,11 @@ export function createAnnotator(host){
   function curCam(){ return S.b3?.getCam?.() || null; }
   // The meshes hidden right now (sorted indices), null with no 3D host or no inspector.
   function curHidden(){ return S.b3?.getHidden?.() ?? null; }
+  // The animation pose now ({clip, t}), null for a model without animation.
+  function curAnim(){ return S.b3?.getAnim?.() ?? null; }
   // Two mesh states match; an unknown one (null) matches any.
   const sameHidden = (a, b) => a == null || b == null || (a.length === b.length && a.every((x, i) => x === b[i]));
-  const viewMatches = (v, cam, hid) => !!v && camMatch(cam, v.cam) && sameHidden(v.hidden, hid);
+  const viewMatches = (v, cam, hid, an = curAnim()) => !!v && camMatch(cam, v.cam) && sameHidden(v.hidden, hid) && RC.animMatch(v.anim, an);
   // Another explode amount is another view: a view with no amount (or a call with none) matches any.
   const explodeSame = (v, ex) => v.explode == null || typeof ex !== "number" || Math.abs(v.explode - ex) < EXP_TOL;
   // `ex` is the explode amount to match; undefined matches the camera and meshes only.
@@ -626,11 +631,12 @@ export function createAnnotator(host){
       let vk = viewMatches(cur, cam, hid) && explodeSame(cur, ex) ? S.curVk : findVk(cam, hid, ex);
       if (!vk){
         if (!make) return { vk: null, cam };
-        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, explode: ex ?? null, explodeAt: 0, created: Date.now() }); S.curVk = vk;
+        vk = uid(); S.views.set(vk, { vk, cam, hidden: hid, v3d: null, explode: ex ?? null, explodeAt: 0, anim: curAnim(), created: Date.now() }); S.curVk = vk;
       }
       const view = S.views.get(vk);
       const c = { vk, cam: view.cam };
       if (view.hidden) c.hidden = view.hidden;
+      if (view.anim) c.anim = { clip: view.anim.clip, t: view.anim.t };
       // A new row records the explode it was made at (old rows have none, and keep none).
       if (ex !== undefined) c.explode = ex;
       if (forNote) c.v3d = live;
@@ -909,6 +915,8 @@ export function createAnnotator(host){
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
     if (e.button !== 0 && !penEraser) return; // middle / right: the viewer's pan / zoom
     if (S.kind === "video"){ const v = video(); if (v && !v.paused) v.pause(); }
+    // A playing model stops too: a drawing belongs to the pose it is made at (ctx.anim).
+    if (S.b3) S.b3.pauseAnim?.();
     const el = surfaceEl();
     const [x, y] = toDoc(e);
     const [sx, sy] = local(e);
@@ -1840,7 +1848,7 @@ export function createAnnotator(host){
     const v = S.views.get(vk);
     if (!v || !S.b3) return null;
     const ex = explode ?? v.explode ?? host.getV3D?.()?.explode ?? 0;
-    const id = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(v.hidden) + "|x" + ex;
+    const id = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(v.hidden) + "|x" + ex + "|a" + JSON.stringify(v.anim);
     const hit = PIC3.get(id);
     if (hit) return hit;
     // No camera move while a drag (orbit, stroke) is on; the picture comes with the next refresh.
@@ -1852,7 +1860,8 @@ export function createAnnotator(host){
     const saveHid = curHidden(), moveMeshes = v.hidden != null && !sameHidden(v.hidden, saveHid) && !!S.b3.setHidden;
     if (!same) S.b3.setCam(v.cam);
     if (moveMeshes) S.b3.setHidden(v.hidden);
-    const src = S.b3.capture(ex);
+    // The view's animation pose for the still only (withAnim puts the live pose back, playing or not).
+    const src = v.anim && S.b3.withAnim ? S.b3.withAnim(v.anim, () => S.b3.capture(ex)) : S.b3.capture(ex);
     if (moveMeshes) S.b3.setHidden(saveHid);
     let url = null;
     if (src?.width && src?.height){
@@ -2365,6 +2374,7 @@ export function createAnnotator(host){
     else viewExplode(vk);
     // The meshes the view was made with: hidden ones hidden, the rest shown (an empty list shows all).
     if (v.hidden) S.b3.setHidden?.(v.hidden);
+    if (v.anim) S.b3.setAnim?.(v.anim);
     S.b3.setCam(v.cam);
     S.curVk = vk;
     afterChange();
@@ -2505,7 +2515,7 @@ export function createAnnotator(host){
         // A drawing not yet added, on the note's camera and meshes, is drawn over the picture the note is made
         // at: it takes the note's view and the amount now (drawings of other cameras keep theirs).
         const pv = it.data.ctx ? S.views.get(it.data.ctx.vk) : null;
-        if (ctx && pv && camMatch(pv.cam, ctx.cam) && sameHidden(pv.hidden, ctx.hidden ?? null) && explodeSame(pv, ctx.explode)){
+        if (ctx && pv && camMatch(pv.cam, ctx.cam) && sameHidden(pv.hidden, ctx.hidden ?? null) && explodeSame(pv, ctx.explode) && RC.animMatch(pv.anim, ctx.anim ?? null)){
           it.data.ctx.vk = ctx.vk;
           if (ctx.explode != null) it.data.ctx.explode = ctx.explode;
         }
@@ -2616,6 +2626,9 @@ export function createAnnotator(host){
       sig += "|h" + (hid ? hid.join(",") : "-");
       // The explode amount too: a view at another amount is another view (its drawings hide until it is the current one).
       sig += "|e" + (typeof ex === "number" ? ex.toFixed(4) : "-");
+      // And the view itself (the animation pose decides it too): not the pose's time, which would repaint the
+      // panel every frame while a model plays.
+      sig += "|v" + (S.curVk || "-");
     }
     if (sig !== S.lastSig){
       S.lastSig = sig;
@@ -2798,7 +2811,9 @@ export function createAnnotator(host){
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
     const v = video();
-    const keep = { t: v?.currentTime, playing: !!v && !v.paused, cam: curCam(), v3d: host.getV3D?.(), vk: S.curVk, hidden: S.hidden, hiddenReplies: S.hiddenReplies };
+    const keep = { t: v?.currentTime, playing: !!v && !v.paused, cam: curCam(), v3d: host.getV3D?.(), vk: S.curVk, hidden: S.hidden, hiddenReplies: S.hiddenReplies, anim: S.b3?.getAnimState?.() ?? null };
+    // A playing model stops for the pictures (views without a pose would be taken wherever the clip is).
+    if (S.b3) S.b3.pauseAnim?.();
     S.hidden = false; S.hiddenReplies = new Set();
     // A playing clip runs on after each seek: the frame would land late and miss its drawings.
     if (keep.playing) v.pause();
@@ -2843,6 +2858,7 @@ export function createAnnotator(host){
             const view = S.views.get(vk);
             const look = vk === c.vk ? c.v3d || view.v3d : view.v3d || keep.v3d, ex = explodeOf(vk, vk === c.vk ? [n] : mine) ?? view.explode;
             if (look || ex != null) host.setV3D?.(viewLook(look, ex));
+            if (view.anim) S.b3.setAnim?.(view.anim);
             S.b3.setCam(view.cam);
             S.curVk = vk;
             await nextFrame(); await nextFrame(); await nextFrame();
@@ -2872,6 +2888,7 @@ export function createAnnotator(host){
       if (v && keep.t != null) await seekTo(v, keep.t);
       if (keep.playing) v.play().catch(() => {});
       if (S.b3 && keep.cam){ if (keep.v3d) host.setV3D?.(keep.v3d); S.b3.setCam(keep.cam); }
+      if (S.b3 && keep.anim) S.b3.setAnimState?.(keep.anim);  // (playing again if it was)
       if (S.b3) S.curVk = keep.vk;
       S.hidden = keep.hidden; S.hiddenReplies = keep.hiddenReplies;
       paintVisibility();

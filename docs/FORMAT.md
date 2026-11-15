@@ -192,6 +192,11 @@ The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `pri
   not change a view that holds an added note or a drawing attached to one (0.44.1). A note's own pictures and
   exports use the `explode` of its own rows on that view (an older note, with none, uses the `v3d.explode` it was
   written with), so two notes on one view may show two amounts.
+  **0.51+:** a 3D ctx may carry `anim` — `{clip, t}`: the animation clip (index in the model's clip list) and
+  its time in seconds (3 dp) the row was made at, on a model with animation. Like `hidden`, it is fixed when the
+  view is made: a view with `anim` matches only that clip within 1.5 ms (`RC.animMatch`); a view without one
+  (a static model, an older row) matches any pose, and so does every view on a viewer that found no clips in the
+  model (loaders differ). Going to a view puts its pose back (paused).
   **0.44.2 (UI rule, not in the file):** a view is a camera, its hidden meshes and an explode amount (within
   0.001). A new row made at another amount is another view, so it gets its own `vk`; the same camera can have
   several views.

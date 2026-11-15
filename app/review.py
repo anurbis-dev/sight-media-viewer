@@ -630,7 +630,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .zoom .zb { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .zoom .zb > img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; pointer-events: none; }
 /* The text plate (caption-plate.js): at the foot it keeps to the left, clear of the pencil. */
-.zoom .zfoot { position: absolute; inset: 0; z-index: 1; pointer-events: none; --scp-b: calc(14px + env(safe-area-inset-bottom)); --scp-t: calc(74px + env(safe-area-inset-top)); --scp-bx: 12px; --scp-bw: min(80%, calc(100% - 82px)); --scp-rb: max(10%, calc(80px + env(safe-area-inset-bottom))); --scp-rt: calc(70px + env(safe-area-inset-top)); --scp-lt: max(10%, calc(70px + env(safe-area-inset-top))); }
+.zoom .zfoot { position: absolute; inset: 0; z-index: 1; pointer-events: none; --scp-b: calc(14px + env(safe-area-inset-bottom)); --scp-t: calc(74px + env(safe-area-inset-top)); --scp-bx: 12px; --scp-bw: min(80%, calc(100% - 82px)); --scp-bmax: calc(100% - 82px); --scp-rb: max(10%, calc(80px + env(safe-area-inset-bottom))); --scp-rt: calc(70px + env(safe-area-inset-top)); --scp-lt: max(10%, calc(70px + env(safe-area-inset-top))); }
 .zfab { position: absolute; z-index: 2; width: 46px; height: 46px; border-radius: 23px; border: 1px solid rgb(255 255 255 / .18); background: rgb(28 28 32 / .6); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 4px 16px rgb(0 0 0 / .18); }
 .zfab:hover { background: rgb(48 48 54 / .75); }
 .zback { left: 12px; top: calc(12px + env(safe-area-inset-top)); }

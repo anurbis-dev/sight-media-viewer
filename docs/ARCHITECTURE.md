@@ -20,7 +20,10 @@ app/static/annotate.js   lightbox annotations + review notes panel — ES module
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
-                         buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers (ES module)
+                         buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers, ENV_PRESETS,
+                         shading (applyBaseMaterial / applyXray / setWireOverlay), the selection highlight
+                         (highlightMaterials / meshHighlight), the UV picture (createUvPainter, readbackCanvas,
+                         textureQuad) and the animation player (createAnimator) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
@@ -97,6 +100,14 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   anything that revives rows must check both folder exclusion and `Library.hidden()`.
 - Table `meta(key, value)` holds library-wide settings the backend needs without a page open
   (`scan_ignore`: the Settings → Scanning ignore list, parsed by `IgnoreRules`).
+- 3D animation (`model3d-core.js` `createAnimator`, both viewers): one AnimationMixer on the model root,
+  `set({clip, t})` / `seek` / `play` / `pause` / `tick(dt)`; the last pose is `duration − 1 ms` (a looping action
+  at its duration shows time 0). glTF loaders copy `gltf.animations` onto the scene (cache clones keep them).
+  With an explode rig every pose change puts the rig's parts at their rest positions, lets the mixer pose,
+  takes those positions as the rig's bases (`it.pos`) and explodes from there — so explode and animation
+  stack. Created right after the rig in both viewers (the model starts at clip 0, t 0). A view's pose is
+  `ctx.anim` (FORMAT.md); the lightbox host gives the annotator `getAnim / setAnim / withAnim / getAnimState /
+  setAnimState` (`bindAnnot3d`); its bar is `#v3dAnim` (`paintAnimBar`, outside `data-tools`: only with clips).
 - Lightbox 3D explode (`model3d-core.js`, shared with the phone app): `buildExplodeRig` solves an explosion graph per assembly level of the node
   hierarchy (box-based blocking, grounded largest part, one model axis per part, ride-along carry);
   `applyExplode(rig, t)` only sets `position`. Rebuilt per load, independent of the 90° turns.
@@ -541,9 +552,10 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   The root never scrolls (a scroll listener resets it); the list scrolls inside `.plist`.
   Themes: `html[data-theme=light|dark]` (Settings, `sight-review:theme`), none = system; the
   stage, overlays (`--ov*`) and the canvas (`--rd-*`) follow it.
-- **Home open buttons**: the big `.opens` pair only while there is no review at all; otherwise the
-  two small icons in the bar (`.mini`). One set is removed once the list is in (no scroll
-  switching). Labels carry `pick-media` / `pick-file` (tests use them).
+- **Home open button**: one picker for every kind (no `accept`, `multiple`: the OS offers the photo
+  library, the camera and Files; `openAny` sorts it out). A big `.opens` button while there is no review
+  at all, otherwise a small rectangular *＋ Open* in the bar (`.mini .obtn`); one is removed once the list
+  is in. The label carries both `pick-file` and `pick-media` (tests use either).
 - **Home list**: `reviewRow` — swipe left / right uncovers the bin / eye (`.sw`), hold + drag
   reorders (`sight-review:order` in localStorage, new reviews first), hide for now =
   `sight-review:hidden` in sessionStorage. While dragging, the DOM is not reordered (that drops the
@@ -712,11 +724,20 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   renders on demand (`controls` change / `need`), `onMove` after each rendered frame. `still(cam,
   {hidden, explode, aspect, max})` renders a view into a 2D canvas in the same task and puts the live
   camera / meshes / explode back; `attach(el)` moves the canvas when the review screen is rebuilt.
+  **Tools (0.51)**: `setShading({base, wire, xray})` / `setGrid("off" | "grid" | "axes")` / `setLight(LIGHTS)`
+  (env presets from core `ENV_PRESETS`, "head" = key light + ambient, "flat" = ambient only; env maps built once
+  per preset) — this device's look (`sight-review:v3d`, `applyLook3d` on load), never a view's; stills hide the
+  grid / axes / selection so cached view pictures do not depend on them. `onTap(x, y)` = a one-finger tap
+  under 8 px / 450 ms → `pick` (raycast on visible meshes, hidden-list order) → `select(i)` (core
+  `meshHighlight` overlays in the scene); `uvPicture(i)` = core `createUvPainter` (Sight's UV pane), shown in the
+  full-screen `viewer`. `anim` = core `createAnimator` (null without clips), ticked in the render loop; `onAnim`
+  repaints the anim row. UI (app.js `paint3dTools`): the picked mesh's row `.hdr .sel3d` (`paintSel3d`), the
+  bottom bar in `els.tp` (`.b3d`: icon row, `R.opt3d` choice row, anim row; `paintAnim` per frame).
   The review side (app.js "3D" block): **views** stand where video frames do. `R.views` =
   `M.views3d(rows)` (oldest first = Sight's View 1, 2…; hidden from the first row that has it, explode
   from the newest), plus drafts' views (`viewsNow`); `findVk(look)` = `RC.camMatch` (moved from annotate.js
-  to review-core) + same hidden list + explode within 0.001 (a view without hidden / explode — older Sight
-  — matches any); `R.curVk` follows every camera move (`updateCurVk`); the stage overlay is the host's
+  to review-core) + same hidden list + explode within 0.001 + `RC.animMatch` on the view's `anim` (a view
+  without hidden / explode / anim — older Sight — matches any); `R.curVk` follows every camera move (`updateCurVk`); the stage overlay is the host's
   space (`vbOf(aspect)` = `-500·a -500 1000·a 1000`) and shows drawings with `ctxVisible(c, {vk})`.
   New rows carry `{vk, cam: {p, t, fov, turns}, hidden, explode}` (`ctx3d(make)`; a new vk only when
   the note / drawing is sent on a camera that is no view; `M.drawCtx` keeps hidden / explode). A note's

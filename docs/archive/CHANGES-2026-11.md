@@ -2,6 +2,53 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.44.3 — 2026-11-13 — Annotations: hovering a note no longer highlights its drawings
+- **What:** in the desktop lightbox, moving the pointer over a note card in the annotation panel does nothing to the
+  picture any more. Before, hover dimmed every other note's drawings and, right after a note was made, brought its
+  drawings back. Now only a click highlights: a click on the card (or a video / 3D preview frame in it) picks the
+  note, and the picture shows only its drawings, as before. A click on a screenshot still opens it full size.
+- **Where:** `app/static/annotate.js` — removed `S.focusNote`, the `pointerover` / `pointerleave` handlers on
+  `.an-list`, the `hover` field of `viewMode()`, the `dim` class in `paintVisibility` and the `.an-doc g.dim` rule;
+  `modeAllows` now lets a note's drawings back only when it is pinned (`S.pinFocus`). `MANUAL.md` (Annotations),
+  `docs/ARCHITECTURE.md` (desktop visibility). `app/version.py`.
+- **Notes:** `S.pinFocus` is the only "picked note" state now; every place that cleared `focusNote` clears
+  `pinFocus` alone. The card's own CSS hover border (`.an-note:hover`) is unchanged — it is styling, not a highlight.
+  Known, left as is: after a note is made the picture stays clean until its card is clicked (it used to come back
+  on hover). Not tested in a browser: checked by reading the code, `node --check app/static/annotate.js`, and a
+  grep that nothing reads `focusNote` / `m.hover` / `.dim` any more. Review (fresh agent, the whole diff): no
+  correctness bugs; its doc remark (a screenshot click does not pin) was applied to MANUAL and ARCHITECTURE.
+
+## 0.44.2 — 2026-11-13 — A new note at another explode is a new view
+- **What:** a view is a camera, its hidden meshes and an explode amount (within 0.001). A note or drawing made at
+  an explode different from the view it is on (the view has added notes, so the slider cannot move it) gets a new
+  view with its own chip, instead of joining the old one. Before, the new note took the old view and its picture
+  showed the old amount. Drawings not yet added on the same camera and meshes move to the new note's view when the
+  note is added, so they take its amount.
+- **Where:** `app/static/annotate.js` — `explodeSame` (new), `findVk(cam, hid, ex)` (matches the amount when given),
+  `ctxNow` (the live amount decides the view; a new view's stub carries it), `explodeChanged` (the current view
+  first, so two views on one camera do not swap), `addNote` (pending drawings on the same camera and meshes take the
+  note's view and amount), the render path (`findVk` with the live amount; the amount is in the redraw signature, so
+  a view at another amount hides its drawings until it is current). `MANUAL.md`, `docs/FORMAT.md`. `app/version.py`.
+- **Notes:** the drawings of a committed view hide while the slider is at another amount (they belong to the amount
+  they were made at); they show again when the slider goes back, or when the chip goes there. A drawing drawn on the
+  view before the slider moved, then added with the note, goes to the note's view (the new one) — its overlay was
+  drawn at the slider's amount then. The file format is unchanged (rows already carry `explode` and `vk`). Not tested
+  in a browser: checked by reading the code and `node --check`.
+  Review 1 (fresh agent, whole block): confirmed, fixed: the slider could give a view the amount another view on the
+  same camera already had (the drawing then stranded on a hidden view) — the slider now stops at that view; an
+  addNote adoption ignored the drawing's own amount (it could move a drawing of another amount into an old note's
+  view) — now it also needs the same amount; a legacy view (no row explode) now takes its notes' `v3d.explode`
+  instead of matching any amount. Left as is (low): a drawing with a hidden-mesh state unknown (null) is adopted
+  by any note on its camera; an empty stub view left in the session is dropped at the next rebuild.
+  Review 2 (fresh agent, the fixes): no new bug in the fixes. Confirmed, fixed: with no current view the slider
+  gave the first view on the camera the new amount (a jump), so now it moves nothing; `findVk` prefers an exact
+  amount over a view with no amount (a legacy one). Known, left: (a) a legacy note newer than a view's last row now
+  sets the view's amount on load (newest wins, as in 0.42); (b) on open the saved slider amount is live, so a view
+  whose camera matches but whose amount differs is not current until its chip is clicked; (c) a drawing that was
+  hidden at add time (its view at another amount) is attached to the note but keeps its own view, so it shows
+  with the "other views" count, not on the note's own picture. The last small fixes were checked by the author
+  (`node --check`, unit tests) and not re-reviewed by a fresh agent.
+
 ## 0.44.1 — 2026-11-13 — Explode: added notes keep their explode; the slider moves only the work not yet added
 - **What:** moving the 3D explode slider (or Ctrl+right-drag) no longer changes an added note, its pictures or its
   exports. A note's pictures and exports use the explode it was added at; clicking the note goes back to that

@@ -25,6 +25,10 @@
   again to deselect); a click on empty space clears any selection. `F` frames the selection, or
   the whole model as it is now (exploded, minus hidden meshes), without turning the view.
   `H` hides the selected mesh, `Ctrl+H` hides everything else, `Alt+H` shows all meshes again.
+- **3D animation** — a model with animation clips (glTF / GLB, FBX) shows a bar above the shading
+  toolbar: ▶ / ❚❚, a time slider to scrub (pauses) and, with several clips, a clip picker. A drawing or note
+  belongs to the pose it was made at: playing or scrubbing away hides it, clicking the note puts the clip
+  and time back (Sight and the phone alike).
 - **3D toolbar extras** — **Ctrl+right-drag** over the model pulls its parts apart (explode, same as
   the slider at the right end of the toolbar). It works like a CAD exploded view: the largest part
   stays in place, every other part slides out along one axis of the model in a direction it can
@@ -98,7 +102,9 @@
     text under it; the pencil on the plate edits that picture's text (Enter saves, Shift+Enter new
     line, Esc cancels, an empty text removes it). Click an attached screenshot of the note: the same
     plate over it. The plate sits at the foot, 80 % wide (more than five lines scroll inside it, with
-    no scrollbar — "…" under the last line shown says there is more);
+    no scrollbar — the last line shown fades out while there is more; the plate keeps its size);
+    drag the small bar in the middle of its inner edge to resize it (across the edge: height, along it:
+    width; double-click the bar: default size — kept per device, one size for top / bottom, one for the sides);
     click it to fold it into a round icon, click the icon to open it; drag the plate or the icon to
     any of the four sides — on the left / right it is 25 % wide and 80 % high. The side and the fold
     are kept. A long text scrolls by the wheel, a drag on the text or a middle-button drag (the words
@@ -216,8 +222,9 @@
 - **Phone app (Sight Review)** — review pictures, videos and 3D models on a phone or tablet, offline, without
   Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews
-  made in Safari before installing stay in Safari. *Photo or video* picks from the library / camera
-  roll, *Open a file…* from Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD — or a `.srev` someone sent). Nothing is
+  made in Safari before installing stay in Safari. One button opens everything — the big *Open a file* on an
+  empty home screen, the small *＋ Open* in the bar once there are reviews: the phone offers the photo library,
+  the camera and Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD — or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
   changes it). The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
@@ -300,8 +307,9 @@
   goes through the whole note: its frames, its attached pictures, then each reply's drawings and
   pictures; a half-transparent plate at the foot (80 % wide, at the left edge so the pencil bottom right stays free) tells which ("0:01.05 · f 30 · 2 / 7",
   "↳ Bob · Picture") with the note's / reply's words and, on the note's own pictures, the picture's
-  own text under them — more than five lines scroll inside the plate (no scrollbar: "…" under the last
-  line shown says there is more; drag the text; to move the
+  own text under them — more than five lines scroll inside the plate (no scrollbar: the last line shown
+  fades out while there is more; drag the small bar on its inner edge to resize it, double-tap the bar for
+  the default size; drag the text; to move the
   plate then, drag its head); the pencil on the plate writes
   or changes that picture's text (the note's text stays its topic; a picture with a text has a mark
   in its corner in the card, and the PDF / HTML exports show the text under it); a tap on the plate
@@ -355,9 +363,15 @@
   and a `.gltf` without its `.bin` says which file it needs. Gaussian-splat `.ply` files stay Sight-only.
   One finger turns the camera round the model, two zoom and pan.
   The header has the eye (drawings), ⟳ *Turn the model a quarter* (which way is up, as Sight's turn
-  button; kept with the review), the explode slider (a model with parts), *Show all* when a view hid
-  some meshes, and ⛶ *Frame the model*. A note goes on the **view** on screen — the camera, the hidden
-  meshes and the explode — like a video note on its frame; views are numbered as in Sight (View 1 is the
+  button; kept with the review) and ⛶ *Frame the model*. **Tap a part** of the model to pick its mesh
+  (orange); a row under the header then offers *Hide*, *Only this* (hide the others), *UV* (the mesh's UVs
+  over its texture, full screen, pinch to zoom) and ✕; a tap on empty space lets it go. While meshes are
+  hidden the row shows *Show all*. The **bottom bar** has Shading, Grid, Light and Explode icons; a tap
+  opens its choices in a row above (Solid / Vertex / Textured / Normal + Wire / X-ray; Off / Grid / Grid +
+  axes; Studio / Sunset / Overcast / Night / Headlight / Flat; the explode slider) — shading, grid and light
+  are this phone's, not the review's. A model with **animation** adds a row with ▶ / ❚❚ and a time slider
+  (several clips: a chip switches them). A note goes on the **view** on screen — the camera, the hidden
+  meshes, the explode and the animation pose — like a video note on its frame; views are numbered as in Sight (View 1 is the
   first one made). The pencil draws over the view on screen; turn to another view and draw again for
   the same note (each view keeps its drawings). A card shows each of the note's views (V1, V2… in the
   corner); a tap on the card or its *View N* button puts the camera there. *Reply* writes over the model
