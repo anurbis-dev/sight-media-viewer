@@ -73,6 +73,8 @@ var SightReviewDraw = (function(){
     // A slot's row: the bar's own look (.rd-panel), only placed here.
     ".draw .dfly { position: absolute; z-index: 3; display: flex; gap: 2px; padding: 4px; border-radius: 14px; }",
     ".draw .dfly .swc { margin: 5px; }",
+    ".draw .dclip { position: absolute; z-index: 2; top: calc(62px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 4px; border-radius: 14px; }",
+    ".draw .dclip[hidden] { display: none; }",
     ".draw .swc { width: 28px; height: 28px; margin: 3px 4px; border-radius: 14px; border: 2px solid var(--rd-line, rgb(255 255 255 / .3)); cursor: pointer; padding: 0; }",
     ".draw .swc.on { border-color: var(--rd-fg, #fff); box-shadow: 0 0 0 2px #0a84ff; }",
     ".draw .dsize { position: absolute; z-index: 3; left: 18px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }",
@@ -188,6 +190,12 @@ var SightReviewDraw = (function(){
   // A key with no modifier at all (the exact-match rule of Sight's keys.js, which this plain script
   // cannot import).
   function plain(e, code){ return e.code === code && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey; }
+  function ctrlOnly(e, code){ return e.code === code && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey; }
+  // Ctrl+C / Ctrl+X keep copies here (doc units), shared by every canvas opened on this page, so a
+  // drawing copied on one frame / picture pastes on another.
+  // clipCut: the items just cut — the first paste after a cut lands in place, unless an undo has
+  // brought them back (then it would stack an unseen twin on them).
+  var clipboard = null, clipCut = null;
   // o: {src, vb: [x, y, w, h] doc box the picture covers, base: rows drawn underneath (not
   // editable), items: editable drawings, onDone(items), onCancel(), view: {rot (degrees), mirror}
   // to open with, onView({rot, mirror}) when the turn / mirror buttons change it}.
@@ -229,6 +237,18 @@ var SightReviewDraw = (function(){
     done.onclick = function(){ if (stroke) finish(); if (edit) commitText(); endScrub(); close(); o.onDone(items, multi ? allFrames() : null); };
     [cancel, ub, rb, clr, el("span", "sp"), mirB, fitB, el("span", "sp"), done].forEach(function(b){ top.appendChild(b); });
     top.addEventListener("pointerdown", function(){ closeFly(); });  // undo / turn / fit…: the row folds
+    // Cut / copy / paste for fingers (the keys: Ctrl+X / C / V): under the top bar while the select
+    // tool is in hand with a selection or something to paste.
+    var clipBar = el("div", "dclip rd-panel");
+    var cutB = tbtn("Cut", ico('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>'), function(){ copySel(true); });
+    var copyB = tbtn("Copy", ico('<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16V5a1 1 0 0 1 1-1h11"/>'), function(){ copySel(false); });
+    var pasteB = tbtn("Paste", ico('<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>'), function(){ pasteClip(); });
+    [cutB, copyB, pasteB].forEach(function(b){
+      var fn = b.onclick; b.onclick = function(){ b.blur(); fn(); };  // a later Space / Enter must not click it again
+      clipBar.appendChild(b);
+    });
+    clipBar.addEventListener("pointerdown", function(){ closeFly(); });
+    clipBar.hidden = true;
     var tools = el("div", "dtools");
     // The flyout of a slot (or of the colour): {el, slot}.
     var fly = null;
@@ -459,7 +479,7 @@ var SightReviewDraw = (function(){
     tools.appendChild(colB);
     if (o.footer){ var foot = el("div", "dfoot"); foot.appendChild(o.footer); bar.appendChild(foot); }
     bar.appendChild(tools);
-    root.appendChild(top); root.appendChild(view); root.appendChild(bar);
+    root.appendChild(top); root.appendChild(view); root.appendChild(clipBar); root.appendChild(bar);
     var ctrlHeld = false;
     function paintBar(){
       tools.querySelectorAll(".tb").forEach(function(b){
@@ -484,6 +504,9 @@ var SightReviewDraw = (function(){
       paintTextFly();
       ub.disabled = !undo.length; rb.disabled = !redo.length;
       clr.disabled = !items.length;
+      var hasClip = !!(clipboard && clipboard.length);
+      clipBar.hidden = !(pen.tool === "select" && !edit && (sel.length || hasClip));
+      cutB.disabled = copyB.disabled = !sel.length; pasteB.disabled = !hasClip;
       clr.title = pen.tool === "select" && sel.length ? "Delete the selected drawings" : multi ? "Clear this frame's drawings" : "Clear all drawings";
       if (multi && o.onFrames){
         var ks = framesDrawn(), sg = ks.join(",");
@@ -532,6 +555,42 @@ var SightReviewDraw = (function(){
       if (stroke || !items.length) return;
       if (pen.tool === "select" && sel.length){ var gone = sel; change(items.filter(function(it){ return gone.indexOf(it) < 0; })); return; }
       change([]);
+    }
+    // Ctrl+C / Ctrl+X: the selection (select tool) into the clipboard; Ctrl+X also removes it (one
+    // undo step). Ctrl+V: copies of the clipboard (what was cut: in its place first, else 20 screen px
+    // down-right of the last ones, so repeated pastes step on), selected, as new drawings (no id: the host makes rows of them). False: nothing
+    // to act on (the browser keeps the key).
+    function copySel(cut){
+      stopAdj();
+      if (edit || stroke || pen.tool !== "select" || !sel.length) return false;
+      var keep = sel.slice().sort(function(a, b){ return (a.z || 0) - (b.z || 0); });  // drawn by z
+      clipboard = keep.map(clone); clipCut = cut ? keep : null;
+      if (cut) change(items.filter(function(it){ return keep.indexOf(it) < 0; })); else paint();  // (Paste turns on)
+      return true;
+    }
+    function pasteClip(){
+      stopAdj();
+      if (edit || stroke || !clipboard || !clipboard.length) return false;
+      var back = clipCut && clipCut.some(function(it){ return items.indexOf(it) >= 0; });
+      var off = clipCut && !back ? 0 : 20 * kNow(), dx = off, dy = off;
+      clipCut = null;
+      // Copied on another picture and nowhere on this one: into the middle of this one.
+      var bb = clipboard.reduce(function(m, it){ var b = RC.boundsOf(it); return [Math.min(m[0], b[0]), Math.min(m[1], b[1]), Math.max(m[2], b[2]), Math.max(m[3], b[3])]; }, [Infinity, Infinity, -Infinity, -Infinity]);
+      if (bb[2] < vb[0] || bb[0] > vb[0] + vb[2] || bb[3] < vb[1] || bb[1] > vb[1] + vb[3]){
+        dx = vb[0] + vb[2] / 2 - (bb[0] + bb[2]) / 2; dy = vb[1] + vb[3] / 2 - (bb[1] + bb[3]) / 2;
+      }
+      var fresh = clipboard.map(function(src){
+        var n = clone(src);
+        delete n.id; n.z = ++zc;
+        RC.transformItem(n, src, function(x, y){ return [x + dx, y + dy]; });
+        delete n.data.note; delete n.data.reply; delete n.data.ctx; n.data.created = Date.now();
+        return n;
+      });
+      clipboard = fresh.map(clone);
+      if (pen.tool !== "select") setTool("select");
+      sel = fresh;  // before change(): its paint() keeps only what is in items
+      change(items.concat(fresh));
+      return true;
     }
     function recolour(c){
       stopAdj();
@@ -1204,6 +1263,9 @@ var SightReviewDraw = (function(){
       else if (mod && !e.altKey && (e.key === "z" || e.key === "Z")){ if (e.shiftKey) doRedo(); else doUndo(); }
       else if (mod && !e.altKey && !e.shiftKey && e.key === "y") doRedo();
       else if ((plain(e, "Delete") || plain(e, "Backspace")) && pen.tool === "select" && sel.length) clearOrDelete();
+      else if (ctrlOnly(e, "KeyC")){ if (!copySel(false)) return; }
+      else if (ctrlOnly(e, "KeyX")){ if (!copySel(true)) return; }
+      else if (ctrlOnly(e, "KeyV")){ if (!pasteClip()) return; }
       else {
         var tl = TOOLS.find(function(x){ return plain(e, x[3]); });
         if (!tl) return;

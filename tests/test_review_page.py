@@ -115,5 +115,42 @@ class PageRoundTrip(unittest.TestCase):
         self.assertEqual(sight_import(lib, Path(str(copy) + ".srev").read_bytes())[1]["added"], 0)
 
 
+
+
+@unittest.skipUnless(has_playwright(), "node with Playwright is not available")
+class DrawClipboard(unittest.TestCase):
+    """Ctrl+C / Ctrl+X / Ctrl+V on the selected drawings of the shared drawing canvas (review-draw.js)."""
+
+    def test_cut_copy_paste(self) -> None:
+        r = subprocess.run([NODE, str(ROOT / "tests" / "draw_clip.cjs"), str(ROOT)],
+                           capture_output=True, text=True, timeout=120, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertEqual(res["log"], [])
+        self.assertEqual(res["drawn"], 1)
+        self.assertTrue(res["selected"])
+        self.assertEqual(res["afterShiftV"], 1)    # Ctrl+Shift+V is not a paste
+        self.assertEqual(res["pasteEmpty"], 1)     # nothing copied yet
+        self.assertEqual(res["afterPaste"], 2)
+        self.assertEqual(res["afterPaste2"], 3)    # repeated pastes
+        self.assertEqual(res["afterCut"], 2)
+        self.assertEqual(res["afterCutPaste"], 3)
+        self.assertEqual((res["undoPaste"], res["undoCut"], res["redone"]), (2, 3, 3))  # one undo step each
+        # Cut, undo (the drawing is back), paste: a copy beside it, not an unseen twin on top.
+        self.assertEqual((res["cutUndoPaste"], res["twinOff"]), (5, True))
+        items = res["items"]
+        self.assertEqual(len(items), 5)
+        self.assertTrue(all("id" not in it for it in items))
+        xs = [it["data"]["pts"][0] for it in items]
+        self.assertEqual(xs, sorted(set(xs)))      # every paste steps down-right (none on top of another)
+        self.assertEqual(len({it["z"] for it in items}), 5)
+        # The clipboard outlives the canvas: another open pastes it, stepped on from the last paste.
+        self.assertEqual(res["secondOpen"], 1)
+        self.assertGreater(res["items2"][0]["data"]["pts"][0], items[4]["data"]["pts"][0])
+        # The buttons (fingers): shown with the select tool only, Copy / Paste / Cut work as the keys.
+        self.assertEqual((res["barSelect"], res["barBrush"]), (True, False))
+        self.assertEqual((res["btnPaste"], res["btnCut"]), (2, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

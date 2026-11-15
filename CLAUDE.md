@@ -52,6 +52,9 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
 - **Language:** replies to the user in Russian; code, comments, UI strings and docs strictly English.
 - **Shortcuts:** every keyboard shortcut goes through `hotkey()` / `runHotkeys()` in `app/static/keys.js`
   (exact modifier match). Never test `e.key`/`e.code` on its own — Shift+D must not fire plain-D.
+- **Desktop and phone, always:** every feature must work both with a mouse / keyboard and on a touch
+  screen with no keyboard (the phone app, the HTML page on a phone) — a shortcut alone is not enough,
+  give touch a button or gesture too. The user expects this by default and will not ask for it.
 - **Reuse, don't reinvent:** if the library grid or lightbox already has a control (zoom, marquee,
   icon picker, rename-on-double-click, pixelation switch), share it instead of writing a second one.
 - **Parallel sessions:** several agents may edit this repo at once. Re-read a file right before editing

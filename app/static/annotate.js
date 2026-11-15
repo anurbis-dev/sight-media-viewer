@@ -165,7 +165,7 @@ export function createAnnotator(host){
     on: false, panelOn: readJSON("sight.annotate.panel", true), hidden: false, onion: false, hiddenReplies: new Set(),
     tool: "brush", styles: loadStyles(), hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
-    sel: new Set(), undo: [], redo: [], clip: null,
+    sel: new Set(), undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
@@ -1351,15 +1351,27 @@ export function createAnnotator(host){
     return true;
   }
   function copySelection(){
-    const src = [...S.sel].map((id) => S.items.get(id)).filter(Boolean);
+    const src = [...S.sel].map((id) => S.items.get(id)).filter(Boolean).sort((a, b) => (a.z || 0) - (b.z || 0));
     if (!src.length) return false;
-    S.clip = src.map(snap);
+    S.clip = src.map(snap); S.clipCut = false;
     toast(`Copied ${src.length}`);
+    return true;
+  }
+  // Ctrl+X: copy, then delete (one undo step). Ctrl+V pastes what was cut in its own place first,
+  // copies 20 px down-right (each paste steps on from the last one).
+  function cutSelection(){
+    const src = [...S.sel].map((id) => S.items.get(id)).filter(Boolean).sort((a, b) => (a.z || 0) - (b.z || 0));
+    if (!src.length) return false;
+    S.clip = src.map(snap); S.clipCut = true;
+    deleteSelection();
+    toast(`Cut ${src.length} · Ctrl+V pastes`);
     return true;
   }
   function paste(){
     if (!S.clip?.length) return false;
-    const off = 20 * k();
+    // In place after a cut — unless an undo brought the cut drawings back (the clip keeps their ids).
+    const off = S.clipCut && !S.clip.some((it) => S.items.has(it.id)) ? 0 : 20 * k();
+    S.clipCut = false;
     const fresh = S.clip.map((it, i) => {
       const n = structuredClone(it);
       n.id = uid(); n.z = nextZ() + i;
@@ -3035,7 +3047,7 @@ export function createAnnotator(host){
       ["KeyA", () => toggle(false)], ["Shift+KeyA", () => toggle(false)],
       ["Ctrl+KeyZ", () => undo()], ["Ctrl+Shift+KeyZ", () => redo()], ["Ctrl+KeyY", () => redo()],
       ["Delete", () => deleteSelection()], ["Shift+Delete", () => clearShown()], ["Backspace", () => deleteSelection()], ["KeyX", () => deleteSelection()],
-      ["Ctrl+KeyC", () => copySelection()], ["Ctrl+KeyV", () => paste()], ["Ctrl+KeyD", () => duplicateSelection()],
+      ["Ctrl+KeyC", () => copySelection()], ["Ctrl+KeyX", () => cutSelection()], ["Ctrl+KeyV", () => paste()], ["Ctrl+KeyD", () => duplicateSelection()],
       ["Ctrl+KeyA", () => selectAll()],
       ["Ctrl+BracketRight", () => reorder(1)], ["Ctrl+BracketLeft", () => reorder(-1)],
       ["BracketLeft", () => resizeTool(1 / 1.2)], ["BracketRight", () => resizeTool(1.2)],

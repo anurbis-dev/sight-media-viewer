@@ -305,7 +305,14 @@ resize does not fold the row. `closeFly` hides the row at once and removes it a 
 picking click is still on its way to the host's document handlers, and a detached target reads as
 "outside the canvas" (the HTML page then closed an empty new-note draft). The colour is the
 `.dcol` circle at the row's end with the colours in its flyout (`useColour`). The trash deletes the selection,
-else every item drawn here (one undo step). Undo keeps whole `items` arrays: a transform drags
+else every item drawn here (one undo step). Ctrl+C / Ctrl+X / Ctrl+V (select tool, exact modifiers via
+`ctrlOnly`): `copySel` / `pasteClip` keep copies in the module-level `clipboard` (doc units, shared by
+every canvas opened on the page, so a copy crosses frames / pictures); pasted copies get no `id`, no
+`note` / `reply` / `ctx` (the host assigns them), `z = ++zc`, offset 20 screen px — 0 for the first paste
+after a cut (`clipCut` = the cut objects; not when an undo has put them back) — or moved to the picture's
+centre when the clipboard lies wholly outside `vb` (no rescale between pictures of other doc sizes). The
+same three as buttons for touch: `.dclip` under the top bar, shown with the select tool and a selection
+or a clipboard. Undo keeps whole `items` arrays: a transform drags
 *copies* of the selected objects (`stroke.prev` restores on a tap / cancel), never objects an undo
 state holds. View: `screen = V.o + Rot(V.r)·diag(V.z·V.m, V.z)·(local − box centre)` (`fwd0` /
 `inv` / `pin` keep a local point under a screen point for pinch, wheel, right-drag zoom); two

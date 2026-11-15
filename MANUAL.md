@@ -71,8 +71,9 @@
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
     more finely; arrows nudge (Shift ×10). Hold `Ctrl` with any drawing tool to erase for a moment;
     the bin in the toolbar (`Shift+Delete`) clears the drawings on screen in one step (undo brings
-    them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+V` / `Ctrl+D`,
-    `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
+    them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+X` / `Ctrl+V`
+    copy / cut / paste the selected drawings (a paste after a cut puts them back where they were, after
+    a copy 20 px down-right), `Ctrl+D`, `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
     Drawings already added to a note stay editable like any other.
   - **Review notes** — the panel on the right (`C`) collects notes. Type and press Enter: the note
     takes every drawing that isn't attached to a note yet — on screen, on other frames of a video or
@@ -196,7 +197,9 @@
     new note then sits on that frame. A new note or a reply is drawn on the clean picture. Tools:
     select / transform (`V`: tap or drag a box to select, drag to move, handles scale, the round knob
     rotates and follows your finger out from the centre for finer turns; a colour recolours the
-    selection), brush (pen pressure), highlighter, arrow, rectangle, ellipse, text (tap where it
+    selection; *Cut / Copy / Paste* under the top bar — or `Ctrl+X` / `Ctrl+C` / `Ctrl+V` — cut, copy and
+    paste it, also onto another frame or picture while the page / app is open; a paste after a cut lands
+    where the drawing was), brush (pen pressure), highlighter, arrow, rectangle, ellipse, text (tap where it
     goes, type; tap your text again to change it, empty it to remove it), eraser (or hold Ctrl),
     five colours, undo / redo (Ctrl+Z / Ctrl+Shift+Z), the bin (deletes the selection, else clears
     everything drawn here), *Done* / *Cancel*. Two fingers zoom, pan and turn the picture (a

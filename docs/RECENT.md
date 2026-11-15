@@ -14,6 +14,30 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.50.0 — 2026-11-15 — Cut / copy / paste of selected drawings (Sight, reviewer page, phone)
+- **What:** (Sight lightbox) `Ctrl+X` cuts the selected drawings (`Ctrl+C` / `Ctrl+V` were there); the first
+  paste after a cut puts them back where they were, later pastes / pastes after a copy step 20 px down-right.
+  (Drawing canvas — HTML reviewer page and phone app) `Ctrl+C` / `Ctrl+X` / `Ctrl+V` with the select tool, and
+  for touch *Cut / Copy / Paste* buttons in a small bar under the top bar (shown with the select tool and a
+  selection or something to paste). The clipboard lives while the page / app is open, so a drawing copied on
+  one frame or picture pastes on another.
+- **Where:** `app/static/annotate.js` (`cutSelection`, `S.clipCut`, `paste` offset, Ctrl+KeyX in `onKey`);
+  `app/static/review-draw.js` (module `clipboard` / `clipCut`, `ctrlOnly`, `copySel`, `pasteClip`, `.dclip` /
+  `clipBar` shown in `paint()`, `onKey`); tests `tests/draw_clip.cjs` + `DrawClipboard` in
+  `tests/test_review_page.py`; `MANUAL.md`, `docs/ARCHITECTURE.md` (Drawing canvas); `CLAUDE.md` (new house rule:
+  every feature works on desktop *and* on a touch screen without a keyboard — the user's default expectation).
+- **Notes:** pasted canvas items get no `id` and no `note` / `reply` / `ctx` (hosts treat id-less items as new
+  rows and assign those); `z = ++zc` in the copied items' z order. A paste after a cut is in place only while
+  none of the cut drawings is back (an undo restores them → the paste is offset, never an unseen twin on top).
+  Pasting onto a picture of another doc size does not rescale; the clipboard is re-centred only when it lies
+  wholly outside the new `vb`. Keys not applicable (nothing selected / nothing copied / typing) keep the browser
+  default. Not done: the system clipboard (copies stay inside Sight / the page), cut / copy / paste of notes.
+  Review (fresh agent) found, fixed: cut → undo → paste stacked an invisible duplicate on the original (both
+  editors); copies were stacked by selection / array order instead of z; the new test class sat after
+  `unittest.main()`; a clicked button kept the focus (Space / Enter pasted again → it blurs). The same reviewer
+  confirmed every fix and the buttons (layout at 360 px, stale state). Left as is (low): the canvas' keys do
+  not look at `e.target` (pre-existing); the bar covers ~130×46 px at the picture's top centre while shown.
+
 ## 0.49.0 — 2026-11-15 — Phone app: 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD), notes on views
 - **What:** (phone app, PLAN-mobile stage 4) *Open a file…* takes 3D models: `.glb` / `.gltf`, `.fbx`, `.obj`,
   `.stl`, `.ply`, `.usdz` / `.usd` / `.usda` / `.usdc`; files a model points at (a `.gltf`'s `.bin`, textures) are
@@ -357,32 +381,3 @@ Add new entries directly below this line.
   hidden at add time (its view at another amount) is attached to the note but keeps its own view, so it shows
   with the "other views" count, not on the note's own picture. The last small fixes were checked by the author
   (`node --check`, unit tests) and not re-reviewed by a fresh agent.
-
-## 0.44.1 — 2026-11-13 — Explode: added notes keep their explode; the slider moves only the work not yet added
-- **What:** moving the 3D explode slider (or Ctrl+right-drag) no longer changes an added note, its pictures or its
-  exports. A note's pictures and exports use the explode it was added at; clicking the note goes back to that
-  explode. A view that holds added work (a note, or a drawing attached to one) keeps its amount, and the slider
-  does not change it. A drawing not yet added on the note's view takes the slider's amount when the note is added.
-  Pictures of two notes on one view can now show two amounts.
-- **Where:** `app/static/annotate.js` — `explodeChanged` (refuses a view with added work), `viewCommitted` (new),
-  `explodeOf(vk, rows)` (new: a row's `ctx.explode`, else a note's `v3d.explode`), `viewLook(look, ex)` (takes the
-  explode), `view3dPic(vk, explode)`, `view3dBox`, `goView(vk, v3d, ex)` (note click passes the note's explode),
-  `rebuildViews` (keeps the amount of a view with added work), `addNote` (pending drawings on the note's view take
-  its explode), the report / export own-frame and more-views code. `MANUAL.md`, `docs/FORMAT.md`. `app/version.py`.
-- **Notes:** before this, the slider changed the view's explode, and the pictures and exports of every note on that
-  view followed it. Older notes (before 0.42, no `ctx.explode`) are drawn at the `v3d.explode` they were written
-  with; a view's own amount (chips) is still set by the newest row when the file loads, so after a reload a chip
-  may go to a different amount than in the session where the view was made. Rows are not rewritten by a slider move.
-  The `explodeOf` fallback to `view.explode` remains only for a note with neither value. Not tested in a browser:
-  checked by reading the code, `node --check`, and `tests.test_merge_parity` / `tests.test_review_page` (OK).
-  Review 1 (fresh agent): two confirmed issues, fixed: `rebuildViews` moved a committed view's amount when a newer
-  note was added (kept now); the report's own-frame export was taken at the live slider when the note had no `v3d`
-  (fixed). One low-impact mismatch left as is: the preview of another view uses the drawings without replies, the
-  export uses them too, so with a reply as the first row on that view they can differ.
-  Review 2 (fresh agent): a first note on a new view kept a `null` amount from the empty view state (fixed: only a
-  real amount is kept). Legacy notes on a view with no amount could follow a newer row (resolved by the `v3d.explode`
-  fallback above).
-  Review 3 (fresh agent, delta only): no confirmed bugs; v3d.explode on older notes verified (saved since 0.19);
-  `explodeOf` filters by view. Left as design: a view with added work keeps the amount of its first note, so a
-  second note made at another amount does not move the chips' amount (`view.explode`) — its own pictures are right.
-  Not verified in a browser.
