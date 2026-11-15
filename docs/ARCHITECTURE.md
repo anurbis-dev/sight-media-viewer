@@ -19,13 +19,17 @@ app/static/canvas.js     the Canvas (board) view — ES module imported by index
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
+app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
+                         buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
 mobile/                  the phone app "Sight Review" (PWA, no build step) — see "Phone app" below
 tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node);
-                         test_pwa.py (phone app: build, pwa_unit.cjs, pwa_e2e.cjs round trip with Sight)
+                         test_pwa.py (phone app: build, pwa_unit.cjs, pwa_e2e.cjs round trip with Sight,
+                         pwa_3d.cjs 3D on fixtures_3d.py's two-box GLB through SwiftShader, pwa_3d_formats.cjs
+                         every phone 3D format; fixtures/parts_v001.usdz + parts.usdc)
 tools/                   archive_changes.py; build_pwa.py (phone app → dist/pwa, --serve PORT); bench_startup.py / bench_grid.py (benchlib.py: isolated SIGHT_HOME
                          copy, headless Edge/Chrome/Chromium over a stdlib CDP client — never the live library)
 build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
@@ -93,7 +97,7 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   anything that revives rows must check both folder exclusion and `Library.hidden()`.
 - Table `meta(key, value)` holds library-wide settings the backend needs without a page open
   (`scan_ignore`: the Settings → Scanning ignore list, parsed by `IgnoreRules`).
-- Lightbox 3D explode: `buildExplodeRig` solves an explosion graph per assembly level of the node
+- Lightbox 3D explode (`model3d-core.js`, shared with the phone app): `buildExplodeRig` solves an explosion graph per assembly level of the node
   hierarchy (box-based blocking, grounded largest part, one model axis per part, ride-along carry);
   `applyExplode(rig, t)` only sets `position`. Rebuilt per load, independent of the 90° turns.
   Guards: graph only up to `EXPLODE_GRAPH_MAX` parts per assembly and within `EXPLODE_BUDGET_MS`
@@ -467,17 +471,19 @@ Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in 
 
 ## Phone app (mobile/, PWA)
 
-"Sight Review" — local review on the phone (docs/PLAN-mobile.md stage 3). Plain HTML + ES modules,
+"Sight Review" — local review on the phone (docs/PLAN-mobile.md stages 3–4). Plain HTML + ES modules,
 no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages serves): `mobile/` plus
-`app/static/review-core.js`, `review-draw.js`, `keys.js` and `favicon.svg` copied to `core/` /
-`icons/`, and fills `%%VERSION%%` (APP_VERSION + a hash of every file) into `index.html` /
+`app/static/review-core.js`, `review-draw.js`, `keys.js`, `caption-plate.js`, `model3d-core.js` and
+`favicon.svg` copied to `core/` / `icons/`, the part of the vendored three.js a glTF needs
+(`THREE_FILES`: core, OrbitControls, the loaders of every phone format and the modules they import) to `three/` (index.html's
+import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/jsm/`), and fills `%%VERSION%%` (APP_VERSION + a hash of every file) into `index.html` /
 `sw.js` and the file list into `sw.js`. Relative URLs everywhere (it runs under `/<repo>/`).
 
 - **Modules** (`mobile/js/`): `app.js` UI (home list, review screen, transport, cards, composer,
   viewer, exports, SW banner); `model.js` every change to the rows + `.srev` build / parse / merge
   (pure, Node-tested); `store.js` IndexedDB; `media.js` file kind / identity / probing / frame
   grabbing; `mp4.js` fps from the MP4 container; `report.js` report content + static HTML + PDF
-  layout; `pdf.js` the PDF writer. review-core / review-draw are classic scripts loaded first
+  layout; `pdf.js` the PDF writer; `model3d.js` the 3D viewer (below). review-core / review-draw are classic scripts loaded first
   (globals `SightReviewCore`, `SightReviewDraw`); keys go through `core/keys.js` `runHotkeys`.
 - **Identity**: a review per media file, `key = assetKey(name, size)` = first 16 hex of SHA-1 of
   `lower(name) + "\n" + size` (mtime deliberately out: iOS reports the pick time for Photos).
@@ -669,11 +675,59 @@ no build step; `tools/build_pwa.py` assembles `dist/pwa/` (what GitHub Pages ser
   media's `object-fit: contain`; card pictures use `preserveAspectRatio="none"` over the scaled
   picture (same aspect). Doc units are pixels of the picture as shown (`asset.width/height`; when
   the file is bound its probed size wins — rotation applied — over a stored one).
+- **3D** (`model3d.js`, kind `model3d`: `media.js` `MODEL_EXT` = glTF / GLB, FBX, OBJ, STL, PLY, USDZ /
+  USD / USDA / USDC). `parseModel(blob, name, extras)` follows the lightbox's `loadModel` per format,
+  with its shared parts from `model3d-core.js` (`dropDeadTextures` + `FBX_TEXTURE_WAIT_MS` for FBX,
+  `stlMesh` / `plyMesh`, `plyHeaderIsSplat` — a splat is refused). USD has no server here: three's
+  `USDLoader` (vendored from three@0.185.0 with its `usd/` parsers; **patched** `USDCParser._readInlinedValue`
+  for inlined Vec*d / Vec*h, which r185 returned as undefined; its textures load as plain images, so the
+  loader's own onLoad is awaited) + `usdAsSight`, which lays it out as Sight's `usdz_convert.py` GLB: the Z-up
+  turn kept, metersPerUnit scale dropped (the conversion does not scale), every mesh baked to world space and
+  split per material group into meshes that share the part's vertices (index subsets, as glTF primitives — so
+  their bounds, hence the explode rig, are the part's), all under one node. Views of a USD from Sight therefore
+  match: camera, hidden list (mesh order) and explode — `test_model_formats` compares the meshes with Sight's
+  conversion when usd-core is installed. The vendored `USDComposer.js` is **patched** for this (marked "Sight"):
+  every material carries `userData.usdMaterial` (its USD path), a mesh with subsets gets its own material last
+  (`usdMeshMaterial`) and its faces in no subset are drawn with it (r185 dropped them); `usdAsSight` merges a
+  mesh's faces per material and orders them by first registration (own material, then subsets, in traverse
+  order), as `_Materials.add` numbers them. Not matched: the conversion drops invisible and proxy / guide
+  meshes; colours differ (Sight writes USD colours into glTF as linear factors, three reads them as sRGB, so
+  Sight shows them lighter); materials with no path (display colours) share one key here, where Sight keys
+  them by colour, and invisible / proxy meshes register their materials here — both can reorder (not
+  recount) the parts of a later multi-material mesh, so its hidden indices may differ from Sight's. **Extras**: files picked
+  together with the model (`openAny`: the model is the main file) are resolved by lowercase base name through
+  the LoadingManager's URL modifier (any folder the model names, Windows paths too), kept with it in `files`
+  (`{key, blob, extras: [{name, blob}]}`; older records have none) and passed again on reopen / rebind.
+  three.js is imported only when a model opens (`createViewer(host, blob, {name, extras, turns, onMove})`): a
+  gradient-sky env map (`buildEnvTexture` studio) + a key light riding on the camera, OrbitControls
+  (one finger orbit, two zoom / pan, damping on; `setView` puts the camera exactly, damping off for that
+  step), Sight's `frameObject3d` pushed back until the model fits across a narrow (portrait) screen;
+  renders on demand (`controls` change / `need`), `onMove` after each rendered frame. `still(cam,
+  {hidden, explode, aspect, max})` renders a view into a 2D canvas in the same task and puts the live
+  camera / meshes / explode back; `attach(el)` moves the canvas when the review screen is rebuilt.
+  The review side (app.js "3D" block): **views** stand where video frames do. `R.views` =
+  `M.views3d(rows)` (oldest first = Sight's View 1, 2…; hidden from the first row that has it, explode
+  from the newest), plus drafts' views (`viewsNow`); `findVk(look)` = `RC.camMatch` (moved from annotate.js
+  to review-core) + same hidden list + explode within 0.001 (a view without hidden / explode — older Sight
+  — matches any); `R.curVk` follows every camera move (`updateCurVk`); the stage overlay is the host's
+  space (`vbOf(aspect)` = `-500·a -500 1000·a 1000`) and shows drawings with `ctxVisible(c, {vk})`.
+  New rows carry `{vk, cam: {p, t, fov, turns}, hidden, explode}` (`ctx3d(make)`; a new vk only when
+  the note / drawing is sent on a camera that is no view; `M.drawCtx` keeps hidden / explode). A note's
+  views = `M.noteViews` (its own drawings' + picture texts' views, fallback the written-on view — the
+  0.47 video rule); replies' = `M.replyViews`. Pictures (`viewPic`) are stills cached in `frames` under
+  `key|vk=<vk>|a<aspect>|x<explode>|h<hidden>`; their aspect is what the view's drawings need (1–2.4,
+  `viewAspect`), so the notes stay readable without the model. Drawing (`drawModel`): a still of the
+  live view at the stage's own aspect, the canvas over it; the draft's other views are kept (orbit,
+  draw again = one more view). Replies are written over the model (`replyOverPlayer`, view chips);
+  *Edit the drawing* asks which view when there are several. Turn (`R.meta.turns`, Sight's quarter turn
+  about X), *Frame*, the explode slider (`canExplode`), *Show all* when a view hid meshes
+  (`meshOrder` = the lightbox inspector's order). No stage swipes in 3D (the fingers move the camera).
 - **Exports** (`report.js`): `gatherReport` = Sight's `gatherReport(false)` content (cover with
   every drawing for pictures; a picture note's own frame only when there are several notes and it
   has drawings; video: each frame of `RC.noteTimes` (the first as the note's frame) with everything
   visible there except replies' drawings; each reply that drew: its frames — the note's own too — / the picture with only its
-  drawings; replies, pictures). HTML: one file, data-URL images, no script. PDF: A4 laid out in points, each page
+  drawings; 3D: each of the note's views via `src.viewAt` as "View N", burned in the host's units —
+  `burn(…, ox, oy)`; replies, pictures). HTML: one file, data-URL images, no script. PDF: A4 laid out in points, each page
   drawn on a canvas at 2 px/pt with the device's fonts (any script) and stored as one JPEG per page
   (`pdf.js`, objects: catalog, pages, info, then page / content / image per page). Files are
   offered in a sheet with *Share…* (Web Share with a file — needs a fresh tap, hence the sheet)

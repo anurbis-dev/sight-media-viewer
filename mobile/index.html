@@ -130,6 +130,12 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* Taps go to the player under it: the cached frame is hidden as its seek lands, often mid-tap, and
    a tap whose target vanished gets no click (a tap on Play right after a scrub did nothing). */
 .stage .scrubimg { pointer-events: none; }
+.stage .m3d { position: absolute; inset: 0; }
+.stage .m3d canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.hdr .t3d { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hdr .t3d:empty { display: none; }
+.hdr .t3d input.explode { width: 110px; accent-color: var(--accent); }
+.hdr .t3d .btn.sm { padding: 4px 10px; font-size: 12px; }
 .stage .none { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--ov-mut); padding: 16px; font-size: 14px; }
 .stage .none label { display: inline-block; margin-top: 10px; background: var(--accent); color: #fff; border-radius: 10px; padding: 8px 14px; cursor: pointer; }
 .stage .none input { display: none; }
@@ -318,6 +324,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <body>
 <div id="app"></div>
 <div class="update" id="update" hidden><span>A new version of the app is ready.</span><button class="btn primary" id="reload" type="button">Reload</button></div>
+<script type="importmap">{"imports":{"three":"./three/three.module.js","three/addons/":"./three/jsm/"}}</script>
 <script src="core/review-core.js"></script>
 <script src="core/review-draw.js"></script>
 <script>window.SIGHT_REVIEW_VERSION = "%%VERSION%%";</script>

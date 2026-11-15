@@ -6,7 +6,9 @@
 
 The app is mobile/ plus the scripts it shares with Sight: app/static/review-core.js (drawing
 primitives, merge rules) and app/static/review-draw.js (the drawing canvas) and app/static/keys.js (the one
-shortcut rule) and app/static/caption-plate.js (the text plate over a full-screen picture), copied to core/. The
+shortcut rule) and app/static/caption-plate.js (the text plate over a full-screen picture) and app/static/model3d-core.js
+(3D turns / framing / explode, shared with the lightbox), copied to core/, and the parts of three.js the 3D
+viewer needs (three/). The
 service worker gets the version (APP_VERSION + a hash of every file, so any change makes phones
 offer "New version — Reload") and the list of files to cache for offline use. Standard library only.
 """
@@ -30,8 +32,21 @@ SHARED = {  # published path -> source
     "core/review-draw.js": ROOT / "app" / "static" / "review-draw.js",
     "core/keys.js": ROOT / "app" / "static" / "keys.js",
     "core/caption-plate.js": ROOT / "app" / "static" / "caption-plate.js",
+    "core/model3d-core.js": ROOT / "app" / "static" / "model3d-core.js",
     "icons/favicon.svg": ROOT / "app" / "static" / "favicon.svg",
 }
+# three.js for the 3D viewer (mobile/js/model3d.js), the same vendored build as Sight: only what its
+# formats need (glTF / GLB, FBX, OBJ, STL, PLY, USD). index.html maps "three" / "three/addons/" here (import map).
+VENDOR = ROOT / "app" / "static" / "vendor"
+THREE_FILES = ["three.module.js", "three.core.js", "jsm/controls/OrbitControls.js", "jsm/loaders/GLTFLoader.js",
+               "jsm/loaders/DRACOLoader.js", "jsm/utils/BufferGeometryUtils.js", "jsm/utils/SkeletonUtils.js",
+               "jsm/libs/meshopt_decoder.module.js", "jsm/libs/draco/gltf/draco_decoder.js",
+               "jsm/libs/draco/gltf/draco_decoder.wasm", "jsm/libs/draco/gltf/draco_wasm_wrapper.js",
+               "jsm/loaders/FBXLoader.js", "jsm/curves/NURBSCurve.js", "jsm/curves/NURBSUtils.js", "jsm/libs/fflate.module.js",
+               "jsm/loaders/OBJLoader.js", "jsm/loaders/STLLoader.js", "jsm/loaders/PLYLoader.js",
+               "jsm/loaders/USDLoader.js", "jsm/loaders/usd/USDAParser.js", "jsm/loaders/usd/USDCParser.js",
+               "jsm/loaders/usd/USDComposer.js"]
+SHARED.update({"three/" + f: VENDOR / f for f in THREE_FILES})
 TEMPLATED = {"index.html", "sw.js"}  # get %%VERSION%% (and sw.js %%FILES%%)
 
 
@@ -80,7 +95,8 @@ def build(out: Path) -> str:
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
-                      ".webmanifest": "application/manifest+json", ".js": "text/javascript", ".srev": "application/json"}
+                      ".webmanifest": "application/manifest+json", ".js": "text/javascript", ".srev": "application/json",
+                      ".wasm": "application/wasm"}
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache")

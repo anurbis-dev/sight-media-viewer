@@ -127,12 +127,70 @@ export function drawingRows(items, { note, reply, ctx, z }, now = Date.now()){
     return Object.assign(RC().drawingRow({ id: RC().uid(), kind: it.kind, shape_kind: it.shape_kind, z: z + i, data: d }, now), { deleted_at: null });
   });
 }
-// What a drawing made on a note's frame takes as data.ctx (FORMAT.md Context): video {t, hold}.
+// What a drawing made on a note's frame takes as data.ctx (FORMAT.md Context): video {t, hold};
+// 3D {vk, cam} with the view's hidden meshes / explode when the view has them (0.41 / 0.42).
 export function drawCtx(c){
   if (!c) return null;
   if (c.t != null) return { t: c.t, hold: c.hold || 0 };
-  if (c.vk) return { vk: c.vk, cam: c.cam };
+  if (c.vk){
+    const o = { vk: c.vk, cam: c.cam };
+    if (Array.isArray(c.hidden)) o.hidden = c.hidden.slice();
+    if (typeof c.explode === "number") o.explode = c.explode;
+    return o;
+  }
   return null;
+}
+// The 3D views a review's rows stand on (FORMAT.md 3D ctx), oldest first: {vk, cam, hidden, explode,
+// created} — Sight's rebuildViews (annotate.js), so the numbers match ("View 1" is the first one made):
+// a row's time is data.created; hidden = a note's list, else the first given (null: none, matches any);
+// explode = the newest row's ctx.explode, or a pre-0.42 note's v3d.explode, else null.
+export function views3d(rows){
+  const out = new Map();
+  live(rows).forEach((r) => {
+    const c = r.data && r.data.ctx;
+    if (!c || !c.vk || !c.cam || !Array.isArray(c.cam.p) || !Array.isArray(c.cam.t)) return;
+    const at = r.data.created || 0;
+    let v = out.get(c.vk);
+    if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, explode: null, explodeAt: 0, created: at }; out.set(c.vk, v); }
+    v.created = Math.min(v.created, at);
+    if (Array.isArray(c.hidden) && (v.hidden == null || r.kind === "note")) v.hidden = c.hidden.slice();
+    const e = typeof c.explode === "number" ? c.explode : r.kind === "note" && c.v3d && typeof c.v3d.explode === "number" ? c.v3d.explode : undefined;
+    if (e !== undefined && at >= v.explodeAt){ v.explode = e; v.explodeAt = at; }
+  });
+  return new Map([...out.values()].sort((a, b) => a.created - b.created).map((v) => [v.vk, v]));
+}
+// The explode a note's (a reply's) picture of view vk is taken at: that of its own rows there (Sight's
+// explodeOf: an added note keeps the look it was made with), a pre-0.42 note's v3d.explode, else undefined
+// (then the view's amount).
+export function explodeOf(vk, rows){
+  for (const r of rows){
+    const c = r && r.data && r.data.ctx;
+    if (!c || c.vk !== vk) continue;
+    if (typeof c.explode === "number") return c.explode;
+    if (r.kind === "note" && c.v3d && typeof c.v3d.explode === "number") return c.v3d.explode;
+  }
+  return undefined;
+}
+// The views a 3D note stands on (like RC.noteTimes for video, 0.47+): those its own drawings are on
+// and those with a picture text of it, in view order; the view it was written on only when it has
+// neither (fallback).
+export function noteViews(rows, note, order, fallback = true){
+  const c = note.data.ctx, vk0 = c && c.vk, vks = [];
+  const add = (k) => { if (k && !vks.includes(k)) vks.push(k); };
+  drawings(rows).forEach((r) => { if (r.data.note === note.id && !r.data.reply) add((r.data.ctx && r.data.ctx.vk) || vk0); });
+  Object.keys(note.data.captions || {}).forEach((k) => { if (k.startsWith("vk:") && String(note.data.captions[k] || "").trim()) add(k.slice(3)); });
+  if (!vks.length && fallback) add(vk0);
+  const rank = (k) => { const i = order.indexOf(k); return i < 0 ? 1e9 : i; };
+  return vks.sort((a, b) => rank(a) - rank(b));
+}
+// The views a reply drew on (view order), null with no drawing.
+export function replyViews(rows, note, rid, order){
+  const own = drawings(rows).filter((x) => x.data.reply === rid && x.data.note === note.id);
+  if (!own.length) return null;
+  const vk0 = note.data.ctx && note.data.ctx.vk, vks = [];
+  own.forEach((x) => { const k = (x.data.ctx && x.data.ctx.vk) || vk0; if (k && !vks.includes(k)) vks.push(k); });
+  const rank = (k) => { const i = order.indexOf(k); return i < 0 ? 1e9 : i; };
+  return vks.sort((a, b) => rank(a) - rank(b));
 }
 
 // The file's review state (Library.set_review_status): the newest live status row; setting it

@@ -490,13 +490,7 @@ export function createAnnotator(host){
   // Where the player goes to show the frame of a stored time: a quarter into that frame (a stored
   // 0.100 at 29.97 fps is just before frame 3's start and would show frame 2).
   const landAt = (t) => S.fpsKnown ? (frameIndex(t) + 0.25) * frameDur() : t;
-  function camMatch(a, b){
-    if (!a || !b) return false;
-    const d = hyp(hyp(a.p[0] - a.t[0], a.p[1] - a.t[1]), a.p[2] - a.t[2]) || 1, tol = d * 0.004;
-    const dp = hyp(hyp(a.p[0] - b.p[0], a.p[1] - b.p[1]), a.p[2] - b.p[2]);
-    const dt = hyp(hyp(a.t[0] - b.t[0], a.t[1] - b.t[1]), a.t[2] - b.t[2]);
-    return dp < tol && dt < tol && Math.abs((a.fov || 50) - (b.fov || 50)) < 0.5 && (a.turns || 0) === (b.turns || 0);
-  }
+  const camMatch = RC.camMatch;  // shared with the phone app (review-core.js)
   // A view is a camera plus the meshes shown or hidden there: {vk, cam, hidden, v3d, explode, created}.
   // hidden is the mesh indices hidden (null when the file predates it: any mesh state matches). The views
   // are kept in the order they were first made, so the number a view shows (viewNumber, the chips, the

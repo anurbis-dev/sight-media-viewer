@@ -1,6 +1,6 @@
-// Sight Review — the phone app (docs/PLAN-mobile.md stage 3). A local file is picked on the device
-// (nothing is uploaded) and reviewed from scratch: notes, replies, states, drawings on the picture
-// or any video frame; the review lives in IndexedDB (store.js) and leaves the device only as an
+// Sight Review — the phone app (docs/PLAN-mobile.md stages 3–4). A local file is picked on the device
+// (nothing is uploaded) and reviewed from scratch: notes, replies, states, drawings on the picture,
+// any video frame or any view of a 3D model (glTF / GLB, model3d.js); the review lives in IndexedDB (store.js) and leaves the device only as an
 // export: PDF / static HTML (report.js) or a .srev that merges in Sight (model.js, review-core).
 // Rendering and the merge come from review-core.js, the drawing canvas from review-draw.js (both
 // shared with Sight's HTML reviewer page), shortcuts from Sight's keys.js.
@@ -8,6 +8,8 @@
 import * as DB from "./store.js";
 import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, ScrubCache, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
 import { videoFps } from "./mp4.js";
+import { createViewer } from "./model3d.js";
+import { plyHeaderIsSplat } from "../core/model3d-core.js";
 import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
@@ -250,32 +252,47 @@ async function shotUrl(id){
 }
 
 // ---- opening files -----------------------------------------------------------------------------
+// The picker for the review's own file: a 3D model takes any file (iOS greys out the extensions it does not know).
+const pickAccept = () => kindNow() === "video" ? "video/*" : kindNow() === "model3d" ? "" : "image/*";
 function picker(accept, multiple, onFiles){
   const inp = el("input"); inp.type = "file"; if (accept) inp.accept = accept; inp.multiple = !!multiple;
   inp.onchange = () => { const fs = Array.from(inp.files || []); inp.value = ""; if (fs.length) onFiles(fs); };
   return inp;
 }
+// Several files at once: a 3D model with the files it points at (textures, a .gltf's .bin) — the model
+// is the one to review, the rest go with it (kept with it on the device).
+const extrasOf = (files, main) => files.filter((x) => x !== main).map((x) => ({ name: x.name, blob: x }));
 async function openAny(files){
-  const f = files[0], k = kindOf(f);
+  const f = files.find((x) => kindOf(x) === "model3d") || files[0], k = kindOf(f);
   if (k === "review") return importReviewFile(f, null);
+  if (k === "model3d") return openMedia(f, extrasOf(files, f));
   if (k === "image" || k === "video") return openMedia(f);
-  toast("The app opens pictures, videos and Sight review files (.srev)", 4000);
+  toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD) and Sight review files (.srev)", 4000);
 }
-async function openMedia(file){
+async function openMedia(file, extras){
   const key = await assetKey(file.name, file.size);
   let meta = await DB.get("reviews", key);
   if (!meta){
-    const kind = kindOf(file), url = URL.createObjectURL(file);
+    const kind = kindOf(file);
     let info;
-    try {
-      info = kind === "image" ? await probeImage(url) : await probeVideo(url, file);
-      if (!info.w) throw new Error("no picture");
-    } catch {
-      URL.revokeObjectURL(url);
-      toast(kind === "video" ? "This device cannot play this video (format or codec). iPhone plays H.264 / HEVC MP4 and MOV." : "This device cannot show this picture.", 5000);
-      return;
+    if (kind === "model3d"){
+      // A GLB starts with "glTF"; a .gltf is JSON. Every model is read when the review opens (a file
+      // that is no model says so on the stage).
+      const ext = extOf(file.name), head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+      const glb = head[0] === 0x67 && head[1] === 0x6c && head[2] === 0x54 && head[3] === 0x46;
+      if ((ext === ".glb" && !glb) || (ext === ".gltf" && !/^\s*\{/.test(new TextDecoder().decode(head)))){ toast("This file is not a glTF / GLB model.", 5000); return; }
+      if (ext === ".ply" && plyHeaderIsSplat(new TextDecoder("ascii").decode(await file.slice(0, 8192).arrayBuffer()))){ toast("Gaussian splats are not shown in the app — open this one in Sight.", 5000); return; }
+      info = { w: null, h: null };
+    } else {
+      const url = URL.createObjectURL(file);
+      try {
+        info = kind === "image" ? await probeImage(url) : await probeVideo(url, file);
+        if (!info.w) throw new Error("no picture");
+      } catch {
+        toast(kind === "video" ? "This device cannot play this video (format or codec). iPhone plays H.264 / HEVC MP4 and MOV." : "This device cannot show this picture.", 5000);
+        return;
+      } finally { URL.revokeObjectURL(url); }
     }
-    URL.revokeObjectURL(url);
     const t = now();
     meta = { key, asset: { id: key, name: file.name, path: file.name, ext: extOf(file.name), kind, size: file.size,
       mtime: file.lastModified ? Math.round(file.lastModified / 1000) : null, width: info.w, height: info.h, duration: kind === "video" ? info.duration || null : null },
@@ -283,7 +300,7 @@ async function openMedia(file){
     await DB.saveReview(meta, []);
     DB.persist();
   }
-  await openReview(key, file);
+  await openReview(key, file, false, extras);
 }
 
 // ---- import / merge a .srev ------------------------------------------------------------------
@@ -292,7 +309,7 @@ async function importReviewFile(file, intoKey){
   try { pkg = M.parsePackage(await file.text()); }
   catch (e){ toast(e.message || "Not a Sight review file", 4000); return; }
   const a = pkg.asset;
-  if (a.kind && a.kind !== "image" && a.kind !== "video"){ toast(`This review is for a ${a.kind} file — the app opens pictures and videos for now.`, 5000); return; }
+  if (a.kind && a.kind !== "image" && a.kind !== "video" && a.kind !== "model3d"){ toast(`This review is for a ${a.kind} file — the app opens pictures, videos and 3D models.`, 5000); return; }
   await flush();
   let key = intoKey;
   if (!key){
@@ -421,7 +438,7 @@ async function renderHome(){
   [["photo", "Photo or video", "image/*,video/*", "pick-media"], ["file", "Open a file…", "", "pick-file"]].forEach(([icon, title, accept, cls]) => {
     const l = el("label", "ib " + cls); l.title = title; l.setAttribute("aria-label", title);
     l.innerHTML = ico(icon, 20);
-    l.appendChild(picker(accept, false, openAny));
+    l.appendChild(picker(accept, cls === "pick-file", openAny));
     mini.appendChild(l);
   });
   mini.hidden = true;
@@ -432,8 +449,8 @@ async function renderHome(){
   const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
   l1.appendChild(el("b", "", "Photo or video")); l1.appendChild(el("small", "", "from the library or camera roll"));
   l1.appendChild(picker("image/*,video/*", false, openAny));
-  l2.appendChild(el("b", "", "Open a file…")); l2.appendChild(el("small", "", "Files: media or a .srev review"));
-  l2.appendChild(picker("", false, openAny));
+  l2.appendChild(el("b", "", "Open a file…")); l2.appendChild(el("small", "", "Files: media, a 3D model (with its textures), or a .srev review"));
+  l2.appendChild(picker("", true, openAny));
   opens.appendChild(l1); opens.appendChild(l2);
   opens.hidden = true;
   main.appendChild(opens);
@@ -746,7 +763,7 @@ function reviewRow(m, grp){
   row.dataset.key = m.key;
   row.classList.toggle("sel", homeSel.has(m.key));
   th.title = "Open"; th.setAttribute("aria-label", "Open " + (m.asset.name || "the review"));
-  if (m.thumb) th.style.backgroundImage = `url("${m.thumb}")`; else th.textContent = m.asset.kind === "video" ? "VIDEO" : "IMAGE";
+  if (m.thumb) th.style.backgroundImage = `url("${m.thumb}")`; else th.textContent = m.asset.kind === "video" ? "VIDEO" : m.asset.kind === "model3d" ? "3D" : "IMAGE";
   tx.appendChild(el("b", "", m.asset.name || "(no name)"));
   const c = m.counts || {}, info = el("span");
   if (c.notes){
@@ -755,7 +772,7 @@ function reviewRow(m, grp){
   } else info.appendChild(document.createTextNode("No notes"));
   info.appendChild(document.createTextNode(" · " + fmtDate(m.updated)));
   tx.appendChild(info);
-  tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : " picture")));
+  tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : m.asset.kind === "model3d" ? " 3D model" : " picture")));
   it.appendChild(th); it.appendChild(tx);
   return rowGestures(row, it, { open: () => toggleSel(m.key, row), thumb: () => { homeSel.clear(); openReview(m.key, null); }, menu: () => reviewMenu(m), name: m.asset.name });
 }
@@ -1109,6 +1126,7 @@ function closeReview(){
   if (R.video){ R.video.pause(); R.video.removeAttribute("src"); R.video.load(); }
   if (R.grab) R.grab.close();
   if (R.scrub) R.scrub.close();
+  if (R.v3d) R.v3d.dispose();
   if (R.url) URL.revokeObjectURL(R.url);
   R.frames.forEach((f) => URL.revokeObjectURL(f.url));
   R.shotUrls.forEach((u) => URL.revokeObjectURL(u));
@@ -1122,7 +1140,7 @@ function closeReview(){
 // Only the latest open counts: a second tap while the first review is still loading wins, and the
 // first one stops at its next step (each open has its own `rv`, nothing writes through `R` late).
 let openSeq = 0;
-async function openReview(key, file, fromRoute){
+async function openReview(key, file, fromRoute, extras){
   const seq = ++openSeq;
   fsArm();
   await flush();
@@ -1135,13 +1153,18 @@ async function openReview(key, file, fromRoute){
   const picked = !!file;
   if (!file){
     const kept = await DB.get("files", key).catch(() => null);
-    if (kept) file = kept.blob;
+    if (kept){ file = kept.blob; extras = kept.extras; }
     meta.kept = !!kept;  // what is really stored wins over the flag (a stale write may have reset it)
+  } else if (!(extras && extras.length)){
+    // The same model picked again on its own: the files kept with it (textures, .bin) still go with it.
+    const kept = await DB.get("files", key).catch(() => null);
+    if (kept && kept.extras && kept.blob && kept.blob.size === file.size) extras = kept.extras;
   }
   if (seq !== openSeq) return;
   closeReview();
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
-    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean" };
+    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
+    views: meta.asset.kind === "model3d" ? M.views3d(rr ? rr.rows : []) : new Map(), curVk: null, v3d: null, v3dReady: null, extras: extras || [] };
   if (file) await bindFile(rv, file);
   if (R !== rv) return;
   meta.opened = now();
@@ -1162,14 +1185,15 @@ async function autoKeep(rv, replace){
   let cur = null;
   if (rv.meta.kept){
     cur = await DB.get("files", key).catch(() => null);
-    if (cur && cur.blob && cur.blob.size === f.size && !replace) return;
+    if (cur && cur.blob && cur.blob.size === f.size && (cur.extras || []).length === rv.extras.length && !replace) return;
   }
+  const bytes = (b, xs) => (b ? b.size : 0) + (xs || []).reduce((n, x) => n + (x.blob ? x.blob.size : 0), 0);
   let ok = false, why = null;
   try {
     const e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
-    const used = (e && e.usage || 0) - (cur && cur.blob ? cur.blob.size : 0);  // a replaced copy frees its room
-    if (e && e.quota && used + f.size > e.quota * 0.9) throw new Error("not enough room on this device");
-    ok = await DB.keepFile(key, f);
+    const used = (e && e.usage || 0) - (cur ? bytes(cur.blob, cur.extras) : 0);  // a replaced copy frees its room
+    if (e && e.quota && used + bytes(f, rv.extras) > e.quota * 0.9) throw new Error("not enough room on this device");
+    ok = await DB.keepFile(key, f, rv.extras);
     if (ok) DB.persist();
   } catch (e){
     console.warn("keep", e);
@@ -1189,6 +1213,7 @@ async function bindFile(rv, file){
   rv.file = file;
   rv.url = URL.createObjectURL(file);
   const a = rv.meta.asset;
+  if (a.kind === "model3d") return;  // read by the stage (buildStage3d), which also makes the thumbnail
   if (a.kind === "video") rv.grab = new Grabber(rv.url);
   try {
     // Doc units are the picture as shown, rotation (EXIF, video matrix) applied: the file's own
@@ -1358,8 +1383,8 @@ function stageDrawings(){
   if (R.hide) return [];
   // The frame on screen, by the rule drawings are stored with (frameStart): a timeline scrub lands mid-frame,
   // and the raw time would hide that frame's drawings until the time moved again.
-  const v = R.video, at = kindNow() === "video" ? (v ? { t: frameStart(R.scrubT != null ? R.scrubT : v.currentTime), fps: R.fps } : null) : null;
-  if (kindNow() === "video" && !at) return [];
+  const v = R.video, at = kindNow() === "video" ? (v ? { t: frameStart(R.scrubT != null ? R.scrubT : v.currentTime), fps: R.fps } : null) : is3d() ? (R.v3d ? { vk: R.curVk || undefined } : null) : null;
+  if ((kindNow() === "video" || is3d()) && !at) return [];
   if (R.newOpen || R.replyTo){
     const d = R.drafts[composeKey()];
     const mine = drawFrames(d && d.draw).filter((x) => !at || RC.ctxVisible(x.frame.ctx, at)).flatMap((x) => x.items);
@@ -1372,7 +1397,12 @@ function stageDrawings(){
 }
 function paintOverlay(){
   if (!els || !els.svg) return;
-  els.svg.setAttribute("viewBox", [0, 0, docW() || 1, docH() || 1].join(" "));
+  // 3D: the view on screen first (a draft just drawn on a new view makes the camera's view exist).
+  if (is3d() && R.v3d){
+    const vk = findVk(liveLook());
+    if (vk !== R.curVk){ R.curVk = vk; paintCurrent(); if (els.where) els.where(); }
+  }
+  els.svg.setAttribute("viewBox", (is3d() ? vbOf(R.v3d ? R.v3d.aspect() : 1) : [0, 0, docW() || 1, docH() || 1]).join(" "));
   els.svg.innerHTML = RC.svgMarkup(stageDrawings(), numOf);
 }
 // The view's turn (0 / 90 / 180 / 270°) and mirror, kept with the review (R.meta.view): the stage,
@@ -1391,6 +1421,7 @@ function applyStageView(){
   if (!els || !els.stage) return;
   const st = els.stage, W = st.clientWidth, H = st.clientHeight, vw = viewOf();
   st.querySelectorAll(":scope > .sv > img, :scope > .sv > video, :scope > .sv > svg").forEach((n) => turnEl(n, W, H, vw));
+  if (is3d()) paintOverlay();  // the host's units follow its shape
   if (els.penB) els.penB.style.bottom = ((els.tp && !els.tp.hidden ? els.tp.offsetHeight + 8 : 0) + 14) + "px";
   applyPlayerView();
 }
@@ -1399,6 +1430,217 @@ function setView(vw){
   putIfAlive(R, "reviews", R.meta);
   applyStageView();
   if (els && els.mirB) els.mirB.classList.toggle("on", R.meta.view.mirror);
+}
+
+// ---- 3D (model3d.js, PLAN-mobile stage 4) ------------------------------------------------------
+// A 3D review has views where a video has frames: a camera, the meshes hidden there and the
+// explode amount (FORMAT.md 3D ctx {vk, cam: {p, t, fov, turns}, hidden, explode}, as Sight writes it).
+// R.views: the rows' views in Sight's order (M.views3d, rebuilt by paintReview); R.curVk: the view
+// the live camera is on (null: none); R.v3d: the viewer once the model is up; R.v3dReady resolves to
+// it (null: no file, or it could not be shown). The camera is moved by one finger (orbit) and two
+// (zoom / pan) on the model itself; the review's own swipes stay on the Notes Panel bar.
+const is3d = () => kindNow() === "model3d";
+const EX_TOL = 0.001;  // two explode amounts within this are one view (Sight 0.44.2)
+// The rows' views plus those of drafts not sent yet (their drawings show on their view meanwhile).
+function viewsNow(){
+  const m = new Map(R.views);
+  Object.values(R.drafts).forEach((d) => drawFrames(d && d.draw).forEach((x) => {
+    const c = x.frame && x.frame.ctx;
+    if (c && c.vk && c.cam && !m.has(c.vk)) m.set(c.vk, { vk: c.vk, cam: c.cam, hidden: Array.isArray(c.hidden) ? c.hidden : null, explode: typeof c.explode === "number" ? c.explode : null, created: Infinity });
+  }));
+  return m;
+}
+const viewOrder = () => [...R.views.keys()];
+const viewNo = (vk) => viewOrder().indexOf(vk) + 1;
+const viewName = (vk) => viewNo(vk) ? "View " + viewNo(vk) : "New view";
+const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+function liveLook(){ const V = R && R.v3d; return V ? { cam: V.getView(), hidden: V.getHidden(), explode: V.explode } : null; }
+// The view a live camera (with its hidden meshes and explode) is on, or null. A view with no hidden
+// list / explode (an older Sight file) matches any; one that has them, only the same.
+// A view matches a live look (the view's own camera, hidden list and explode; none = any).
+function viewFits(v, look){
+  return !!v && RC.camMatch(look.cam, v.cam) && (!v.hidden || sameList(v.hidden, look.hidden)) && (v.explode == null || Math.abs(v.explode - look.explode) < EX_TOL);
+}
+function findVk(look){
+  if (!look) return null;
+  // The current view while it still fits (as Sight's ctxNow): an older view sharing its camera does not take over.
+  if (R.curVk && viewFits(viewsNow().get(R.curVk), look)) return R.curVk;
+  let loose = null;
+  for (const v of viewsNow().values()){
+    if (!RC.camMatch(look.cam, v.cam) || (v.hidden && !sameList(v.hidden, look.hidden))) continue;
+    if (v.explode == null){ if (!loose) loose = v.vk; continue; }
+    if (Math.abs(v.explode - look.explode) < EX_TOL) return v.vk;
+  }
+  return loose;
+}
+// The ctx of the view on screen (make: a new view when the camera is on none), as rows store it.
+function ctx3d(make){
+  const look = liveLook();
+  if (!look) return null;
+  const vk = findVk(look) || (make ? RC.uid() : null);
+  if (!vk) return null;
+  const v = viewsNow().get(vk);
+  const c = { vk, cam: v ? v.cam : look.cam, explode: v && v.explode != null ? v.explode : look.explode };
+  if (!v || v.hidden) c.hidden = (v ? v.hidden : look.hidden).slice();  // (an older Sight view has no list: none added)
+  return c;
+}
+// Called on every camera move (the viewer's onMove) and after the rows change.
+function updateCurVk(){
+  if (!R || !is3d() || !R.v3d) return;
+  const vk = findVk(liveLook());
+  if (vk === R.curVk) return;
+  R.curVk = vk;
+  paintOverlay(); paintCurrent();
+  if (els && els.where) els.where();
+}
+// Puts the live camera on a view: its meshes, explode and camera.
+function goView(vk){
+  const v = R && viewsNow().get(vk), V = R && R.v3d;
+  if (!v || !V) return false;
+  if (v.hidden) V.setHidden(v.hidden);
+  if (v.explode != null) V.setExplode(v.explode);
+  V.setView(v.cam);
+  R.curVk = vk;
+  paintOverlay(); paintCurrent(); paint3dTools();
+  if (els && els.where) els.where();
+  return true;
+}
+// A view's picture is as wide as its drawings need (at least square, at most 2.4 : 1): a view drawn on
+// a wide screen is whole on the phone, one drawn on the phone keeps a square picture.
+function viewAspect(vk, rv = R){
+  let x = 0;
+  M.drawings(rv.rows).forEach((r) => { if (r.data.ctx && r.data.ctx.vk === vk){ const b = RC.boundsOf(r); if (b) x = Math.max(x, Math.abs(b[0]), Math.abs(b[2])); } });
+  return Math.round(RC.clamp(x * 2 / 1000 * 1.06, 1, 2.4) * 20) / 20;
+}
+// Doc units of a 3D picture `a` wide per 1 high: the host's screen space, 1000 high, origin at the centre.
+const vbOf = (a) => [-500 * a, -500, 1000 * a, 1000];
+// A view's clean picture {blob, w, h, url, vb} (cached like video frames: kept on the device, so the
+// notes stay readable without the model), or null. ex: the explode to show it at (a note's own,
+// M.explodeOf); else the view's. A view with no hidden list / explode (older Sight) is shown with every
+// mesh and assembled — never the live state, which the cached picture would keep.
+async function viewPic(vk, rv = R, ex){
+  const v = rv.views.get(vk) || (rv === R ? viewsNow().get(vk) : null);
+  if (!v) return null;
+  const x = typeof ex === "number" ? ex : v.explode != null ? v.explode : 0, hid = v.hidden || [];
+  const a = viewAspect(vk, rv), tag = `vk=${vk}|a${a}|x${x.toFixed(3)}|h${hid.join(",")}`;
+  const f = await cachedFrame(rv, tag, async () => {
+    const V = await rv.v3dReady;
+    if (!V || R !== rv) return null;
+    const c = V.still(v.cam, { hidden: hid, explode: x, aspect: a });
+    const blob = await canvasBlob(c, "image/jpeg", 0.88), out = { blob, w: c.width, h: c.height };
+    dropCanvas(c);
+    return out;
+  });
+  return f ? Object.assign({}, f, { vb: vbOf(a) }) : null;
+}
+// The model on screen as a picture to draw on (the stage's own shape, so the canvas lies exactly over it).
+async function frame3dNow(rv = R){
+  const V = rv.v3d;
+  if (!V) return null;
+  const ctx = ctx3d(true), a = V.aspect(), c = V.still(null, { aspect: a });
+  const blob = await canvasBlob(c, "image/jpeg", 0.88), w = c.width, h = c.height;
+  dropCanvas(c);
+  if (R !== rv) return null;
+  const url = URL.createObjectURL(blob);
+  rv.frames.set("live|" + RC.uid(), { blob, w, h, url });  // (revoked with the review)
+  return { url, vb: vbOf(a), ctx, at: { vk: ctx.vk } };
+}
+// The views a 3D note stands on (its drawings' and picture texts', view order; fallback: the view it
+// was written on), the views of its whole thread (replies' drawings too), a reply's.
+// The explode a note's (rid: a reply's) picture of view vk shows: its own rows' there (M.explodeOf).
+// As Sight's previews: the note's own view takes the note's amount, its other views their drawings'.
+function picExplode(n, vk, rid){
+  const own = M.drawings(R.rows).filter((r) => r.data.note === n.id && (rid ? r.data.reply === rid : !r.data.reply));
+  return M.explodeOf(vk, rid ? own : vk === (n.data.ctx && n.data.ctx.vk) ? [n] : own);
+}
+const noteVks = (n, fallback = true) => M.noteViews(R.rows, n, viewOrder(), fallback);
+function threadVks(n){
+  const out = noteVks(n);
+  M.liveReplies(n).forEach((r) => (M.replyViews(R.rows, n, r.id, viewOrder()) || []).forEach((k) => { if (!out.includes(k)) out.push(k); }));
+  return out;
+}
+function vnoTag(box, vk){ box.appendChild(el("span", "fno", "V" + (viewNo(vk) || "+"))); return box; }
+// One view of a 3D note (or of a reply: rid, its drawings only), filled in once its picture is there.
+function asyncViewAt(n, vk, rid, cls = "sm"){
+  const rv = R, ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
+  viewPic(vk, rv, picExplode(n, vk, rid)).then((fr) => {
+    if (R !== rv || !fr){ ph.remove(); return; }
+    const f = { url: fr.url, vb: fr.vb, at: { vk } };
+    const box = vnoTag(picBox(f, rid ? drawingsOn(f, { reply: rid }) : drawingsOn(f), cls), vk);
+    if (!rid) markCap(box, n, { vk });
+    box.onclick = () => openThread(n, rid ? { kind: "frame", vk, rid } : { kind: "frame", vk });
+    ph.replaceWith(box);
+  });
+  return ph;
+}
+// Drawing on the model: the view on screen as a picture, the canvas over it. frames: the draft's
+// views so far — this view's drawing is edited, the others kept; onDone gets them all.
+async function drawModel({ frames = [], onDone, noPlace }){
+  const rv = R;
+  if (!rv.v3d || rv.drawOpening) return;
+  rv.drawOpening = true;
+  let fr;
+  try { fr = await frame3dNow(rv); } finally { rv.drawOpening = false; }
+  if (!fr || R !== rv) return;
+  const mine = frames.find((x) => x.frame && x.frame.ctx && x.frame.ctx.vk === fr.ctx.vk);
+  const rest = frames.filter((x) => x !== mine);
+  const frame = mine ? Object.assign({}, fr, { ctx: mine.frame.ctx }) : fr;
+  drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: mine ? mine.items : [], noPlace, onDone: (items) => onDone(items.length ? rest.concat([{ frame, items }]) : rest) });
+}
+// The 3D controls in the header: turn (which way is up), frame the model, the explode slider (a
+// model with parts), "show all" while a view's meshes are hidden.
+function paint3dTools(){
+  if (!els || !els.t3d || !R) return;
+  const box = els.t3d, V = R.v3d;
+  box.textContent = "";
+  if (!V) return;
+  if (V.canExplode){
+    const r = el("input", "explode"); r.type = "range"; r.min = "0"; r.max = "1"; r.step = "0.01"; r.value = String(V.explode);
+    r.title = "Explode"; r.setAttribute("aria-label", "Explode");
+    r.oninput = () => { V.setExplode(Number(r.value)); updateCurVk(); };
+    box.appendChild(r);
+  }
+  const hid = V.getHidden().length;
+  if (hid) box.appendChild(btn("btn sm", `Show all (${hid} hidden)`, () => { V.setHidden([]); paint3dTools(); updateCurVk(); }, "Show the meshes this view hides"));
+}
+function turnModel(){
+  const V = R && R.v3d;
+  if (!V) return;
+  R.meta.turns = V.turn();
+  putIfAlive(R, "reviews", R.meta);
+  updateCurVk();
+}
+// The stage of a 3D review: the model's canvas, the drawings over it (the host's units).
+function buildStage3d(stage, missing){
+  const rv = R, host = el("div", "m3d");
+  stage.appendChild(host);
+  stage.appendChild(els.svg);
+  els.m3d = host;
+  if (rv.v3d){ rv.v3d.attach(host); paintOverlay(); paint3dTools(); return; }
+  if (!rv.file){ missing("Pick the model again (with its texture files, if it has any) to turn it and draw on new views. Notes and their views stay readable."); return; }
+  const wait = el("div", "none", "Loading the model…");
+  stage.appendChild(wait);
+  if (!rv.v3dReady){
+    // Only the latest load counts: a file picked again meanwhile (rebind) starts another one.
+    const p = rv.v3dReady = createViewer(host, rv.file, { name: rv.meta.asset.name, extras: rv.extras, turns: rv.meta.turns || 0, onMove: () => { if (R === rv) updateCurVk(); } })
+      .then((V) => {
+        if (R !== rv || rv.v3dReady !== p){ V.dispose(); return null; }
+        rv.v3d = V;
+        return V;
+      }, (e) => { console.warn("3D", e); if (rv.v3dReady === p) rv.v3dError = e.message || String(e); return null; });
+  }
+  const ready = rv.v3dReady;
+  ready.then((V) => {
+    if (R !== rv || rv.v3dReady !== ready || !els || els.m3d !== host) return;
+    wait.remove();
+    if (!V){ missing("This model cannot be shown here: " + (rv.v3dError || "unknown error")); return; }
+    V.attach(host);
+    paint3dTools(); paintOverlay(); paintReview(); updateCurVk();
+    if (!rv.meta.thumb){
+      const c = V.still(null, { aspect: 1, max: 200 });
+      canvasBlob(c, "image/jpeg", 0.8).then(blobToDataUrl).then((u) => { dropCanvas(c); rv.meta.thumb = u; putIfAlive(rv, "reviews", rv.meta); }).catch((e) => console.warn("thumb", e));
+    }
+  });
 }
 
 let stageRO = null;
@@ -1417,11 +1659,13 @@ function buildStage(){
     d.appendChild(el("div", "", what));
     d.appendChild(el("div", "", `${a.name} · ${fmtBytes(a.size)}`));
     const l = el("label"); l.appendChild(document.createTextNode("Pick the file"));
-    l.appendChild(picker(a.kind === "video" ? "video/*" : "image/*", false, (fs) => rebind(fs[0])));
+    l.appendChild(picker(pickAccept(), is3d(), rebindPicked));
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
-  bindStage(stage);
-  if (a.kind === "image"){
+  if (a.kind !== "model3d") bindStage(stage);  // (3D: the model takes the fingers, model3d.js)
+  els.t3d = null; els.m3d = null;
+  if (a.kind === "model3d") buildStage3d(stage, missing);
+  else if (a.kind === "image"){
     const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; sv.appendChild(img); sv.appendChild(svg); stage.appendChild(sv); paintOverlay(); applyStageView(); };
     if (R.url) show(R.url);
     else {
@@ -1496,10 +1740,18 @@ function buildStage(){
   const eye = ibtn(R.hide ? "eyeoff" : "eye", "Show / hide drawings", () => { R.hide = !R.hide; eye.innerHTML = ico(R.hide ? "eyeoff" : "eye"); eye.classList.toggle("on", R.hide); paintOverlay(); });
   eye.classList.toggle("on", R.hide);
   tools.appendChild(eye);
-  const mirB = ibtn("mirror", "Mirror the view", () => setView({ rot: viewOf().rot, mirror: !viewOf().mirror }));
-  mirB.classList.toggle("on", viewOf().mirror);
-  els.mirB = mirB;
-  tools.appendChild(mirB);
+  if (a.kind === "model3d"){
+    tools.appendChild(ibtn("turn", "Turn the model a quarter (which way is up)", turnModel));
+    const t3 = el("div", "t3d");
+    els.t3d = t3;
+    tools.appendChild(t3);
+    paint3dTools();
+  } else {
+    const mirB = ibtn("mirror", "Mirror the view", () => setView({ rot: viewOf().rot, mirror: !viewOf().mirror }));
+    mirB.classList.toggle("on", viewOf().mirror);
+    els.mirB = mirB;
+    tools.appendChild(mirB);
+  }
   // Left end: hide every control; the round button left in the top left corner brings them back
   // (the gestures keep working meanwhile).
   const uiB = ibtn("hideui", "Hide the controls", () => setClean(true));
@@ -1510,15 +1762,26 @@ function buildStage(){
   els.showB = showB;
   stage.parentNode.appendChild(showB);
   root.classList.toggle("clean", !!R.clean);
-  const fitB = ibtn("fit", "Fit to screen", fitPlayer);
-  fitB.classList.add("fitb");
-  els.fitB = fitB;
-  tools.appendChild(fitB);
+  if (a.kind === "model3d") tools.appendChild(ibtn("fit", "Frame the model", () => { if (R.v3d){ R.v3d.home(); updateCurVk(); } }));
+  else {
+    const fitB = ibtn("fit", "Fit to screen", fitPlayer);
+    fitB.classList.add("fitb");
+    els.fitB = fitB;
+    tools.appendChild(fitB);
+  }
   if (!stageRO){ stageRO = new ResizeObserver(() => applyStageView()); }
   stageRO.disconnect(); stageRO.observe(stage);
   applyPlayerView();
 }
-async function rebind(file){
+// The review's file picked again (3D: with the files it points at, as when it was opened).
+function rebindPicked(fs){
+  if (!is3d()) return rebind(fs[0]);
+  const f = fs.find((x) => kindOf(x) === "model3d") || fs[0];
+  return rebind(f, extrasOf(fs, f));
+}
+async function rebind(file, extras){
+  // Picked again alone: the files that went with the model before stay with it (same size: the same file).
+  if (is3d() && !(extras && extras.length) && R.file && R.file.size === file.size) extras = R.extras;
   const a = R.meta.asset;
   if (file.size !== a.size || file.name.toLowerCase() !== String(a.name).toLowerCase()){
     if (!await ask({ title: "A different file?", text: `This review is for “${a.name}” (${fmtBytes(a.size)}); you picked “${file.name}” (${fmtBytes(file.size)}). Drawings land in the wrong place if the picture differs. Use it anyway?`, ok: "Use it" })) return;
@@ -1529,6 +1792,8 @@ async function rebind(file){
   if (rv.grab) rv.grab.close();
   if (rv.scrub) rv.scrub.close();
   rv.grab = null; rv.scrub = null; rv.cacheF = 0; rv.want = null; rv.scrubT = null;
+  if (rv.v3d) rv.v3d.dispose();
+  rv.v3d = null; rv.v3dReady = null; rv.v3dError = null; rv.curVk = null; rv.extras = extras || [];
   // Another file: whether it has sound is learnt again.
   delete rv.meta.audio; rv.hasAudio = null; rv.audioSure = false; rv.playedFor = 0;
   const old = rv.frames.get("img");
@@ -2107,8 +2372,9 @@ function loop(){
 function paintReview(){
   if (!R || !els) return;
   NUM = numMap();
+  if (is3d()){ R.views = M.views3d(R.rows); updateCurVk(); }
   const c = M.counts(R.rows), a = R.meta.asset;
-  els.sub.textContent = [c.notes ? `${c.notes} note${c.notes > 1 ? "s" : ""}` : "No notes yet", a.kind === "video" && a.duration ? fmtTime(a.duration, R.fps) : a.width ? `${a.width} × ${a.height}` : ""].filter(Boolean).join(" · ");
+  els.sub.textContent = [c.notes ? `${c.notes} note${c.notes > 1 ? "s" : ""}` : "No notes yet", a.kind === "video" && a.duration ? fmtTime(a.duration, R.fps) : a.kind === "model3d" ? (R.views.size ? `${R.views.size} view${R.views.size > 1 ? "s" : ""}` : "3D model") : a.width ? `${a.width} × ${a.height}` : ""].filter(Boolean).join(" · ");
   paintKeep();
   paintPanelBar();
   renderNotes();
@@ -2134,7 +2400,7 @@ async function keepCopy(){
     const rv = R;
     rv.meta.noKeep = false;
     await DB.put("reviews", rv.meta);
-    if (!await DB.keepFile(rv.meta.key, rv.file)) throw new Error("the review is gone");
+    if (!await DB.keepFile(rv.meta.key, rv.file, rv.extras)) throw new Error("the review is gone");
     rv.meta.kept = true; rv.keepFailed = null;
     DB.persist();
     toast("The file is kept on this device");
@@ -2159,7 +2425,7 @@ function renderNotes(){
   box.textContent = "";
   const notes = listedNotes();
   notes.forEach((n) => box.appendChild(noteCard(n)));
-  if (!notes.length) box.appendChild(el("p", "empty", R.filter === "all" ? (kindNow() === "video" ? "No notes yet. Pause on a frame and add a note below, or draw on it." : "No notes yet. Add one below, or draw on the picture.") : "No notes here."));
+  if (!notes.length) box.appendChild(el("p", "empty", R.filter === "all" ? (kindNow() === "video" ? "No notes yet. Pause on a frame and add a note below, or draw on it." : is3d() ? "No notes yet. Turn the model to a view and add a note below, or draw on it." : "No notes yet. Add one below, or draw on the picture.") : "No notes here."));
   els.plist.scrollTop = keepY;
   paintCurrent();
 }
@@ -2171,7 +2437,7 @@ function paintCurrent(){
   const v = R.video, t = v ? (R.scrubT != null ? R.scrubT : v.currentTime) : null, fd = v ? frameDur() : 0;
   els.notes.querySelectorAll(".note").forEach((c) => {
     c.classList.toggle("cur", c.dataset.id === R.curNote);
-    c.classList.toggle("here", t != null && c.dataset.t != null && Math.abs(Number(c.dataset.t) - t) < fd * 0.75);
+    c.classList.toggle("here", is3d() ? !!R.curVk && (c.dataset.vks || "").split(" ").includes(R.curVk) : t != null && c.dataset.t != null && Math.abs(Number(c.dataset.t) - t) < fd * 0.75);
   });
 }
 // A tap on a note's card (not on its buttons / pictures / fields): it is selected and the player
@@ -2182,12 +2448,18 @@ function selectNote(n, at){
   if (!R || composing()) return;
   R.curNote = n.id;
   if (R.video && kindNow() === "video"){ const t = at != null ? at : noteTimes(n)[0]; if (t != null) seekTo(t); }  // its own drawings' frames, not its replies'
+  if (is3d() && R.v3d){ const vk = at != null ? at : noteVks(n)[0]; if (vk) goView(vk); }
   paintCurrent();
 }
 
 // A note's picture to show / draw on: {url, vb, ctx, at, note} or null.
 async function noteFrame(n){
   const c = n.data.ctx, vb = [0, 0, docW(), docH()];
+  if (is3d()){
+    // Its first view (noteVks) as a picture, with that view's ctx.
+    const vk = noteVks(n)[0], v = vk && viewsNow().get(vk), f = vk ? await viewPic(vk, R, picExplode(n, vk)) : null;
+    return f && v ? { url: f.url, vb: f.vb, ctx: M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode }), at: { vk } } : null;
+  }
   if (!vb[2] || !vb[3]) return null;
   if (kindNow() === "image"){
     const url = R.url || (await getPicture() || {}).url;
@@ -2273,12 +2545,15 @@ function noteCard(n){
   });
   const ts = kind === "video" && c && c.t != null ? noteTimes(n) : [];
   if (ts.length) card.dataset.t = String(ts[0]);
+  const vks = kind === "model3d" ? noteVks(n) : [];
+  if (vks.length) card.dataset.vks = vks.join(" ");
   const h = el("div", "nh");
   h.appendChild(el("span", "num", String(NUM.get(id) || "")));
   if (ts.length){
     const b = btn("ctx", fmtTime(ts[0], R.fps), () => goTo(n), "Go to this frame");
     h.appendChild(b);
   }
+  if (vks.length) h.appendChild(btn("ctx", viewName(vks[0]), () => goTo(n), "Go to this view"));
   h.appendChild(el("span", "who", [n.data.author, fmtDate(n.data.created)].filter(Boolean).join(" · ") + (n.data.edited_at ? " · edited" : "")));
   h.appendChild(el("span", "state " + st, M.NOTE_STATES[st]));
   h.appendChild(ibtn("more", "Note actions", () => noteMenu(n), 18));
@@ -2297,6 +2572,7 @@ function noteCard(n){
     box.onclick = () => openThread(n, { kind: "frame", t });
     pics.appendChild(box);
   });
+  else if (kind === "model3d") noteFrameList(n).forEach((vk, i) => pics.appendChild(asyncViewAt(n, vk, null, i ? "sm" : "")));
   else if (own.length) pics.appendChild(asyncPic(n, (f) => drawingsOn(f), "", (f) => openThread(n, f.at ? { kind: "frame", t: f.at.t } : { kind: "frame" })));
   shotThumbs(n.data.shots, n, null, pics);
   if (pics.children.length) card.appendChild(pics);
@@ -2352,7 +2628,7 @@ function replyFrameTimes(n, rid){
   own.forEach((x) => { const t = x.data.ctx && x.data.ctx.t != null ? x.data.ctx.t : c && c.t; if (t != null && !by.has(frameKey(t))) by.set(frameKey(t), t); });
   return [...by.values()].sort((a, b) => a - b);
 }
-const replyOverPlayer = (n) => kindNow() === "video" && !!R.video && !!(n.data.ctx && n.data.ctx.t != null);
+const replyOverPlayer = (n) => (kindNow() === "video" && !!R.video && !!(n.data.ctx && n.data.ctx.t != null)) || (is3d() && !!R.v3d && !!(n.data.ctx && n.data.ctx.vk));
 // A reply on a video note, over the player: the panel goes, the player stands on the note's first
 // frame (or the one given), its frames are on the timeline and its drawings on the picture; the
 // pencil draws on whatever frame is on screen, as many as wanted. Leaving keeps the frame reached
@@ -2364,7 +2640,8 @@ function startReply(n, at){
   delete R.openReply[n.id];
   R.replyTo = n.id; R.curNote = n.id;
   setPanel(false);
-  seekTo(at != null ? at : threadFrames(n)[0]);
+  if (is3d()) goView(at != null ? at : threadVks(n)[0]);
+  else seekTo(at != null ? at : threadFrames(n)[0]);
   renderNotes();
   paintNewBar(); paintOverlay();
   return true;
@@ -2382,7 +2659,7 @@ function closeReply(){
 function sendReply(n, text, shots, state, draw){
   const t = now(), c = n.data.ctx;
   // On the note's own frame: the note's ctx (its hold too, FORMAT.md); on another frame its own.
-  const own = (fc) => !fc || fc.t == null || !c || c.t == null || frameKey(fc.t) === frameKey(c.t);
+  const own = (fc) => is3d() ? !fc || !fc.vk || !c || fc.vk === c.vk : !fc || fc.t == null || !c || c.t == null || frameKey(fc.t) === frameKey(c.t);
   if (text || shots.length || draw){
     const r = M.addReply(n, { text, author: who, shots }, t);
     drawFrames(draw).forEach((x) => { const fc = x.frame && x.frame.ctx; R.rows.push(...M.drawingRows(x.items, { note: n.id, reply: r.id, ctx: M.drawCtx(own(fc) ? c : fc), z: M.maxZ(R.rows) + 1 }, t)); });
@@ -2399,7 +2676,8 @@ function replyEntry(n, r){
   const d = el("div", "rep");
   d.appendChild(el("div", "rh", [r.author, fmtDate(r.created)].filter(Boolean).join(" · ")));
   if (r.text) d.appendChild(el("div", "rt", r.text));
-  const rt = replyFrameTimes(n, r.id), c = n.data.ctx, pics = el("div", "pics");
+  const rt = is3d() ? null : replyFrameTimes(n, r.id), c = n.data.ctx, pics = el("div", "pics");
+  if (is3d()) (M.replyViews(R.rows, n, r.id, viewOrder()) || []).forEach((vk) => pics.appendChild(asyncViewAt(n, vk, r.id)));
   if (rt){
     // A video reply: each frame it drew on (a picture: the picture through noteFrame).
     if (rt.length) rt.forEach((t) => pics.appendChild(asyncFrameAt(n, t, r.id)));
@@ -2521,6 +2799,24 @@ async function editNoteDrawing(n, rid){
     drawVideo({ frames: [...groups.values()], onDone: (list) => apply(list.map((x) => ({ ctx: x.frame.ctx, items: x.items }))) });
     return;
   }
+  if (is3d()){
+    // One view at a time (asked when it has drawings on several); the other views' drawings are kept.
+    const vk0 = c && c.vk, groups = new Map();
+    own.forEach((r) => { const k = (r.data.ctx && r.data.ctx.vk) || vk0; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+    let vks = [...groups.keys()].filter(Boolean).sort((a, b) => (viewNo(a) || 1e9) - (viewNo(b) || 1e9));
+    if (!vks.length && vk0) vks = [vk0];
+    if (!vks.length){ toast("This note has no view to draw on"); return; }
+    const vk = vks.length > 1 ? await new Promise((ok) => menu("Which view?", vks.map((k) => ({ label: viewName(k), fn: () => ok(k) })).concat([{ label: "Cancel", fn: () => ok(null) }]))) : vks[0];
+    if (!vk || R !== rv) return;
+    const others = [...groups.entries()].filter(([k]) => k !== vk).map(([k, rs]) => ({ ctx: rs[0].data.ctx, items: rs.map(asItem) }));
+    const v = viewsNow().get(vk), vctx = v ? M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode }) : c;
+    let f = null;
+    if (rv.v3d && goView(vk)) f = await frame3dNow(rv);
+    if (!f) f = await viewPic(vk, rv);
+    if (!f || R !== rv){ if (R === rv) toast("Pick the model again to draw on its views"); return; }
+    drawCanvas({ src: f.url, vb: f.vb, base: [], items: (groups.get(vk) || []).map(asItem), onDone: (items) => apply(others.concat([{ ctx: vctx, items }])) });
+    return;
+  }
   const f = await noteFrame(n);
   if (!f){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
   // On the clean picture: only this note's (reply's) own drawings, editable.
@@ -2547,6 +2843,14 @@ function whenSettled(rv){
 }
 function goTo(n){
   const c = n.data.ctx, v = R.video;
+  if (is3d()){
+    const vk = noteVks(n)[0];
+    if (!R.v3d){ toast("Pick the model again to turn it to this view"); return; }
+    R.curNote = n.id;
+    if (vk) goView(vk);
+    setPanel(false);
+    return;
+  }
   if (!v || !c || c.t == null){ if (!v && kindNow() === "video") toast("Pick the video again to play it"); return; }
   R.curNote = n.id;
   seekTo(noteTimes(n)[0]);
@@ -2618,9 +2922,10 @@ function composer(opts){
   clip.dataset.nofs = "1";  // opens the file picker: no full screen on this tap
   const pen = btn("pen", null, async () => {
     if (opts.here && kindNow() === "video" && R.video) return drawDraft(null);  // the frame on screen now
+    if (is3d() && R.v3d && (opts.here || opts.multi)) return drawDraft(dr.draw && !opts.here ? dr.draw.frame : null);  // the view on screen (a new note: its first view)
     if (dr.draw) return drawDraft(dr.draw.frame);
     const fr = await opts.frameFor();
-    if (!fr){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
+    if (!fr){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : is3d() ? "Pick the model again to draw on its views" : "The picture is not on this device"); return; }
     drawDraft(fr);
   }, "Draw"); pen.innerHTML = ico("pen", 19);
   const paintPen = () => pen.classList.toggle("on", !!dr.draw);
@@ -2637,6 +2942,13 @@ function composer(opts){
     if (opts.multi && kindNow() === "video" && rv.video){
       if (fr && fr.ctx && fr.ctx.t != null) seekTo(fr.ctx.t);
       drawVideo({ frames: drawFrames(dr.draw), onDone: done });
+      return;
+    }
+    // A new note or a reply over a 3D model: drawn on the view on screen (a draft's own view first, when
+    // its drawing is tapped), the draft's other views kept.
+    if (opts.multi && is3d() && rv.v3d){
+      if (fr && fr.ctx && fr.ctx.vk) goView(fr.ctx.vk);
+      drawModel({ frames: drawFrames(dr.draw), onDone: done });
       return;
     }
     // A new note or a reply is drawn on the clean picture: the other notes' drawings stay on theirs.
@@ -2666,7 +2978,9 @@ function composer(opts){
 
 // The new-note bar at the bottom: "+ Note" opens the message field; a video note goes on the frame
 // that is on screen when it is sent (or the frame its drawing was made on).
-function ctxNow(){
+// make (3D): a new view when the camera is on none (only when the note / reply is sent).
+function ctxNow(make){
+  if (is3d()) return ctx3d(make);
   if (kindNow() !== "video") return null;
   const v = R.video;
   return v ? { t: frameStart(v.currentTime), hold: 0 } : null;
@@ -2683,10 +2997,10 @@ function paintNewBar(){
   nb.textContent = "";
   els.where = null;
   if (rn){ replyBar(nb, rn); return; }
-  const canNote = kindNow() !== "video" || !!R.video;
+  const canNote = is3d() ? !!R.v3d : kindNow() !== "video" || !!R.video;
   if (!R.newOpen){
     const row = el("div", "row");
-    const add = btn("add", "+ Note", () => { if (!canNote){ toast("Pick the video again to add notes on its frames"); return; } R.newOpen = "focus"; paintNewBar(); });
+    const add = btn("add", "+ Note", () => { if (!canNote){ toast(is3d() ? "Pick the model again to add notes on its views" : "Pick the video again to add notes on its frames"); return; } R.newOpen = "focus"; paintNewBar(); });
     row.appendChild(add);
     nb.appendChild(row);
     paintOverlay();
@@ -2695,7 +3009,8 @@ function paintNewBar(){
   const row = el("div", "row"), lab = el("span");
   const where = () => {
     const d = R.drafts["+new"], c = d && d.draw ? d.draw.frame.ctx : ctxNow(), more = d && d.draw && d.draw.more ? d.draw.more.length : 0;
-    lab.textContent = "New note" + (c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : "") + (more ? ` + ${more} more frame${more > 1 ? "s" : ""}` : "");
+    const at3 = is3d() ? (d && d.draw ? viewName(d.draw.frame.ctx.vk) : R.curVk ? viewName(R.curVk) : "a new view") : "";
+    lab.textContent = "New note" + (at3 ? " on " + at3 : c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : "") + (more ? ` + ${more} more ${is3d() ? "view" : "frame"}${more > 1 ? "s" : ""}` : "");
   };
   row.appendChild(lab);
   row.appendChild(btn("ib", "×", () => {
@@ -2706,7 +3021,7 @@ function paintNewBar(){
   nb.appendChild(row);
   nb.appendChild(composer({ key: "+new", placeholder: "Add a note…", status: null, multi: true, frameFor: currentFrame, onChange: () => { where(); paintOverlay(); paintMarkers(); },
     onSend: (text, shots, state, draw) => {
-      const t = now(), ctx = draw ? draw.frame.ctx : ctxNow();
+      const t = now(), ctx = draw ? draw.frame.ctx : ctxNow(true);
       const n = M.newNote({ text, author: who, ctx, shots }, t);
       R.rows.push(n);
       // Every frame drawn on goes with the note, each drawing on its own frame.
@@ -2725,10 +3040,10 @@ function paintNewBar(){
 function replyBar(nb, n){
   const id = n.id, row = el("div", "row"), lab = el("span"), fr = el("div", "frs");
   const where = () => {
-    const d = R.drafts[id], c = ctxNow(), k = drawFrames(d && d.draw).length;
-    lab.textContent = `Reply to note ${NUM.get(id) || ""}` + (c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : "") + (k ? ` · drawn on ${k} frame${k > 1 ? "s" : ""}` : "");
-    const cur = c && c.t != null ? frameIdx(c.t) : null;
-    fr.querySelectorAll("button").forEach((b) => b.classList.toggle("on", cur != null && frameIdx(Number(b.dataset.t)) === cur));
+    const d = R.drafts[id], c = ctxNow(), k = drawFrames(d && d.draw).length, unit = is3d() ? "view" : "frame";
+    lab.textContent = `Reply to note ${NUM.get(id) || ""}` + (is3d() ? " on " + (R.curVk ? viewName(R.curVk) : "a new view") : c && c.t != null ? " at " + fmtTime(c.t, R.fps) + " · f " + Math.round(c.t * R.fps) : "") + (k ? ` · drawn on ${k} ${unit}${k > 1 ? "s" : ""}` : "");
+    const cur = is3d() ? R.curVk : c && c.t != null ? frameIdx(c.t) : null;
+    fr.querySelectorAll("button").forEach((b) => b.classList.toggle("on", cur != null && (is3d() ? b.dataset.vk === cur : frameIdx(Number(b.dataset.t)) === cur)));
   };
   row.appendChild(lab);
   row.appendChild(btn("ib", "×", () => {
@@ -2738,7 +3053,12 @@ function replyBar(nb, n){
     go();
   }, "Close"));
   nb.appendChild(row);
-  const ts = threadFrames(n);
+  const vs = is3d() ? threadVks(n) : [];
+  if (vs.length > 1){
+    vs.forEach((vk) => { const b = btn("fr", viewName(vk), () => goView(vk), "Go to this view"); b.dataset.vk = vk; fr.appendChild(b); });
+    nb.appendChild(fr);
+  }
+  const ts = is3d() ? [] : threadFrames(n);
   if (ts.length > 1){
     ts.forEach((t) => { const b = btn("fr", "f " + Math.round(t * R.fps), () => seekTo(t), "Go to this frame"); b.dataset.t = String(t); fr.appendChild(b); });
     nb.appendChild(fr);
@@ -2758,6 +3078,10 @@ function replyBar(nb, n){
 // The picture on screen as a frame to draw a new note on: the picture, or the paused video frame.
 async function currentFrame(){
   const rv = R, vb = [0, 0, docW(), docH()];
+  if (is3d()){
+    const fr = await frame3dNow(rv);
+    return fr && R === rv ? Object.assign(fr, { base: M.drawings(rv.rows).filter((r) => RC.ctxVisible(r.data.ctx, fr.at)) }) : null;
+  }
   if (!vb[2] || !vb[3]) return null;
   if (kindNow() === "image"){
     const url = rv.url || (await getPicture(rv) || {}).url;
@@ -2798,6 +3122,12 @@ async function drawNew(fromViewer){
   };
   // A video: drawn over the player on as many frames as wanted, the draft's frames kept.
   if (kindNow() === "video" && rv.video){ drawVideo({ frames: drawFrames(d.draw), onDone: done, noPlace: fromViewer === true }); return; }
+  // A 3D model: drawn on the view on screen; the draft keeps its other views (turn, draw again).
+  if (is3d()){
+    if (!rv.v3d){ toast("Pick the model again to draw on its views"); return; }
+    drawModel({ frames: drawFrames(d.draw), onDone: done, noPlace: fromViewer === true });
+    return;
+  }
   const fr = await currentFrame();
   if (!fr){ toast(kindNow() === "video" ? "Pick the video again to draw on its frames" : "The picture is not on this device"); return; }
   if (d.draw && !(await ask({ title: "Replace the drawing?", text: "The new note already has a drawing.", ok: "Replace" }))) return;
@@ -3204,28 +3534,31 @@ async function openPicture(){
 // list / player follow the note and frame it was left on. from: where the viewer was opened ({id, t}).
 function noteFrameList(n){
   const c = n.data.ctx;
+  if (is3d()) return c && c.vk ? noteVks(n, !(n.data.shots || []).length) : [];  // (views, not times)
   if (kindNow() !== "video" || !c || c.t == null) return [];
   // Frames with its drawings / picture texts; the frame it was written on only for a note with nothing
   // else to show (no attached pictures either).
   return noteTimes(n, !(n.data.shots || []).length);
 }
-// Items: {kind: "frame", t?, rid?} (t: a video frame; rid: a reply's drawing) | {kind: "shot", id, rid?}.
+// Items: {kind: "frame", t? | vk?, rid?} (t: a video frame, vk: a 3D view; rid: a reply's drawing) | {kind: "shot", id, rid?}.
 function threadItems(n){
   const out = [], video = kindNow() === "video";
   // A picture review: the picture with the note's drawings, always (up / down visits every note).
   if (video) noteFrameList(n).forEach((t) => out.push({ kind: "frame", t }));
+  else if (is3d()) noteFrameList(n).forEach((vk) => out.push({ kind: "frame", vk }));
   else out.push({ kind: "frame" });
   (n.data.shots || []).forEach((id) => out.push({ kind: "shot", id: String(id) }));
   M.liveReplies(n).forEach((r) => {
     if (r.event) return;
-    const rt = replyFrameTimes(n, r.id);
+    if (is3d()) (M.replyViews(R.rows, n, r.id, viewOrder()) || []).forEach((vk) => out.push({ kind: "frame", vk, rid: r.id }));
+    const rt = is3d() ? null : replyFrameTimes(n, r.id);
     if (rt) (video ? rt : [null]).forEach((t) => out.push(t == null ? { kind: "frame", rid: r.id } : { kind: "frame", t, rid: r.id }));
     (r.shots || []).forEach((id) => out.push({ kind: "shot", id: String(id), rid: r.id }));
   });
   return out;
 }
 const sameItem = (a, b) => a.kind === b.kind && (a.rid || null) === (b.rid || null) &&
-  (a.kind === "shot" ? a.id === b.id : (a.t == null) === (b.t == null) && (a.t == null || frameKey(a.t) === frameKey(b.t)));
+  (a.kind === "shot" ? a.id === b.id : (a.vk || null) === (b.vk || null) && (a.t == null) === (b.t == null) && (a.t == null || frameKey(a.t) === frameKey(b.t)));
 // One item as a picture: {url, vb, rows, at} or null (not on this device).
 async function loadItem(n, it, rv = R){
   if (it.kind === "shot"){
@@ -3237,7 +3570,11 @@ async function loadItem(n, it, rv = R){
     return { url, vb: [0, 0, im.naturalWidth, im.naturalHeight], rows: [], at: null, shot: true };
   }
   let f;
-  if (it.t != null){
+  if (it.vk){
+    const fr = await viewPic(it.vk, rv, picExplode(n, it.vk, it.rid));
+    if (!fr || R !== rv) return null;
+    f = { url: fr.url, vb: fr.vb, at: { vk: it.vk } };
+  } else if (it.t != null){
     if (!docW() || !docH()) return null;
     const fr = await getFrame(it.t, rv);
     if (!fr || R !== rv) return null;
@@ -3250,19 +3587,20 @@ async function loadItem(n, it, rv = R){
 }
 // prevAt: the frame looked at before (an attached picture keeps it, so Back still follows it).
 function threadView(n, items, i, f, from, prevAt){
-  const rv = R, it = items[i], t0 = it.t != null ? it.t : f.at ? f.at.t : null;
-  const from0 = from || { id: n.id, t: t0 };
+  const rv = R, it = items[i], t0 = it.t != null ? it.t : f.at && f.at.t != null ? f.at.t : null;
+  const v0 = it.vk || (f.at && f.at.vk) || null;  // a 3D view (stands where a video's t does)
+  const from0 = from || { id: n.id, t: v0 || t0 };
   const rep = it.rid ? (n.data.replies || []).find((x) => x.id === it.rid) : null;
-  const where = it.kind === "shot" ? "Picture" : t0 != null ? `${fmtTime(t0, R.fps)} · f ${Math.round(t0 * R.fps)}` : "Drawing";
+  const where = it.kind === "shot" ? "Picture" : v0 ? viewName(v0) : t0 != null ? `${fmtTime(t0, R.fps)} · f ${Math.round(t0 * R.fps)}` : "Drawing";
   const label = (rep ? `↳ ${rep.author || "Reply"} · ` : "") + where + (items.length > 1 ? ` · ${i + 1} / ${items.length}` : "");
   // The note's own pictures carry a text each (a reply's pictures show the reply's words instead).
-  const pic = rep ? null : it.kind === "shot" ? { shot: it.id } : it.t != null ? { t: it.t } : kindNow() === "video" ? null : {};
-  return { url: f.url, vb: f.vb, view: f.shot ? null : viewOf(), note: n, label, pic, text: rep ? rep.text || "" : undefined,
+  const pic = rep ? null : it.kind === "shot" ? { shot: it.id } : it.vk ? { vk: it.vk } : it.t != null ? { t: it.t } : kindNow() === "video" || is3d() ? null : {};
+  return { url: f.url, vb: f.vb, view: f.shot || is3d() ? null : viewOf(), note: n, label, pic, text: rep ? rep.text || "" : undefined,
     at: it.kind === "shot" ? prevAt || null : f.at, rows: f.rows,
     onDraw: f.shot ? null : () => {
       if (R !== rv) return;
-      // A video note: the reply over the player, drawn on the frame looked at.
-      if (startReply(n, t0)){ const p = document.querySelector(`.newbar .cmp[data-key="${n.id}"] .pen`); if (p) p.click(); return; }
+      // A video note: the reply over the player, drawn on the frame looked at (3D: on the view).
+      if (startReply(n, is3d() ? v0 : t0)){ const p = document.querySelector(`.newbar .cmp[data-key="${n.id}"] .pen`); if (p) p.click(); return; }
       setPanel(true); R.openReply[n.id] = true; renderNotes();
       const box = document.querySelector(`.cmp[data-key="${n.id}"]`);
       if (box) box.querySelector(".pen").click(); },
@@ -3289,6 +3627,11 @@ function threadView(n, items, i, f, from, prevAt){
     } : null,
     onClose: (last) => {
       if (R !== rv || !last.note) return;
+      if (is3d()){
+        const vk = last.at ? last.at.vk || null : null;
+        if (last.note.id !== from0.id || (vk && vk !== from0.t)) showNote(last.note, vk);
+        return;
+      }
       const t = last.at ? last.at.t : null;
       if (last.note.id !== from0.id || (t != null && (from0.t == null || frameKey(t) !== frameKey(from0.t)))) showNote(last.note, t);
     } };
@@ -3309,9 +3652,10 @@ async function openThread(n, at){
 // Brings a note forward: its card into view in the list, the player onto its frame (or the frame
 // of it given: one of its other frames).
 function showNote(n, at){
-  const c = n.data.ctx, t = at != null ? at : c && c.t != null && kindNow() === "video" ? noteTimes(n)[0] : null;
+  const c = n.data.ctx, t = is3d() ? null : at != null ? at : c && c.t != null && kindNow() === "video" ? noteTimes(n)[0] : null;
   R.curNote = n.id;
   if (R.video && t != null) seekTo(t);
+  if (is3d() && R.v3d){ const vk = at != null ? at : noteVks(n)[0]; if (vk) goView(vk); }
   paintCurrent();
   const card = els && els.notes.querySelector(`.note[data-id="${n.id}"]`);
   if (card) card.scrollIntoView({ block: "nearest" });
@@ -3331,7 +3675,7 @@ function reviewActions(){
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,
-    { label: R.file ? "Use another copy of the file…" : "Pick the file…", fn: () => { const p = picker(kindNow() === "video" ? "video/*" : "image/*", false, (fs) => rebind(fs[0])); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
+    { label: R.file ? "Use another copy of the file…" : "Pick the file…", fn: () => { const p = picker(pickAccept(), is3d(), rebindPicked); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     { label: "Your name: " + (who || "—"), fn: setName },
     { label: "Settings (theme, storage)…", fn: settings },
     { label: "Delete this review…", danger: true, fn: () => deleteReview(R.meta) },
@@ -3363,6 +3707,7 @@ function reportSrc(){
   return {
     picture: () => getPicture(),
     frameAt: (t) => getFrame(t),
+    viewAt: (vk, ex) => viewPic(vk, R, ex),
     shot: async (id) => { const s = await DB.get("shots", id).catch(() => null); return s ? s.blob : null; },
   };
 }
@@ -3373,6 +3718,7 @@ async function exportReport(type){
     const a = Object.assign({}, R.meta.asset);
     const payload = await gatherReport({ asset: a, rows: R.rows, fps: R.fps, author: who, appLabel: APP_LABEL, src: reportSrc(), progress: (i, n) => b.set(`Frames ${i + 1} / ${n}…`) });
     if (a.kind === "video" && payload.notes.some((n) => !n.frame) && !R.grab) toast("Some frames are not on this device: pick the video again to include them", 5000);
+    if (a.kind === "model3d" && payload.notes.some((n) => !n.frame) && !R.v3d) toast("Some views are not on this device: pick the model again to include them", 5000);
     b.set(type === "pdf" ? "Laying out the pages…" : "Writing the page…");
     const stem = safeName(stemOf(a.name) + " review");
     if (type === "pdf"){
@@ -3452,4 +3798,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn };
+window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel };

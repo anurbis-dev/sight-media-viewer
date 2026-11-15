@@ -88,12 +88,13 @@ export async function deleteReview(key, shotIds, sharedShots){
 // Keeps a review's media file and marks its list entry (kept) in one transaction, reading the
 // stored entry there: nothing is written for a review that is gone, or whose file the user told the
 // app to forget (noKeep). Resolves true when the file was kept.
-export const keepFile = (key, blob) => run(["reviews", "files"], "readwrite", (t) => {
+// extras: the files picked with a 3D model ([{name, blob}]: its textures, a .gltf's .bin), kept with it.
+export const keepFile = (key, blob, extras) => run(["reviews", "files"], "readwrite", (t) => {
   const st = { ok: false }, g = t.objectStore("reviews").get(key);
   g.onsuccess = () => {
     const m = g.result;
     if (!m || m.noKeep) return;
-    t.objectStore("files").put({ key, blob });
+    t.objectStore("files").put(extras && extras.length ? { key, blob, extras } : { key, blob });
     m.kept = true;
     t.objectStore("reviews").put(m);
     st.ok = true;

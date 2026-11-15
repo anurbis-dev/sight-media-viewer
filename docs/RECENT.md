@@ -14,6 +14,53 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.49.0 — 2026-11-15 — Phone app: 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD), notes on views
+- **What:** (phone app, PLAN-mobile stage 4) *Open a file…* takes 3D models: `.glb` / `.gltf`, `.fbx`, `.obj`,
+  `.stl`, `.ply`, `.usdz` / `.usd` / `.usda` / `.usdc`; files a model points at (a `.gltf`'s `.bin`, textures) are
+  picked together with it and kept with it. One finger orbits, two zoom / pan; header: eye, quarter turn, explode
+  slider, *Show all* (a view's hidden meshes), *Frame*. Notes, drawings and replies stand on **views** (camera +
+  hidden meshes + explode) exactly as Sight writes them — numbered as in Sight, a note may hold several views
+  (orbit, draw again), cards / the full-screen viewer / PDF / HTML show each view ("V1", "View 1"), replies are
+  written over the model with view chips, a `.srev` round-trips with Sight (checked: phone drawings land on the
+  same spot in Sight's lightbox).
+- **Where:** `mobile/js/model3d.js` (new: `parseModel`, `createViewer` → `getView / setView / still / attach /
+  turn / home / setHidden / setExplode`); `mobile/js/app.js` "3D" block (`viewsNow`, `findVk` / `viewFits`, `ctx3d`,
+  `updateCurVk`, `goView`, `viewPic`, `frame3dNow`, `drawModel`, `asyncViewAt`, `picExplode`, `buildStage3d`,
+  `paint3dTools`) and 3D branches in cards, composer, replies, viewer, editing, exports; `extras` through
+  `openAny` / `openMedia` / `openReview` / `autoKeep` / `rebind`; `mobile/js/model.js` (`views3d`, `explodeOf`,
+  `noteViews`, `replyViews`, `drawCtx` keeps hidden / explode); `mobile/js/report.js` (`viewAt`, `burn(…, ox, oy)`);
+  `mobile/js/store.js` (`keepFile(key, blob, extras)`); `mobile/js/media.js` (`MODEL_EXT`); `mobile/index.html`
+  (import map, CSS). **Shared with Sight:** new `app/static/model3d-core.js` — `frameObject3d`,
+  `buildExplodeRig` / `applyExplode`, `buildEnvTexture`, `applyTurns`, `dropDeadTextures`, `stlMesh` / `plyMesh`,
+  `plyHeaderIsSplat` moved out of `index.html` unchanged (index.html imports them), `meshOrder`, `usdAsSight`;
+  `camMatch` moved from annotate.js to `review-core.js` (`RC.camMatch`). Vendored three@0.185.0 `USDLoader.js` +
+  `loaders/usd/*` (USDCParser patched: inlined Vec*d / Vec*h). `tools/build_pwa.py` publishes the three.js parts
+  (`THREE_FILES`); `.github/workflows/phone-app.yml` paths. Tests: `tests/pwa_3d.cjs`, `tests/pwa_3d_formats.cjs`,
+  `tests/fixtures_3d.py`, `tests/fixtures/parts_v001.usdz`, `parts.usdc`, `mats_v001.usdz`; `test_pwa.py`
+  `test_model3d`, `test_model_formats`. Docs: ARCHITECTURE (Phone app → 3D), MANUAL, PLAN-mobile.
+- **Notes:** USD is read on the phone (no server): `usdAsSight` lays it out as Sight's server conversion does
+  (Z-up → Y-up, no metersPerUnit scale, one mesh per material group sharing the part's vertices, under one
+  node), so views from Sight match — verified against `usdz_convert` (bounds, mesh order and boxes, textures);
+  left: the conversion drops invisible / proxy meshes, the loader keeps them. The explode rig is built at the
+  review's turns, as Sight builds it at its own (both depend on it). A view picture's aspect is what its drawings
+  need (1–2.4); drawing uses a still at the stage's own aspect. Not done: splats (refused), hiding meshes on the
+  phone, Sight's shading / lights (`v3d`) on the phone, Sight's lightbox reading `.usd*` without usd-core.
+  Not checked on a real phone (WebGL memory with big models, the Files picker with several files).
+  Review 1 (fresh agent, the 3D review logic) found, fixed: a model picked again while loading left the old
+  viewer in use and leaking; a single-part model never matched a Sight view with an explode amount (the
+  amount is now kept without a rig); a draft drawn on a new view stayed hidden until the camera moved; the
+  view's explode / hidden did not follow Sight's `rebuildViews` / `explodeOf`; legacy views' pictures caught the
+  live hidden / explode in the cache; a `hidden` list was added to older Sight views; then (second pass) the
+  current view is kept while it fits and a note's own view takes the note's amount, as in Sight. The same
+  reviewer confirmed every fix. Review 2 (fresh agent, the formats) found, fixed: every USD texture was dropped
+  (its images bypass the LoadingManager), USD mesh order / explode differed from Sight's conversion, picking a
+  kept model alone wiped its kept textures, a splat `.ply` was read whole to be refused (and saved first), a
+  failed viewer build leaked its renderer; then (second pass) USD faces in no GeomSubset were not drawn, two
+  subsets of one material made two meshes, and a mesh's parts were not in Sight's material order — the vendored
+  USDComposer is patched (marked "Sight") and `usdAsSight` merges / orders parts as `usdz_convert` does. The same
+  reviewer confirmed every fix. Left, documented (low, order only): display-colour-only materials share one key,
+  invisible / proxy meshes register their materials.
+
 ## 0.48.0 — 2026-11-14 — Picture text plate without scrollbar; page captions on their own line, named downloads; notes as ZIP
 - **What:** (everywhere: Sight lightbox, phone, reviewer page) the picture text plate has no scrollbar; while text is
   left below, the last shown line fades and "…" stands under it. (HTML reviewer page) under each picture: its title
@@ -339,24 +386,3 @@ Add new entries directly below this line.
   `explodeOf` filters by view. Left as design: a view with added work keeps the amount of its first note, so a
   second note made at another amount does not move the chips' amount (`view.explode`) — its own pictures are right.
   Not verified in a browser.
-
-## 0.44.0 — 2026-11-13 — Reviewer page: *Download page* saves the page with your changes
-- **What:** the reviewer page (Web page for reviewers) has a *Download page* button next to *Download reply*. It
-  saves the same page with this reviewer's replies, pictures, drawings, state changes and new notes already in it.
-  The copy opens in any browser with those edits in place and can be answered and downloaded again. *Download reply*
-  (.srev) is unchanged and is still what Sight imports.
-- **Where:** `app/review.py` (`_HTML_TEMPLATE`: `ORIG` / `DATA_TEXT` captured at the start of the script, `D.edits`,
-  `D.copy` in `KEY`, `replyPackage()` split out of `download()`, `saveBlob`, `downloadPage()`, the `#dlpage` button
-  in the foot, the status text in `render()`). `tests/page_e2e.cjs` (optional 4th argument: the copy; the copy is
-  reopened, must show the reply, its two pictures and the new note, and its .srev merges with nothing added).
-  `tests/test_review_page.py`. `MANUAL.md`, `docs/ARCHITECTURE.md`. `app/version.py`.
-- **Notes:** the copy is a snapshot of the reviewer's local edits, not of the owner's package: the package and report
-  inside stay as exported, so the copy's *Download reply* still merges by ids (a second copy is no duplicate).
-  Each copy gets a new `copy` id, so copies do not share localStorage with the page they came from. The copy's
-  "From" line is the original sender. Sight cannot import the `.html` — a deliberate gap; import the `.srev`.
-  The data block is replaced as a literal string (the first match is the block; `<` is escaped as `\u003c` as in
-  `build_html`). Not checked at phone width (the foot now has three buttons).
-  Review (fresh agent): no confirmed bugs. Checked: the raw-string escape of `<`, `ORIG` taken before any DOM change,
-  `$` patterns in the replace (function replacer), PKG never mutated, re-download idempotent, the .srev unchanged,
-  original page KEY unchanged, Discard on a copy stays empty after reload. Dropped drafts are not in the copy (as in
-  Download reply); stale attachments in E.att are embedded but filtered out by the reply.

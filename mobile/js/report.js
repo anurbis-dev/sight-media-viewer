@@ -5,7 +5,7 @@
 
 import { decode, canvasBlob, dropCanvas, fmtTime } from "./media.js";
 import { pdfFromJpegs } from "./pdf.js";
-import { notesSorted, noteFrameTimes, liveReplies, drawings, NOTE_STATES, REVIEW_STATES, EVENT_LABEL, reviewState } from "./model.js";
+import { notesSorted, noteFrameTimes, liveReplies, drawings, NOTE_STATES, REVIEW_STATES, EVENT_LABEL, reviewState, views3d, noteViews, replyViews, explodeOf } from "./model.js";
 
 const RC = () => globalThis.SightReviewCore;
 export function fmtDate(ms){
@@ -13,8 +13,8 @@ export function fmtDate(ms){
   catch { return ""; }
 }
 
-// A picture {blob, w, h} with drawings (doc units docW × docH) burned in, ≤ 1600 px.
-export async function burn(pic, docW, docH, items, numOf){
+// A picture {blob, w, h} with drawings (doc units docW × docH from ox, oy — a 3D view: centred) burned in, ≤ 1600 px.
+export async function burn(pic, docW, docH, items, numOf, ox = 0, oy = 0){
   if (!pic) return null;
   if (!items.length) return pic;
   const im = await decode(pic.blob);
@@ -24,7 +24,8 @@ export async function burn(pic, docW, docH, items, numOf){
   g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
   g.drawImage(im, 0, 0, c.width, c.height);
   if (im.close) im.close();
-  g.setTransform(c.width / (docW || c.width), 0, 0, c.height / (docH || c.height), 0, 0);
+  const sx = c.width / (docW || c.width), sy = c.height / (docH || c.height);
+  g.setTransform(sx, 0, 0, sy, -ox * sx, -oy * sy);
   RC().drawCanvas(g, items, numOf);
   const blob = await canvasBlob(c, "image/jpeg", 0.88), out = { blob, w: c.width, h: c.height };
   dropCanvas(c);
@@ -40,7 +41,8 @@ async function picOf(blob){
 }
 
 // src: { picture(): {blob, w, h} | null  (image, the clean picture ≤ 1600 px),
-//        frameAt(t): {blob, w, h} | null  (video frame, clean), shot(id): Blob | null }
+//        frameAt(t): {blob, w, h} | null  (video frame, clean), shot(id): Blob | null,
+//        viewAt(vk, explode?): {blob, w, h, vb} | null  (3D view, clean, at that explode; vb its doc units) }
 export async function gatherReport({ asset, rows, fps, author, appLabel, src, progress }){
   const kind = asset.kind, notes = notesSorted(rows, kind), all = drawings(rows);
   const num = new Map(notes.map((n, i) => [n.id, i + 1]));
@@ -58,6 +60,13 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
   }))).filter(Boolean);
   // A picture's own text (FORMAT.md captions) finds its frame within half a frame.
   const sameT = (a, b) => Math.abs(a - b) < 0.5 / (fps || 25);
+  // 3D: a note's pictures are its views (Sight's order and numbers), each drawn in the host's units.
+  const order = kind === "model3d" ? [...views3d(rows).keys()] : [];
+  const viewLabel = (vk) => "View " + (order.indexOf(vk) + 1 || "");
+  const burnView = async (vk, items, ex) => {
+    const g = src.viewAt ? await src.viewAt(vk, ex) : null;
+    return g ? burn(g, g.vb[2], g.vb[3], items, numOf, g.vb[0], g.vb[1]) : null;
+  };
   const out = [];
   for (const [i, n] of notes.entries()){
     if (progress) progress(i, notes.length);
@@ -87,6 +96,17 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
         if (!frame){ frame = bg; cap = RC().frameLabel(t, fps); }
         else more.push(Object.assign(bg, { text: [RC().frameLabel(t, fps), bg.text].filter(Boolean).join(" — ") }));
       }
+    } else if (kind === "model3d" && c && c.vk){
+      // Its views (those with its drawings or a picture text; the one it was written on for a note with
+      // nothing else): the first is the note's picture, the rest go with its pictures.
+      for (const vk of noteViews(rows, n, order, !(d.shots || []).length)){
+        const mineHere = noteOnly.filter((it) => it.data.note === n.id && (it.data.ctx && it.data.ctx.vk) === vk);
+        let bg = await burnView(vk, noteOnly.filter((it) => (it.data.ctx && it.data.ctx.vk) === vk), explodeOf(vk, vk === c.vk ? [n] : mineHere));
+        if (!bg) continue;
+        bg = Object.assign({}, bg, { text: RC().captionOf(d, { vk }) });
+        if (!frame){ frame = bg; cap = viewLabel(vk); }
+        else more.push(Object.assign(bg, { text: [viewLabel(vk), bg.text].filter(Boolean).join(" — ") }));
+      }
     }
     // A reply's drawing: with that reply, on each frame it drew on (the note's own frame too) — only
     // its own drawings there; on a picture, the picture with them.
@@ -101,19 +121,22 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
             const g = await src.frameAt(t);
             if (g) pics.push(await burn(g, W || g.w, H || g.h, mine.filter((it) => RC().ctxVisible(it.data.ctx, { t, fps })), numOf));
           }
+        } else if (kind === "model3d"){
+          for (const vk of replyViews(rows, n, r.id, order) || []) pics.push(await burnView(vk, mine.filter((it) => ((it.data.ctx && it.data.ctx.vk) || (c && c.vk)) === vk), explodeOf(vk, mine)));
         } else if (kind === "image" && picture) pics.push(await burn(picture, W, H, mine, numOf));
       }
       replies.push({ author: r.author || "", date: fmtDate(r.created), text: r.text || "", event: r.event || "", shots: pics.filter(Boolean).concat(await shotPics(r.shots)) });
     }
     const t0 = kind === "video" && c && c.t != null ? RC().noteTimes(d, noteFrameTimes(rows, n), sameT, true)[0] : null;
-    out.push({ num: i + 1, ctx: t0 != null ? fmtTime(t0, fps) + "  ·  f " + Math.round(t0 * fps) : "", author: d.author || "", date: fmtDate(d.created),
+    const vk0 = kind === "model3d" && c && c.vk ? noteViews(rows, n, order, true)[0] : null;
+    out.push({ num: i + 1, ctx: t0 != null ? fmtTime(t0, fps) + "  ·  f " + Math.round(t0 * fps) : vk0 ? viewLabel(vk0) : "", author: d.author || "", date: fmtDate(d.created),
       text: d.text || "", picText, status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots, d)), replies });
   }
   const st = reviewState(rows);
   return {
     title: "Review — " + asset.name,
     subtitle: asset.path && asset.path !== asset.name ? asset.path : "",
-    meta: [["Type", (asset.ext || "").replace(".", "").toUpperCase()], ["Size", W && H ? `${W} × ${H}` : ""],
+    meta: [["Type", (asset.ext || "").replace(".", "").toUpperCase()], ["Size", W && H ? `${W} × ${H}` : ""], ["Views", order.length ? String(order.length) : ""],
       ["Duration", asset.duration ? fmtTime(asset.duration, fps) : ""], ["State", REVIEW_STATES[st] || ""], ["Reviewer", author || ""],
       ["Notes", String(notes.length)], ["Open", String(notes.filter((n) => n.data.status !== "done").length)],
       ["In progress", String(notes.filter((n) => n.data.status === "progress").length || "")], ["Exported", fmtDate(Date.now())]],

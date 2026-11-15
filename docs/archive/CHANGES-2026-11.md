@@ -2,6 +2,27 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.44.0 — 2026-11-13 — Reviewer page: *Download page* saves the page with your changes
+- **What:** the reviewer page (Web page for reviewers) has a *Download page* button next to *Download reply*. It
+  saves the same page with this reviewer's replies, pictures, drawings, state changes and new notes already in it.
+  The copy opens in any browser with those edits in place and can be answered and downloaded again. *Download reply*
+  (.srev) is unchanged and is still what Sight imports.
+- **Where:** `app/review.py` (`_HTML_TEMPLATE`: `ORIG` / `DATA_TEXT` captured at the start of the script, `D.edits`,
+  `D.copy` in `KEY`, `replyPackage()` split out of `download()`, `saveBlob`, `downloadPage()`, the `#dlpage` button
+  in the foot, the status text in `render()`). `tests/page_e2e.cjs` (optional 4th argument: the copy; the copy is
+  reopened, must show the reply, its two pictures and the new note, and its .srev merges with nothing added).
+  `tests/test_review_page.py`. `MANUAL.md`, `docs/ARCHITECTURE.md`. `app/version.py`.
+- **Notes:** the copy is a snapshot of the reviewer's local edits, not of the owner's package: the package and report
+  inside stay as exported, so the copy's *Download reply* still merges by ids (a second copy is no duplicate).
+  Each copy gets a new `copy` id, so copies do not share localStorage with the page they came from. The copy's
+  "From" line is the original sender. Sight cannot import the `.html` — a deliberate gap; import the `.srev`.
+  The data block is replaced as a literal string (the first match is the block; `<` is escaped as `\u003c` as in
+  `build_html`). Not checked at phone width (the foot now has three buttons).
+  Review (fresh agent): no confirmed bugs. Checked: the raw-string escape of `<`, `ORIG` taken before any DOM change,
+  `$` patterns in the replace (function replacer), PKG never mutated, re-download idempotent, the .srev unchanged,
+  original page KEY unchanged, Discard on a copy stays empty after reload. Dropped drafts are not in the copy (as in
+  Download reply); stale attachments in E.att are embedded but filtered out by the reply.
+
 ## 0.43.1 — 2026-11-13 — Review panel scrolls with middle-drag like the other lightbox panels
 - **What:** the review (annotation) panel's note list scrolls by middle-drag, as the info, PSD, 3D and frame
   panels already do; the wheel still scrolls it natively.

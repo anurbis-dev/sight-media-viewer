@@ -4,6 +4,8 @@
 
 - build: tools/build_pwa.py fills every placeholder and the service worker caches every file.
 - unit: tests/pwa_unit.cjs (node) — model, MP4 frame rate, PDF writer; the PDF opens in PyMuPDF.
+- 3D (tests/pwa_3d.cjs, WebGL through SwiftShader): notes on views of a GLB, explode, a reply drawn on a
+  view, a quarter turn, exports; Sight imports the .srev by name + size.
 - round trip (node + Playwright's Chromium; ffmpeg for the video part): the app reviews a picture
   and a video and exports .srev / PDF / HTML (tests/pwa_e2e.cjs make); Sight's own import
   (Library.import_annotations, as /api/review/import does it) finds the files by name + size and
@@ -30,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import build_pwa  # noqa: E402
+from tests.fixtures_3d import make_fbx, make_glb, make_gltf_with_bin, make_obj, make_stl  # noqa: E402
 from app import review  # noqa: E402
 from app.library import Library  # noqa: E402
 
@@ -75,7 +78,9 @@ class Build(unittest.TestCase):
             files = json.loads(sw.split("var FILES = ", 1)[1].split(";\n", 1)[0])
             on_disk = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()} - {"sw.js", ".nojekyll"}
             self.assertEqual(set(files) - {"./"}, on_disk)
-            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "manifest.webmanifest", "icons/icon-512.png"):
+            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "core/model3d-core.js",
+                      "three/three.module.js", "three/jsm/loaders/GLTFLoader.js", "three/jsm/libs/draco/gltf/draco_decoder.wasm",
+                      "manifest.webmanifest", "icons/icon-512.png"):
                 self.assertIn(f, files)
             json.loads((out / "manifest.webmanifest").read_text(encoding="utf-8"))
 
@@ -109,6 +114,7 @@ class RoundTrip(unittest.TestCase):
         im = Image.new("RGB", (1920, 1080), (60, 120, 200))
         ImageDraw.Draw(im).ellipse([700, 300, 1200, 800], fill=(250, 200, 40))
         im.save(media / "shot_v001.png")
+        make_glb(media / "boxes_v001.glb")
         cls.video = bool(shutil.which("ffmpeg"))
         if cls.video:  # VP9: Playwright's Chromium has no H.264
             subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=24:duration=4",
@@ -128,7 +134,7 @@ class RoundTrip(unittest.TestCase):
         deadline = time.time() + 30
         while time.time() < deadline:
             n = cls.lib.query("SELECT COUNT(*) AS n FROM assets WHERE source_id=? AND status='ready'", (sid,))[0]["n"]
-            if n >= (2 if cls.video else 1):
+            if n >= (3 if cls.video else 2):
                 break
             time.sleep(0.2)
 
@@ -246,6 +252,106 @@ class RoundTrip(unittest.TestCase):
         bnote = next(r for r in live if r["kind"] == "note" and r["data"]["text"].startswith("Sky"))
         self.assertIn("From Sight", [x.get("text") for x in bnote["data"]["replies"]])
 
+
+    def test_model3d(self) -> None:
+        out = self.tmp / "out3d"
+        out.mkdir()
+        r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_3d.cjs"), self.base, str(self.media / "boxes_v001.glb"), str(out)],
+                           capture_output=True, text=True, timeout=600, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertEqual(res["log"], [])
+        self.assertEqual((res["kind"], res["canExplode"]), ("model3d", True))
+        rows = res["rows"]
+        notes = {n["data"]["text"]: n for n in rows if n["kind"] == "note"}
+        self.assertEqual(sorted(notes), ["Apart", "Box the cubes", "Seen from the side", "Turned"])
+        c1, c2, c3, c4 = (notes[k]["data"]["ctx"] for k in ("Box the cubes", "Seen from the side", "Apart", "Turned"))
+        self.assertEqual(len({c1["vk"], c2["vk"], c3["vk"], c4["vk"]}), 4)
+        self.assertEqual((c1["hidden"], c1["explode"], c3["explode"], c4["cam"]["turns"]), ([], 0, 0.6, 1))
+        self.assertEqual(c1["cam"]["fov"], 50)
+        rect = next(x for x in rows if x["kind"] == "shape" and x["shape_kind"] == "rect")
+        self.assertEqual(rect["data"]["ctx"]["vk"], c1["vk"])
+        self.assertLess(abs(rect["data"]["x"] + rect["data"]["w"] / 2), 30, rect["data"])  # drawn about the centre (doc origin)
+        arrow = next(x for x in rows if x["kind"] == "shape" and x["data"].get("reply"))
+        self.assertEqual((arrow["data"]["note"], arrow["data"]["ctx"]["vk"]), (notes["Box the cubes"]["id"], c1["vk"]))
+        self.assertEqual((res["overlayView1"], res["overlayOrbited"], res["curVkOrbited"]), (1, 0, None))
+        self.assertEqual((res["backOnView1"], res["explodeBack"], res["overlayBack"], res["ctxButton"]), (True, 0, 1, "View 1"))
+        self.assertIn("View 1", res["replyLabel"])
+        self.assertEqual(res["cardTags"], ["V1", "V1", "V2", "V3"])
+        self.assertIn("View 1", res["viewerLabel"])
+        self.assertEqual((res["viewerOverlay"], res["turns"]), (1, 1))
+        self.assertEqual((res["reopenedNotes"], res["reopenedViews"], res["thumb"]), (4, 4, True))
+        import pymupdf
+
+        doc = pymupdf.open(str(out / "app_model.pdf"))
+        self.assertGreaterEqual(sum(len(pg.get_images()) for pg in doc), 3)
+        doc.close()
+        page = (out / "app_model.html").read_text(encoding="utf-8")
+        for v in ("View 1", "View 2", "View 3", "View 4"):
+            self.assertIn(v, page)
+        a, stats = sight_import(self.lib, (out / "app_model.srev").read_bytes())
+        self.assertEqual((a["name"], a["kind"]), ("boxes_v001.glb", "model3d"))
+        self.assertEqual(stats["added"], len(rows))
+        srect = next(x for x in self.lib.annotations_for_asset(a["id"]) if x["kind"] == "shape" and x["shape_kind"] == "rect")
+        self.assertEqual(srect["data"]["ctx"], rect["data"]["ctx"])
+
+    def test_model_formats(self) -> None:
+        d = self.tmp / "fmt"
+        d.mkdir()
+        gltf = make_gltf_with_bin(d / "boxes.gltf")
+        files = [make_obj(d / "boxes.obj"), make_stl(d / "boxes.stl"), make_fbx(d / "boxes.fbx")]
+        usdz = d / "parts_v001.usdz"
+        shutil.copyfile(ROOT / "tests" / "fixtures" / "parts_v001.usdz", usdz)
+        usdc = d / "parts.usdc"  # the same stage as binary USD (crate): small double vectors are stored inline
+        shutil.copyfile(ROOT / "tests" / "fixtures" / "parts.usdc", usdc)
+        # A strip with two materials (GeomSubsets), a textured quad (red.png inside), and a row of four quads:
+        # mesh material blue, subsets green / red / green, one face in no subset (Sight: red, blue, green).
+        mats = d / "mats_v001.usdz"
+        shutil.copyfile(ROOT / "tests" / "fixtures" / "mats_v001.usdz", mats)
+        args = [str(f) for f in files] + [str(gltf), f"{gltf},{gltf.with_suffix('.bin')}", str(usdz), str(usdc), str(mats)]
+        sight = {}
+        try:  # Sight's own USDZ conversion (optional usd-core): the phone must lay the model out the same way
+            from app import usdz_convert
+
+            for f in (usdz, mats):
+                if usdz_convert.convert(f, d / (f.stem + "_sight.glb")):
+                    sight[f.name] = d / (f.stem + "_sight.glb")
+        except Exception:
+            pass
+        args += [str(g) for g in sight.values()]
+        r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_3d_formats.cjs"), self.base, *args],
+                           capture_output=True, text=True, timeout=600, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        boxes = [[-1.05, -0.45, -0.45], [1.05, 0.45, 0.45]]
+        for name, meshes in (("boxes.obj", 2), ("boxes.stl", 1), ("boxes.fbx", 2), ("boxes.gltf+", 2)):
+            got = res[name]
+            self.assertEqual((got["err"], got["meshes"], got["log"]), (None, meshes, []), name)
+            for a, b in zip(got["bounds"]["min"] + got["bounds"]["max"], boxes[0] + boxes[1]):
+                self.assertAlmostEqual(a, b, places=4, msg=name)
+        self.assertEqual(res["boxes.gltf+"]["extras"], 1)
+        self.assertIn("boxes.bin", res["boxes.gltf"]["err"])  # the .gltf alone says what it needs
+        # USDZ: Z-up turned to Y-up, centimetres not scaled (as Sight's conversion): x ±100, y -40…90, z ±40.
+        for name in ("parts_v001.usdz", "parts.usdc"):
+            u = res[name]
+            self.assertEqual((u["err"], u["meshes"]), (None, 2), name)
+            for a, b in zip(u["bounds"]["min"] + u["bounds"]["max"], [-100, -40, -40, 100, 90, 40]):
+                self.assertAlmostEqual(a, b, places=4, msg=name)
+        # Its texture arrives (inside the .usdz); one mesh per material, a primitive's bounds its part's (as glTF).
+        m = res["mats_v001.usdz"]
+        self.assertEqual((m["err"], m["meshes"], m["textured"]), (None, 6, 3))
+        self.assertEqual(m["centres"], [[0, 0.5, 0], [0, 0.5, 0], [0, 2.5, 0], [0, 4.5, 0], [0, 4.5, 0], [0, 4.5, 0]])
+
+        def pattern(cols: list[str]) -> list[str]:  # which meshes share a material (colours differ: see ARCHITECTURE)
+            first: dict[str, int] = {}
+            return [c if c == "tex" else str(first.setdefault(c, len(first))) for c in cols]
+
+        self.assertEqual(pattern(m["colours"]), ["tex", "0", "tex", "tex", "0", "1"])
+        for name, glb in sight.items():  # Sight's converted GLB: the same meshes in the same order, at the same place
+            u, s = res[name], res[glb.name]
+            self.assertEqual((u["meshes"], u["textured"], pattern(u["colours"])), (s["meshes"], s["textured"], pattern(s["colours"])), name)
+            for a, b in zip(sum(u["centres"], []) + u["bounds"]["min"] + u["bounds"]["max"], sum(s["centres"], []) + s["bounds"]["min"] + s["bounds"]["max"]):
+                self.assertAlmostEqual(a, b, places=4, msg=name)
 
     def test_touch(self) -> None:
         if not self.video:

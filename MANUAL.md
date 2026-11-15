@@ -210,11 +210,11 @@
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Download page*
     saves the same page with your changes in it (it opens in any browser, with the replies, notes and drawings
     already there, and can be answered and downloaded again); Sight does not import that file — send the `.srev` back for that. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
-- **Phone app (Sight Review)** — review pictures and videos on a phone or tablet, offline, without
+- **Phone app (Sight Review)** — review pictures, videos and 3D models on a phone or tablet, offline, without
   Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews
   made in Safari before installing stay in Safari. *Photo or video* picks from the library / camera
-  roll, *Open a file…* from Files (pictures, videos, or a `.srev` someone sent). Nothing is
+  roll, *Open a file…* from Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD — or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
   changes it). The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
@@ -345,6 +345,22 @@
   original from Files (*Open a file…*): the Photos picker hands over a converted copy (HEIC becomes
   JPEG, video may be re-encoded), whose name / size Sight does not know. Press and hold a review in
   the list to delete it. When a new version of the app is out, a bar offers *Reload*.
+- **3D on the phone** — *Open a file…* takes `.glb` / `.gltf`, `.fbx`, `.obj`, `.stl`, `.ply` and USD
+  (`.usdz`, `.usd`, `.usda`, `.usdc`; read on the phone itself, no Sight needed — placed exactly as Sight
+  shows it, so views match). A model that uses files beside it (a `.gltf`'s `.bin`, an FBX's textures):
+  pick them together with it (select several files in Files); they are kept with the model on the device,
+  and a `.gltf` without its `.bin` says which file it needs. Gaussian-splat `.ply` files stay Sight-only.
+  One finger turns the camera round the model, two zoom and pan.
+  The header has the eye (drawings), ⟳ *Turn the model a quarter* (which way is up, as Sight's turn
+  button; kept with the review), the explode slider (a model with parts), *Show all* when a view hid
+  some meshes, and ⛶ *Frame the model*. A note goes on the **view** on screen — the camera, the hidden
+  meshes and the explode — like a video note on its frame; views are numbered as in Sight (View 1 is the
+  first one made). The pencil draws over the view on screen; turn to another view and draw again for
+  the same note (each view keeps its drawings). A card shows each of the note's views (V1, V2… in the
+  corner); a tap on the card or its *View N* button puts the camera there. *Reply* writes over the model
+  on the note's view, with chips for its other views; *Edit the drawing* asks which view when there are
+  several. Views from Sight (their hidden meshes and explode included) open the same way, and the
+  `.srev` goes back to Sight with every view in place. PDF / web page: each view as a picture, "View N".
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
   file (see *Versions* above). Also the palette and the review panel's *Compare* button.

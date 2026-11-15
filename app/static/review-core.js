@@ -605,6 +605,16 @@ var SightReviewCore = (function(){
     return true;
   }
 
+  // Two 3D cameras ({p, t, fov, turns}, FORMAT.md 3D ctx) are one view: position and target within
+  // 0.4 % of a's camera distance, the same fov (0.5°) and quarter-turn count.
+  function camMatch(a, b){
+    if (!a || !b || !a.p || !b.p || !a.t || !b.t) return false;
+    var d = hyp(hyp(a.p[0] - a.t[0], a.p[1] - a.t[1]), a.p[2] - a.t[2]) || 1, tol = d * 0.004;
+    var dp = hyp(hyp(a.p[0] - b.p[0], a.p[1] - b.p[1]), a.p[2] - b.p[2]);
+    var dt = hyp(hyp(a.t[0] - b.t[0], a.t[1] - b.t[1]), a.t[2] - b.t[2]);
+    return dp < tol && dt < tol && Math.abs((a.fov || 50) - (b.fov || 50)) < 0.5 && (a.turns || 0) === (b.turns || 0);
+  }
+
   // ---- picture texts (FORMAT.md "note", `captions`) -------------------------------------------
   // A note's text is the topic; each of its pictures may carry a text of its own, kept in the note's
   // data.captions = {key: text}. A picture is {} (the image / PSD itself), {t} (a video frame),
@@ -872,7 +882,7 @@ var SightReviewCore = (function(){
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
-    ctxVisible: ctxVisible, drawingRow: drawingRow,
+    ctxVisible: ctxVisible, camMatch: camMatch, drawingRow: drawingRow,
     picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel, picFileName: picFileName,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,
   };
