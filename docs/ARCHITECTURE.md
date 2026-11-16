@@ -77,10 +77,23 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   Floor shadow from ambient/env is accumulated by `makeSkyOcclusion` (layers 5/6 — three selects
   shadow casters by the rendering camera's layers). Re-check the chunk markers after a three upgrade.
 - Shared pane helpers: `bindSplitDrag(handle, {box, stacked, set, end, dblclick})` is the one
-  divider drag (library/board split and the lightbox UV split); `attachViewer(stage, a, src,
+  divider drag (library/board split and the lightbox UV split); with `move(e)` instead of `box`/`set`
+  it runs in pixel mode — the sidebar / inspector edges (`#sideHandle` / `#inspHandle`, zero-width
+  `.panel-handle` flex items over the panels' borders; widths `state.sideW / inspW` in `sight.layout`,
+  limits `PANEL_W`, applied as `--side-w / --insp-w` by `applyPanelWidths()`; narrow-screen drawers
+  ignore them); `attachViewer(stage, a, src,
   {embedded:true})` shows any picture with the image lightbox's pan/zoom/fit and returns
   `{fit, zoom}`; hover picks the pane that gets F/digits (`activePane`, `lightPane`).
   `attachPanScroll` handles nested scrollers (inner one wins via `e._panScroll`).
+- Theme (desktop look): every Settings knob is a key of `state.theme` (`DEFAULT_THEME`, overridden by
+  `app/static/defaults.json`), turned into CSS variables by `applyUi()`. The default look is
+  **Graphite** (Inter 13 px self-hosted in `vendor/fonts`, `--ctl-h` 30 px controls, blue `accent`).
+  `accent` (selection, focus, active row, hover lines) is separate from `border` (frame colour) since
+  0.54; a theme without `accent` falls back to `border`. Captions: `captions: "below"` puts name + one
+  joined info line under the thumbnail, and `capMetrics()` is the single source of that block's height
+  (CSS `--cap-n-lh / --cap-j-lh` and `layout()`'s `L.meta`, grid and masonry); `"over"` is the older
+  overlay with `pack1/pack2`. `themeRev` + `migrateTheme()` move a saved pre-0.54 theme onto the new
+  defaults key by key (`CLASSIC_LOOK` = old defaults; the "Classic" preset restores it).
 - `cloneModel` clones each distinct material once — meshes that shared a material keep sharing it.
 - Library grid tile rescaling on window resize is driven by `#mainBody` width (not the grid's), so
   hiding/squeezing the grid for the board split never changes the zoom.

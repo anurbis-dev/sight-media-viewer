@@ -450,6 +450,13 @@
   set the frame's corner radius. "Full" with radius 0 is the plain edge-to-edge preview. Works for
   images, video and 3D models alike; the choice is saved with the theme. With a radius set, the corner
   icons (info, 3D gear, video strip) move in from the corners so the rounding does not cut them.
+- **Look** — the default theme is *Graphite*: compact rows, Inter, one blue accent, captions under the
+  thumbnails. Settings → Theme switches presets (*Classic* brings back the sizes and colours from before 0.54:
+  larger text, framed cards, names on the thumbnail; the panels stay compact); Settings → Colors → *Accent* changes the selection / focus colour, and
+  Settings → Layout → *Captions* puts names under or on the thumbnails.
+- **Panel widths** — drag the inner edge of the sidebar or of the inspector (mouse, pen or finger) to
+  make it wider or narrower (the thumbnails keep their size, the number of columns changes); double-click
+  the edge for the default width. The widths are remembered.
 - **Settings are remembered** — every option (Settings panel, 3D viewer rig, saved camera views,
   tile size, inspector/sidebar sections) and the app window's position, size and maximized state
   are saved to `settings.json` in the Sight data folder (`~/.sight`, or `SIGHT_HOME`) and come

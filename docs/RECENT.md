@@ -14,6 +14,45 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.54.0 — 2026-11-16 — Desktop: Graphite theme (compact, Inter), captions under thumbnails, resizable side panels
+- **What:** new default look *Graphite*, picked from five variants on a mock-up stand: Inter 13 px, 26 px menu rows,
+  30 px controls, sidebar 208 / inspector 260 px, one blue accent, frameless cards with name + one info line
+  under the thumbnail, no serif wordmark. Sidebar section headers sit on a tinted band so they no longer merge
+  with their rows (user feedback). The sidebar's and inspector's inner edges are drag handles (mouse, pen, touch);
+  double-click resets; widths are remembered. Settings gets *Accent* (colour) and *Captions* (under / on the
+  thumbnail); presets *Graphite* (was *Dark*) and *Classic* (the old sizes and colours).
+- **Where:** `app/static/index.html` (`:root` tokens, shell CSS, `.sec`, `.card.capb`, `.panel-handle`, touch
+  media block; `DEFAULT_THEME`, `CLASSIC_LOOK`, `BUILTIN_THEMES`, `migrateTheme`, `applyUi`, `capMetrics`,
+  `layout`, card render, `renderOptions`, `PANEL_W` / `clampPanel` / `resizePanel` / `applyPanelWidths`,
+  `bindSplitDrag` pixel mode `o.move`), `app/static/defaults.json` (theme + tileSize 160),
+  `app/static/vendor/fonts.css` + `vendor/fonts/inter-*.woff2` (Inter variable 5.1.0, OFL, latin + cyrillic),
+  ARCHITECTURE (theme, pane helpers), MANUAL (Look, Panel widths).
+- **Notes:**
+  - `accent` is new and separate from `border` (before, `--accent` was the frame colour). Anything without
+    `accent` (old saved themes, old user presets) falls back to `border` — keep that fallback.
+  - `capMetrics()` is the only source of the caption block height: CSS reads `--cap-n-lh / --cap-j-lh`,
+    `layout()` reserves `L.meta` in grid and masonry. Change one without the other and rows overlap.
+  - Migration: a saved theme holds every key, so new defaults would never show. Once (`themeRev` < 2), keys
+    still equal to the 0.53 defaults (`CLASSIC_LOOK`) are dropped and get the new defaults; customised keys
+    stay (a custom frame colour keeps its frame width / active colour). Written back after boot. Themes
+    saved by builds with other defaults than 0.53 keep those values (treated as customised).
+  - Dragging a panel edge does not rescale the tile (the `#mainBody` observer skips while `panelResizing`);
+    window resizes still do, as before. Drags keep the library area >= 320 px; a window shrunk later can
+    still squeeze it. Narrow screens (< 1024 px) ignore the widths (drawers) and hide the handles.
+  - Touch screens and the narrow-screen drawers keep 40 px controls / 36 px rows whatever the theme says
+    (media block placed after the base rules so it wins the cascade).
+  - Not done: the phone app and the HTML review page keep their own look; mono figures and file-type badges
+    from the mock-up were left out. *Classic* does not bring back the serif headings or the grey active row.
+  - Review (fresh agent, ran the app in Playwright): caption heights verified exact across 22 grid / masonry
+    combinations, init order and presets fine. Found: panel drags rescaled the tile on every move (clamped to
+    the list mode, zoom drifted for good) → tile kept during drags + 320 px main-area minimum; touch targets
+    shrank to 26 / 30 px on phones / drawers → touch media block; migration dropped the frame of a custom frame
+    colour → kept; Classic accent not the old one → fixed; version tag hidden at narrow widths → ellipsis;
+    touch hit strip covered the panel's own buttons → moved outward. Left: an empty info line leaves a small gap.
+    Second pass (same reviewer): all fixes confirmed (tile drift and touch sizes re-run); found the outward touch
+    strip now covered the first card column → strip limited to 12 px outside (the grid padding), 6 px inside. The same reviewer
+    confirmed it by tapping in Playwright, nothing new. Keep the outer reach <= `--space-4` (grid padding).
+
 ## 0.53.2 — 2026-11-16 — Grid: thumbnails of a re-added folder get their size (masonry) and show after a restart
 - **What:** in a source folder that had been removed and added again (or whose files changed while Sight was
   closed), masonry drew every card square and, after a restart, part of the thumbnails stayed placeholders.
@@ -382,51 +421,3 @@ Add new entries directly below this line.
   both drawings and the screenshot, no loose rows left). Not cleaned: loose drawings already left in libraries by
   earlier sessions (older than the file's opening, not on screen) still wait on their frames.
   Front / Back keep the 0.45.1 rule (z may go below 0; storage accepts it).
-
-## 0.46.0 — 2026-11-13 — Picture texts: each note picture has its own text, shown on a movable plate
-- **What:** a note's text is now its topic, and each of the note's own pictures (the image, a video frame, a 3D
-  view, an attached screenshot) can carry a text of its own. Desktop: a second field under *Add a note…* (*Text for
-  this frame / view / picture*) gives the new note's picture a text; while a note is picked and one of its pictures
-  is on screen, a half-transparent plate over the picture shows the note's text and that picture's text, with a
-  pencil to edit it in place; the same plate over an attached screenshot; the note card lists the texts (click =
-  go to the frame / view, double-click = edit) and marks previews that have one. Phone: the full-screen viewer's
-  caption became the same plate (pencil on it → the text sheet); thumbnails with a text get a corner mark; the
-  draw pencil stays bottom right: there the plate keeps to the left edge at the foot and, stuck to the right side,
-  ends above the pencil (`--scp-bx` / `--scp-bw` / `--scp-rb` in `mobile/index.html`; under 390 px wide the foot
-  plate narrows below 80 % to stay clear; on the left side it starts below Back, `--scp-lt`; desktop keeps the
-  defaults: centred, 10 % / 80 %). A fresh-agent review of this layout found the narrow-phone overlap and the
-  left plate under Back (both fixed); geometry checked by arithmetic for 360 × 800 and 844 × 390. The
-  plate: bottom centre, 80 % wide, more than five lines scroll; a tap folds it into an icon, a tap on the icon
-  opens it; a drag sticks the plate / icon to the nearest side (left / right: 25 % wide, 80 % high); side and fold
-  kept per device. PDF / HTML exports (Sight and phone) show the texts under the pictures.
-- **Where:** `app/static/caption-plate.js` (new, shared ES module), `app/static/review-core.js` (`picKey`,
-  `captionOf`, `withCaption`), `app/static/annotate.js` (`.an-cin`, `captionsHtml`, `editCaption`, `platePic`,
-  `paintPlate` in `tick`, `showShot(src, from)`, `setCaptionFor`, report payload `withPicText` / `picText` /
-  `shotCaptions`; `onDown` / dblclick skip `.scp`), `app/review.py` (PDF `picText` / `shotCaptions`, page
-  `picText`), `mobile/js/app.js` (`viewer` → `paintPlate`, `markCap`, `sameFrameT`),
-  `mobile/js/model.js` (`setCaption`), `mobile/js/report.js`, `mobile/index.html`, `tools/build_pwa.py` +
-  workflow paths (publishes `core/caption-plate.js`), `docs/FORMAT.md` (`captions`), `ARCHITECTURE.md`,
-  `MANUAL.md`, tests (`pwa_unit.cjs` captions test; `pwa_touch.cjs` / `test_pwa.py` plate fold / side / edit).
-- **Notes:** no format version change: `captions` is an optional note field; older clients keep it. It is note
-  content: editing stamps `edited_at`, so merges are unchanged (rule 3) — concurrent edits of two different
-  pictures' texts keep only the later note copy, as with text / shots (deliberately not a per-caption merge;
-  that would need a parity change in `Library.import_annotations` and `mergeRows`). Frame keys are written as
-  `t:<ctx.t to 3 dp>` and read by each client's own frame rule (`same` argument), never by string equality.
-  Reply pictures have no texts (the reply's words are theirs). Desktop plate shows only in annotation mode with a
-  note picked and the frame / view on screen being one of that note's (its own, one it drew on, one with a text).
-  The HTML reviewer page shows `picText` and frame / view captions but not screenshot texts, and cannot edit
-  texts yet. 3D was checked by reading only (no 3D asset in the container); image and video were driven in
-  Playwright on a dev server with a scratch library.
-  Review (fresh agent): no crash-level bug. Fixed: (1) a press on the plate body's scrollbar (mouse, long text)
-  moved / folded the plate — `down` now skips it; (2) the HTML reviewer page dropped screenshot texts — `thumbs`
-  takes `shotCaptions`; (3) the screenshot overlay's plate leaked its resize listener when the lightbox closed or
-  the asset changed — `S.shotView` / `closeShotView()` in `setAsset` / `unmount`; (4) `destroy()` of a plate with an
-  open edit ran after `S.asset` changed / after `flush` — the plates are now destroyed first; (5) a click on the
-  plate's pencil while editing saved and reopened the editor, a press on the plate while editing folded it; (6)
-  `captionsHtml` sorted an unknown view as NaN; a click on a screenshot's text row now opens that picture; the
-  plate blocks the browser context menu. Left as is: Enter during IME composition saves early (same as every
-  editor here; `hotkey` does not check `isComposing`); a frame text on a frame whose drawings were all deleted is
-  listed in the card and on the plate but not in the reports (they walk frames with drawings); the screenshot
-  overlay's plate does not follow note edits made elsewhere while it is open; `paintPlate` scans the items every
-  frame while a note is picked (cheap at review sizes). Fixes re-tested (unit, PWA touch, desktop Playwright), not
-  re-reviewed. Not committed.
