@@ -182,7 +182,10 @@ The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `pri
   of one camera view share it), `cam` the camera position, orbit target, vertical fov (degrees)
   and the model's quarter-turn count. A drawing shows only while the live camera matches its view
   (within 0.4 % of the camera distance). A note's ctx also carries `v3d` — the viewer settings
-  (shading, lights, explode, fov) it was written with, restored when the note is opened.
+  (shading, lights, explode, fov) it was written with, restored when the note is opened (merged into the
+  viewer's settings: keys it lacks stay as they are). **0.53+:** the phone app restores it too (shading base,
+  wire / x-ray, `env` + `envPreset` as its light; `env: false` = its key light) and writes a partial one on its
+  own notes: `{shadeBase, wireOn, xrayOn, env, envPreset?, explode}`.
   **0.41+:** a 3D ctx may carry `hidden` — the indices (ascending) of the model's meshes hidden in that
   view, in the viewer's mesh order. A view matches only with the same hidden set (an absent `hidden`, a
   file from before 0.41, matches any). `[]` = nothing hidden.

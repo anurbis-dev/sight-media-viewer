@@ -117,8 +117,8 @@ def make_gltf_with_bin(path: Path) -> Path:
 
 
 def make_glb(path: Path, anim: bool = False) -> Path:
-    """anim: also UVs on both boxes and a 2 s clip "Lift" that moves Box 2 up by 1 and back (linear,
-    keys at 0 / 1 / 2 s)."""
+    """anim: also two UV sets on both boxes (TEXCOORD_0: each side the whole square, TEXCOORD_1: the lower left
+    quarter) and a 2 s clip "Lift" that moves Box 2 up by 1 and back (linear, keys at 0 / 1 / 2 s)."""
     meshes, bufs, views, accs, offset = [], [], [], [], 0
     for i, (cx, col) in enumerate(((-0.6, [0.9, 0.3, 0.2, 1]), (0.6, [0.2, 0.5, 0.9, 1]))):
         pos, idx = box(cx, 0.0, 0.0, 0.45)
@@ -136,13 +136,14 @@ def make_glb(path: Path, anim: bool = False) -> Path:
         offset += len(pb) + len(ib)
     extra = {}
     if anim:
-        uv = struct.pack("<48f", *([0, 0, 1, 0, 1, 1, 0, 1] * 6))
-        for i in range(2):
-            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(uv), "target": 34962})
-            accs.append({"bufferView": len(views) - 1, "componentType": 5126, "count": 24, "type": "VEC2"})
-            meshes[i]["primitives"][0]["attributes"]["TEXCOORD_0"] = len(accs) - 1
-            bufs.append(uv)
-            offset += len(uv)
+        for k, uv in enumerate((struct.pack("<48f", *([0, 0, 1, 0, 1, 1, 0, 1] * 6)),
+                                struct.pack("<48f", *([0, 0, 0.5, 0, 0.5, 0.5, 0, 0.5] * 6)))):
+            for i in range(2):
+                views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(uv), "target": 34962})
+                accs.append({"bufferView": len(views) - 1, "componentType": 5126, "count": 24, "type": "VEC2"})
+                meshes[i]["primitives"][0]["attributes"][f"TEXCOORD_{k}"] = len(accs) - 1
+                bufs.append(uv)
+                offset += len(uv)
         tb = struct.pack("<3f", 0, 1, 2)
         vb = struct.pack("<9f", 0, 0, 0, 0, 1, 0, 0, 0, 0)
         for b, typ, cnt, mm in ((tb, "SCALAR", 3, ([0], [2])), (vb, "VEC3", 3, None)):
@@ -166,6 +167,47 @@ def make_glb(path: Path, anim: bool = False) -> Path:
     js += b" " * ((4 - len(js) % 4) % 4)
     body = struct.pack("<II", len(js), 0x4E4F534A) + js + struct.pack("<II", len(blob), 0x004E4942) + blob
     path.write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + len(body)) + body)
+    return path
+
+
+def make_splat(path: Path) -> Path:
+    """A Gaussian splat (.splat: 32 bytes per splat — position, scale as float32 ×3 each, RGBA and a rotation
+    quaternion as uint8 ×4 each): two balls of 400 splats, red at x = -1 and blue at x = +1 (radius 0.5), in the
+    splat's own Y-down frame (both viewers turn it half round X)."""
+    import math
+
+    out = bytearray()
+    for cx, rgba in ((-1.0, (230, 40, 40, 255)), (1.0, (40, 80, 230, 255))):
+        for i in range(400):
+            # a Fibonacci sphere, three shells
+            k = i % 133
+            r = 0.5 * (1, 0.75, 0.5)[i // 133 % 3]
+            y = 1 - 2 * (k + 0.5) / 133
+            a = math.pi * (3 - math.sqrt(5)) * k
+            rr = math.sqrt(max(0.0, 1 - y * y))
+            out += struct.pack("<3f3f4B4B", cx + r * rr * math.cos(a), r * y, r * rr * math.sin(a),
+                               0.06, 0.06, 0.06, *rgba, 255, 128, 128, 128)
+    path.write_bytes(bytes(out))
+    return path
+
+
+def make_splat_ply(path: Path) -> Path:
+    """The same two balls as make_splat, as a 3DGS .ply (what a splat .ply's header has: opacity, f_dc_*,
+    scale_*, rot_*; colours as SH degree 0, opacity and scales as stored by 3DGS — logit and log)."""
+    import math
+
+    src = make_splat(path.with_suffix(".tmp.splat")).read_bytes()
+    path.with_suffix(".tmp.splat").unlink()
+    props = ["x", "y", "z", "f_dc_0", "f_dc_1", "f_dc_2", "opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
+    n = len(src) // 32
+    head = "ply\nformat binary_little_endian 1.0\nelement vertex %d\n" % n + "".join(f"property float {p}\n" for p in props) + "end_header\n"
+    out = bytearray(head.encode("ascii"))
+    sh0 = 0.28209479177387814
+    for i in range(n):
+        x, y, z, sx, sy, sz, r, g, b, a, *_ = struct.unpack_from("<3f3f4B4B", src, i * 32)
+        out += struct.pack("<14f", x, y, z, (r / 255 - 0.5) / sh0, (g / 255 - 0.5) / sh0, (b / 255 - 0.5) / sh0,
+                           8.0, math.log(sx), math.log(sy), math.log(sz), 1.0, 0.0, 0.0, 0.0)
+    path.write_bytes(bytes(out))
     return path
 
 

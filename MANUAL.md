@@ -25,7 +25,7 @@
   again to deselect); a click on empty space clears any selection. `F` frames the selection, or
   the whole model as it is now (exploded, minus hidden meshes), without turning the view.
   `H` hides the selected mesh, `Ctrl+H` hides everything else, `Alt+H` shows all meshes again.
-- **3D animation** — a model with animation clips (glTF / GLB, FBX) shows a bar above the shading
+- **3D animation** — a model with animation clips (glTF / GLB, FBX, USD — moving transforms and skeletons) shows a bar above the shading
   toolbar: ▶ / ❚❚, a time slider to scrub (pauses) and, with several clips, a clip picker. A drawing or note
   belongs to the pose it was made at: playing or scrubbing away hides it, clicking the note puts the clip
   and time back (Sight and the phone alike).
@@ -224,7 +224,7 @@
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews
   made in Safari before installing stay in Safari. One button opens everything — the big *Open a file* on an
   empty home screen, the small *＋ Open* in the bar once there are reviews: the phone offers the photo library,
-  the camera and Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD — or a `.srev` someone sent). Nothing is
+  the camera and Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD, Gaussian splats — or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
   changes it). The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
@@ -360,16 +360,23 @@
   (`.usdz`, `.usd`, `.usda`, `.usdc`; read on the phone itself, no Sight needed — placed exactly as Sight
   shows it, so views match). A model that uses files beside it (a `.gltf`'s `.bin`, an FBX's textures):
   pick them together with it (select several files in Files); they are kept with the model on the device,
-  and a `.gltf` without its `.bin` says which file it needs. Gaussian-splat `.ply` files stay Sight-only.
+  and a `.gltf` without its `.bin` says which file it needs. **Gaussian splats** (`.splat`, `.spz`, `.ksplat`,
+  `.sog`, a splat `.ply`) open too, placed as Sight places them: notes and drawings go on views as on a model;
+  a splat has no meshes, shading, light, explode or turn, so those controls are not shown.
   One finger turns the camera round the model, two zoom and pan.
   The header has the eye (drawings), ⟳ *Turn the model a quarter* (which way is up, as Sight's turn
   button; kept with the review) and ⛶ *Frame the model*. **Tap a part** of the model to pick its mesh
   (orange); a row under the header then offers *Hide*, *Only this* (hide the others), *UV* (the mesh's UVs
-  over its texture, full screen, pinch to zoom) and ✕; a tap on empty space lets it go. While meshes are
-  hidden the row shows *Show all*. The **bottom bar** has Shading, Grid, Light and Explode icons; a tap
-  opens its choices in a row above (Solid / Vertex / Textured / Normal + Wire / X-ray; Off / Grid / Grid +
-  axes; Studio / Sunset / Overcast / Night / Headlight / Flat; the explode slider) — shading, grid and light
-  are this phone's, not the review's. A model with **animation** adds a row with ▶ / ❚❚ and a time slider
+  over its texture, full screen, pinch to zoom; the UV set is named at the top — *UV1 · 1 / 2* — and a mesh with
+  several sets shows the next one with a swipe to the side) and ✕; a tap on empty space lets it go. While meshes are
+  hidden the row shows *Show all*. The **bottom bar** has Shading, Grid, Light, Background and Explode icons;
+  a tap opens its choices in a row above (Solid / Vertex / Textured / Normal + Wire / X-ray; Off / Grid / Grid +
+  axes, with a *Cell* slider under it — round cell sizes, shown in model units; Studio / Sunset / Overcast /
+  Night / Headlight / Flat; background swatches and a colour picker; the explode slider). The grid's lines take
+  their colour from the background (light on a dark one, dark on a light one), in Sight too. Shading, grid,
+  light and background are this phone's (a splat has only the background). A note keeps the shading and light it was written with: opening it (here or in Sight)
+  shows them again (for that look only — the phone's own choice is not overwritten), as Sight does with its own notes (Sight's lights without an environment read as Headlight;
+  the phone's Headlight / Flat as Sight's lights without an environment). A model with **animation** adds a row with ▶ / ❚❚ and a time slider
   (several clips: a chip switches them). A note goes on the **view** on screen — the camera, the hidden
   meshes, the explode and the animation pose — like a video note on its frame; views are numbered as in Sight (View 1 is the
   first one made). The pencil draws over the view on screen; turn to another view and draw again for
@@ -517,6 +524,10 @@
   - **Camera** — `W A S D` fly the camera (speed slider under Camera in the settings panel);
     `F` frames the whole model again; `Alt+1…9` saves the current view under that digit
     (overwriting what was there) and `1…9` jumps back to it. Saved views are kept per model.
+  - USD: `.usdz` is converted once into glTF when the optional usd-core library is installed; `.usd`,
+    `.usda` and `.usdc`, a `.usdz` without usd-core and an **animated** `.usdz` are read in the viewer itself
+    (as the phone app reads them), so their animation plays. A standalone `.usda` / `.usdc` finds its textures
+    by name beside the model (or in the usual texture folders); other USD files it references are not loaded.
   - Gaussian splats (`.splat`, `.spz`, `.ksplat`, `.sog`, and splat-flavored `.ply`) get their
     own interactive viewer too (drag to orbit, same camera keys) — no shading controls, since a
     splat's color is already baked in.

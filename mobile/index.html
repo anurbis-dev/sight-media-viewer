@@ -146,6 +146,11 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .b3d .chip3.clipb { max-width: 34%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 6px 9px; font-size: 12px; }
 .b3d .sep3 { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--rd-line, rgb(255 255 255 / .2)); }
 .b3d input[type=range] { flex: 1; min-width: 0; height: 32px; accent-color: var(--accent); }
+.b3d .row.cells { flex-wrap: nowrap; }
+.b3d .swatch { width: 32px; height: 32px; padding: 0; border-radius: 16px; border: 2px solid var(--rd-line, rgb(255 255 255 / .3)); cursor: pointer; }
+.b3d .swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.b3d .swatch.pick { position: relative; overflow: hidden; background: conic-gradient(#f44, #fd4, #4d4, #4df, #44f, #f4f, #f44); }
+.b3d .swatch.pick input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .b3d .val3 { flex: none; min-width: 48px; text-align: right; padding-right: 6px; font-size: 12px; font-variant-numeric: tabular-nums; opacity: .8; }
 .stage .none { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--ov-mut); padding: 16px; font-size: 14px; }
 .stage .none label { display: inline-block; margin-top: 10px; background: var(--accent); color: #fff; border-radius: 10px; padding: 8px 14px; cursor: pointer; }
@@ -319,6 +324,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .view .vb img, .view .vb svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; -webkit-user-drag: none; }
 .fab { position: absolute; z-index: 2; width: 46px; height: 46px; border-radius: 23px; border: 1px solid var(--ov-line); background: var(--ov); color: var(--ov-fg); display: grid; place-items: center; cursor: pointer; padding: 0; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 4px 16px rgb(0 0 0 / .18); }
 .view .fab.back { left: 12px; top: calc(12px + var(--st)); }
+.view .vtitle { position: absolute; z-index: 2; top: calc(18px + var(--st)); left: 50%; transform: translateX(-50%); max-width: calc(100% - 140px); padding: 6px 12px; border-radius: 14px; background: rgba(20,20,24,.72); color: #fff; font-size: 13px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .view .fab.pencil { right: 12px; bottom: calc(14px + var(--sb)); width: 54px; height: 54px; border-radius: 27px; }
 /* The plate layer (caption-plate.js): the note's text and the picture's own text, 80 % wide, folds
    to an icon on a tap, sticks to any side when dragged. At the foot it keeps to the left edge so the
@@ -335,7 +341,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <body>
 <div id="app"></div>
 <div class="update" id="update" hidden><span>A new version of the app is ready.</span><button class="btn primary" id="reload" type="button">Reload</button></div>
-<script type="importmap">{"imports":{"three":"./three/three.module.js","three/addons/":"./three/jsm/"}}</script>
+<script type="importmap">{"imports":{"three":"./three/three.module.js","three/addons/":"./three/jsm/","@sparkjsdev/spark":"./three/spark.module.js"}}</script>
 <script src="core/review-core.js"></script>
 <script src="core/review-draw.js"></script>
 <script>window.SIGHT_REVIEW_VERSION = "%%VERSION%%";</script>

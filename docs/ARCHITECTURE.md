@@ -23,7 +23,8 @@ app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: 
                          buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers, ENV_PRESETS,
                          shading (applyBaseMaterial / applyXray / setWireOverlay), the selection highlight
                          (highlightMaterials / meshHighlight), the UV picture (createUvPainter, readbackCanvas,
-                         textureQuad) and the animation player (createAnimator) (ES module)
+                         textureQuad), the animation player (createAnimator), USD reading (parseUsd / usdAsSight) and
+                         splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
@@ -32,7 +33,9 @@ mobile/                  the phone app "Sight Review" (PWA, no build step) — s
 tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node);
                          test_pwa.py (phone app: build, pwa_unit.cjs, pwa_e2e.cjs round trip with Sight,
                          pwa_3d.cjs 3D on fixtures_3d.py's two-box GLB through SwiftShader, pwa_3d_formats.cjs
-                         every phone 3D format; fixtures/parts_v001.usdz + parts.usdc)
+                         every phone 3D format incl. animated USD and splats; fixtures/parts_v001.usdz + parts.usdc,
+                         anim.usda / anim_v001.usdz / skel.usda from fixtures/make_anim_usd.py);
+                         test_usdz_convert.py (which .usdz the server leaves to the browser; needs usd-core)
 tools/                   archive_changes.py; build_pwa.py (phone app → dist/pwa, --serve PORT); bench_startup.py / bench_grid.py (benchlib.py: isolated SIGHT_HOME
                          copy, headless Edge/Chrome/Chromium over a stdlib CDP client — never the live library)
 build_exe.bat            Windows PyInstaller build (dist\Sight\Sight.exe); pauses skipped when CI is set
@@ -108,6 +111,15 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   stack. Created right after the rig in both viewers (the model starts at clip 0, t 0). A view's pose is
   `ctx.anim` (FORMAT.md); the lightbox host gives the annotator `getAnim / setAnim / withAnim / getAnimState /
   setAnimState` (`bindAnnot3d`); its bar is `#v3dAnim` (`paintAnimBar`, outside `data-tools`: only with clips).
+  USD clips (0.53, three's USDLoader: SkelAnimation, time-sampled translate / orient / rotateXYZ / scale /
+  transform on Xform / Scope / Mesh prims, by prim name) survive `usdAsSight` only in its animated layout (below).
+- 3D USD in the lightbox (0.53): `.usd` / `.usda` / `.usdc` are read in the browser (`loadUsd` → core `parseUsd`, the
+  phone's reading — standalone layers find textures by base name through `/api/model-res`; referenced layers
+  are not loaded). A `.usdz` goes to `/api/model-glb` (server conversion, `usdz_convert.py`) first and falls back
+  to `loadUsd` on any failure; the server answers **409** for a stage the browser plays as animated
+  (`_stage_animated`: what the loader makes clips of — a suffixed `xformOp:transform:*` counts only in a binary
+  root layer, since the loader's text parser gives it no clip), remembered by `thumbs/usdz/<aid>.anim` (mtime-fresh,
+  cleaned like the cached `.glb`; `USDZ_CONVERTER_VERSION` 3). `cloneModel` copies a USD root's `skeleton`.
 - Lightbox 3D explode (`model3d-core.js`, shared with the phone app): `buildExplodeRig` solves an explosion graph per assembly level of the node
   hierarchy (box-based blocking, grounded largest part, one model axis per part, ride-along carry);
   `applyExplode(rig, t)` only sets `position`. Rebuilt per load, independent of the 90° turns.
@@ -697,7 +709,7 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
 - **3D** (`model3d.js`, kind `model3d`: `media.js` `MODEL_EXT` = glTF / GLB, FBX, OBJ, STL, PLY, USDZ /
   USD / USDA / USDC). `parseModel(blob, name, extras)` follows the lightbox's `loadModel` per format,
   with its shared parts from `model3d-core.js` (`dropDeadTextures` + `FBX_TEXTURE_WAIT_MS` for FBX,
-  `stlMesh` / `plyMesh`, `plyHeaderIsSplat` — a splat is refused). USD has no server here: three's
+  `stlMesh` / `plyMesh`). USD has no server here: three's
   `USDLoader` (vendored from three@0.185.0 with its `usd/` parsers; **patched** `USDCParser._readInlinedValue`
   for inlined Vec*d / Vec*h, which r185 returned as undefined; its textures load as plain images, so the
   loader's own onLoad is awaited) + `usdAsSight`, which lays it out as Sight's `usdz_convert.py` GLB: the Z-up
@@ -709,7 +721,12 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   every material carries `userData.usdMaterial` (its USD path), a mesh with subsets gets its own material last
   (`usdMeshMaterial`) and its faces in no subset are drawn with it (r185 dropped them); `usdAsSight` merges a
   mesh's faces per material and orders them by first registration (own material, then subsets, in traverse
-  order), as `_Materials.add` numbers them. Not matched: the conversion drops invisible and proxy / guide
+  order), as `_Materials.add` numbers them. **Animated stages** (the loader made clips): nothing is baked — the
+  stage's nodes and skeletons stay (clips find nodes by prim name, bones through the root's `skeleton`), each mesh
+  is replaced in place by a Group with its name / transform / visibility holding its per-material parts (skinned
+  parts re-bound to the same skeleton), its child prims moved after them, so the mesh order and rest-pose bounds
+  are the static layout's; the explode rig sees the hierarchy (differs from the conversion's flat node). Sight's
+  lightbox reads such a `.usdz` in the browser too, so Sight and the phone agree. Not matched: the conversion drops invisible and proxy / guide
   meshes; colours differ (Sight writes USD colours into glTF as linear factors, three reads them as sRGB, so
   Sight shows them lighter); materials with no path (display colours) share one key here, where Sight keys
   them by colour, and invisible / proxy meshes register their materials here — both can reorder (not
@@ -724,6 +741,12 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   renders on demand (`controls` change / `need`), `onMove` after each rendered frame. `still(cam,
   {hidden, explode, aspect, max})` renders a view into a 2D canvas in the same task and puts the live
   camera / meshes / explode back; `attach(el)` moves the canvas when the review screen is rebuilt.
+  **Grid / background (0.53)**: core `modelGrid` (cells of `niceStep` 1-2-5 sizes, a tenth of the diagonal moved
+  `gridCell` −4…4 steps, ≈ 2× the diagonal, ≤ 600 cells) and `gridColors` / `tintGrid` (line colours from the
+  background, a minimum contrast for mid greys — the lightbox's `syncRig` tints its floor grid the same way);
+  `setGridCell` / `cellSize`, `setBg` / `bg` (also on a splat); the device look stores `bg` and `gridCell`; stills
+  keep the default background. UV view: `uvPicture(i, max, set)`; app.js `showUv` opens `viewer` in its `title`
+  mode (no caption plate, a `.vtitle` pill "UV1 · 1 / 2 · mesh"), sideways = the next set (one picture per set).
   **Tools (0.51)**: `setShading({base, wire, xray})` / `setGrid("off" | "grid" | "axes")` / `setLight(LIGHTS)`
   (env presets from core `ENV_PRESETS`, "head" = key light + ambient, "flat" = ambient only; env maps built once
   per preset) — this device's look (`sight-review:v3d`, `applyLook3d` on load), never a view's; stills hide the
@@ -733,6 +756,22 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   full-screen `viewer`. `anim` = core `createAnimator` (null without clips), ticked in the render loop; `onAnim`
   repaints the anim row. UI (app.js `paint3dTools`): the picked mesh's row `.hdr .sel3d` (`paintSel3d`), the
   bottom bar in `els.tp` (`.b3d`: icon row, `R.opt3d` choice row, anim row; `paintAnim` per frame).
+  **Gaussian splats (0.53)**: `isSplat` (core `SPLAT_EXT`, or a `.ply` whose header says so) → `createSplatViewer`:
+  Spark (`spark.module.js` + `jsm/postprocessing/Pass.js` in the build, `@sparkjsdev/spark` in the import map), a
+  SplatMesh from the file's bytes, placed / framed as the lightbox does (core `SPLAT_QUATERNION`, `splatHome`), the
+  same API with the mesh parts inert (`isSplat`, `meshCount` 0, `canExplode` false, `anim` null, `turns` 0 — no turn
+  button, no shading / grid / light icons). Spark sorts in a worker after a render, so the canvas renders a 90-frame
+  tail after every change, the viewer warms up (render + `spark.update` until `activeSplats`) before it is handed out,
+  and **`still()` returns a Promise** (one at a time): Spark's own sorting off (`autoUpdate = false` — its async
+  depth readback leaves a pixel buffer bound, which empties a synchronous read, and a sort under way makes
+  `update()` skip a camera), wait out a sort under way, `await spark.update` for the still's own camera, then a
+  render into an sRGB render target, read back (rows flipped), `autoUpdate` back on — the live canvas does not
+  render meanwhile; a closed viewer throws (never a blank picture that would be cached). Callers `await V.still(...)`
+  (a mesh viewer's still stays synchronous). **Note look (0.53)**: `views3d` keeps a view's newest note's `ctx.v3d`;
+  `goView(vk, look)` applies `look || view.v3d` (`applyNoteLook`: `M.lookOfV3d` → shading / light, shown but not
+  saved — as Sight's `setV3D`; the device's own look comes back with the next model); every way of opening a note
+  (card, Go to, reply, editing its drawing) passes the note's own `v3d` on its own view, view chips the view's; a new note gets
+  `ctx.v3d = M.v3dOfLook(...)` (not on a splat). Stills keep the default look (cached pictures).
   The review side (app.js "3D" block): **views** stand where video frames do. `R.views` =
   `M.views3d(rows)` (oldest first = Sight's View 1, 2…; hidden from the first row that has it, explode
   from the newest), plus drafts' views (`viewsNow`); `findVk(look)` = `RC.camMatch` (moved from annotate.js

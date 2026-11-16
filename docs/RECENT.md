@@ -14,6 +14,50 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.53.0 — 2026-11-15 — 3D: USD in the lightbox + USD animation, splats on the phone, notes' look on the phone; phone UV sets, background, grid cells
+- **What:** (Sight) the lightbox opens `.usd` / `.usda` / `.usdc`, a `.usdz` without usd-core, and plays **USD
+  animation** (moving transforms, skeletons) — an animated `.usdz` is read in the browser instead of the server's
+  still conversion. The floor grid's colours follow the backdrop. (phone) USD animation plays too; **Gaussian
+  splats** open (`.splat` / `.spz` / `.ksplat` / `.sog` / splat `.ply`) with notes on views as in Sight; opening a
+  note shows the **shading and light it was written with** (Sight's `v3d`; the phone's notes carry one Sight
+  restores). The UV view has no note plate: the UV set is named at the top, a swipe sideways shows the mesh's other
+  sets. New Background icon (swatches + colour picker), a smaller grid with round cells and a *Cell* slider, grid
+  colours from the background.
+- **Where:** `model3d-core.js` (`parseUsd`, `usdAsSight` animated layout, `SPLAT_*` / `splatHome`, `gridColors` /
+  `tintGrid` / `niceStep` / `modelGrid`); `index.html` (`loadUsd`, `.usdz` fallback, `makeModelManager().modify`,
+  `fetchBufferWithProgress` error `status`, `cloneModel` root skeleton, shared splat constants, `syncRig` tint);
+  `usdz_convert.py` (`_stage_animated`, `_root_is_crate`, `convert(…, animated_out)`), `library.py` (`.usd*` in
+  MODEL_EXT, `.anim` marker, `usdz_is_animated`, `USDZ_CONVERTER_VERSION` 3), `server.py` (409), `fileinfo.py`
+  (`_usd`); phone `model3d.js` (`isSplat`, `createSplatViewer`, `setBg` / `setGridCell`, `uvPicture` set),
+  `app.js` (`await V.still`, `goView(vk, look)` / `applyNoteLook` / `noteLook`, note `ctx.v3d`, `showUv`, `viewer`
+  title mode, Background / Cell rows, `turnB`), `model.js` (`lookOfV3d`, `v3dOfLook`, `views3d` v3d), `media.js`,
+  `index.html`, `tools/build_pwa.py` (Spark + Pass.js). Tests: `fixtures/make_anim_usd.py` (+ `anim.usda`,
+  `anim_v001.usdz`, `skel.usda`), `fixtures_3d.make_splat` / `make_splat_ply`, lift GLB with two UV sets,
+  `test_usdz_convert.py`, `pwa_3d_formats.cjs`, `pwa_3d_tools.cjs`, `pwa_unit.cjs`. Docs: ARCHITECTURE, FORMAT
+  (phone v3d), MANUAL, PLAN-mobile stage 4 (its "not done" list is done).
+- **Notes:** an animated USD keeps its hierarchy (each mesh split in place, its parts before its children), so mesh
+  order matches the still layout but the explode rig differs from the server conversion's flat one. The server
+  calls a stage animated only for what three's USDLoader makes clips of (SkelAnimation; translate / orient /
+  rotateXYZ / scale; `xformOp:transform*` only in a binary root layer — the loader's text parser gives it none);
+  left: animation in a referenced layer of another format may still disagree. Standalone USD layers find textures
+  by base name via `/api/model-res`; referenced USD files are not loaded. A splat `still()` is async: Spark's own
+  sorting is switched off while it sorts for the still's camera (else an empty picture, cached for good); the
+  desktop's splat view pictures are still synchronous (taken with the live sort order — not changed). Phone stills
+  keep the default look (textured, studio, default background) so cached view pictures do not depend on it; a
+  note's look is shown, not saved (as Sight's `setV3D`); explode stays the view's (findVk matches by it); phone
+  "studio" = Sight's studio environment, Headlight / Flat = Sight's lights without one (Flat reads back as Headlight).
+  The desktop grid did not follow the backdrop before (fixed colours) — it does now. Spark: three copies of a splat
+  file at peak on the phone; off-screen stills blend in linear space (edges a little different from the screen).
+  Reviews (a fresh agent per block; each confirmed its fixes): **USD** — nested meshes out of order in the animated
+  layout, `is_animated` too broad (then too narrow: suffixed transform ops; text layers), a 409 hiding the browser's
+  own error, Windows texture paths, a race in the marker check, two stage opens — all fixed. **Splats** — stills of
+  any other camera came out empty (Spark's async readback) — fixed and tested (a view of one ball only); a closed
+  viewer returned a blank picture; turn button flash. **Note look** — Go to / reply / edit-drawing used the view's
+  look, the look was saved over the device's — fixed; explode left as the view's on purpose. **UV view** — a URL leak
+  after close, a picture remade per swipe, errors outside the try, a failed set remembered — fixed. **Grid /
+  background** — the 200-cell cap left the finest grid smaller than the model, mid greys hid the lines, the colour
+  picker's row rebuilt under an open picker (iOS) — fixed.
+
 ## 0.52.0 — 2026-11-15 — Text plate: resizable, no "…" line under the text
 - **What:** (everywhere: Sight lightbox, phone viewer, HTML reviewer page) the picture text plate no longer adds a
   "…" line under the text while more is below — that line came and went with the scroll and changed the plate's
@@ -379,21 +423,3 @@ Add new entries directly below this line.
   time), and the other controls only ever change editable drawings.
   Not tested in a browser: checked by reading the code and `node --check`. Undo of a Front / Back step is the
   generic z snapshot, as before.
-
-## 0.45.0 — 2026-11-13 — Annotations: drawings added to a note are fixed
-- **What:** a drawing already added to a note (or to a reply) can no longer be edited. It can still be selected and
-  deleted from the frame (Delete, Shift+Delete, the bin, Ctrl+A then Delete, the eraser in full mode). Moving,
-  scaling / rotating / line-end handles, restyling (colour, width, text props), arrow nudging, Ctrl+[ / Ctrl+],
-  partial erasing and double-click text editing do nothing to it. Only drawings not yet added to a note are editable.
-- **Where:** `app/static/annotate.js` — `baked` / `editable` (new, after `visibleDrawings`), `editSel` (handles and
-  handle drags), `onDown` (select tool: a baked hit is selected but not dragged; the move drag takes editable ids
-  only), text tool and `dblclick` (only editable text opens), `eraseAt` (partial mode skips baked), `nudge`,
-  `reorder` (only editable drawings take part; baked z is kept), `setProp`, `addNote` (clears undo / redo).
-  `MANUAL.md` (Annotations).
-- **Notes:** `baked` means `data.note` is set, so replies' drawings (`data.reply`) are locked too. Copy / duplicate /
-  paste of a baked drawing make a new, editable, unattached drawing (the original stays). Deleting a whole note still
-  deletes its drawings with it (`onListClick` `data-del`), as before — that is a note action, not a drawing edit.
-  Undo: `addNote` now clears the undo and redo stacks, because an older step could otherwise detach a baked drawing
-  from its note or rewrite its fields. Known, left as is: the HTML review page and the phone app are not changed; the
-  properties panel still shows a baked drawing's values (controls do nothing to it). Not tested in a browser: checked
-  by reading the code and `node --check app/static/annotate.js`.

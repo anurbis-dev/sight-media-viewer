@@ -617,7 +617,7 @@ import { createCompare, comparable, flash } from "/static/compare.js";
 import { hotkey } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
-  dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
+  dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
   setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
@@ -1687,14 +1687,12 @@ async function renderSplatThumb(THREE, r, a){
   scene.add(mesh);
   try {
     await mesh.initialized;
-    mesh.quaternion.set(1, 0, 0, 0); // same Y-down → Y-up correction boot3d applies
+    mesh.quaternion.fromArray(SPLAT_QUATERNION); // same Y-down → Y-up correction boot3d applies
     mesh.updateMatrixWorld(true);
-    const box = mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld);
-    const size = box.getSize(new THREE.Vector3()).length() || 1;
-    const center = box.getCenter(new THREE.Vector3());
-    camera.position.copy(center).add(new THREE.Vector3(size*0.7, size*0.45, size*0.7));
-    camera.near = size/100; camera.far = size*20; camera.updateProjectionMatrix();
-    camera.lookAt(center);
+    const home = splatHome(THREE, mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld));
+    camera.position.copy(home.p);
+    camera.near = home.near; camera.far = home.far; camera.updateProjectionMatrix();
+    camera.lookAt(home.t);
     r.clear();
     // Depth-sorting a freshly loaded splat is a round trip through a background worker kicked
     // off by the first render() call — nothing meaningful is on screen until it posts back, which
@@ -3056,13 +3054,11 @@ function releaseRenderer(renderer){
   try { renderer.forceContextLoss(); } catch {}
 }
 
-const MODEL_EXT_LOADERS = new Set([".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply", ".usdz", ".splat", ".spz", ".ksplat", ".sog"]);
+const MODEL_EXT_LOADERS = new Set([".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply", ".usdz", ".usd", ".usda", ".usdc", ".splat", ".spz", ".ksplat", ".sog"]);
 // Formats that are unambiguously Gaussian splats. .ply is NOT here — it's also the standard mesh
 // PLY extension, so splat .ply files are told apart by sniffing the header (see isSplatAsset()).
-const SPLAT_EXT = new Set([".splat", ".spz", ".ksplat", ".sog"]);
-// Our file URLs (/api/file/{id}) carry no extension, so Spark can't infer the format from the
-// path like its own examples do — pass it the SplatFileType explicitly instead.
-const SPLAT_FILE_TYPE_BY_EXT = { ".ply": "ply", ".spz": "spz", ".splat": "splat", ".ksplat": "ksplat", ".sog": "pcsogszip" };
+const SPLAT_EXT = new Set(SPLAT_EXT_LIST);
+// (Our file URLs carry no extension: Spark is told the file type — SPLAT_FILE_TYPE_BY_EXT, model3d-core.js.)
 
 // Shared by the interactive viewer (boot3d) and the offscreen thumbnailer (ensureModelThumb) —
 // dispatches by extension, returns an Object3D, or null for a format three.js has no loader for
@@ -3094,15 +3090,16 @@ async function gltfLoaderWithDecoders(manager){
 const FILE_URL_RE = /^(?:https?:\/\/[^/]+)?\/api\/file\/([^?#]+)$/;
 function makeModelManager(THREE, aid){
   const manager = new THREE.LoadingManager();
-  manager.setURLModifier((u) => {
+  const modify = (u) => {
     const m = FILE_URL_RE.exec(u);
     if (!m) return u;
     let rest = m[1];
     try { rest = decodeURIComponent(rest); } catch {}
     return /^[0-9a-f]{16}$/.test(rest) ? u : `/api/model-res/${aid}?name=${encodeURIComponent(rest)}`;
-  });
+  };
+  manager.setURLModifier(modify);
   const idle = new Promise((resolve) => { manager.onLoad = resolve; });
-  return { manager, idle };
+  return { manager, idle, modify };
 }
 
 // fetch() with byte-count progress, for the responses no three.js loader is in charge of.
@@ -3112,7 +3109,9 @@ async function fetchBufferWithProgress(url, onProgress){
     // The server says why in its 404 detail (e.g. the USD library is not installed): the viewer shows it.
     let why = "";
     try { why = (await res.json()).detail || ""; } catch {}
-    throw new Error(why || `HTTP ${res.status}`);
+    const err = new Error(why || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
   const total = Number(res.headers.get("Content-Length")) || 0;
   if (!res.body || !total || !onProgress) return await res.arrayBuffer();
@@ -3130,6 +3129,20 @@ async function fetchBufferWithProgress(url, onProgress){
   return buf.buffer;
 }
 
+// A USD file read in the browser (model3d-core.js parseUsd — the phone app's reading, so views agree): a
+// .usd / .usda / .usdc, or a .usdz the server did not convert. A standalone layer's textures are asked for by
+// base name; the manager sends those to /api/model-res (beside the model, the usual texture folders).
+async function loadUsd(THREE, url, aid, onProgress){
+  const { USDLoader } = await import("three/addons/loaders/USDLoader.js");
+  const { manager, idle, modify } = makeModelManager(THREE, aid);
+  manager.setURLModifier((u) => (/^(?:blob:|data:|https?:|\/)/i.test(u) ? modify(u) : `/api/model-res/${aid}?name=${encodeURIComponent(u)}`));
+  let started = false;
+  manager.onStart = () => { started = true; };
+  const buf = await fetchBufferWithProgress(url, onProgress);
+  return await parseUsd(THREE, USDLoader, buf, manager,
+    () => (started ? Promise.race([idle, new Promise((r) => setTimeout(r, FBX_TEXTURE_WAIT_MS))]) : null));
+}
+
 async function loadModel(THREE, url, ext, onProgress, aid){
   const low = (ext || "").toLowerCase();
   if (low === ".glb" || low === ".gltf"){
@@ -3140,17 +3153,23 @@ async function loadModel(THREE, url, ext, onProgress, aid){
     return g.scene;
   }
   if (low === ".usdz"){
-    // three.js has no USD loader — the server converts once (via the optional
-    // `pxr` USD library) into a plain .glb, which GLTFLoader then renders
-    // exactly like any other glTF asset. A 404 means the server-side conversion
-    // isn't available or failed; fetchBufferWithProgress throws with the server's
-    // reason, and the caller shows it.
-    const data = await fetchBufferWithProgress(`/api/model-glb/${aid}`, onProgress);
-    const loader = await gltfLoaderWithDecoders();
-    const g = await loader.parseAsync(data, "");
-    g.scene.animations = g.animations || [];
-    return g.scene;
+    // The server converts a .usdz once (via the optional `pxr` USD library, app/usdz_convert.py) into a plain
+    // .glb, which GLTFLoader renders like any glTF. It does not when usd-core is missing, the file does not
+    // convert, or the stage is animated (the conversion keeps no animation; HTTP 409) — then the file is read
+    // here with three's USDLoader, as the phone app reads it (loadUsd). Its error wins only when both fail.
+    let why = null;
+    try {
+      const data = await fetchBufferWithProgress(`/api/model-glb/${aid}`, onProgress);
+      const loader = await gltfLoaderWithDecoders();
+      const g = await loader.parseAsync(data, "");
+      g.scene.animations = g.animations || [];
+      return g.scene;
+    } catch (e){ why = e; }
+    try { return await loadUsd(THREE, url, aid, onProgress); }
+    // (409: animated, read here on purpose — this read's own error says what went wrong)
+    catch (e){ console.warn("USD", e); throw why && why.status !== 409 ? why : e; }
   }
+  if (low === ".usd" || low === ".usda" || low === ".usdc") return await loadUsd(THREE, url, aid, onProgress);
   if (low === ".obj"){
     const { OBJLoader } = await import("three/addons/loaders/OBJLoader.js");
     return await new OBJLoader().loadAsync(url, onProgress);
@@ -3228,6 +3247,9 @@ async function cloneModel(obj){
   const dup = (x) => { let y = copies.get(x); if (!y){ y = x.clone(); copies.set(x, y); } return y; };
   c.traverse((m) => {
     if (m.material) m.material = Array.isArray(m.material) ? m.material.map(dup) : dup(m.material);
+    // A USD stage's one skeleton sits on its root, for the mixer to find bones before same-named prims
+    // (model3d-core.js usdAsSight); a clone does not copy it — the cloned meshes' skeleton is that one.
+    if (obj.skeleton && !c.skeleton && m.isSkinnedMesh) c.skeleton = m.skeleton;
   });
   return c;
 }
@@ -3860,15 +3882,14 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       await mesh.initialized;
       if (!live) return; // viewer was torn down (asset switched / lightbox closed) mid-load
       // Most splat exporters (COLMAP/3DGS convention) use a Y-down, Z-forward frame — flip to
-      // three.js's Y-up, matching the orientation correction Spark's own examples always apply.
-      mesh.quaternion.set(1, 0, 0, 0);
+      // three.js's Y-up (SPLAT_QUATERNION, shared with the phone app so a view means the same there).
+      mesh.quaternion.fromArray(SPLAT_QUATERNION);
       mesh.updateMatrixWorld(true);
       const box = mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld);
-      const size = box.getSize(new THREE.Vector3()).length() || 1;
-      const center = box.getCenter(new THREE.Vector3());
-      controls.target.copy(center);
-      camera.position.copy(center).add(new THREE.Vector3(size*0.7, size*0.45, size*0.7));
-      camera.near = size/100; camera.far = size*20; camera.updateProjectionMatrix();
+      const home = splatHome(THREE, box), size = home.size;
+      controls.target.copy(home.t);
+      camera.position.copy(home.p);
+      camera.near = home.near; camera.far = home.far; camera.updateProjectionMatrix();
       if (isLightbox){
         camRig = makeCameraRig(THREE, camera, controls, aid);
         camRig.setHome(size);
@@ -4066,6 +4087,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       if (Math.abs(fadeTarget - floorFade) < 0.002) floorFade = fadeTarget;
       lastSync = now;
       bgColor.set(v.bg);
+      tintGrid(THREE, grid, v.bg);  // the grid's colours follow the backdrop (model3d-core.js gridColors)
       let eDir = 0; // direct irradiance on the (upward-facing) floor, for the shadow-only mix below
       for (let i = 0; i < 3; i++){
         const l = rigLights[i], n = i + 1;

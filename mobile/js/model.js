@@ -142,12 +142,33 @@ export function drawCtx(c){
   }
   return null;
 }
+// A note's viewer look (FORMAT.md 3D ctx `v3d`, Sight's lightbox settings) and the phone's: the phone has a
+// shading base with the wire / x-ray overlays, as Sight, and a light choice — Sight's environment presets, a key
+// light ("head", Sight's lights without an environment) or "flat". lookOfV3d(v3d) → {base, wire, xray, light}
+// (a field Sight's look does not name is left out; a custom environment reads as studio); v3dOfLook(look,
+// explode) → the part of Sight's v3d this describes (Sight merges it into its own settings).
+const LOOK_ENVS = ["studio", "sunset", "overcast", "night"], LOOK_BASES = ["solid", "vertex", "textured", "normal"];
+export function lookOfV3d(v){
+  if (!v || typeof v !== "object") return null;
+  const o = {};
+  if (LOOK_BASES.includes(v.shadeBase)) o.base = v.shadeBase;
+  if (typeof v.wireOn === "boolean") o.wire = v.wireOn;
+  if (typeof v.xrayOn === "boolean") o.xray = v.xrayOn;
+  if (typeof v.env === "boolean") o.light = v.env ? (LOOK_ENVS.includes(v.envPreset) ? v.envPreset : "studio") : "head";
+  return Object.keys(o).length ? o : null;
+}
+export function v3dOfLook(l, explode){
+  const o = { shadeBase: l.base, wireOn: !!l.wire, xrayOn: !!l.xray, env: LOOK_ENVS.includes(l.light) };
+  if (o.env) o.envPreset = l.light;
+  if (typeof explode === "number") o.explode = explode;
+  return o;
+}
 // A 3D ctx's animation pose {clip, t} (FORMAT.md, 0.51+), or null (a static model, an older row).
 export function animOf(c){
   const a = c && c.anim;
   return a && typeof a === "object" ? { clip: a.clip | 0, t: Number(a.t) || 0 } : null;
 }
-// The 3D views a review's rows stand on (FORMAT.md 3D ctx), oldest first: {vk, cam, hidden, explode, anim,
+// The 3D views a review's rows stand on (FORMAT.md 3D ctx), oldest first: {vk, cam, hidden, explode, anim, v3d,
 // created} — Sight's rebuildViews (annotate.js), so the numbers match ("View 1" is the first one made):
 // a row's time is data.created; hidden = a note's list, else the first given (null: none, matches any);
 // explode = the newest row's ctx.explode, or a pre-0.42 note's v3d.explode, else null.
@@ -158,8 +179,11 @@ export function views3d(rows){
     if (!c || !c.vk || !c.cam || !Array.isArray(c.cam.p) || !Array.isArray(c.cam.t)) return;
     const at = r.data.created || 0;
     let v = out.get(c.vk);
-    if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, explode: null, explodeAt: 0, anim: null, created: at }; out.set(c.vk, v); }
+    if (!v){ v = { vk: c.vk, cam: c.cam, hidden: null, explode: null, explodeAt: 0, anim: null, v3d: null, v3dAt: -1, created: at }; out.set(c.vk, v); }
     if (!v.anim) v.anim = animOf(c);
+    // The look (shading, light) a note was written with: the view's newest note's (Sight's rebuildViews keeps its
+    // last note's).
+    if (r.kind === "note" && c.v3d && typeof c.v3d === "object" && at >= v.v3dAt){ v.v3d = c.v3d; v.v3dAt = at; }
     v.created = Math.min(v.created, at);
     if (Array.isArray(c.hidden) && (v.hidden == null || r.kind === "note")) v.hidden = c.hidden.slice();
     const e = typeof c.explode === "number" ? c.explode : r.kind === "note" && c.v3d && typeof c.v3d.explode === "number" ? c.v3d.explode : undefined;

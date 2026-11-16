@@ -36,7 +36,7 @@ SHARED = {  # published path -> source
     "icons/favicon.svg": ROOT / "app" / "static" / "favicon.svg",
 }
 # three.js for the 3D viewer (mobile/js/model3d.js), the same vendored build as Sight: only what its
-# formats need (glTF / GLB, FBX, OBJ, STL, PLY, USD). index.html maps "three" / "three/addons/" here (import map).
+# formats need (glTF / GLB, FBX, OBJ, STL, PLY, USD; Spark for Gaussian splats). index.html maps "three" / "three/addons/" here (import map).
 VENDOR = ROOT / "app" / "static" / "vendor"
 THREE_FILES = ["three.module.js", "three.core.js", "jsm/controls/OrbitControls.js", "jsm/loaders/GLTFLoader.js",
                "jsm/loaders/DRACOLoader.js", "jsm/utils/BufferGeometryUtils.js", "jsm/utils/SkeletonUtils.js",
@@ -45,7 +45,9 @@ THREE_FILES = ["three.module.js", "three.core.js", "jsm/controls/OrbitControls.j
                "jsm/loaders/FBXLoader.js", "jsm/curves/NURBSCurve.js", "jsm/curves/NURBSUtils.js", "jsm/libs/fflate.module.js",
                "jsm/loaders/OBJLoader.js", "jsm/loaders/STLLoader.js", "jsm/loaders/PLYLoader.js",
                "jsm/loaders/USDLoader.js", "jsm/loaders/usd/USDAParser.js", "jsm/loaders/usd/USDCParser.js",
-               "jsm/loaders/usd/USDComposer.js"]
+               "jsm/loaders/usd/USDComposer.js",
+               # Gaussian splats: Spark (index.html maps "@sparkjsdev/spark" here) and the one addon it imports
+               "spark.module.js", "jsm/postprocessing/Pass.js"]
 SHARED.update({"three/" + f: VENDOR / f for f in THREE_FILES})
 TEMPLATED = {"index.html", "sw.js"}  # get %%VERSION%% (and sw.js %%FILES%%)
 

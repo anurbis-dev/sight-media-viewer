@@ -568,6 +568,9 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     @app.get("/api/model-glb/{aid}")
     def model_glb(aid: str):
         p = lib.make_usdz_glb(aid)
+        if not p and lib.usdz_is_animated(aid):
+            # Not converted on purpose: the viewer reads an animated stage itself (index.html loadUsd).
+            raise HTTPException(409, "this USDZ is animated: it is read in the viewer")
         if not p:
             # The reason goes to the viewer (index.html fetchBufferWithProgress): a missing USD library and
             # a file that does not convert look the same otherwise.

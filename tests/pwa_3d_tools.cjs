@@ -41,6 +41,16 @@ const log = [];
   await p.click('.hdr .sel3d button[title="Show this mesh\'s UVs"]');
   await p.waitForSelector(".view .vb img");
   res.uvShown = await p.evaluate(() => { const i = document.querySelector(".view .vb img"); return new Promise((r) => (i.complete ? r(i.naturalWidth) : i.onload = () => r(i.naturalWidth))); });
+  // Its set named at the top, no note plate; a swipe to the left shows the next set, at the last one nothing.
+  const uvState = () => p.evaluate(() => ({ title: (document.querySelector(".view .vtitle") || {}).textContent || null, src: [...document.querySelectorAll(".view .vb img")].pop().src, plate: !!document.querySelector(".view .scp-plate, .view .scp-icon") }));
+  res.uv1 = await uvState();
+  const swipe = async (dx) => { await p.mouse.move(195, 420); await p.mouse.down(); for (let k = 1; k <= 6; k++) await p.mouse.move(195 + dx * k / 6, 422); await p.mouse.up(); await p.waitForTimeout(700); };
+  await swipe(-160);
+  res.uv2 = await uvState();
+  await swipe(-160);
+  res.uvEnd = await uvState();
+  await swipe(160);
+  res.uvBack = await uvState();
   await p.click(".view .fab.back");
   await p.click('.hdr .sel3d button[title="Show only this mesh (hide the others)"]');
   res.solo = await st();
@@ -61,6 +71,18 @@ const log = [];
   res.stored = await p.evaluate(() => JSON.parse(localStorage.getItem("sight-review:v3d")));
   await p.click('.b3d .icons button[title="Grid"]');
   res.rowClosed = await p.locator(".b3d .row.opts").count();
+  // The grid's cell slider (the grid is on: Grid + axes): two steps finer.
+  await p.click('.b3d .icons button[title="Grid"]');
+  res.cell0 = await p.evaluate(() => window.__sightReview.R.v3d.cellSize);
+  await p.evaluate(() => { const r = document.querySelector(".b3d input.cell"); r.value = "-2"; r.dispatchEvent(new Event("input")); r.dispatchEvent(new Event("change")); });
+  res.cell = await p.evaluate(() => ({ size: window.__sightReview.R.v3d.cellSize, label: [...document.querySelectorAll(".b3d .row.cells .val3")].pop().textContent, stored: JSON.parse(localStorage.getItem("sight-review:v3d")).gridCell }));
+  await p.click('.b3d .icons button[title="Grid"]');
+  // The background: white; the grid turns dark on it.
+  await p.click('.b3d .icons button[title="Background colour"]');
+  await p.click('.b3d .swatch[title="Background #ffffff"]');
+  res.bg = await p.evaluate(() => ({ bg: window.__sightReview.R.v3d.bg, stored: JSON.parse(localStorage.getItem("sight-review:v3d")).bg, on: document.querySelector(".b3d .swatch.on").title }));
+  await p.click('.b3d .swatch[title="Default background"]');
+  await p.click('.b3d .icons button[title="Background colour"]');
   // Play / pause.
   await p.click('.b3d .anim button[title="Play / pause the animation"]');
   await p.waitForTimeout(500);
@@ -82,6 +104,13 @@ const log = [];
   res.away = await st();
   await p.evaluate(() => { const R = window.__sightReview.R; window.__sightReview.goView([...R.views.keys()][0]); });
   res.back = await st();
+  // The note keeps its look (ctx.v3d, Sight's shape); another look, then the note opened: its look comes back
+  // (as Sight's goNote restores it) — shown, not saved over this phone's own choice.
+  await p.evaluate(() => { const V = window.__sightReview.R.v3d; V.setShading({ base: "normal", wire: false }); V.setLight("sunset"); });
+  await p.evaluate(() => localStorage.setItem("sight-review:v3d", JSON.stringify({ base: "vertex", wire: false, xray: true, grid: "off", light: "flat" })));
+  await p.evaluate(() => { const S = window.__sightReview, R = S.R; S.showNote(R.rows.find((r) => r.kind === "note")); });
+  res.noteLook = await st();
+  res.storedAfterNote = await p.evaluate(() => JSON.parse(localStorage.getItem("sight-review:v3d")));
   console.log(JSON.stringify(res));
   await b.close();
 })().catch((e) => { console.error(e, log); process.exit(1); });

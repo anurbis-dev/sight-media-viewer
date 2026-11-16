@@ -487,9 +487,53 @@ def _mesh_to_arrays(prim, world: np.ndarray, mats: _Materials) -> list[dict] | N
     return [{"positions": positions, "normals": out_normals, "uvs": out_uvs, "colors": out_colors, "prims": prims}]
 
 
-def convert(usdz_path: Path, glb_path: Path) -> bool:
+# What three's USDLoader (USDComposer._buildAnimations) turns into animation clips: SkelAnimation prims, and
+# these xformOps time-sampled on Xform / Scope / Mesh prims (any op whose name starts with xformOp:transform —
+# Houdini writes xformOp:transform:transform —, and the other four by exact name). Its transform check reads
+# properties only the binary (crate) parser fills in, so a text root layer's time-sampled transform gives no
+# clip. Anything else that moves (a rotateY, a camera) gives the loader no clip either, so such a file is
+# converted as a still one.
+_CLIP_XFORM_OPS = ("xformOp:translate", "xformOp:orient", "xformOp:rotateXYZ", "xformOp:scale")
+_CLIP_PRIM_TYPES = ("Xform", "Scope", "Mesh")
+
+
+def _root_is_crate(path: Path) -> bool:
+    """The root layer is binary USD: the file itself, or a package's first entry (its root layer)."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8)
+        if head[:2] == b"PK":
+            with zipfile.ZipFile(path) as z:
+                names = z.namelist()
+                if not names:
+                    return False
+                with z.open(names[0]) as fh:
+                    head = fh.read(8)
+        return head == b"PXR-USDC"
+    except Exception:
+        return False
+
+
+def _stage_animated(stage, crate: bool) -> bool:
+    from pxr import Usd
+
+    for prim in Usd.PrimRange(stage.GetPseudoRoot(), Usd.TraverseInstanceProxies()):
+        t = prim.GetTypeName()
+        if t == "SkelAnimation":
+            return True
+        if t not in _CLIP_PRIM_TYPES:
+            continue
+        for attr in prim.GetAttributes():
+            name = attr.GetName()
+            if (name in _CLIP_XFORM_OPS or (crate and name.startswith("xformOp:transform"))) and attr.GetNumTimeSamples() > 1:
+                return True
+    return False
+
+
+def convert(usdz_path: Path, glb_path: Path, animated_out: list | None = None) -> bool:
     """Convert `usdz_path` to a .glb at `glb_path`. Returns False on failure
-    (caller falls back to the "unsupported" placeholder)."""
+    (caller falls back to the "unsupported" placeholder). With `animated_out` (a list), a stage the browser
+    plays as animated (_stage_animated) is not converted: True is appended to it and False returned — one stage open for both."""
     try:
         from pxr import Gf, Usd, UsdGeom
     except Exception:
@@ -501,6 +545,13 @@ def convert(usdz_path: Path, glb_path: Path) -> bool:
         stage = None
     if stage is None:
         return False
+    if animated_out is not None:
+        try:
+            if _stage_animated(stage, _root_is_crate(usdz_path)):
+                animated_out.append(True)
+                return False
+        except Exception:
+            pass
 
     try:
         pkg = _Package(usdz_path)

@@ -273,6 +273,21 @@ export function plyMesh(THREE, geometry){
   return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xc5cdd8, vertexColors: hasColor, metalness: 0.2, roughness: 0.6 }));
 }
 
+// Gaussian splats (Spark's SplatMesh; the lightbox and the phone app). These extensions are always splats;
+// a .ply is one only when its header says so (plyHeaderIsSplat). Spark does not sniff a format from a URL or
+// bytes the way its own examples load them — it is told the file type.
+export const SPLAT_EXT = [".splat", ".spz", ".ksplat", ".sog"];
+export const SPLAT_FILE_TYPE_BY_EXT = { ".ply": "ply", ".spz": "spz", ".splat": "splat", ".ksplat": "ksplat", ".sog": "pcsogszip" };
+// Most splat exporters (COLMAP / 3DGS) use a Y-down, Z-forward frame: a half turn about X makes it three's
+// Y-up, as Spark's own examples do. Both viewers place a splat this way, so a view's camera means the same.
+export const SPLAT_QUATERNION = [1, 0, 0, 0];
+// The opening camera of a splat (both viewers): from its bounds (Box3), off the corner, as the lightbox
+// frames one. {p, t, near, far}.
+export function splatHome(THREE, box){
+  const size = box.getSize(new THREE.Vector3()).length() || 1, c = box.getCenter(new THREE.Vector3());
+  return { p: c.clone().add(new THREE.Vector3(size * 0.7, size * 0.45, size * 0.7)), t: c, near: size / 100, far: size * 20, size };
+}
+
 // A .ply is a Gaussian splat (not a mesh) when its header has per-splat opacity and SH / scale /
 // rotation fields. `text`: the file's first bytes as ASCII (the header ends at "end_header").
 export function plyHeaderIsSplat(text){
@@ -280,6 +295,21 @@ export function plyHeaderIsSplat(text){
   const hasOpacity = /^property\s+\S+\s+opacity\s*$/m.test(header);
   const hasSplatField = /^property\s+\S+\s+(f_dc_0|scale_0|rot_0)\s*$/m.test(header);
   return hasOpacity && hasSplatField;
+}
+
+// A USD file (bytes) read with three's USDLoader and laid out by usdAsSight — the lightbox (.usd / .usda /
+// .usdc, and a .usdz its server does not convert) and the phone app both read USD this way. Its textures
+// (inside a .usdz) load as plain images, not through the manager: the loader's own onLoad says when they are
+// all in (bounded, as an FBX's); a standalone layer's textures go through `manager` by base name (its URL
+// modifier finds them). settle(): waits for what the manager itself loads (optional).
+export async function parseUsd(THREE, USDLoader, buf, manager, settle = null){
+  let g = null;
+  await Promise.race([new Promise((ok) => { g = new USDLoader(manager).parse(buf, "", ok, (e) => { console.warn("USD textures", e); ok(); }); }),
+    new Promise((r) => setTimeout(r, FBX_TEXTURE_WAIT_MS))]);
+  if (settle) await settle();
+  if (!g) throw new Error("No model in this USD file");
+  dropDeadTextures(g);
+  return usdAsSight(THREE, g);
 }
 
 // A USD stage from three's USDLoader laid out as Sight's USDZ → GLB conversion (app/usdz_convert.py)
@@ -291,11 +321,24 @@ export function plyHeaderIsSplat(text){
 //   makes that a node with one Mesh per primitive. So every mesh here is baked into world space and split the
 //   same way, under one node.
 // Not matched: the conversion leaves out invisible and proxy / guide meshes; the loader keeps them.
+// A stage with animation (the loader's clips: SkelAnimation, time-sampled xformOps — `group.animations`)
+// cannot be baked: its nodes and skeletons are kept (the clips animate them by prim name), each mesh is split
+// in place (a node with the mesh's name and transform holding one mesh per material, as a glTF node with
+// primitives). Mesh order and the meshes' rest-pose bounds stay the static layout's; the explode rig sees the
+// stage's hierarchy, so an explode differs from the conversion's (which has no animation: Sight's lightbox reads
+// an animated .usdz on the client too, so Sight and the phone agree).
 export function usdAsSight(THREE, group){
+  const animated = modelClips(group).length > 0;
   group.scale.set(1, 1, 1);
   group.updateMatrixWorld(true);
-  const root = new THREE.Group(), node = new THREE.Group();
+  const root = new THREE.Group(), node = animated ? group : new THREE.Group();
   root.add(node);
+  if (animated){
+    root.animations = group.animations;
+    // The loader exposes a single skeleton on its root so PropertyBinding finds bones before same-named prims
+    // (the mixer's root is ours now).
+    if (group.skeleton) root.skeleton = group.skeleton;
+  }
   const meshes = [];
   group.traverse((c) => { if (c.isMesh && c.geometry && c.geometry.attributes && c.geometry.attributes.position) meshes.push(c); });
   // The conversion's material numbers: registered in traverse order, per mesh its own material first, then
@@ -308,7 +351,7 @@ export function usdAsSight(THREE, group){
     // As a glTF primitive: the part's whole vertex buffer (baked to world space) with its material's indices —
     // so a primitive's bounds are its part's, as in Sight (the explode rig measures them).
     const geo = m.geometry.clone();
-    geo.applyMatrix4(m.matrixWorld);
+    if (!animated) geo.applyMatrix4(m.matrixWorld);
     const n = geo.attributes.position.count, idx = geo.index ? geo.index.array : null;
     const mats = Array.isArray(m.material) ? m.material : [m.material];
     const own = mats.find((x) => x && x.userData && x.userData.usdMeshMaterial) || mats[0];
@@ -322,19 +365,89 @@ export function usdAsSight(THREE, group){
       if (!part){ part = { mat, ids: [] }; parts.set(k, part); }
       for (let i = g.start, end = Math.min(g.start + g.count, idx ? idx.length : n); i < end; i++) part.ids.push(idx ? idx[i] : i);
     }
+    // Animated: the mesh's place in the stage becomes a node (same name, transform and children) holding the parts.
+    let holder = node;
+    if (animated){
+      holder = new THREE.Group();
+      holder.name = m.name;
+      holder.position.copy(m.position); holder.quaternion.copy(m.quaternion); holder.scale.copy(m.scale);
+      holder.visible = m.visible;
+      const parent = m.parent;
+      parent.children[parent.children.indexOf(m)] = holder;
+      holder.parent = parent;
+      m.parent = null;
+    }
     for (const [k, part] of [...parts].sort((a, b) => rank.get(a[0]) - rank.get(b[0]))){
       if (!part.ids.length) continue;
       const pg = new THREE.BufferGeometry();
       for (const [name, at] of Object.entries(geo.attributes)) pg.setAttribute(name, at);
+      if (animated && geo.morphAttributes) for (const [name, list] of Object.entries(geo.morphAttributes)) pg.morphAttributes[name] = list;
       pg.setIndex(part.ids);
-      const mesh = new THREE.Mesh(pg, part.mat);
+      let mesh;
+      if (animated && m.isSkinnedMesh){
+        mesh = new THREE.SkinnedMesh(pg, part.mat);
+        mesh.bind(m.skeleton, m.bindMatrix);
+        mesh.bindMode = m.bindMode;
+      } else mesh = new THREE.Mesh(pg, part.mat);
+      if (animated && m.morphTargetInfluences){ mesh.morphTargetInfluences = m.morphTargetInfluences; mesh.morphTargetDictionary = m.morphTargetDictionary; }
       mesh.name = m.name;
-      node.add(mesh);
+      holder.add(mesh);
     }
+    // (after the parts: a mesh's own parts come before its descendants' in traverse order, as in the static layout)
+    if (animated) for (const ch of [...m.children]) holder.add(ch);
     m.geometry.dispose();
   }
   root.updateMatrixWorld(true);
   return root;
+}
+
+// ---- Floor grid (the lightbox's and the phone's) --------------------------------------------------
+// The grid's two line colours for a background (a hex string or number): the background moved toward white on a
+// dark one, toward black on a light one — the centre lines more (0.25), the others less (0.12), and at least 50 /
+// 28 (of 255) away in brightness, so a mid grey still shows them. On Sight's default #0a0a0b that is about its old
+// fixed 0x4a4a54 / 0x26262c.
+export function gridColors(bg){
+  const n = typeof bg === "number" ? bg : parseInt(String(bg || "#0a0a0b").replace("#", ""), 16) || 0;
+  const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  const to = lum < 0.5 ? 255 : 0, room = Math.max(1, Math.abs(to - lum * 255));
+  const mix = (k, least) => { k = Math.min(1, Math.max(k, least / room)); return rgb.reduce((acc, c) => (acc << 8) | Math.round(c + (to - c) * k), 0); };
+  return [mix(0.25, 50), mix(0.12, 28)];
+}
+// Recolours a THREE.GridHelper for background `bg` (its vertex colours: 4 per division line, the centre one first
+// colour). Cheap; skipped when the grid already has that background's colours.
+export function tintGrid(THREE, grid, bg){
+  if (!grid || grid.userData.bg === bg) return;
+  const at = grid.geometry.getAttribute("color");
+  if (!at) return;
+  const [c1, c2] = gridColors(bg).map((x) => new THREE.Color(x));
+  const lines = at.count / 4, centre = (lines - 1) / 2;
+  for (let j = 0; j < at.count; j++){ const c = Math.floor(j / 4) === centre ? c1 : c2; at.setXYZ(j, c.r, c.g, c.b); }
+  at.needsUpdate = true;
+  grid.userData.bg = bg;
+}
+// The 1-2-5 step nearest x (… 0.1, 0.2, 0.5, 1, 2, 5, 10 …), `shift` steps along that sequence from it.
+export function niceStep(x, shift = 0){
+  if (!(x > 0)) return 1;
+  const e = Math.floor(Math.log10(x)), m = x / 10 ** e;
+  let k = 3 * e + (m < 1.5 ? 0 : m < 3.5 ? 1 : m < 7.5 ? 2 : 3);
+  k += shift | 0;
+  const d = Math.floor(k / 3);
+  return [1, 2, 5][k - 3 * d] * 10 ** d;
+}
+// The phone's grid under a model of bounds `box`: cells of a round size (a tenth of the model's diagonal, moved
+// `cellShift` 1-2-5 steps, -4…4), over about twice the model's diagonal (an even count so a centre line runs under
+// the model; at most 600 cells across, which still covers the diagonal at the finest step). → {grid, cell}.
+export function modelGrid(THREE, box, cellShift = 0, bg = "#0a0a0b"){
+  const size = box.getSize(new THREE.Vector3()).length() || 1, c = box.getCenter(new THREE.Vector3());
+  const cell = niceStep(size / 10, cellShift);
+  let div = Math.ceil(size * 2 / cell / 2) * 2;
+  div = Math.max(2, Math.min(600, div));
+  const grid = new THREE.GridHelper(cell * div, div, 0xffffff, 0xffffff);
+  tintGrid(THREE, grid, bg);
+  grid.position.set(c.x, box.min.y + Math.max(0.001, size * 0.002), c.z);
+  grid.raycast = () => {};
+  return { grid, cell };
 }
 
 // ---- Shading (the lightbox's Shade bar and the phone's shading row) ------------------------------

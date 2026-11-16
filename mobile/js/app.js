@@ -9,7 +9,7 @@ import * as DB from "./store.js";
 import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, ScrubCache, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
 import { videoFps } from "./mp4.js";
 import { createViewer } from "./model3d.js";
-import { plyHeaderIsSplat } from "../core/model3d-core.js";
+import { SPLAT_EXT } from "../core/model3d-core.js";
 import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
@@ -48,6 +48,7 @@ const ICONS = {
   fit: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', up: '<path d="m6 15 6-6 6 6"/>',
   shade: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" opacity=".55"/>',
+  bg: '<rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M3.5 15.5 9 10l4 4 2.5-2.5 5 5" /><circle cx="15.5" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
   grid: '<path d="M6 8h16l-4 12H2z"/><path d="M4 14h16"/><path d="m10 8-2 12"/><path d="m16 8-2 12"/>',
   light: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
   explode: '<rect x="9" y="9" width="6" height="6" rx="1"/><path d="M4 4l3.5 3.5M20 4l-3.5 3.5M4 20l3.5-3.5M20 20l-3.5-3.5"/><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/>',
@@ -278,7 +279,7 @@ async function openAny(files){
     if (files.length > 1) toast(`Opened ${f.name} — one picture or video at a time`, 3500);
     return openMedia(f);
   }
-  toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD) and Sight review files (.srev)", 4000);
+  toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD, Gaussian splats) and Sight review files (.srev)", 4000);
 }
 async function openMedia(file, extras){
   const key = await assetKey(file.name, file.size);
@@ -292,7 +293,6 @@ async function openMedia(file, extras){
       const ext = extOf(file.name), head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
       const glb = head[0] === 0x67 && head[1] === 0x6c && head[2] === 0x54 && head[3] === 0x46;
       if ((ext === ".glb" && !glb) || (ext === ".gltf" && !/^\s*\{/.test(new TextDecoder().decode(head)))){ toast("This file is not a glTF / GLB model.", 5000); return; }
-      if (ext === ".ply" && plyHeaderIsSplat(new TextDecoder("ascii").decode(await file.slice(0, 8192).arrayBuffer()))){ toast("Gaussian splats are not shown in the app — open this one in Sight.", 5000); return; }
       info = { w: null, h: null };
     } else {
       const url = URL.createObjectURL(file);
@@ -1510,9 +1510,13 @@ function updateCurVk(){
   if (els && els.where) els.where();
 }
 // Puts the live camera on a view: its meshes, explode and camera.
-function goView(vk){
+// look: the v3d of the note being opened (on its own view), else the view's newest note's — Sight's shading and
+// light (or another phone's) come with it, as Sight's goView restores them (shown, not saved: this device's own
+// choice comes back with the next model). The explode is the view's (findVk matches a view by it).
+function goView(vk, look){
   const v = R && viewsNow().get(vk), V = R && R.v3d;
   if (!v || !V) return false;
+  applyNoteLook(V, look || v.v3d);
   if (v.hidden) V.setHidden(v.hidden);
   if (v.explode != null) V.setExplode(v.explode);
   if (v.anim && V.anim) V.anim.set(v.anim);
@@ -1543,7 +1547,7 @@ async function viewPic(vk, rv = R, ex){
   const f = await cachedFrame(rv, tag, async () => {
     const V = await rv.v3dReady;
     if (!V || R !== rv) return null;
-    const c = V.still(v.cam, { hidden: hid, explode: x, anim: v.anim, aspect: a });
+    const c = await V.still(v.cam, { hidden: hid, explode: x, anim: v.anim, aspect: a });  // (a splat's is a Promise)
     const blob = await canvasBlob(c, "image/jpeg", 0.88), out = { blob, w: c.width, h: c.height };
     dropCanvas(c);
     return out;
@@ -1555,7 +1559,8 @@ async function frame3dNow(rv = R){
   const V = rv.v3d;
   if (!V) return null;
   if (V.anim) V.anim.pause();  // a drawing belongs to the pose it is drawn on (ctx.anim): the model stops
-  const ctx = ctx3d(true), a = V.aspect(), c = V.still(null, { aspect: a });
+  // (a splat's still waits for its sort: it is taken at the camera of the ctx, wherever the live one is by then)
+  const ctx = ctx3d(true), a = V.aspect(), c = await V.still(V.isSplat ? ctx.cam : null, { aspect: a });
   const blob = await canvasBlob(c, "image/jpeg", 0.88), w = c.width, h = c.height;
   dropCanvas(c);
   if (R !== rv) return null;
@@ -1605,6 +1610,16 @@ async function drawModel({ frames = [], onDone, noPlace }){
   const frame = mine ? Object.assign({}, fr, { ctx: mine.frame.ctx }) : fr;
   drawCanvas({ src: fr.url, vb: fr.vb, base: [], items: mine ? mine.items : [], noPlace, onDone: (items) => onDone(items.length ? rest.concat([{ frame, items }]) : rest) });
 }
+// A note's own look (ctx.v3d) when vk is the view it was written on (Sight's goNote), else null (the view's).
+function noteLook(n, vk){ const c = n && n.data && n.data.ctx; return c && c.vk === vk && c.v3d ? c.v3d : null; }
+// Puts a note's look (Sight's v3d, model.js lookOfV3d) on the viewer — shown, not saved (as Sight's setV3D).
+function applyNoteLook(V, v3d){
+  const l = M.lookOfV3d(v3d);
+  if (!l || V.isSplat) return;
+  const sh = V.shading;
+  if ((l.base && l.base !== sh.base) || (l.wire != null && l.wire !== sh.wire) || (l.xray != null && l.xray !== sh.xray)) V.setShading(l);
+  if (l.light && l.light !== V.light) V.setLight(l.light);
+}
 // The 3D controls. Header: turn (which way is up), frame the model; under them, while a mesh is picked (a
 // tap on it; a tap on nothing lets it go) or meshes are hidden, a row: the mesh's name, Hide, Only this,
 // UV, Show all. Bottom bar (els.tp, as a video's transport): Shading / Grid / Light / Explode icons, each
@@ -1613,13 +1628,26 @@ async function drawModel({ frames = [], onDone, noPlace }){
 // the review's; hidden meshes, explode and the animation pose are a view's.
 const V3D_KEY = "sight-review:v3d";
 function look3d(){ try { return JSON.parse(localStorage.getItem(V3D_KEY) || "{}") || {}; } catch { return {}; } }
-function saveLook3d(V){ try { localStorage.setItem(V3D_KEY, JSON.stringify({ ...V.shading, grid: V.grid, light: V.light })); } catch {} }
+// (a splat viewer's look is only its background: what it does not have is kept as stored)
+function saveLook3d(V){
+  try {
+    const l = V.isSplat ? look3d() : { ...V.shading, grid: V.grid, gridCell: V.gridCell, light: V.light };
+    localStorage.setItem(V3D_KEY, JSON.stringify({ ...l, bg: V.bg }));
+  } catch {}
+}
 function applyLook3d(V){
   const l = look3d();
+  V.setBg(l.bg || BG3D);
+  if (V.isSplat) return;
   V.setShading({ base: l.base || "textured", wire: !!l.wire, xray: !!l.xray });
+  V.setGridCell(l.gridCell || 0);
   V.setGrid(l.grid || "off");
   V.setLight(l.light || "studio");
 }
+// Background choices: Sight's default, greys, white; the last swatch opens the system colour picker.
+const BG3D = "#0a0a0b", BG_SWATCHES = [BG3D, "#1d1e22", "#3a3b40", "#6e7075", "#b4b6ba", "#ffffff"];
+// A grid cell's size in model units, short ("0.05", "20").
+const fmtCell = (x) => (x >= 1 ? String(+x.toPrecision(3)) : String(+x.toPrecision(2)));
 const SHADE_LABEL = { solid: "Solid", vertex: "Vertex", textured: "Textured", normal: "Normal" };
 const LIGHT_LABEL = { studio: "Studio", sunset: "Sunset", overcast: "Overcast", night: "Night", head: "Headlight", flat: "Flat" };
 const GRID_LABEL = { off: "Off", grid: "Grid", axes: "Grid + axes" };
@@ -1628,6 +1656,7 @@ function paint3dTools(){
   if (!els || !R || !is3d()) return;
   const V = R.v3d;
   paintSel3d(V);
+  if (els.turnB) els.turnB.hidden = !!(V && V.isSplat);
   const tp = els.tp;
   if (!tp) return;
   tp.textContent = "";
@@ -1638,6 +1667,7 @@ function paint3dTools(){
   const opt = R.opt3d;
   if (opt){
     const row = el("div", "row opts");
+    let extra = null;  // (a second row under it)
     const set = (fn) => () => { fn(); saveLook3d(V); paint3dTools(); };
     if (opt === "shade"){
       const sh = V.shading;
@@ -1647,6 +1677,33 @@ function paint3dTools(){
       row.appendChild(chip("X-ray", sh.xray, set(() => V.setShading({ xray: !V.shading.xray })), "See through the model"));
     } else if (opt === "grid"){
       Object.keys(GRID_LABEL).forEach((k) => row.appendChild(chip(GRID_LABEL[k], V.grid === k, set(() => V.setGrid(k)))));
+      if (V.grid !== "off"){
+        // The cell size: a slider of 1-2-5 steps around a tenth of the model, the size in model units beside it.
+        const cr = extra = el("div", "row opts cells");
+        const r = el("input", "cell"); r.type = "range"; r.min = "-4"; r.max = "4"; r.step = "1"; r.value = String(V.gridCell);
+        r.title = "Grid cell size"; r.setAttribute("aria-label", "Grid cell size");
+        const val = el("span", "val3", fmtCell(V.cellSize));
+        r.oninput = () => { V.setGridCell(Number(r.value)); val.textContent = fmtCell(V.cellSize); };
+        r.onchange = () => saveLook3d(V);
+        cr.appendChild(el("span", "val3", "Cell")); cr.appendChild(r); cr.appendChild(val);
+      }
+    } else if (opt === "bg"){
+      BG_SWATCHES.forEach((c) => {
+        const b = btn("swatch" + (V.bg === c ? " on" : ""), null, set(() => V.setBg(c)), c === BG3D ? "Default background" : "Background " + c);
+        b.style.background = c;
+        row.appendChild(b);
+      });
+      const pick = el("label", "swatch pick" + (BG_SWATCHES.includes(V.bg) ? "" : " on"));
+      pick.title = "Another colour";
+      const inp = el("input"); inp.type = "color"; inp.value = V.bg; inp.setAttribute("aria-label", "Background colour");
+      inp.oninput = () => V.setBg(inp.value);
+      // (no rebuild of the row on change: a picker still open — iOS fires change while it is — would close)
+      inp.onchange = () => {
+        V.setBg(inp.value); saveLook3d(V);
+        row.querySelectorAll(".swatch").forEach((x) => x.classList.toggle("on", x === pick ? !BG_SWATCHES.includes(V.bg) : x.title === (V.bg === BG3D ? "Default background" : "Background " + V.bg)));
+      };
+      pick.appendChild(inp);
+      row.appendChild(pick);
     } else if (opt === "light"){
       Object.keys(LIGHT_LABEL).forEach((k) => row.appendChild(chip(LIGHT_LABEL[k], V.light === k, set(() => V.setLight(k)))));
     } else if (opt === "explode" && V.canExplode){
@@ -1657,6 +1714,7 @@ function paint3dTools(){
       row.appendChild(r); row.appendChild(pc);
     }
     box.appendChild(row);
+    if (extra) box.appendChild(extra);
   }
   const A = V.anim;
   if (A){
@@ -1682,11 +1740,16 @@ function paint3dTools(){
     b.classList.toggle("on", R.opt3d === k);
     icons.appendChild(b);
   };
-  tool("shade", "shade", "Shading");
-  tool("grid", "grid", "Grid");
-  tool("light", "light", "Light");
+  // (a Gaussian splat has its colours and light baked in, and no meshes: no tools)
+  if (!V.isSplat){
+    tool("shade", "shade", "Shading");
+    tool("grid", "grid", "Grid");
+    tool("light", "light", "Light");
+  }
+  tool("bg", "bg", "Background colour");
   if (V.canExplode) tool("explode", "explode", "Explode");
-  box.appendChild(icons);
+  if (!icons.children.length && !box.children.length){ tp.hidden = true; applyStageView(); return; }
+  if (icons.children.length) box.appendChild(icons);
   tp.appendChild(box);
   applyStageView();
 }
@@ -1727,16 +1790,39 @@ function tap3d(x, y){
   V.select(i);
   paintSel3d(V);
 }
+// A mesh's UVs full screen: the set's name at the top (no note plate: it is no note's picture); a mesh with
+// more UV sets (uv, uv1… — glTF TEXCOORD_n) walks them sideways.
 async function showUv(i){
   const V = R && R.v3d;
   if (!V) return;
-  let r = null;
-  try { r = V.uvPicture(i); } catch (e){ console.warn("UV", e); }
-  if (!r){ toast("This mesh has no UVs"); return; }
-  const blob = await canvasBlob(r.canvas, "image/png");
-  dropCanvas(r.canvas);
-  const url = URL.createObjectURL(blob);
-  viewer({ url, vb: [0, 0, r.w, r.h], rows: [], label: `UV · ${V.meshName(i)}`, onClose: () => URL.revokeObjectURL(url) });
+  // One picture per set, made once (a swipe back reuses it); all revoked on close — one made after that at once.
+  const made = new Map();
+  let closed = false;
+  const make = async (set) => {
+    if (!R || R.v3d !== V) return null;  // (the model went away meanwhile)
+    let r = null, blob = null;
+    try {
+      r = V.uvPicture(i, 1024, set);
+      if (r) blob = await canvasBlob(r.canvas, "image/png");
+    } catch (e){ console.warn("UV", e); }
+    finally { if (r) dropCanvas(r.canvas); }
+    if (!r || !blob) return null;
+    const url = URL.createObjectURL(blob);
+    if (closed){ URL.revokeObjectURL(url); return null; }
+    const more = r.sets > 1 ? ` · ${r.set + 1} / ${r.sets}` : "";
+    return { url, vb: [0, 0, r.w, r.h], rows: [], title: `UV${r.set + 1}${more} · ${V.meshName(i)}`,
+      ends: ["The mesh's last UV set", "The mesh's first UV set"],
+      side: r.sets > 1 ? (dir) => { const k = r.set + dir; return k >= 0 && k < r.sets ? pic(k) : Promise.resolve(null); } : null,
+      onClose: () => { closed = true; made.forEach((p) => p.then((x) => { if (x) URL.revokeObjectURL(x.url); })); } };
+  };
+  // (a set that failed is not remembered: the next swipe tries again)
+  const pic = (set) => {
+    if (!made.has(set)){ const p = make(set); made.set(set, p); p.then((x) => { if (!x && made.get(set) === p) made.delete(set); }); }
+    return made.get(set);
+  };
+  const first = await pic(0);
+  if (!first){ toast("This mesh has no UVs"); return; }
+  viewer(first);
 }
 function turnModel(){
   const V = R && R.v3d;
@@ -1775,8 +1861,7 @@ function buildStage3d(stage, missing){
     V.attach(host);
     paint3dTools(); paintOverlay(); paintReview(); updateCurVk();
     if (!rv.meta.thumb){
-      const c = V.still(null, { aspect: 1, max: 200 });
-      canvasBlob(c, "image/jpeg", 0.8).then(blobToDataUrl).then((u) => { dropCanvas(c); rv.meta.thumb = u; putIfAlive(rv, "reviews", rv.meta); }).catch((e) => console.warn("thumb", e));
+      Promise.resolve(V.still(null, { aspect: 1, max: 200 })).then((c) => canvasBlob(c, "image/jpeg", 0.8).then((b) => { dropCanvas(c); return b; })).then(blobToDataUrl).then((u) => { rv.meta.thumb = u; putIfAlive(rv, "reviews", rv.meta); }).catch((e) => console.warn("thumb", e));
     }
   });
 }
@@ -1880,7 +1965,9 @@ function buildStage(){
   eye.classList.toggle("on", R.hide);
   tools.appendChild(eye);
   if (a.kind === "model3d"){
-    tools.appendChild(ibtn("turn", "Turn the model a quarter (which way is up)", turnModel));
+    // (no turn for a Gaussian splat — Sight's splat viewer has none: paint3dTools hides it)
+    els.turnB = tools.appendChild(ibtn("turn", "Turn the model a quarter (which way is up)", turnModel));
+    els.turnB.hidden = SPLAT_EXT.includes(extOf(a.name));  // (known before the viewer is: no flash)
     // The picked mesh's row, under the header's icons (paintSel3d).
     const sr = el("div", "row sel3d");
     sr.hidden = true;
@@ -2589,7 +2676,7 @@ function selectNote(n, at){
   if (!R || composing()) return;
   R.curNote = n.id;
   if (R.video && kindNow() === "video"){ const t = at != null ? at : noteTimes(n)[0]; if (t != null) seekTo(t); }  // its own drawings' frames, not its replies'
-  if (is3d() && R.v3d){ const vk = at != null ? at : noteVks(n)[0]; if (vk) goView(vk); }
+  if (is3d() && R.v3d){ const vk = at != null ? at : noteVks(n)[0]; if (vk) goView(vk, noteLook(n, vk)); }
   paintCurrent();
 }
 
@@ -2781,7 +2868,7 @@ function startReply(n, at){
   delete R.openReply[n.id];
   R.replyTo = n.id; R.curNote = n.id;
   setPanel(false);
-  if (is3d()) goView(at != null ? at : threadVks(n)[0]);
+  if (is3d()){ const vk = at != null ? at : threadVks(n)[0]; goView(vk, noteLook(n, vk)); }
   else seekTo(at != null ? at : threadFrames(n)[0]);
   renderNotes();
   paintNewBar(); paintOverlay();
@@ -2952,7 +3039,7 @@ async function editNoteDrawing(n, rid){
     const others = [...groups.entries()].filter(([k]) => k !== vk).map(([k, rs]) => ({ ctx: rs[0].data.ctx, items: rs.map(asItem) }));
     const v = viewsNow().get(vk), vctx = v ? M.drawCtx({ vk, cam: v.cam, hidden: v.hidden, explode: v.explode == null ? undefined : v.explode, anim: v.anim }) : c;
     let f = null;
-    if (rv.v3d && goView(vk)) f = await frame3dNow(rv);
+    if (rv.v3d && goView(vk, noteLook(n, vk))) f = await frame3dNow(rv);
     if (!f) f = await viewPic(vk, rv);
     if (!f || R !== rv){ if (R === rv) toast("Pick the model again to draw on its views"); return; }
     drawCanvas({ src: f.url, vb: f.vb, base: [], items: (groups.get(vk) || []).map(asItem), onDone: (items) => apply(others.concat([{ ctx: vctx, items }])) });
@@ -2988,7 +3075,7 @@ function goTo(n){
     const vk = noteVks(n)[0];
     if (!R.v3d){ toast("Pick the model again to turn it to this view"); return; }
     R.curNote = n.id;
-    if (vk) goView(vk);
+    if (vk) goView(vk, noteLook(n, vk));
     setPanel(false);
     return;
   }
@@ -3163,7 +3250,9 @@ function paintNewBar(){
   nb.appendChild(composer({ key: "+new", placeholder: "Add a note…", status: null, multi: true, frameFor: currentFrame, onChange: () => { where(); paintOverlay(); paintMarkers(); },
     onSend: (text, shots, state, draw) => {
       const t = now(), ctx = draw ? draw.frame.ctx : ctxNow(true);
-      const n = M.newNote({ text, author: who, ctx, shots }, t);
+      // A 3D note keeps the look it was written with (FORMAT.md ctx.v3d): Sight puts it back when the note opens.
+      const nctx = ctx && is3d() && R.v3d && !R.v3d.isSplat ? Object.assign({}, ctx, { v3d: M.v3dOfLook({ ...R.v3d.shading, light: R.v3d.light }, ctx.explode) }) : ctx;
+      const n = M.newNote({ text, author: who, ctx: nctx, shots }, t);
       R.rows.push(n);
       // Every frame drawn on goes with the note, each drawing on its own frame.
       drawFrames(draw).forEach((x) => R.rows.push(...M.drawingRows(x.items, { note: n.id, ctx: M.drawCtx(x.frame.ctx || ctx), z: M.maxZ(R.rows) + 1 }, t)));
@@ -3500,12 +3589,14 @@ function viewer(o){
   const pen = btn("fab pencil", null, () => { const cur = o; close(); cur.onDraw(); }, "Draw on it"); pen.innerHTML = ico("pen", 24);
   // The pictures sit under the plate's layer (`foot`: the note's text and the picture's own text on
   // a plate that folds / moves to any side, caption-plate.js); Back top left, the pencil bottom right.
+  // o.title instead (a picture that is no note's — a mesh's UVs): no plate, the title in a pill at the top.
   const foot = el("div", "vfoot");
   v.appendChild(foot); v.appendChild(back); v.appendChild(pen);
-  const plate = createPlate(foot, { storeKey: "sight-review:plate" });
+  const titled = o.title != null, title = titled ? v.appendChild(el("div", "vtitle")) : null;
+  const plate = titled ? null : createPlate(foot, { storeKey: "sight-review:plate" });
   let box = null, V = { z: 1, x: 0, y: 0 }, off = [0, 0], busyNav = false;
   const close = () => {
-    plate.destroy();
+    if (plate) plate.destroy();
     v.remove(); window.removeEventListener("resize", fit); document.removeEventListener("keydown", onKey, true);
     const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1);
     if (o.onClose) o.onClose(o);
@@ -3542,6 +3633,7 @@ function viewer(o){
   // The plate: the note's text (a reply's picture: the reply's words) and, on a note's own picture,
   // that picture's text (o.pic, FORMAT.md captions) with the pencil-on-the-plate to edit it.
   function paintPlate(){
+    if (!plate){ title.textContent = o.title || ""; return; }
     if (!o.note){ plate.set(o.label ? { key: "x", label: o.label } : null); return; }
     const n = o.note, c = n.data.ctx, lab = o.label || (c && c.t != null && R ? fmtTime(c.t, R.fps) : "");
     const reply = o.text != null, pic = reply ? null : o.pic || null;
@@ -3591,8 +3683,9 @@ function viewer(o){
     if (!next){
       busyNav = false;
       off = [0, 0]; apply(true);
-      if (axis === "y") toast(dir > 0 ? "No later note" : "No earlier note", 1500);
-      else if (o.side) toast(dir > 0 ? "The note's last picture" : "The note's first picture", 1500);
+      // (o.ends: [last, first] words for the sideways walk of something that is no note's pictures)
+      if (axis === "y"){ if (o.nav) toast(dir > 0 ? "No later note" : "No earlier note", 1500); }
+      else if (o.side) toast(o.ends ? o.ends[dir > 0 ? 0 : 1] : dir > 0 ? "The note's last picture" : "The note's first picture", 1500);
       return;
     }
     await show(next, { axis, dir });
@@ -3796,7 +3889,7 @@ function showNote(n, at){
   const c = n.data.ctx, t = is3d() ? null : at != null ? at : c && c.t != null && kindNow() === "video" ? noteTimes(n)[0] : null;
   R.curNote = n.id;
   if (R.video && t != null) seekTo(t);
-  if (is3d() && R.v3d){ const vk = at != null ? at : noteVks(n)[0]; if (vk) goView(vk); }
+  if (is3d() && R.v3d){ const vk = at != null ? at : noteVks(n)[0]; if (vk) goView(vk, noteLook(n, vk)); }
   paintCurrent();
   const card = els && els.notes.querySelector(`.note[data-id="${n.id}"]`);
   if (card) card.scrollIntoView({ block: "nearest" });
@@ -3939,4 +4032,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView };
+window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote };

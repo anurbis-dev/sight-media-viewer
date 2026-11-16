@@ -24,7 +24,7 @@ IMAGE_EXT = {
 VIDEO_EXT = {".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv", ".mpg", ".mpeg"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".aiff"}
 MODEL_EXT = {
-    ".gltf", ".glb", ".fbx", ".obj", ".stl", ".usdz", ".ply",
+    ".gltf", ".glb", ".fbx", ".obj", ".stl", ".usdz", ".usd", ".usda", ".usdc", ".ply",
     ".splat", ".spz", ".ksplat", ".sog",  # Gaussian splat formats (.ply overlaps with mesh PLY —
     # disambiguated client-side by sniffing the header, see isSplatAsset() in index.html)
 }
@@ -59,7 +59,7 @@ MODEL_THUMB_VERSION = 3
 # Bump when usdz_convert's output changes in a way that makes previously cached .glb files (and the
 # thumbnails rendered from them) wrong; Library wipes both on a mismatch. Kept here, not in
 # usdz_convert, so the startup check does not import that module (numpy alone costs ~160 ms).
-USDZ_CONVERTER_VERSION = 2
+USDZ_CONVERTER_VERSION = 3  # 3: animated stages are not converted (read in the browser)
 
 PRI_VISIBLE = 0
 PRI_PREFETCH = 1
@@ -935,7 +935,7 @@ class Library:
             old_model_ver = marker.read_text(encoding="utf-8").strip().split(".")[0]
         except OSError:
             old_model_ver = ""
-        for p in (self.thumbs / "usdz").glob("*.glb"):
+        for p in [*(self.thumbs / "usdz").glob("*.glb"), *(self.thumbs / "usdz").glob("*.anim")]:
             p.unlink(missing_ok=True)
         # A MODEL_THUMB_VERSION bump means the client-side render itself changed, so every model
         # re-renders; a converter-only bump only affects FBX/USDZ.
@@ -1453,6 +1453,7 @@ class Library:
         for sub, old_name, new_name in (
             ("wave", f"{old_id}.json", f"{new_id}.json"),
             ("usdz", f"{old_id}.glb", f"{new_id}.glb"),
+            ("usdz", f"{old_id}.anim", f"{new_id}.anim"),
         ):
             src = self.thumbs / sub / old_name
             if src.exists():
@@ -1565,7 +1566,7 @@ class Library:
             self._forget_thumb(aid)
             for p in (
                 self.thumbs / f"{aid}.jpg", self.thumbs / f"{aid}.png",
-                self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb",
+                self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb", self.thumbs / "usdz" / f"{aid}.anim",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
                 *(self.thumbs / "video").glob(f"{aid}_*"),
             ):
@@ -2477,6 +2478,15 @@ class Library:
         p = self.thumbs / "usdz" / f"{aid}.glb"
         return p if p.exists() else None
 
+    def usdz_is_animated(self, aid: str) -> bool:
+        """make_usdz_glb found the .usdz animated (and did not convert it) — the viewer reads it itself."""
+        a = self.get_asset(aid)
+        p = self.thumbs / "usdz" / f"{aid}.anim"
+        try:
+            return bool(a) and p.exists() and p.stat().st_mtime >= Path(a["path"]).stat().st_mtime
+        except OSError:
+            return False
+
     def make_usdz_glb(self, aid: str) -> Path | None:
         """Convert a .usdz asset to .glb on first request so the existing
         GLTFLoader path can view/thumbnail it — three.js has no USD loader
@@ -2491,25 +2501,44 @@ class Library:
             return None
 
         def fresh(p: Path | None) -> bool:
-            return bool(p) and p.stat().st_mtime >= path.stat().st_mtime
+            try:  # (a file removed meanwhile by another request is not fresh)
+                return bool(p) and p.stat().st_mtime >= path.stat().st_mtime
+            except OSError:
+                return False
 
         cached = self.usdz_glb_path(aid)
         if fresh(cached):
             return cached
+        anim = self.thumbs / "usdz" / f"{aid}.anim"
+        if fresh(anim):
+            return None
         # The viewer and the thumbnailer can both ask for the same file at once — serialise, so
         # the second caller reuses the first one's result instead of converting (and writing) again.
         with self._usdz_lock:
             cached = self.usdz_glb_path(aid)
             if fresh(cached):
                 return cached
+            if fresh(anim):
+                return None
             from .usdz_convert import convert
 
             dest = self.thumbs / "usdz" / f"{aid}.glb"
             dest.parent.mkdir(parents=True, exist_ok=True)
+            # An animated stage is not converted (the conversion keeps no animation): the viewer reads the file
+            # itself. The marker remembers that until the file changes.
+            anim.unlink(missing_ok=True)
+            animated: list = []
             try:
-                ok = convert(path, dest)
+                ok = convert(path, dest, animated)
             except Exception:
                 ok = False
+            if animated:
+                dest.unlink(missing_ok=True)
+                try:
+                    anim.write_bytes(b"")
+                except OSError:
+                    pass
+                return None
             if not ok:
                 dest.unlink(missing_ok=True)
                 return None
@@ -2642,7 +2671,7 @@ class Library:
             # it as current, and the new content's thumbnail is never generated.
             for p in (
                 self.thumbs / f"{aid}.jpg", self.thumbs / f"{aid}.png",
-                self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb",
+                self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb", self.thumbs / "usdz" / f"{aid}.anim",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
                 *(self.thumbs / "video").glob(f"{aid}_*"),
             ):

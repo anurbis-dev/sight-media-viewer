@@ -104,10 +104,9 @@ separate plan: `docs/PLAN-viewer.md`.
   Files picker offering `.glb` (the app's *Open a file…* has no type filter), Pencil over a view.
 - Formats (owner, 2026-11-15): not only GLB — FBX and USD too, ported from Sight's loading, not new code:
   glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD / USDA / USDC; files a model points at are picked with it.
-- Not done (ask when wanted): Gaussian splats, hiding meshes on the phone (views from Sight that hide
-  some are shown that way, *Show all* brings them back), Sight's shading / lights (`v3d`) on the phone;
-  Sight's lightbox could read `.usd` / `.usda` / `.usdc` (and USDZ without usd-core) with the same
-  vendored USDLoader — not asked.
+- Done since: hiding meshes on the phone (0.51); Gaussian splats on the phone, Sight's shading / lights
+  (`v3d`) on the phone both ways, Sight's lightbox reading `.usd` / `.usda` / `.usdc` (and USDZ without usd-core or
+  animated) with the same USDLoader, USD animation in both (0.53).
 
 ### 5. Coreline — the owner's tracker (repository `anurbis-dev/CueTrack`)
 - The first integration. It stores vectors natively like Sight (decision 6), so it speaks

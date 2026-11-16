@@ -6,8 +6,9 @@ import { videoFps } from "./mp4.js";
 export const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".avif", ".bmp", ".tif", ".tiff"];
 export const VIDEO_EXT = [".mp4", ".mov", ".m4v", ".webm", ".mkv", ".3gp", ".avi"];
 export const REVIEW_EXT = [".srev", ".sightreview"];
-// 3D (model3d.js parseModel): the formats Sight's lightbox opens, splats aside (a .ply splat is refused there).
-export const MODEL_EXT = [".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply", ".usdz", ".usd", ".usda", ".usdc"];
+// 3D (model3d.js createViewer): the formats Sight's lightbox opens — meshes, and Gaussian splats (a .ply is
+// either: its header says which).
+export const MODEL_EXT = [".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply", ".usdz", ".usd", ".usda", ".usdc", ".splat", ".spz", ".ksplat", ".sog"];
 
 export const extOf = (name) => { const m = /\.[^.\\/]+$/.exec(name || ""); return m ? m[0].toLowerCase() : ""; };
 export function kindOf(file){

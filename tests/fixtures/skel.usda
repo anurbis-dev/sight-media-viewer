@@ -1,0 +1,52 @@
+#usda 1.0
+(
+    defaultPrim = "Rig"
+    endTimeCode = 24
+    startTimeCode = 0
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def SkelRoot "Rig"
+{
+    def Skeleton "Skel" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )]
+        uniform token[] joints = ["root", "root/tip"]
+        uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )]
+        rel skel:animationSource = </Rig/Skel/Anim>
+
+        def SkelAnimation "Anim"
+        {
+            uniform token[] joints = ["root", "root/tip"]
+            quatf[] rotations.timeSamples = {
+                0: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                24: [(1, 0, 0, 0), (0.70710677, 0, 0, 0.70710677)],
+            }
+            half3[] scales = [(1, 1, 1), (1, 1, 1)]
+            float3[] translations = [(0, 0, 0), (0, 1, 0)]
+        }
+    }
+
+    def Mesh "Body" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3]
+        point3f[] points = [(-0.5, 0, -0.5), (-0.5, 0, 0.5), (-0.5, 2, -0.5), (-0.5, 2, 0.5), (0.5, 0, -0.5), (0.5, 0, 0.5), (0.5, 2, -0.5), (0.5, 2, 0.5)]
+        matrix4d primvars:skel:geomBindTransform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+        int[] primvars:skel:jointIndices = [0, 0, 1, 1, 0, 0, 1, 1] (
+            elementSize = 1
+            interpolation = "vertex"
+        )
+        float[] primvars:skel:jointWeights = [1, 1, 1, 1, 1, 1, 1, 1] (
+            elementSize = 1
+            interpolation = "vertex"
+        )
+        rel skel:skeleton = </Rig/Skel>
+    }
+}
+

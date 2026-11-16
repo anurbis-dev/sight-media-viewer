@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import build_pwa  # noqa: E402
-from tests.fixtures_3d import make_fbx, make_glb, make_gltf_with_bin, make_obj, make_stl  # noqa: E402
+from tests.fixtures_3d import make_fbx, make_glb, make_gltf_with_bin, make_obj, make_splat, make_splat_ply, make_stl  # noqa: E402
 from app import review  # noqa: E402
 from app.library import Library  # noqa: E402
 
@@ -309,14 +309,26 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["picked"]["selRow"])
         self.assertEqual(res["afterEmptyTap"]["sel"], -1)
         self.assertGreater(res["uvShown"], 0)
+        # The UV viewer: the set at the top (two sets here), no note plate; sideways walks the sets.
+        self.assertRegex(res["uv1"]["title"], r"^UV1 · 1 / 2 · ")
+        self.assertFalse(res["uv1"]["plate"])
+        self.assertRegex(res["uv2"]["title"], r"^UV2 · 2 / 2 · ")
+        self.assertRegex(res["uvEnd"]["title"], r"^UV2 · 2 / 2 · ")
+        self.assertRegex(res["uvBack"]["title"], r"^UV1 · 1 / 2 · ")
+        self.assertNotEqual(res["uv1"]["src"], res["uv2"]["src"])
+        self.assertEqual(res["uv1"]["src"], res["uvBack"]["src"])  # (made once per set)
         self.assertEqual(len(res["solo"]["hidden"]), 1)
         self.assertEqual(len(res["hid"]["hidden"]), 1)
         self.assertEqual(res["hid"]["sel"], -1)
         self.assertEqual(res["shown"]["hidden"], [])
         self.assertEqual((res["look"]["shading"], res["look"]["light"], res["look"]["grid"]),
                          ({"base": "solid", "wire": True, "xray": False}, "head", "axes"))
-        self.assertEqual(res["stored"], {"base": "solid", "wire": True, "xray": False, "grid": "axes", "light": "head"})
+        self.assertEqual(res["stored"], {"base": "solid", "wire": True, "xray": False, "grid": "axes", "gridCell": 0, "light": "head", "bg": "#0a0a0b"})
         self.assertEqual(res["rowClosed"], 0)
+        # Grid cells: round sizes, two 1-2-5 steps finer; the background colour (kept on the device).
+        self.assertEqual(res["cell0"], 0.2)  # (the boxes' diagonal ≈ 2.6: a tenth rounds to 0.2)
+        self.assertEqual((res["cell"]["size"], res["cell"]["label"], res["cell"]["stored"]), (0.05, "0.05", -2))
+        self.assertEqual(res["bg"], {"bg": "#ffffff", "stored": "#ffffff", "on": "Background #ffffff"})
         self.assertTrue(res["played"]["playing"])
         self.assertGreater(res["played"]["anim"]["t"], 0)
         self.assertFalse(res["paused"]["playing"])
@@ -324,6 +336,10 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["onNote"]["vk"], res["noteCtx"]["vk"])
         self.assertIsNone(res["away"]["vk"])
         self.assertEqual((res["back"]["vk"], res["back"]["anim"]), (res["noteCtx"]["vk"], {"clip": 0, "t": 1}))
+        # The note carries the look it was written with, in Sight's v3d shape; opening it puts the look back.
+        self.assertEqual(res["noteCtx"]["v3d"], {"shadeBase": "solid", "wireOn": True, "xrayOn": False, "env": False, "explode": 0})
+        self.assertEqual((res["noteLook"]["shading"], res["noteLook"]["light"]), ({"base": "solid", "wire": True, "xray": False}, "head"))
+        self.assertEqual(res["storedAfterNote"], {"base": "vertex", "wire": False, "xray": True, "grid": "off", "light": "flat"})
 
     def test_model_formats(self) -> None:
         d = self.tmp / "fmt"
@@ -338,7 +354,13 @@ class RoundTrip(unittest.TestCase):
         # mesh material blue, subsets green / red / green, one face in no subset (Sight: red, blue, green).
         mats = d / "mats_v001.usdz"
         shutil.copyfile(ROOT / "tests" / "fixtures" / "mats_v001.usdz", mats)
-        args = [str(f) for f in files] + [str(gltf), f"{gltf},{gltf.with_suffix('.bin')}", str(usdz), str(usdc), str(mats)]
+        # Animated USD (tests/fixtures/make_anim_usd.py): an Xform's translate (text and packaged), a skeleton.
+        anim = [d / n for n in ("anim.usda", "anim_v001.usdz", "skel.usda")]
+        for f in anim:
+            shutil.copyfile(ROOT / "tests" / "fixtures" / f.name, f)
+        # Gaussian splats (Spark): a .splat and a 3DGS .ply (told from a mesh .ply by its header)
+        splats = [make_splat(d / "balls.splat"), make_splat_ply(d / "balls.ply")]
+        args = [str(f) for f in files] + [str(gltf), f"{gltf},{gltf.with_suffix('.bin')}", str(usdz), str(usdc), str(mats)] + [str(f) for f in anim + splats]
         sight = {}
         try:  # Sight's own USDZ conversion (optional usd-core): the phone must lay the model out the same way
             from app import usdz_convert
@@ -377,6 +399,35 @@ class RoundTrip(unittest.TestCase):
             return [c if c == "tex" else str(first.setdefault(c, len(first))) for c in cols]
 
         self.assertEqual(pattern(m["colours"]), ["tex", "0", "tex", "tex", "0", "1"])
+        # Animated USD keeps its clip: the box under "Arm" (split per material in place, the static mesh order)
+        # rises 2 over 2 s; the skeleton's tip turns (its picture changes). Static USD has no clip.
+        for name in ("anim.usda", "anim_v001.usdz"):
+            u = res[name]
+            self.assertEqual((u["err"], u["meshes"], u["log"]), (None, 3, []), name)
+            self.assertEqual(u["centres"], [[0, 0, 0], [2, 0, 0], [2, 0, 0]], name)
+            self.assertEqual((u["anim"]["clips"], u["anim"]["duration"], u["anim"]["moves"]), (1, 1.999, True), name)
+            for a, b in zip(sum(u["anim"]["centres"], []), [0, 0, 0, 2, 1.999, 0, 2, 1.999, 0]):
+                self.assertAlmostEqual(a, b, places=3, msg=name)
+        sk = res["skel.usda"]
+        self.assertEqual((sk["err"], sk["meshes"], sk["log"]), (None, 1, []))
+        self.assertEqual((sk["anim"]["clips"], sk["anim"]["duration"], sk["anim"]["moves"]), (1, 0.999, True))
+        self.assertIsNone(res["parts_v001.usdz"]["anim"])
+        # Splats: no meshes, both balls in the still (it waits for Spark's sort), placed as Sight places them
+        # (half a turn about X: the balls at x ±1, radius 0.5).
+        for name in ("balls.splat", "balls.ply"):
+            u = res[name]
+            self.assertEqual((u["err"], u["meshes"], u["explode"], u["anim"], u["log"]), (None, 0, False, None, []), name)
+            self.assertEqual(u["splat"]["count"], 800, name)
+            self.assertGreater(u["splat"]["red"], 50, name)
+            self.assertGreater(u["splat"]["blue"], 50, name)
+            for k in ("other", "racing"):  # stills of views that are not the live camera
+                self.assertGreater(u["splat"][k]["red"], 50, (name, k))
+                self.assertGreater(u["splat"][k]["blue"], 50, (name, k))
+            self.assertGreater(u["splat"]["onlyRed"]["red"], 500, name)
+            self.assertEqual(u["splat"]["onlyRed"]["blue"], 0, name)
+            for a, b in zip(u["bounds"]["min"] + u["bounds"]["max"], [-1.5, -0.5, -0.5, 1.5, 0.5, 0.5]):
+                self.assertAlmostEqual(a, b, delta=0.01, msg=name)
+        self.assertIsNone(res["boxes.obj"]["splat"])
         for name, glb in sight.items():  # Sight's converted GLB: the same meshes in the same order, at the same place
             u, s = res[name], res[glb.name]
             self.assertEqual((u["meshes"], u["textured"], pattern(u["colours"])), (s["meshes"], s["textured"], pattern(s["colours"])), name)

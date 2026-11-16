@@ -885,6 +885,17 @@ def _usdz(path: Path) -> list[dict]:
     ])]
 
 
+def _usd(path: Path) -> list[dict]:
+    with path.open("rb") as fh:
+        head = fh.read(64)
+    if head.startswith(b"PXR-USDC"):
+        fmt = "USD (binary crate)"
+    else:
+        m = re.match(rb"#usda\s+([\d.]+)", head)
+        fmt = f"USDA {m.group(1).decode()} (text)" if m else "USD"
+    return [_sec("Model", [["Format", fmt]])]
+
+
 def _splat(path: Path, ext: str) -> list[dict]:
     rows: Rows = [["Content", "Gaussian splat"]]
     if ext == ".splat":
@@ -918,7 +929,8 @@ def file_info(path: Path, kind: str, ext: str, ffmpeg: str | None) -> list[dict]
             out = (
                 _gltf(path, ext) if ext in (".gltf", ".glb") else _obj(path) if ext == ".obj"
                 else _stl(path) if ext == ".stl" else _ply(path) if ext == ".ply" else _fbx(path) if ext == ".fbx"
-                else _usdz(path) if ext == ".usdz" else _splat(path, ext)
+                else _usdz(path) if ext == ".usdz" else _usd(path) if ext in (".usd", ".usda", ".usdc")
+                else _splat(path, ext)
             )
         elif ext == ".psd":
             out = _psd(path)

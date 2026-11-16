@@ -36,6 +36,7 @@ const moovPayload = (...traks) => Buffer.concat(traks);
   const M = await load("model.js");
   const { pdfFromJpegs } = await load("pdf.js");
   const { fpsFromMoov, videoFps } = await load("mp4.js");
+  const C = await import("data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(ROOT, "app", "static", "model3d-core.js"))).toString("base64"));
   let n = 0;
   const t = (name, fn) => { fn(); n++; };
 
@@ -93,6 +94,39 @@ const moovPayload = (...traks) => Buffer.concat(traks);
     assert.strictEqual(st.length, 1); assert.deepStrictEqual(st[0].data.history.map((h) => h.state), ["changes", "approved"]);
     M.deleteNote(rows, b.id, now + 40);
     assert.deepStrictEqual(M.counts(rows), { notes: 1, open: 0, progress: 0, done: 1 });
+  });
+  t("3D grid: line colours follow the background (contrast on mid greys), round cell steps", () => {
+    const hex = (n) => n.toString(16).padStart(6, "0");
+    assert.deepStrictEqual(C.gridColors("#0a0a0b").map(hex), ["474748", "272728"]);  // ≈ Sight's old fixed colours
+    assert.deepStrictEqual(C.gridColors("#ffffff").map(hex), ["bfbfbf", "e0e0e0"]);  // dark lines on white
+    const lum = (n) => (n >> 16 & 255) * 0.2126 + (n >> 8 & 255) * 0.7152 + (n & 255) * 0.0722;
+    for (const bg of ["#808080", "#6e7075", "#7f7f7f"]){
+      const b = parseInt(bg.slice(1), 16), [c1, c2] = C.gridColors(bg);
+      assert.ok(Math.abs(lum(c1) - lum(b)) >= 49 && Math.abs(lum(c2) - lum(b)) >= 27, bg);
+    }
+    assert.deepStrictEqual([0.07, 0.13, 0.3, 0.6, 1.5, 3.5, 7.5, 12].map((x) => C.niceStep(x)), [0.05, 0.1, 0.2, 0.5, 2, 5, 10, 10]);
+    assert.deepStrictEqual([-4, -1, 1, 4].map((k) => C.niceStep(1, k)), [0.05, 0.5, 2, 20]);
+  });
+  t("3D look: Sight's v3d read as the phone's shading / light and written back; a view keeps its newest note's", () => {
+    assert.deepStrictEqual(M.lookOfV3d({ shadeBase: "solid", wireOn: true, xrayOn: false, env: true, envPreset: "sunset", l1on: true, explode: 0.3 }),
+      { base: "solid", wire: true, xray: false, light: "sunset" });
+    assert.deepStrictEqual(M.lookOfV3d({ env: true, envPreset: "custom" }), { light: "studio" });  // a custom environment
+    assert.deepStrictEqual(M.lookOfV3d({ env: false, shadeBase: "bogus" }), { light: "head" });  // Sight's lights, no environment
+    assert.strictEqual(M.lookOfV3d({ camFov: 40 }), null);
+    assert.strictEqual(M.lookOfV3d(null), null);
+    assert.deepStrictEqual(M.v3dOfLook({ base: "normal", wire: false, xray: true, light: "night" }, 0.5),
+      { shadeBase: "normal", wireOn: false, xrayOn: true, env: true, envPreset: "night", explode: 0.5 });
+    assert.deepStrictEqual(M.v3dOfLook({ base: "textured", wire: false, xray: false, light: "flat" }),
+      { shadeBase: "textured", wireOn: false, xrayOn: false, env: false });
+    const l = { base: "vertex", wire: true, xray: false, light: "overcast" };
+    assert.deepStrictEqual(M.lookOfV3d(M.v3dOfLook(l)), l);  // a round trip through Sight's shape
+    const cam = { p: [0, 0, 5], t: [0, 0, 0], fov: 50, turns: 0 };
+    const a = M.newNote({ text: "A", author: "S", ctx: { vk: "v1", cam, v3d: { shadeBase: "solid", env: false } } }, 1000);
+    const b = M.newNote({ text: "B", author: "S", ctx: { vk: "v1", cam, v3d: { shadeBase: "normal", env: true, envPreset: "night" } } }, 2000);
+    const c = M.newNote({ text: "C", author: "S", ctx: { vk: "v2", cam } }, 3000);
+    const vs = M.views3d([b, a, c]);
+    assert.deepStrictEqual(vs.get("v1").v3d, { shadeBase: "normal", env: true, envPreset: "night" });
+    assert.strictEqual(vs.get("v2").v3d, null);
   });
   t("a reply edited: text / pictures, edited stamp; the later edit wins a merge", () => {
     const n = M.newNote({ text: "N", author: "A", ctx: null, shots: [] }, 1000);
