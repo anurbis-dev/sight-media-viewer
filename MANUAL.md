@@ -148,9 +148,10 @@
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
     whole clip; the onion button shows drawings within ±1 s faded.
-    The frame-stamp button (Shift+F, annotation mode only) shows the current frame over the video; drag it (mouse, pen or finger) and it snaps to
+    The frame-stamp button (Shift+F, annotation mode only) is on by default; switch it off per video (the others keep it). On, it shows the current frame over the video and is burned into every report picture of that video; drag it (mouse, pen or finger) and it snaps to
     a corner or the middle of a side. The ▾ next to it (or a tap on the stamp) sets what it shows, size, colours, backdrop,
-    font and position; the same look is burned into the report pictures.
+    font and position. The same label is burned into the report pictures (ZIP, PDF, the
+    reviewer page); switched off for a video, its pictures carry no frame label.
   - **3D** — a drawing belongs to the camera view it was made in, and a note also saves the shading,
     lights, explode and field of view. A view also keeps which meshes were hidden (H / Ctrl+H / Alt+H)
     when it was made: a change of hidden meshes starts a new view, and going back to a view shows its

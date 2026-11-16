@@ -77,7 +77,7 @@ const TOOLS = [
 ];
 // The frame stamp (a device preference, not review data): where / how the frame label sits over the video and on
 // report pictures. `size` is a percentage of the picture's width; the defaults are the look the label always had.
-const STAMP_DEFAULT = { on: false, mode: "both", size: 2.2, color: "#ffffff", bg: "#000000", bgOp: 0.6, font: "normal", pos: "tl" };
+const STAMP_DEFAULT = { mode: "both", size: 2.2, color: "#ffffff", bg: "#000000", bgOp: 0.6, font: "normal", pos: "tl" };
 const STAMP_POS = ["tl", "t", "tr", "l", null, "r", "bl", "b", "br"];
 const STAMP_ARROW = { tl: "↖", t: "↑", tr: "↗", l: "←", r: "→", bl: "↙", b: "↓", br: "↘" };
 const SWATCHES = ["#ff3b30", "#ff9500", "#ffd60a", "#34c759", "#32ade6", "#3478f6", "#af52de", "#ffffff", "#111111"];
@@ -171,7 +171,7 @@ export function createAnnotator(host){
   injectStyles();
   const S = {
     on: false, panelOn: readJSON("sight.annotate.panel", true), hidden: false, onion: false, hiddenReplies: new Set(),
-    tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
+    tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
@@ -193,10 +193,20 @@ export function createAnnotator(host){
     const v = readJSON("sight.annotate.stamp", {}) || {}, d = STAMP_DEFAULT, hex = (x, f) => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x) ? x : f;
     const num = (x, lo, hi, f) => Number.isFinite(Number(x)) && x !== null && x !== "" ? Math.min(hi, Math.max(lo, Number(x))) : f;
     return {
-      on: v.on === true, mode: ["both", "frame", "time"].includes(v.mode) ? v.mode : d.mode, size: num(v.size, 1, 8, d.size),
+      mode: ["both", "frame", "time"].includes(v.mode) ? v.mode : d.mode, size: num(v.size, 1, 8, d.size),
       color: hex(v.color, d.color), bg: hex(v.bg, d.bg), bgOp: num(v.bgOp, 0, 1, d.bgOp),
       font: ["normal", "bold", "mono"].includes(v.font) ? v.font : d.font, pos: STAMP_POS.includes(v.pos) && v.pos ? v.pos : d.pos,
     };
+  }
+  // On / off belongs to the VIDEO, and it is ON by default: sight.annotate.stamp.videos is { assetId: false } for the
+  // videos where it was switched off (the key goes when it is switched on again). On, it shows and is burned on every
+  // frame of that video. The look above stays one device preference. (A global `on` saved by 0.60 / 0.61.1 is
+  // ignored and dropped at the next save.)
+  const stampOn = (aid = S.asset?.id) => !!aid && S.stampVideos[aid] !== false;
+  function setStampOn(aid, on){
+    if (!aid) return;
+    if (on) delete S.stampVideos[aid]; else S.stampVideos[aid] = false;
+    writeJSON("sight.annotate.stamp.videos", S.stampVideos);
   }
   let stampTimer = 0;
   function saveStamp(){ clearTimeout(stampTimer); stampTimer = setTimeout(() => writeJSON("sight.annotate.stamp", S.stamp), 300); }
@@ -1491,7 +1501,7 @@ export function createAnnotator(host){
     bar.querySelector("[data-act=onion]").classList.toggle("on", S.onion);
     bar.querySelector("[data-act=onion]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
-    bar.querySelector("[data-act=stamp]").classList.toggle("on", S.stamp.on);
+    bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
     if (S.kind !== "video") closeStampPop();
     const hide = bar.querySelector("[data-act=hide]");
     hide.classList.toggle("on", S.hidden);
@@ -2650,8 +2660,8 @@ export function createAnnotator(host){
   // ---- frame stamp ----------------------------------------------------------------------------
   // The frame on screen as a label over the video (not a drawing; annotation mode, video only). One icon toggles
   // it, the ▾ beside it (or a tap on the stamp) opens the settings, a drag - mouse, pen or finger - moves it and
-  // snaps to the nearest of eight spots on release. The same settings draw the label burned into report
-  // pictures (bakeFrame), so both look alike: sizes are relative to the picture's width.
+  // snaps to the nearest of eight spots on release. While it is on, the same settings draw the label burned
+  // into report pictures (bakeFrame), so both look alike: sizes are relative to the picture's width.
   function stampText(t, mode){
     const parts = RC.frameLabel(t, S.fps).split(" / ");  // "f128 / 0:05+3"
     return mode === "frame" ? parts[0] : mode === "time" ? parts[1] || parts[0] : parts.join(" / ");
@@ -2673,8 +2683,8 @@ export function createAnnotator(host){
   function paintStamp(force){
     const L = S.layer;
     if (!L) return;
-    const g = geom(), v = video(), st = S.stamp;
-    const show = S.on && S.kind === "video" && st.on && g && g.nw && v;
+    const g = geom(), v = video(), st = S.stamp, aOn = stampOn();
+    const show = S.on && S.kind === "video" && aOn && g && g.nw && v;
     if (!show){ if (L.stamp) L.stamp.hidden = true; return; }
     if (!L.stamp){
       const el = document.createElement("div");
@@ -2733,9 +2743,9 @@ export function createAnnotator(host){
   }
   function toggleStamp(){
     if (S.kind !== "video" || !S.on) return false;  // Video-group rows also run outside annotation mode: let the key fall through there
-    S.stamp.on = !S.stamp.on;
-    saveStamp(); paintBar(); paintStamp(true); paintStampPop();
-    toast(S.stamp.on ? "Frame stamp on" : "Frame stamp off");
+    setStampOn(S.asset?.id, !stampOn());
+    paintBar(); paintStamp(true); paintStampPop();
+    toast(stampOn() ? "Frame stamp on" : "Frame stamp off");
     return true;
   }
   let stampPop = null;
@@ -2764,7 +2774,7 @@ export function createAnnotator(host){
     pop.querySelectorAll("[data-sr]").forEach((r) => r.addEventListener("input", () => set(r.dataset.sr, Number(r.value))));
     pop.querySelectorAll("[data-sc]").forEach((c) => c.addEventListener("input", () => set(c.dataset.sc, c.value)));
     pop.querySelector("[data-sx=close]").onclick = () => closeStampPop();
-    pop.querySelector("[data-sx=reset]").onclick = () => { S.stamp = { ...STAMP_DEFAULT, on: S.stamp.on }; saveStamp(); paintStamp(true); paintStampPop(); };
+    pop.querySelector("[data-sx=reset]").onclick = () => { S.stamp = { ...STAMP_DEFAULT }; saveStamp(); paintStamp(true); paintStampPop(); };
     lightEl.appendChild(pop);
     stampPop = pop;
     host.registerAutoClose?.(pop, () => { pop.hidden = true; }, bar.querySelector("[data-act=stampset]"));
@@ -2785,7 +2795,7 @@ export function createAnnotator(host){
     const pop = stampPop, btn = S.bar?.querySelector("[data-act=stampset]");
     if (!pop || !btn || S.kind !== "video") return;
     if (!(force ?? pop.hidden)){ pop.hidden = true; return; }
-    if (!S.stamp.on){ S.stamp.on = true; saveStamp(); paintBar(); paintStamp(true); }
+    if (!stampOn()){ setStampOn(S.asset?.id, true); paintBar(); paintStamp(true); }
     pop.hidden = false;
     paintStampPop();
     const lr = S.light.getBoundingClientRect(), br = btn.getBoundingClientRect();
@@ -2969,15 +2979,16 @@ export function createAnnotator(host){
   // `media` (how pictures map to doc units); picture notes get no frame of their own (the page
   // shows the cover with the note's drawings).
   // Report pictures are named by their file (and, for a video frame, RC.frameLabel: the frame number the
-  // panel shows, and the timecode). That label is also burned into the picture's corner, so it stays with
-  // the picture once it is taken out of the report.
+  // panel shows, and the timecode). While the frame stamp is on, that label is also burned into the picture's
+  // corner, so it stays with the picture once it is taken out of the report; stamp off = clean pictures.
   const frameNo = (t) => Math.round(t * S.fps);
   const frameTitle = (a, t) => `${a.name} · ${RC.frameLabel(t, S.fps)}`;
   const viewTitle = (a, vk) => `${a.name} · View ${viewNumber(vk) || ""}`.trimEnd();
   // The label takes the frame-stamp settings (position, text, size, colours, font); the defaults are the look it
-  // always had (top-left, "f128 / 0:05+3", white on a 60% black backdrop).
-  function bakeFrame(cv, t){
-    if (!cv) return;
+  // always had (top-left, "f128 / 0:05+3", white on a 60% black backdrop). The stamp's own toggle decides
+  // whether it is burned at all (0.62.0), per video: `aid` is the exported asset (a report may run over several).
+  function bakeFrame(cv, t, aid){
+    if (!cv || !stampOn(aid)) return;
     const st = S.stamp, text = stampText(t, st.mode);
     if (!text) return;
     const b = stampBox(text, cv.width, st), [x, y] = stampXY(st.pos, cv.width, cv.height, b), cx = cv.getContext("2d");
@@ -3033,7 +3044,7 @@ export function createAnnotator(host){
           for (const t of RC.noteTimes(d, mine.filter((it) => !it.data.reply).map((it) => it.data.ctx?.t), sameFrame, fb)){
             await seekTo(v, landAt(t));
             const cm = composeNative(pick((it) => ctxShown(it)), 1600);  // every drawing on that frame, whatever the panel shows
-            if (cm){ bakeFrame(cm, t); pics.push(picOf(cm, frameTitle(a, t), { t }, { t, hold: 0 })); }
+            if (cm){ bakeFrame(cm, t, a.id); pics.push(picOf(cm, frameTitle(a, t), { t }, { t, hold: 0 })); }
           }
         } else if (S.b3 && c?.vk){
           const vks = [];

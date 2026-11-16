@@ -14,6 +14,25 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.62.0 — 2026-11-17 — Video annotation: the frame stamp is on by default, switched off per video, burned only while on
+- **What:** the frame stamp is on for every video until switched off, and the switch (toolbar icon / `Shift+F`)
+  belongs to that one video: off in video A leaves video B stamped. While a video's stamp is on, its label is burned
+  into that video's report pictures (ZIP, PDF, reviewer page); off = clean pictures. No separate "burn" option (user's
+  decision: the stamp's own button is the switch, set once per video, not per frame). The look (mode, size, colours,
+  backdrop, font, position) stays one shared preference.
+- **Where:** `app/static/annotate.js` — `S.stampVideos`, `stampOn(aid)`, `setStampOn(aid, on)`, `toggleStamp`,
+  `toggleStampPop`, `paintStamp`, `paintBar`, `loadStamp`, the reset handler, `bakeFrame(cv, t, aid)` (early return
+  when that asset's stamp is off; `gatherReport` passes the loop asset's id, so "export all" uses each asset's own
+  state); MANUAL (Frame stamp).
+- **Notes:** stored as `sight.annotate.stamp.videos` → `{ [assetId]: false }` for the switched-off videos only (the
+  key is deleted when switched back on), written at once (no debounce), not review data — FORMAT.md unchanged; the
+  HTML page and the phone consume the burned pictures. The old global `sight.annotate.stamp.on` (0.60.0) is ignored
+  and dropped on the next save; no migration (default on makes it moot). `S.stampVideos` is read once at creation: a
+  change made in another tab or on the phone shows after a reload, and this tab's next write stores its whole map
+  (accepted for a device preference). Opening the ▾ popover on a switched-off video turns it on again. Review (fresh
+  agent, two passes: the "burn follows the toggle" step and the per-video state): nothing of substance; `S.asset`
+  drives the live state, `setAsset` repaints the bar, non-video assets return false.
+
 ## 0.61.0 — 2026-11-17 — Voice dictation in the annotation text fields (desktop); STT plan revised
 - **What:** a microphone button in the note composer (it dictates into the last focused composer field: the note
   or the picture text) and a floating one at the corner of a focused note-edit, reply or picture-text field. Click
@@ -60,7 +79,7 @@ Add new entries directly below this line.
 - **Notes:** device preference, not review data (FORMAT.md unchanged). Size is a % of the picture width (min 11 px),
   so the live label equals the burned one up to tiny displays. Show modes split `RC.frameLabel` on " / " —
   review-core, the HTML page and the phone are untouched (they consume the burned pictures). The burn always
-  happens, whether or not the live stamp is on; the panel's `f<N>` chip is unchanged. The stamp lives in the turned
+  happened whether or not the live stamp was on (changed in 0.62.0: only while it is on, and on by default); the panel's `f<N>` chip is unchanged. The stamp lives in the turned
   layer root, so it rotates with a turned view; stamp clicks are stopped so a tap does not play / pause. `toggleStamp`
   returns false outside annotation mode (the "Video" key group also runs in the plain lightbox). Drag geometry is
   captured at pointerdown (a zoom mid-drag uses stale values, accepted). Default top-left overlaps the lightbox's
