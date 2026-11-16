@@ -492,7 +492,20 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         p = lib.thumb_path(aid)
         if not p:
             lib.prioritize([aid], 0)
-            return JSONResponse({"ok": False, "queued": True}, status_code=202)
+            # An untrusted (orphan) file is being rendered again; until then boards, which ask
+            # for /api/thumb without waiting for the grid's "thumb" event, still get a picture —
+            # never cached, so the new render replaces it on the next load.
+            # Read whole (a few tens of KB), not streamed: an open file cannot be replaced on
+            # Windows, which would make the render just queued fail on it.
+            p = lib.thumb_file(aid)
+            try:
+                data = p.read_bytes() if p else None
+            except OSError:
+                data = None
+            if not data:
+                return JSONResponse({"ok": False, "queued": True}, status_code=202)
+            media_type = "image/png" if p.suffix == ".png" else "image/jpeg"
+            return Response(data, media_type=media_type, headers={"Cache-Control": "no-store"})
         media_type = "image/png" if p.suffix == ".png" else "image/jpeg"
         return FileResponse(
             p,

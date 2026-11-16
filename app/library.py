@@ -894,6 +894,7 @@ class Library:
         except Exception:
             pass
         self._drop_stale_model_thumbs()
+        self._untrust_dimless_thumbs()
         self._load_thumb_cache()
         self.video_cache = SlidingVideoCache()
         self._play_lock = threading.Lock()
@@ -903,7 +904,6 @@ class Library:
         workers = max(2, min(4, os.cpu_count() or 2))
         for _ in range(workers):
             threading.Thread(target=self._worker, daemon=True).start()
-        threading.Thread(target=self._load_legacy_thumb_cache, daemon=True).start()
 
     def _search_ffmpeg(self) -> None:
         try:
@@ -1141,13 +1141,26 @@ class Library:
         for row in self.conn.execute("SELECT id FROM assets WHERE has_thumb=1"):
             self._mark_thumb(row["id"])
 
-    def _load_legacy_thumb_cache(self) -> None:
-        """Disk thumbs from older runs whose DB row predates has_thumb. Listing the whole thumbs
-        folder can take seconds once a library has accumulated a lot of them, so this runs in the
-        background instead of delaying startup — anything not yet indexed here just looks
-        momentarily unthumbed and gets queued for a (harmless, self-correcting) regen."""
-        for p in self.thumbs.glob("*.jpg"):
-            self._mark_thumb(p.stem)
+    def _untrust_dimless_thumbs(self) -> None:
+        """One-time repair (marker file). Before 0.53.2 a thumbnail file found on disk was adopted
+        whatever its row said — files left behind by a removed and re-added source (same path, so
+        the same id) or by a file changed while Sight was closed. Such rows got has_thumb=1 with no
+        width/height, so masonry drew them square, and the thumbnail could be of old content. Every
+        server renderer returns a size, so a row (other than a client-rendered model) that has a
+        thumbnail but no size can only come from that: untrust it, so it is rendered again (and
+        sized) the next time it is on screen."""
+        marker = self.thumbs / "trust_v1"
+        if marker.exists():
+            return
+        self.execute(
+            "UPDATE assets SET has_thumb=0 WHERE has_thumb=1 AND kind != 'model3d' "
+            "AND (width IS NULL OR height IS NULL OR width=0 OR height=0)"
+        )
+        try:
+            self.thumbs.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1", encoding="utf-8")
+        except OSError:
+            pass
 
     def _heavy(self, kind: str, path: Path, dest: Path) -> tuple[int, int] | None:
         """Renders a PSD / PDF thumbnail in a worker process (HeavyWorkers). A file that timed out
@@ -1421,7 +1434,12 @@ class Library:
         return True
 
     def remove_source(self, sid: str) -> None:
+        # Thumbnail files stay on disk; forgetting them here makes them orphans (see thumb_path),
+        # so adding the same folder again (same paths, same ids) renders and sizes them anew.
+        gone = [r["id"] for r in self.query("SELECT id FROM assets WHERE source_id=?", (sid,))]
         self.execute("DELETE FROM assets WHERE source_id=?", (sid,))
+        for aid in gone:
+            self._forget_thumb(aid)
         self.execute("DELETE FROM sources WHERE id=?", (sid,))
         w = self._watchers.pop(sid, None)
         if w is not None:
@@ -1442,9 +1460,11 @@ class Library:
             return
         old = old_rows[0]
         moved_thumb = False
+        # Only a known thumbnail moves with the file; an orphan one (see thumb_path) stays behind.
+        trusted = bool(old["has_thumb"]) or old_id in self._have_thumb
         for ext in (".jpg", ".png"):
             src = self.thumbs / f"{old_id}{ext}"
-            if src.exists():
+            if trusted and src.exists():
                 try:
                     src.replace(self.thumbs / f"{new_id}{ext}")
                     moved_thumb = True
@@ -1707,26 +1727,32 @@ class Library:
                 if aid in self._have_thumb and self._thumb_v.get(aid) == 0:
                     # has_thumb=1 but thumb_version found no file (deleted by hand, a cleaner):
                     # make it again instead of skipping it forever; or the file is there after all.
-                    if self.thumb_path(aid):
+                    if self.thumb_file(aid):
                         self._thumb_v.pop(aid, None)
                     else:
                         self._forget_thumb(aid)
                 if aid in self._have_thumb or aid in self._inflight:
                     continue
-                if (self.thumbs / f"{aid}.jpg").exists() or (self.thumbs / f"{aid}.png").exists():
-                    self._mark_thumb(aid)
-                    continue
+                # A file on disk whose row does not say has_thumb is not adopted here (that left
+                # the client waiting for a "thumb" event that never came, and the row without a
+                # size): the worker renders it again — see _make_thumb.
                 self._seq += 1
                 heapq.heappush(self._heap, (priority, self._seq, aid))
             self._wake.notify_all()
 
     def thumb_path(self, aid: str) -> Path | None:
+        """The asset's thumbnail, only if it is a known one (has_thumb=1 at startup, or written /
+        moved here this session). A file the row does not know about is an orphan — left by a
+        removed source whose folder was added again (ids are path hashes), or by a file changed
+        while Sight was closed — and may show old content with no size in the row: it is not
+        served or adopted, the worker renders it again."""
+        return self.thumb_file(aid) if aid in self._have_thumb else None
+
+    def thumb_file(self, aid: str) -> Path | None:
+        """The thumbnail file on disk, trusted or not."""
         for ext in (".jpg", ".png"):
             p = self.thumbs / f"{aid}{ext}"
             if p.exists():
-                if aid not in self._have_thumb:
-                    self._mark_thumb(aid)
-                    self.execute("UPDATE assets SET has_thumb=1 WHERE id=?", (aid,))
                 return p
         return None
 
@@ -1763,6 +1789,14 @@ class Library:
         if not path.exists():
             self.execute("UPDATE assets SET status='missing' WHERE id=?", (aid,))
             return
+        if kind == "model3d":
+            return  # rendered and uploaded by the client (save_uploaded_thumb), never here
+        orphan_left = False
+        for e in (".jpg", ".png"):  # an orphan (see thumb_path): never mistaken for the new render
+            try:
+                (self.thumbs / f"{aid}{e}").unlink(missing_ok=True)
+            except OSError:
+                orphan_left = True  # held open (Windows): the render below overwrites it where it can
         dest = self.thumbs / f"{aid}.jpg"
         wh: tuple[int, int] | None = None
         if ext == ".psd":
@@ -1785,16 +1819,24 @@ class Library:
         if kind == "image" and ext in ANIMATABLE_EXT:
             animated = is_animated(path, ext)
             self.execute("UPDATE assets SET animated=? WHERE id=?", (1 if animated else 0, aid))
-        thumb_ok = self.thumb_path(aid) is not None
+        # With an orphan still on disk, a file there proves nothing: only a render that returned
+        # a size (every server renderer does on success) counts.
+        thumb_ok = self.thumb_file(aid) is not None and (bool(wh) or not orphan_left)
         if thumb_ok:
+            # Marked before the row is updated, and forgotten again if the row is gone: a
+            # remove_source() during the render must not leave the id trusted in memory (a re-added
+            # folder would then list it as thumbnailed with no size).
             self._mark_thumb(aid)
             if wh:
-                self.execute(
+                cur = self.execute(
                     "UPDATE assets SET has_thumb=1, width=?, height=? WHERE id=?",
                     (wh[0], wh[1], aid),
                 )
             else:
-                self.execute("UPDATE assets SET has_thumb=1 WHERE id=?", (aid,))
+                cur = self.execute("UPDATE assets SET has_thumb=1 WHERE id=?", (aid,))
+            if cur.rowcount == 0:
+                self._forget_thumb(aid)
+                return
         # Publish even when the thumbnail itself failed, as long as we learned the animated
         # flag — otherwise a client that already fetched the asset list never finds out.
         if thumb_ok or animated is not None:
@@ -2029,15 +2071,19 @@ class Library:
         p = self.thumb_path(aid)
         if p:
             return p
-        wh = self._thumb_psd(path, self.thumbs / f"{aid}.jpg")
-        self.thumb_version(aid, fresh=True)
-        p = self.thumb_path(aid)
-        if p and wh:
-            self.execute(
-                "UPDATE assets SET has_thumb=1, width=?, height=? WHERE id=?",
-                (wh[0], wh[1], aid),
-            )
-        return p
+        # The card thumbnail, made the worker's way (marks it, stores the size, publishes the
+        # "thumb" event the grid waits for); not while a worker is rendering the same one.
+        with self._wake:
+            busy = aid in self._inflight
+            if not busy:
+                self._inflight.add(aid)
+        if not busy:
+            try:
+                self._make_thumb(aid)
+            finally:
+                with self._wake:
+                    self._inflight.discard(aid)
+        return self.thumb_path(aid)
 
     def _thumb_pdf(self, path: Path, dest: Path) -> tuple[int, int] | None:
         return self._heavy("pdf", path, dest)

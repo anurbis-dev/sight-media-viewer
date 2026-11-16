@@ -141,6 +141,13 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   `thumb_version(aid, fresh=True)`; code that finds or writes one marks it with `_mark_thumb(aid)`
   (never `_have_thumb.add` directly — it also drops a cached 0); code that deletes or invalidates one
   calls `_forget_thumb(aid)`.
+- A thumbnail file is **trusted only if the row knows it** (`has_thumb=1` at startup → `_have_thumb`, or
+  written / moved / uploaded this session). `thumb_path()` returns trusted files only; `thumb_file()`
+  is the raw disk check (GET `/api/thumb` serves an untrusted file `no-store` while it re-renders, for boards). An untrusted file (an orphan: a removed source added again — ids are path
+  hashes — or a file changed while Sight was closed) is never adopted: `_make_thumb` deletes it and
+  renders again, which also fills width/height (masonry needs them) and publishes the `thumb` event the
+  client waits for. Never adopt a file silently in `prioritize` — the client gets no event and the row
+  no size. `remove_source` forgets its assets' thumbs in memory (files stay on disk).
 - PSD and PDF thumbnails render in 2 worker processes (`HeavyWorkers` in library.py, used through
   `Library._heavy`; module-level `render_psd_thumb` / `render_pdf_thumb`, `_heavy_child`): psd_tools
   and MuPDF hold the GIL and made the whole server sluggish from the thumbnail threads. Not a

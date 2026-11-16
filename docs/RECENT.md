@@ -14,6 +14,36 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.53.2 — 2026-11-16 — Grid: thumbnails of a re-added folder get their size (masonry) and show after a restart
+- **What:** in a source folder that had been removed and added again (or whose files changed while Sight was
+  closed), masonry drew every card square and, after a restart, part of the thumbnails stayed placeholders.
+  Both fixed; libraries already affected are repaired once on the first start.
+- **Where:** `app/library.py` — `thumb_path` (trusted files only) / new `_thumb_file`, `prioritize`, `_make_thumb`,
+  `remove_source`, `_migrate_asset`, `psd_composite`; new one-time `_untrust_dimless_thumbs` (marker
+  `thumbs/trust_v1`); `_load_legacy_thumb_cache` removed. ARCHITECTURE (thumbnail trust).
+- **Notes:** root cause: `remove_source` deletes rows but leaves thumbnail files; ids are path hashes, so a re-added
+  folder's new rows (no width/height, `has_thumb=0`) met the old files. `prioritize` / `thumb_path` / the legacy
+  glob adopted them silently — no `thumb` event (the client kept its placeholder until the grid re-read the item;
+  after a restart the background glob had not run yet when the first page was listed) and no size (masonry falls
+  back to square). Now a file the row does not know is an orphan: `_make_thumb` deletes it and renders again (once
+  per asset, on screen), which stores the size and publishes the event. The repair untrusts image / video rows with
+  `has_thumb=1` and no size (only adopted files can be like that); they re-render as they come on screen. The catch-up
+  scan's `has_thumb=0` for a changed file (which left the stale file on disk) is covered by the same rule. Model
+  thumbnails (client-rendered) are never deleted by `_make_thumb`. Very old libraries whose rows predate `has_thumb`
+  re-render their thumbnails on demand (the legacy glob that adopted them is gone). Orphan files of a removed source
+  are still not deleted from disk (deliberately: a delete in the background could race a re-add).
+  Checked with a script (add → remove → add again → restart, and the repair) — old code: no size, no events; new: sized, 4/4 events.
+  Review (fresh agent) found: repair limited to image / video (PSD, PDF, text, font, audio cards are sized by masonry
+  too) → now every kind but `model3d`; `psd_composite`'s fallback marked a thumbnail without a `thumb` event → it now
+  runs `_make_thumb` (under `_inflight`); a `remove_source` during a render could leave the id trusted → `_make_thumb`
+  forgets it when its UPDATE hits no row; unguarded orphan unlink (Windows, file held open) → guarded; boards ask
+  `/api/thumb` without the grid's event and got 202 for orphans → GET serves an untrusted file `no-store` while it
+  re-renders (`thumb_file()`, public). Left: a sizeless video whose re-render now fails loses its old thumbnail (rare).
+  Second pass (same reviewer): fixes 1–3 confirmed; 4+5 together let an orphan held open on Windows (by that very
+  GET) survive a failed render and be trusted with no size → `_make_thumb` trusts a file only with a size when an
+  orphan could not be deleted, and the GET reads the untrusted file whole (`Response`) instead of streaming it open.
+  The same reviewer confirmed both, nothing new found; the script and unit tests pass after them.
+
 ## 0.53.1 — 2026-11-16 — Phone: the gallery button is back (two open buttons again)
 - **What:** (phone home) two open buttons again, as before 0.51.0: *Photo or video* (the gallery) and *Open a
   file…* (Files: 3D models with textures, `.srev`, any media) — big on an empty home, two icons in the bar once
@@ -400,24 +430,3 @@ Add new entries directly below this line.
   overlay's plate does not follow note edits made elsewhere while it is open; `paintPlate` scans the items every
   frame while a note is picked (cheap at review sizes). Fixes re-tested (unit, PWA touch, desktop Playwright), not
   re-reviewed. Not committed.
-
-## 0.45.2 — 2026-11-13 — Lightbox: Alt+drag scrubs a video; a video turns with Ctrl+Alt+drag
-- **What:** Alt is the quick 2D gesture again. Alt+drag on a picture turns it by hand, as before. On a video plain
-  Alt+drag scrubs it (sideways on the picture), which is what the Alt-over-a-drawing-tool mode (0.40.0) relies on.
-  A video's by-hand turn moves to Ctrl+Alt+drag (Cmd+Alt on Mac). Shift still snaps to 15°.
-- **Where:** `app/static/index.html` — the viewer `wrap` `pointerdown` (turn branch condition now
-  `altKey && (!isVid || ctrlKey || metaKey)`). `MANUAL.md` (Turn by hand). `app/version.py`.
-- **Notes:** the 3D lights are on Shift+right-drag (0.41.1), so Alt is free there; the 3D slider label already says
-  "Rotate all (Shift+right-drag)". Canvas Alt+drag (crop pan, background pan) is unchanged.
-  Plain drag still scrubs a video, as before. Supersedes the 0.43.0 remark "Alt+drag on a video no longer scrubs"
-  and the MANUAL turn line. Ctrl-click on a video does not turn it (the turn needs Alt).
-  Known, left as is: in annotation mode the Alt cursor and faded bar also show over a picture, where Alt now turns
-  it (`altCam` in annotate.js does not check the kind). On Windows an AltGr press reports Ctrl+Alt, so AltGr-drag
-  turns a video too.
-  Review: two fresh-agent rounds. Round 1 (the Ctrl+Alt-for-both version) found no correctness bug in the turn
-  branch. Round 2 (this version) found three, all fixed here: (1) a `pointercancel` (the browser took the pointer
-  mid-drag) set `justScrubbed`, but no click follows, so the next real click on the video was swallowed — `end`
-  now takes `cancelled` and sets the flag only on pointerup; (2) an image turn set `justScrubbed`, which the click
-  handler (video only) never clears — the flag is set only for a video turn; (3) an Alt-scrub press now calls
-  `preventDefault()`, as the turn does, so it does not start a native text selection. Not tested in a browser:
-  checked by reading the code and `node --check` on the inline script. Not committed.

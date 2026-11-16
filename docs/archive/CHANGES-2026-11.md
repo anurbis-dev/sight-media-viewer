@@ -2,6 +2,27 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.45.2 — 2026-11-13 — Lightbox: Alt+drag scrubs a video; a video turns with Ctrl+Alt+drag
+- **What:** Alt is the quick 2D gesture again. Alt+drag on a picture turns it by hand, as before. On a video plain
+  Alt+drag scrubs it (sideways on the picture), which is what the Alt-over-a-drawing-tool mode (0.40.0) relies on.
+  A video's by-hand turn moves to Ctrl+Alt+drag (Cmd+Alt on Mac). Shift still snaps to 15°.
+- **Where:** `app/static/index.html` — the viewer `wrap` `pointerdown` (turn branch condition now
+  `altKey && (!isVid || ctrlKey || metaKey)`). `MANUAL.md` (Turn by hand). `app/version.py`.
+- **Notes:** the 3D lights are on Shift+right-drag (0.41.1), so Alt is free there; the 3D slider label already says
+  "Rotate all (Shift+right-drag)". Canvas Alt+drag (crop pan, background pan) is unchanged.
+  Plain drag still scrubs a video, as before. Supersedes the 0.43.0 remark "Alt+drag on a video no longer scrubs"
+  and the MANUAL turn line. Ctrl-click on a video does not turn it (the turn needs Alt).
+  Known, left as is: in annotation mode the Alt cursor and faded bar also show over a picture, where Alt now turns
+  it (`altCam` in annotate.js does not check the kind). On Windows an AltGr press reports Ctrl+Alt, so AltGr-drag
+  turns a video too.
+  Review: two fresh-agent rounds. Round 1 (the Ctrl+Alt-for-both version) found no correctness bug in the turn
+  branch. Round 2 (this version) found three, all fixed here: (1) a `pointercancel` (the browser took the pointer
+  mid-drag) set `justScrubbed`, but no click follows, so the next real click on the video was swallowed — `end`
+  now takes `cancelled` and sets the flag only on pointerup; (2) an image turn set `justScrubbed`, which the click
+  handler (video only) never clears — the flag is set only for a video turn; (3) an Alt-scrub press now calls
+  `preventDefault()`, as the turn does, so it does not start a native text selection. Not tested in a browser:
+  checked by reading the code and `node --check` on the inline script. Not committed.
+
 ## 0.45.1 — 2026-11-13 — Annotations: fixes to the 0.45.0 lock
 - **What:** review of 0.45.0 found four gaps, fixed here. (1) The Hold selector changed the on-screen time of a
   baked drawing: it now changes only editable drawings, and it is not shown for a selection with none. (2) Front /
