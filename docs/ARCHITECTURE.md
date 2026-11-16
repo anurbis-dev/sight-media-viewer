@@ -85,6 +85,7 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   {embedded:true})` shows any picture with the image lightbox's pan/zoom/fit and returns
   `{fit, zoom}`; hover picks the pane that gets F/digits (`activePane`, `lightPane`).
   `attachPanScroll` handles nested scrollers (inner one wins via `e._panScroll`).
+- Info panel / sidebar: The inspector is shown by `state.details` (wide) or `.open` (narrow drawer) via `toggleDetails()` / `applyDetails()`, driven by `#infoBtn`, the `D` key and the palette; its File block collapse is `state.navCollapse.inspFile`. The file counter is `#srcCount` in the Sources header (`statusHtml()`, repainted by `renderStatus()`). Sidebar row icons: `row(..., iconId)`, `KIND_ICON`.
 - Theme (desktop look): every Settings knob is a key of `state.theme` (`DEFAULT_THEME`, overridden by
   `app/static/defaults.json`), turned into CSS variables by `applyUi()`. The default look is
   **Graphite** (Inter 13 px self-hosted in `vendor/fonts`, `--ctl-h` 30 px controls, blue `accent`).
@@ -94,6 +95,10 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   (CSS `--cap-n-lh / --cap-j-lh` and `layout()`'s `L.meta`, grid and masonry); `"over"` is the older
   overlay with `pack1/pack2`. `themeRev` + `migrateTheme()` move a saved pre-0.54 theme onto the new
   defaults key by key (`CLASSIC_LOOK` = old defaults; the "Classic" preset restores it).
+  `secColor` / `secSize` style the `.sec` band (`--sec-fg` / `--sec-size`); a theme or preset lacking them gets
+  fg / textSize-1 via `secFallback()` (loadTheme, preset apply and preset matching). The theme row
+  (`renderThemeList`) shows the save button only while no preset matches; the last picked/saved preset is
+  `state.themeBase` `{kind:"b"|"u", name}` in sight.layout. `saveTheme()` re-renders the row (signature-guarded).
 - `cloneModel` clones each distinct material once — meshes that shared a material keep sharing it.
 - Library grid tile rescaling on window resize is driven by `#mainBody` width (not the grid's), so
   hiding/squeezing the grid for the board split never changes the zoom.
@@ -111,11 +116,16 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   exists yet). Additive migrations live in `Library._migrate()` (`CREATE TABLE IF NOT EXISTS`,
   `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`).
 - `/api/state` returns sources, counts, tags, collections, **boards**, scanIgnore, buildMs, **version**.
+- `GET /api/app-info` feeds the About dialog (brand mark button `#aboutBtn`, overlay `#aboutOverlay` reusing `.fb-modal`): version, frozen, python, platform, starlette, three (parsed from `vendor/three.core.js` `REVISION`), usd, ffmpegPath/ffmpegVersion (tool facts probed once, cached in `static_info()`), home, dbPath/dbBytes, assets, sources, thumbnails (top-level files in `thumbs/`), port, dev, uptimeSec, logPath. `/api/health` is only `{ok,name}`, so nothing is duplicated.
 - Asset `status`: `ready` | `missing` (file gone) | `excluded` (hidden: inside an excluded folder,
   matched by the scan ignore list, or a compiled `.obj`). Excluded rows are kept so metadata survives;
   anything that revives rows must check both folder exclusion and `Library.hidden()`.
 - Table `meta(key, value)` holds library-wide settings the backend needs without a page open
-  (`scan_ignore`: the Settings → Scanning ignore list, parsed by `IgnoreRules`).
+  (`scan_ignore`: the Settings → Scan Filtering ignore list, parsed by `IgnoreRules`).
+  Effective scan rules = built-in filter + user list, merged in one place: `IgnoreRules(user_text, default_text)`.
+  The built-in filter is `app/initial_filtering.ini` (bundled by build_exe.bat / build_app_macos.sh), replaced by
+  `<SIGHT_HOME>/initial_filtering.ini` when it exists (`read_default_filter`; fallback: `SKIP_DIRS`). `scan_ignore` holds
+  only the user list. `GET/PUT/DELETE /api/scan/defaults`; PUT/DELETE re-apply and rescan like `set_ignore`.
 - 3D animation (`model3d-core.js` `createAnimator`, both viewers): one AnimationMixer on the model root,
   `set({clip, t})` / `seek` / `play` / `pause` / `tick(dt)`; the last pose is `duration − 1 ms` (a looping action
   at its duration shows time 0). glTF loaders copy `gltf.animations` onto the scene (cache clones keep them).
@@ -149,6 +159,23 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   only when the browser fails on the source: the player calls `POST /api/video/transcode` (see
   `app/static/video-playable.js`), then polls `GET` until `ready`. Any new `<video>` that plays library
   files needs the same fallback (`convertForPlayback`), or it shows nothing for the codecs above.
+- Scrub copy (lightbox, `attachViewer` `loadScrubCopy`): a browser seek decodes from the keyframe
+  before the target, so a long-GOP clip costs ~0.9 ms per frame of distance (416x960 H.264; ~230 ms
+  at the end of an 8.3 s GOP) — RAM cache or not. Two seeks slower than `SLOW_SEEK_MS` (80) *during a
+  scrub* (`light.scrubbing`; not the first seek after open, a loop wrap or a frame step), on a clip of
+  at least 3 s, ask `POST /api/video/scrub` (`Library.start_scrub_copy`, the playback-copy job with `tag=".scrub"`:
+  <= 960 px, no audio, `-g 4 -bf 0`, file `thumbs/video/<aid>_<stamp>.scrub.<ext>`, served by
+  `GET /api/video/scrub/{id}`). Once loaded, a `.view-scrub` `<video>` sits right after the player
+  (same size / transform via `apply()`), seeks along during a scrub (`scWant` / `pumpScrubCopy`,
+  one in flight) and is shown only while `light.scrubbing`; `settleScrub` hides it after the player
+  presents its own frame (rVFC, <= 250 ms). The player keeps its own throttled seeks (`pumpSeek`), so
+  the landed frame is full quality. A new drag hides the copy until it has landed on that drag's
+  position (`scGen`); any other seek of the player (frame step, marker jump) hides it at once.
+  Scrub and playback copies share the one-at-a-time `_play_slot` (queued threads, never parallel
+  ffmpegs, `_encode_copy`); a playback copy goes first: while one waits scrub jobs hold back, and its
+  arrival terminates a running scrub ffmpeg (`_scrub_proc`), whose job then starts over after it. After each scrub copy, `_prune_scrub_copies` keeps the newest 20 / 1 GB in all
+  (`SCRUB_KEEP_FILES` / `SCRUB_KEEP_BYTES`), never the one just made. The playback-copy cleanup removes stale files of its own kind only
+  (scrub vs playback); the asset rename / delete globs `<aid>_*` cover both.
 - `thumb_version()` is cached in memory, a missing file as 0 too (re-checked after 30 s;
   `prioritize` regenerates a has_thumb asset whose file is gone). Code that writes a thumbnail calls
   `thumb_version(aid, fresh=True)`; code that finds or writes one marks it with `_mark_thumb(aid)`
@@ -474,6 +501,13 @@ select-tool drags on empty space pass through. `pointerType === "pen"` strokes s
 `buttons & 32` (pen eraser end) erases. Keys: `annot.onKey(e)` runs first in the document keydown
 handler while the lightbox is open (A / Shift+A toggle is in index.html: plain A in 3D flies the
 camera).
+The hotkeys are one table, `keyTable()` in annotate.js: rows `[combo, handler, label, group]`. `runHotkeys`
+runs it and the "?" help overlay (`openHelp`, toolbar button + Shift+/) is rendered from the same rows, so
+a new shortcut = a new row with a label (rows without one are not listed). While the overlay is open it owns
+the keyboard: index.html's keydown handler hands every key to `annot.onKey` first (`annot.helpOpen()`) and
+returns; only Esc / ? close it. The overlay is a `.an-help` backdrop inside `.light` that swallows pointer,
+wheel and touch events. `.light.an-panel-on` sets `--an-right: 320px`; bars centred on the lightbox width
+(`#v3dShade`, `#v3dAnim`) subtract it so they centre on the visible strip (left of the notes panel).
 
 **Host hooks** — `createAnnotator(host)` gets `api, putSetting, registerAutoClose, toast, getV3D,
 setV3D, openAsset, onModeChange`. The lightbox calls `mount` / `unmount`, `setAsset(a)` (before

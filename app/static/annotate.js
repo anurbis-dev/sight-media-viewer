@@ -22,6 +22,7 @@ import { convertForPlayback } from "/static/video-playable.js";
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
 import "/static/review-core.js";
 import { createPlate } from "/static/caption-plate.js";
+import { createDictationUI } from "/static/dictation.js";
 const RC = globalThis.SightReviewCore;
 const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, textLayout,
   primsOf, primSvg, boundsOf, hitTest, transformItem, validItem } = RC;
@@ -47,8 +48,10 @@ const ICON = {
   eye: ico(`<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>`),
   eyeOff: ico(`<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>`),
   panel: ico(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M17.5 8h1M17.5 11h1"/>`),
+  stamp: ico(`<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="5.5" y="7.5" width="7" height="3.5" rx="1" fill="currentColor" stroke="none"/>`),
   onion: ico(`<circle cx="8" cy="12" r="5" opacity=".45"/><circle cx="16" cy="12" r="5" opacity=".45"/><circle cx="12" cy="12" r="5"/>`),
   annotate: ico(`<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/>`),
+  help: ico(`<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8"/><path d="M12 17h.01"/>`),
   close: ico(`<path d="M6 6l12 12M18 6 6 18"/>`),
   check: ico(`<path d="m5 12.5 4.5 4.5L19 7.5"/>`),
   prog: ico(`<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>`),
@@ -72,6 +75,11 @@ const TOOLS = [
   ["text", "KeyT", "Text", ICON.text],
   ["pin", "KeyN", "Numbered pin", ICON.pin],
 ];
+// The frame stamp (a device preference, not review data): where / how the frame label sits over the video and on
+// report pictures. `size` is a percentage of the picture's width; the defaults are the look the label always had.
+const STAMP_DEFAULT = { on: false, mode: "both", size: 2.2, color: "#ffffff", bg: "#000000", bgOp: 0.6, font: "normal", pos: "tl" };
+const STAMP_POS = ["tl", "t", "tr", "l", null, "r", "bl", "b", "br"];
+const STAMP_ARROW = { tl: "↖", t: "↑", tr: "↗", l: "←", r: "→", bl: "↙", b: "↓", br: "↘" };
 const SWATCHES = ["#ff3b30", "#ff9500", "#ffd60a", "#34c759", "#32ade6", "#3478f6", "#af52de", "#ffffff", "#111111"];
 const HEADS = [["none", "—"], ["triangle", "▶"], ["open", "›"], ["diamond", "◆"], ["dot", "●"], ["bar", "|"]];
 const BODIES = [["straight", "Straight"], ["curve", "Curve"], ["elbow", "Elbow"]];
@@ -163,14 +171,14 @@ export function createAnnotator(host){
   injectStyles();
   const S = {
     on: false, panelOn: readJSON("sight.annotate.panel", true), hidden: false, onion: false, hiddenReplies: new Set(),
-    tool: "brush", styles: loadStyles(), hold: readJSON("sight.annotate.hold", 0),
+    tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
-    plate: null, shotView: null, adopt: new Set(),
+    plate: null, shotView: null, adopt: new Set(), dict: null, dictTa: null,
   };
 
   function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
@@ -181,6 +189,17 @@ export function createAnnotator(host){
     for (const [k, v] of Object.entries(DEFAULT_STYLES)) out[k] = { ...v, ...(saved[k] || {}) };
     return out;
   }
+  function loadStamp(){
+    const v = readJSON("sight.annotate.stamp", {}) || {}, d = STAMP_DEFAULT, hex = (x, f) => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x) ? x : f;
+    const num = (x, lo, hi, f) => Number.isFinite(Number(x)) && x !== null && x !== "" ? Math.min(hi, Math.max(lo, Number(x))) : f;
+    return {
+      on: v.on === true, mode: ["both", "frame", "time"].includes(v.mode) ? v.mode : d.mode, size: num(v.size, 1, 8, d.size),
+      color: hex(v.color, d.color), bg: hex(v.bg, d.bg), bgOp: num(v.bgOp, 0, 1, d.bgOp),
+      font: ["normal", "bold", "mono"].includes(v.font) ? v.font : d.font, pos: STAMP_POS.includes(v.pos) && v.pos ? v.pos : d.pos,
+    };
+  }
+  let stampTimer = 0;
+  function saveStamp(){ clearTimeout(stampTimer); stampTimer = setTimeout(() => writeJSON("sight.annotate.stamp", S.stamp), 300); }
   let styleTimer = 0;
   function saveStyles(){ clearTimeout(styleTimer); styleTimer = setTimeout(() => writeJSON("sight.annotate.styles", S.styles), 400); }
   const reviewer = () => localStorage.getItem("sight.reviewer") || "";
@@ -812,6 +831,7 @@ export function createAnnotator(host){
     for (const it of list){ renderItem(it); L.doc.appendChild(L.els.get(it.id)); }
     paintVisibility();
     L.root.hidden = !S.on;
+    paintStamp();
   }
   function paintVisibility(){
     const L = S.layer;
@@ -908,6 +928,7 @@ export function createAnnotator(host){
   let suppressClick = false;
   function onDown(e){
     if (!S.on) return;
+    if (!e.altKey && e.target.closest?.(".an-stamp")) return;  // the frame stamp has its own drag
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
     if (altCam() && e.button === 0) return; // Alt held: the viewer's own press (orbit, scrub), not ours
@@ -950,6 +971,9 @@ export function createAnnotator(host){
         if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); }
         return;
       }
+      // Alt on empty space: the viewer's Alt-drag (scrub a video, turn a picture), as with the drawing
+      // tools (altCam). Alt on a drawing keeps its duplicate-drag above; a marquee has no Alt meaning.
+      if (e.altKey) return;
       grab(e);
       if (!(e.shiftKey || e.ctrlKey || e.metaKey)) S.sel.clear();
       S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: e.ctrlKey || e.metaKey };
@@ -1435,9 +1459,10 @@ export function createAnnotator(host){
         <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete)">${ICON.trash}</button>
         <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="onion" data-only="video" title="Onion skin — drawings within ±1 s, faded">${ICON.onion}</button>
+        <button type="button" class="an-tool" data-act="stamp" title="Frame stamp on the video (Shift+F) — drag it to a corner or a side">${ICON.stamp}</button><button type="button" class="an-tool an-chev" data-act="stampset" title="Frame stamp settings">▾</button>
         <button type="button" class="an-tool" data-act="hide" title="Hide / show drawings (Shift+H)">${ICON.eye}</button>
         <button type="button" class="an-tool" data-act="panel" title="Review notes panel (C)">${ICON.panel}</button>
-        <button type="button" class="an-tool" data-act="exit" title="Leave annotation mode (A / Esc)">${ICON.close}</button>
+        <button type="button" class="an-tool" data-act="help" title="Keyboard shortcuts (?)">${ICON.help}</button>
       </div>
       <div class="an-props"></div>`;
     bar.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -1451,8 +1476,11 @@ export function createAnnotator(host){
     bar.querySelector("[data-act=region]").onclick = () => screenshot(true);
     bar.querySelector("[data-act=onion]").onclick = () => { S.onion = !S.onion; paintBar(); paintVisibility(); };
     bar.querySelector("[data-act=hide]").onclick = () => toggleHidden();
+    bar.querySelector("[data-act=stamp]").onclick = () => toggleStamp();
+    bar.querySelector("[data-act=stampset]").onclick = () => toggleStampPop();
+    buildStampPop(lightEl, bar);
     bar.querySelector("[data-act=panel]").onclick = () => togglePanel();
-    bar.querySelector("[data-act=exit]").onclick = () => toggle(false);
+    bar.querySelector("[data-act=help]").onclick = () => toggleHelp();
     lightEl.appendChild(bar);
     return bar;
   }
@@ -1462,6 +1490,9 @@ export function createAnnotator(host){
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
     bar.querySelector("[data-act=onion]").classList.toggle("on", S.onion);
     bar.querySelector("[data-act=onion]").hidden = S.kind !== "video";
+    bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
+    bar.querySelector("[data-act=stamp]").classList.toggle("on", S.stamp.on);
+    if (S.kind !== "video") closeStampPop();
     const hide = bar.querySelector("[data-act=hide]");
     hide.classList.toggle("on", S.hidden);
     hide.innerHTML = S.hidden ? ICON.eyeOff : ICON.eye;
@@ -1690,11 +1721,12 @@ export function createAnnotator(host){
       <div class="an-compose">
         <div class="an-pend"></div>
         <div class="an-views" hidden></div>
-        <textarea class="an-input" rows="2" placeholder="Add a note…  Enter adds · Shift+Enter new line"></textarea>
-        <textarea class="an-input an-cin" rows="1" placeholder="Text for this picture (optional)"></textarea>
+        <textarea class="an-input" data-dict rows="2" placeholder="Add a note…  Enter adds · Shift+Enter new line"></textarea>
+        <textarea class="an-input an-cin" data-dict rows="1" placeholder="Text for this picture (optional)"></textarea>
         <div class="an-crow">
           <button type="button" class="an-ib" data-act="shot" title="Screenshot (S)">${ICON.shot}</button>
           <button type="button" class="an-ib" data-act="region" title="Screenshot of an area (Shift+S)">${ICON.region}</button>
+          <button type="button" class="an-ib" data-act="dict"></button>
           <span class="an-ctx"></span>
           <button type="button" class="btn an-add" data-act="add">Add</button>
         </div>
@@ -1726,6 +1758,9 @@ export function createAnnotator(host){
     el.querySelector(".an-compose [data-act=shot]").onclick = () => screenshot(false);
     el.querySelector(".an-compose [data-act=region]").onclick = () => screenshot(true);
     el.querySelector("[data-act=add]").onclick = () => addNote();
+    // Dictation: the mic dictates into the composer field that was focused last (the note by default).
+    el.addEventListener("focusin", (e) => { if (e.target.matches?.(".an-compose textarea")) S.dictTa = e.target; });
+    S.dict?.mic(el.querySelector("[data-act=dict]"), () => { const t = S.dictTa; return t && t.isConnected ? t : el.querySelector(".an-input"); });
     const inp = el.querySelector(".an-input");
     inp.addEventListener("keydown", (e) => {
       e.stopPropagation();
@@ -1771,6 +1806,10 @@ export function createAnnotator(host){
   function focusComposer(){
     if (!S.panelOn) togglePanel(true);
     requestAnimationFrame(() => S.ui?.querySelector(".an-input")?.focus());
+  }
+  function dictateNote(){
+    if (!S.panelOn) togglePanel(true);
+    requestAnimationFrame(() => { const t = S.dictTa?.isConnected ? S.dictTa : S.ui?.querySelector(".an-input"); if (t) S.dict?.toggle(t); });
   }
   function togglePanel(force){
     S.panelOn = force ?? !S.panelOn;
@@ -1824,7 +1863,7 @@ export function createAnnotator(host){
         ${repliesHtml(n)}
       </div>`;
     }).join("");
-    if (!all.length) list.innerHTML = `<div class="an-hint"><p>No notes yet.</p><p>Draw on the ${S.kind === "model3d" ? "view" : S.kind === "video" ? "frame" : "picture"}, then type a note below — the drawings are attached to it.${S.kind === "video" ? " Notes are pinned to the current frame and show as markers on the timeline." : S.kind === "model3d" ? " The camera, shading and lights are saved with the note." : ""}</p><p><b>S</b> screenshot · <b>Shift+S</b> area</p></div>`;
+    if (!all.length) list.innerHTML = `<div class="an-hint"><p>No notes yet.</p><p>Draw on the ${S.kind === "model3d" ? "view" : S.kind === "video" ? "frame" : "picture"}, then type a note below — the drawings are attached to it.${S.kind === "video" ? " Notes are pinned to the current frame and show as markers on the timeline." : S.kind === "model3d" ? " The camera, shading and lights are saved with the note." : ""}</p><p>Press <b>?</b> (or the <b>?</b> button in the toolbar) for all shortcuts.</p></div>`;
     list.scrollTop = scroll;
     renderViews();
     renderPending();
@@ -2608,6 +2647,152 @@ export function createAnnotator(host){
     return true;
   }
 
+  // ---- frame stamp ----------------------------------------------------------------------------
+  // The frame on screen as a label over the video (not a drawing; annotation mode, video only). One icon toggles
+  // it, the ▾ beside it (or a tap on the stamp) opens the settings, a drag - mouse, pen or finger - moves it and
+  // snaps to the nearest of eight spots on release. The same settings draw the label burned into report
+  // pictures (bakeFrame), so both look alike: sizes are relative to the picture's width.
+  function stampText(t, mode){
+    const parts = RC.frameLabel(t, S.fps).split(" / ");  // "f128 / 0:05+3"
+    return mode === "frame" ? parts[0] : mode === "time" ? parts[1] || parts[0] : parts.join(" / ");
+  }
+  let stampCx = null;
+  // The label's box for a picture W px wide: font, padding, inset from the edge, and its size.
+  function stampBox(text, W, st){
+    const fs = Math.max(11, Math.round(W * st.size / 100)), pad = Math.round(fs * 0.4), m = Math.round(fs * 0.6);
+    const font = `${st.font === "bold" ? 800 : 600} ${fs}px ${st.font === "mono" ? "ui-monospace, Consolas, monospace" : "system-ui, sans-serif"}`;
+    const cx = stampCx || (stampCx = document.createElement("canvas").getContext("2d"));
+    cx.font = font;
+    return { fs, pad, m, font, text, w: Math.ceil(cx.measureText(text).width) + pad * 2, h: fs + pad * 2 };
+  }
+  // The box's top-left corner in a W x H picture for one of the eight spots.
+  function stampXY(pos, W, H, b){
+    return [pos.includes("l") ? b.m : pos.includes("r") ? W - b.m - b.w : (W - b.w) / 2,
+      pos.includes("t") ? b.m : pos.includes("b") ? H - b.m - b.h : (H - b.h) / 2];
+  }
+  function paintStamp(force){
+    const L = S.layer;
+    if (!L) return;
+    const g = geom(), v = video(), st = S.stamp;
+    const show = S.on && S.kind === "video" && st.on && g && g.nw && v;
+    if (!show){ if (L.stamp) L.stamp.hidden = true; return; }
+    if (!L.stamp){
+      const el = document.createElement("div");
+      el.className = "an-stamp";
+      el.addEventListener("pointerdown", stampDown);
+      for (const t of ["click", "dblclick"]) el.addEventListener(t, (ev) => ev.stopPropagation());  // not a play / pause of the viewer underneath
+      L.root.appendChild(el);
+      L.stamp = el;
+      S.stampKey = ""; S.stampDrag = false;
+    }
+    if (S.stampDrag) return;
+    const W = g.nw * g.s, H = g.nh * g.s, b = stampBox(stampText(frameStart(v.currentTime), st.mode), W, st);
+    const [x, y] = stampXY(st.pos, W, H, b);
+    const key = [b.text, b.font, b.w, b.h, st.color, st.bg, st.bgOp, r2(g.ox + x), r2(g.oy + y)].join("|");
+    L.stamp.hidden = false;
+    if (key === S.stampKey && !force) return;
+    S.stampKey = key;
+    const e = L.stamp;
+    e.textContent = b.text;
+    e.style.cssText = `left:${g.ox + x}px;top:${g.oy + y}px;width:${b.w}px;height:${b.h}px;font:${b.font};line-height:${b.fs}px;padding:${b.pad}px 0;` +
+      `color:${st.color};background:${st.bgOp > 0 ? hexA(st.bg, st.bgOp) : "transparent"}`;
+  }
+  function stampDown(e){
+    if (e.altKey || e.button !== 0 || !S.on || S.stampDrag) return;  // Alt: the viewer's own press; a second pointer is ignored
+    e.preventDefault(); e.stopPropagation();
+    // (g is taken at pointerdown: a zoom in mid-drag uses stale values - accepted.)
+    const el = e.currentTarget, g = geom(), [px, py] = local(e), x0 = el.offsetLeft, y0 = el.offsetTop;
+    const W = g.nw * g.s, H = g.nh * g.s, w = el.offsetWidth, h = el.offsetHeight;
+    let moved = false;
+    S.stampDrag = true;
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    const mv = (ev) => {
+      const [cx, cy] = local(ev);
+      if (!moved && Math.hypot(cx - px, cy - py) < 4) return;
+      moved = true;
+      el.style.left = clamp(x0 + cx - px, g.ox, g.ox + W - w) + "px";
+      el.style.top = clamp(y0 + cy - py, g.oy, g.oy + H - h) + "px";
+    };
+    const end = (ev) => {
+      el.removeEventListener("pointermove", mv); el.removeEventListener("pointerup", end); el.removeEventListener("pointercancel", end); el.removeEventListener("lostpointercapture", end);
+      try { el.releasePointerCapture(e.pointerId); } catch {}
+      S.stampDrag = false;
+      if (moved && ev.type === "pointerup"){
+        const cx = el.offsetLeft - g.ox + w / 2, cy = el.offsetTop - g.oy + h / 2, b = { m: Math.round(Math.max(11, Math.round(W * S.stamp.size / 100)) * 0.6), w, h };
+        let best = null, bd = Infinity;
+        for (const pos of STAMP_POS){
+          if (!pos) continue;
+          const [x, y] = stampXY(pos, W, H, b), d = Math.hypot(x + w / 2 - cx, y + h / 2 - cy);
+          if (d < bd){ bd = d; best = pos; }
+        }
+        S.stamp.pos = best; saveStamp(); paintStampPop();
+      } else if (!moved && ev.type === "pointerup") toggleStampPop(true);
+      paintStamp(true);
+    };
+    el.addEventListener("pointermove", mv); el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end); el.addEventListener("lostpointercapture", end);
+  }
+  function toggleStamp(){
+    if (S.kind !== "video" || !S.on) return false;  // Video-group rows also run outside annotation mode: let the key fall through there
+    S.stamp.on = !S.stamp.on;
+    saveStamp(); paintBar(); paintStamp(true); paintStampPop();
+    toast(S.stamp.on ? "Frame stamp on" : "Frame stamp off");
+    return true;
+  }
+  let stampPop = null;
+  function buildStampPop(lightEl, bar){
+    stampPop?.remove();
+    const seg = (k, opts) => `<span class="an-seg">${opts.map(([id, n]) => `<button type="button" data-sk="${k}" data-sv="${id}">${n}</button>`).join("")}</span>`;
+    const pop = document.createElement("div");
+    pop.className = "an-stampop";
+    pop.hidden = true;
+    pop.innerHTML = `
+      <div class="an-spr"><b>Frame stamp</b><button type="button" class="an-ib" data-sx="close" title="Close">${ICON.close}</button></div>
+      <div class="an-spr"><span>Show</span>${seg("mode", [["both", "Frame + time"], ["frame", "Frame"], ["time", "Time"]])}</div>
+      <div class="an-spr"><span>Size</span><input type="range" data-sr="size" min="1" max="8" step="0.1"><em data-se="size"></em></div>
+      <div class="an-spr"><span>Text</span><label class="an-pc"><input type="color" data-sc="color"></label>
+        <span>Backdrop</span><label class="an-pc"><input type="color" data-sc="bg"></label></div>
+      <div class="an-spr"><span>Opacity</span><input type="range" data-sr="bgOp" min="0" max="1" step="0.05"><em data-se="bgOp"></em></div>
+      <div class="an-spr"><span>Font</span>${seg("font", [["normal", "Normal"], ["bold", "Bold"], ["mono", "Mono"]])}</div>
+      <div class="an-spr"><span>Position</span><span class="an-spos">${STAMP_POS.map((p) => p ? `<button type="button" data-sk="pos" data-sv="${p}" title="${p}">${STAMP_ARROW[p]}</button>` : `<i></i>`).join("")}</span>
+        <button type="button" class="an-ib" data-sx="reset" title="Back to the default look">Reset</button></div>`;
+    pop.addEventListener("pointerdown", (e) => e.stopPropagation());
+    // Sliders / colour inputs keep their own keys; Escape still reaches onKey so it can close the popover.
+    pop.addEventListener("keydown", (e) => { if (/^(INPUT|SELECT)$/.test(e.target.tagName) && !hotkey(e, "Escape")) e.stopPropagation(); });
+    pop.addEventListener("click", (e) => e.target.closest?.("button")?.blur());  // a focused button must not swallow keys
+    const set = (k, v) => { S.stamp[k] = v; saveStamp(); paintStamp(true); paintStampPop(); };
+    pop.querySelectorAll("[data-sk]").forEach((b) => { b.onclick = () => set(b.dataset.sk, b.dataset.sv); });
+    pop.querySelectorAll("[data-sr]").forEach((r) => r.addEventListener("input", () => set(r.dataset.sr, Number(r.value))));
+    pop.querySelectorAll("[data-sc]").forEach((c) => c.addEventListener("input", () => set(c.dataset.sc, c.value)));
+    pop.querySelector("[data-sx=close]").onclick = () => closeStampPop();
+    pop.querySelector("[data-sx=reset]").onclick = () => { S.stamp = { ...STAMP_DEFAULT, on: S.stamp.on }; saveStamp(); paintStamp(true); paintStampPop(); };
+    lightEl.appendChild(pop);
+    stampPop = pop;
+    host.registerAutoClose?.(pop, () => { pop.hidden = true; }, bar.querySelector("[data-act=stampset]"));
+    paintStampPop();
+  }
+  function paintStampPop(){
+    const pop = stampPop, st = S.stamp;
+    if (!pop) return;
+    pop.querySelectorAll("[data-sk]").forEach((b) => b.classList.toggle("on", String(st[b.dataset.sk]) === b.dataset.sv));
+    pop.querySelectorAll("[data-sr]").forEach((r) => { r.value = st[r.dataset.sr]; });
+    pop.querySelectorAll("[data-sc]").forEach((c) => { c.value = st[c.dataset.sc]; });
+    pop.querySelector("[data-se=size]").textContent = st.size.toFixed(1) + "%";
+    pop.querySelector("[data-se=bgOp]").textContent = Math.round(st.bgOp * 100) + "%";
+  }
+  function closeStampPop(){ if (stampPop) stampPop.hidden = true; }
+  // force: open (a tap on the stamp); without: toggle (the ▾). Opening shows the stamp, so a change is seen at once.
+  function toggleStampPop(force){
+    const pop = stampPop, btn = S.bar?.querySelector("[data-act=stampset]");
+    if (!pop || !btn || S.kind !== "video") return;
+    if (!(force ?? pop.hidden)){ pop.hidden = true; return; }
+    if (!S.stamp.on){ S.stamp.on = true; saveStamp(); paintBar(); paintStamp(true); }
+    pop.hidden = false;
+    paintStampPop();
+    const lr = S.light.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    pop.style.left = clamp(br.left - lr.left - pop.offsetWidth / 2, 8, Math.max(8, lr.width - pop.offsetWidth - 8)) + "px";
+    pop.style.top = (br.bottom - lr.top + 8) + "px";
+  }
+
   // ---- tick: follow video time / camera / viewport --------------------------------------------
   function tick(){
     S.raf = 0;
@@ -2635,6 +2820,7 @@ export function createAnnotator(host){
       if (S.on){
         syncViewBox();
         paintVisibility();
+        paintStamp();
         renderSel();
         if (S.edit) S.edit.place();
         if (S.ui && !S.ui.hidden) renderPending();
@@ -2788,19 +2974,21 @@ export function createAnnotator(host){
   const frameNo = (t) => Math.round(t * S.fps);
   const frameTitle = (a, t) => `${a.name} · ${RC.frameLabel(t, S.fps)}`;
   const viewTitle = (a, vk) => `${a.name} · View ${viewNumber(vk) || ""}`.trimEnd();
+  // The label takes the frame-stamp settings (position, text, size, colours, font); the defaults are the look it
+  // always had (top-left, "f128 / 0:05+3", white on a 60% black backdrop).
   function bakeFrame(cv, t){
     if (!cv) return;
-    const cx = cv.getContext("2d"), text = RC.frameLabel(t, S.fps);
-    const fs = Math.max(11, Math.round(cv.width * 0.022)), pad = Math.round(fs * 0.4), m = Math.round(fs * 0.6);
+    const st = S.stamp, text = stampText(t, st.mode);
+    if (!text) return;
+    const b = stampBox(text, cv.width, st), [x, y] = stampXY(st.pos, cv.width, cv.height, b), cx = cv.getContext("2d");
     cx.save();
     // composeNative leaves its downscale on the context: draw the label in device pixels.
     cx.setTransform(1, 0, 0, 1, 0, 0);
-    cx.font = `600 ${fs}px system-ui, sans-serif`;
+    cx.font = b.font;
     cx.textBaseline = "top";
-    cx.fillStyle = "rgb(0 0 0 / 0.6)";
-    cx.fillRect(m, m, cx.measureText(text).width + pad * 2, fs + pad * 2);
-    cx.fillStyle = "#fff";
-    cx.fillText(text, m + pad, m + pad);
+    if (st.bgOp > 0){ cx.fillStyle = hexA(st.bg, st.bgOp); cx.fillRect(x, y, b.w, b.h); }
+    cx.fillStyle = st.color;
+    cx.fillText(text, x + b.pad, y + b.pad);
     cx.restore();
   }
   // everyNote (the notes ZIP): a note on a picture gets its own picture even when it is the only note.
@@ -3003,7 +3191,7 @@ export function createAnnotator(host){
     if (want && !supported()){ toast("Annotations work on images, video and 3D models"); return false; }
     if (want === S.on) return true;
     S.on = want;
-    if (!want){ finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush(); }
+    if (!want){ closeHelp(); closeStampPop(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush(); }
     S.light?.classList.toggle("an-on", S.on);
     paintAlt();
     S.b3?.annotating?.(S.on);
@@ -3044,42 +3232,112 @@ export function createAnnotator(host){
   }
 
   // ---- keyboard -------------------------------------------------------------------------------
+  // The one hotkey table: [combo, handler, label, group]. runHotkeys reads the first two; the help overlay
+  // ("?") is rendered from the same rows (rows with the same label + group are shown as one line, so aliases
+  // like Ctrl+Y / Ctrl+Shift+Z cannot drift from what actually fires). A row without a label is not listed.
+  function keyTable(){
+    const G = { tool: "Drawing tools", edit: "Editing", notes: "Notes and panels", nav: "Moving the selection", video: "Video", d3: "3D models", gen: "General" };
+    return [
+      ["Shift+Slash", () => toggleHelp(), "Show / hide this list", G.gen],
+      ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }, "Deselect / clear pin focus, then leave annotation mode", G.gen],
+      ["KeyA", () => toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen], ["Shift+KeyA", () => toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen],
+      ["Ctrl+KeyZ", () => undo(), "Undo", G.edit], ["Ctrl+Shift+KeyZ", () => redo(), "Redo", G.edit], ["Ctrl+KeyY", () => redo(), "Redo", G.edit],
+      ["Delete", () => deleteSelection(), "Delete the selection", G.edit], ["Backspace", () => deleteSelection(), "Delete the selection", G.edit], ["KeyX", () => deleteSelection(), "Delete the selection", G.edit],
+      ["Shift+Delete", () => clearShown(), "Clear the drawings on screen", G.edit],
+      ["Ctrl+KeyC", () => copySelection(), "Copy", G.edit], ["Ctrl+KeyX", () => cutSelection(), "Cut", G.edit], ["Ctrl+KeyV", () => paste(), "Paste", G.edit], ["Ctrl+KeyD", () => duplicateSelection(), "Duplicate", G.edit],
+      ["Ctrl+KeyA", () => selectAll(), "Select all drawings on screen", G.edit],
+      ["Ctrl+BracketRight", () => reorder(1), "Bring forward", G.edit], ["Ctrl+BracketLeft", () => reorder(-1), "Send backward", G.edit],
+      ["BracketLeft", () => resizeTool(1 / 1.2), "Smaller brush / stroke / text", G.tool], ["BracketRight", () => resizeTool(1.2), "Larger brush / stroke / text", G.tool],
+      ...TOOLS.filter(Boolean).map(([id, combo, label]) => [combo, () => setTool(id), label, G.tool]),
+      ["KeyS", () => { screenshot(false); }, "Screenshot of the view into the note", G.notes], ["Shift+KeyS", () => { screenshot(true); }, "Screenshot of an area", G.notes],
+      ["KeyC", () => togglePanel(), "Show / hide the notes panel", G.notes], ["Shift+KeyH", () => toggleHidden(), "Hide / show the drawings", G.notes],
+      ["Enter", () => focusComposer(), "Write a note (Enter adds it, Shift+Enter is a new line)", G.notes],
+      ["Alt+KeyM", () => dictateNote(), "Dictate into the note / reply / picture text (again: stop; right-click the mic: language)", G.notes],
+      ["ArrowLeft", () => nudge(-1, 0), "Nudge the selection 1 px", G.nav], ["ArrowRight", () => nudge(1, 0), "Nudge the selection 1 px", G.nav], ["ArrowUp", () => nudge(0, -1), "Nudge the selection 1 px", G.nav], ["ArrowDown", () => nudge(0, 1), "Nudge the selection 1 px", G.nav],
+      ["Shift+ArrowLeft", () => nudge(-10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowRight", () => nudge(10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowUp", () => nudge(0, -10), "Nudge the selection 10 px", G.nav], ["Shift+ArrowDown", () => nudge(0, 10), "Nudge the selection 10 px", G.nav],
+      ["Comma", () => stepFrame(-1), "Previous frame (also outside annotation mode)", G.video], ["Period", () => stepFrame(1), "Next frame (also outside annotation mode)", G.video],
+      ["Shift+KeyF", () => toggleStamp(), "Frame stamp on the video (drag it to a corner / side; settings: the ▾ next to its icon)", G.video],
+      ["Shift+Comma", () => jumpMarker(-1), "Previous note marker on the timeline", G.video], ["Shift+Period", () => jumpMarker(1), "Next note marker on the timeline", G.video],
+      // 3D: D would still fly the camera (W/A/S are taken above) and move it off the drawings.
+      ["KeyD", () => S.kind === "model3d", S.kind === "model3d" ? "Reserved: does not fly the camera while annotating (W / A / S are tools)" : null, G.d3],
+    ];
+  }
+  // What a combo looks like to a person: KeyV -> V, Ctrl+Shift+KeyZ -> Ctrl+Shift+Z, BracketLeft -> [.
+  const KEY_NAMES = { BracketLeft: "[", BracketRight: "]", Comma: ",", Period: ".", Slash: "?", Delete: "Del", ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
+  const keyName = (c) => c.split("+").map((k) => KEY_NAMES[k] || k.replace(/^Key/, "")).join("+").replace("Shift+?", "?");
+  // [{ group, rows: [[keys[], label]] }] in table order.
+  function helpGroups(){
+    const groups = new Map();
+    for (const [combo, , label, group] of keyTable()){
+      if (!label) continue;
+      if (!groups.has(group)) groups.set(group, new Map());
+      const g = groups.get(group);
+      if (!g.has(label)) g.set(label, []);
+      g.get(label).push(keyName(combo));
+    }
+    // Mouse / touch things that are not hotkeys (static: they live in the pointer code, not in the table).
+    const extra = {
+      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Line / arrow snap to 15°, rectangle square, ellipse circle"]],
+      "General": [[["Alt + drag"], "Hand the drag to the viewer (pan / zoom, orbit in 3D) while a drawing tool is active"]],
+      ...(S.kind !== "model3d" ? {} : { "3D models": [[["Shift+A"], "Enter / leave annotation mode (A flies the camera in a 3D view)"], [["Alt+1–9"], "Save the camera view (1–9 recall it)"]] }),
+    };
+    for (const [group, rows] of Object.entries(extra)){
+      if (!groups.has(group)) groups.set(group, new Map());
+      for (const [keys, label] of rows) groups.get(group).set(label, keys);
+    }
+    return [...groups].map(([group, rows]) => ({ group, rows: [...rows].map(([label, keys]) => [keys, label]) }));
+  }
+  let help = null;
+  function openHelp(){
+    if (help || !S.light) return;
+    document.activeElement?.blur?.();
+    const el = document.createElement("div");
+    el.className = "an-help";
+    el.innerHTML = `<div class="an-hcard" role="dialog" aria-label="Annotation shortcuts">
+      <div class="an-hh"><b>Annotation shortcuts</b><button type="button" class="an-ib" data-act="hclose" title="Close (Esc)">${ICON.close}</button></div>
+      <div class="an-hbody">${helpGroups().map((g) => `<section><h4>${esc(g.group)}</h4>${g.rows.map(([keys, label]) => `<div class="an-hrow"><span class="an-hk">${keys.map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span><span>${esc(label)}</span></div>`).join("")}</section>`).join("")}</div>
+      <p class="an-hfoot">On a touch screen every tool, undo, screenshot and the notes panel have a button in the toolbar.</p></div>`;
+    // A full-screen backdrop: nothing underneath sees the pointer, wheel or touch while this is open.
+    for (const t of ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "dblclick", "contextmenu", "touchstart", "touchend", "wheel", "touchmove"]){
+      el.addEventListener(t, (ev) => {
+        ev.stopPropagation();
+        const inBody = !!ev.target.closest?.(".an-hbody");
+        if (ev.cancelable && (t === "contextmenu" || ((t === "wheel" || t === "touchmove") && !inBody))) ev.preventDefault();
+      }, { passive: false });
+    }
+    el.addEventListener("click", (ev) => { ev.stopPropagation(); if (ev.target === el || ev.target.closest("[data-act=hclose]")) closeHelp(); });
+    S.light.appendChild(el);
+    help = el;
+    el.querySelector("[data-act=hclose]").focus({ preventScroll: true });
+  }
+  function closeHelp(){
+    if (!help) return;
+    help.remove(); help = null;
+  }
+  function toggleHelp(){ if (help) closeHelp(); else openHelp(); return true; }
   function onKey(e){
     if (!S.light) return false;
+    // The help overlay owns the keyboard: only Esc (and ?) get through, everything else is swallowed so
+    // neither the annotator nor the lightbox behind it acts. Browser shortcuts (Ctrl/Alt, F-keys) are left alone.
+    if (help){
+      if (hotkey(e, "Escape") || hotkey(e, "Shift+Slash")){ e.preventDefault(); closeHelp(); }
+      // Enter / Space on the focused close button must still press it (keyboard-only users).
+      else if (e.target?.closest?.("[data-act=hclose]") && (hotkey(e, "Enter") || hotkey(e, "Space"))) { /* default: click */ }
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && !/^F\d+$/.test(e.code)) e.preventDefault();
+      return true;
+    }
+    if (stampPop && !stampPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeStampPop(); return true; }
     const tag = e.target?.tagName;
     const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable;
     if (!S.on){
       if (typing) return false;
       // Frame stepping works in any video, annotating or not.
-      if (S.kind === "video") return runHotkeys(e, [
-        ["Comma", () => stepFrame(-1)], ["Period", () => stepFrame(1)],
-        ["Shift+Comma", () => jumpMarker(-1)], ["Shift+Period", () => jumpMarker(1)],
-      ]);
+      if (S.kind === "video") return runHotkeys(e, keyTable().filter((r) => r[3] === "Video"));
       return false;
     }
     if (typing) return false;
     if (S.region && hotkey(e, "Escape")){ e.preventDefault(); cancelRegion(); return true; }
-    const table = [
-      ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }],
-      ["KeyA", () => toggle(false)], ["Shift+KeyA", () => toggle(false)],
-      ["Ctrl+KeyZ", () => undo()], ["Ctrl+Shift+KeyZ", () => redo()], ["Ctrl+KeyY", () => redo()],
-      ["Delete", () => deleteSelection()], ["Shift+Delete", () => clearShown()], ["Backspace", () => deleteSelection()], ["KeyX", () => deleteSelection()],
-      ["Ctrl+KeyC", () => copySelection()], ["Ctrl+KeyX", () => cutSelection()], ["Ctrl+KeyV", () => paste()], ["Ctrl+KeyD", () => duplicateSelection()],
-      ["Ctrl+KeyA", () => selectAll()],
-      ["Ctrl+BracketRight", () => reorder(1)], ["Ctrl+BracketLeft", () => reorder(-1)],
-      ["BracketLeft", () => resizeTool(1 / 1.2)], ["BracketRight", () => resizeTool(1.2)],
-      ["KeyS", () => { screenshot(false); }], ["Shift+KeyS", () => { screenshot(true); }],
-      ["KeyC", () => togglePanel()], ["Shift+KeyH", () => toggleHidden()],
-      ["Enter", () => focusComposer()],
-      ["ArrowLeft", () => nudge(-1, 0)], ["ArrowRight", () => nudge(1, 0)], ["ArrowUp", () => nudge(0, -1)], ["ArrowDown", () => nudge(0, 1)],
-      ["Shift+ArrowLeft", () => nudge(-10, 0)], ["Shift+ArrowRight", () => nudge(10, 0)], ["Shift+ArrowUp", () => nudge(0, -10)], ["Shift+ArrowDown", () => nudge(0, 10)],
-      ["Comma", () => stepFrame(-1)], ["Period", () => stepFrame(1)],
-      ["Shift+Comma", () => jumpMarker(-1)], ["Shift+Period", () => jumpMarker(1)],
-      ...TOOLS.filter(Boolean).map(([id, combo]) => [combo, () => setTool(id)]),
-      // 3D: D would still fly the camera (W/A/S are taken above) and move it off the drawings.
-      ["KeyD", () => S.kind === "model3d"],
-    ];
-    return runHotkeys(e, table);
+    return runHotkeys(e, keyTable());
   }
   function resizeTool(f){
     const tg = propsTarget();
@@ -3095,6 +3353,8 @@ export function createAnnotator(host){
   // ---- lifecycle ------------------------------------------------------------------------------
   function mount(lightEl){
     S.light = lightEl;
+    S.dict = createDictationUI({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
+      getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) });
     S.bar = buildBar(lightEl);
     S.ui = buildPanel(lightEl);
     const t = document.createElement("div");
@@ -3106,14 +3366,16 @@ export function createAnnotator(host){
     paintBar();
   }
   function unmount(){
+    closeHelp();
     // The plates first: an edit still open there saves into this asset's notes before the flush.
     S.plate?.destroy(); S.plate = null;
+    S.dict?.destroy(); S.dict = S.dictTa = null;
     closeShotView();
     flush();
     finishEdit();
     cancelAnimationFrame(S.raf);
     S.raf = 0;
-    S.on = false;
+    S.on = false; S.stampDrag = false;
     S.light = S.bar = S.ui = null;
     S.b2 = S.b3 = null;
     S.layer = null;
@@ -3204,7 +3466,7 @@ export function createAnnotator(host){
   }
 
   return {
-    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, importFile, explodeChanged,
+    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, importFile, explodeChanged,
     isOn: () => S.on,
     supports: () => supported(),
   };
@@ -3275,7 +3537,7 @@ function injectStyles(){
 .an-flash { position: absolute; inset: 0; z-index: 29; background: #fff; opacity: 0; pointer-events: none; }
 .an-flash.go { animation: an-flash .35s ease-out; }
 @keyframes an-flash { 0% { opacity: .35; } 100% { opacity: 0; } }
-.light.an-panel-on { padding-right: 320px; }
+.light.an-panel-on { padding-right: 320px; --an-right: 320px; }
 .light.an-panel-on .v3d-gear, .light.an-panel-on .v3d-panel, .light.an-panel-on .frame-pop { right: 336px; }
 .an-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 320px; z-index: 20; display: flex; flex-direction: column; background: var(--surface, #1b1c20); border-left: 1px solid var(--border); box-sizing: border-box; font-size: 12px; color: var(--fg); }
 .an-panel[hidden] { display: none; }
@@ -3289,6 +3551,20 @@ function injectStyles(){
 .an-ib.sm { height: 22px; min-width: 22px; padding: 0; }
 .an-ib.sm svg { width: 14px; height: 14px; }
 .an-menu { position: absolute; right: 40px; top: 42px; z-index: 22; display: flex; flex-direction: column; padding: 4px; min-width: 210px; border-radius: 10px; background: rgb(22 22 25 / .97); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .5); }
+.an-chev { width: 24px; margin-left: -4px; font-size: 10px; }
+.an-stamp { position: absolute; z-index: 4; box-sizing: border-box; text-align: center; white-space: nowrap; overflow: hidden; pointer-events: auto; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.an-stamp[hidden] { display: none; }
+.an-stamp:active { cursor: grabbing; }
+.an-stampop { position: absolute; z-index: 22; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; width: 280px; max-width: calc(100% - 16px); box-sizing: border-box; border-radius: 10px; background: rgb(22 22 25 / .97); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .5); color: var(--fg); font-size: 11px; }
+.an-stampop[hidden] { display: none; }
+.an-spr { display: flex; align-items: center; gap: 8px; }
+.an-spr > span:first-child, .an-spr > b { min-width: 50px; color: var(--muted); }
+.an-spr > b { color: var(--fg); flex: 1; }
+.an-spr input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.an-spr em { font-style: normal; min-width: 34px; text-align: right; color: var(--muted); }
+.an-spos { display: inline-grid; grid-template-columns: repeat(3, 26px); gap: 2px; flex: 1; }
+.an-spos button { height: 22px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
+.an-spos button.on { background: var(--surface-3, #2a2b31); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .an-menu[hidden] { display: none; }
 .an-menu button { text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--fg); font-size: 12px; }
 .an-menu button:hover { background: var(--surface-2); }
@@ -3324,6 +3600,16 @@ function injectStyles(){
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-nprev .an-fno { position: absolute; left: 3px; top: 3px; z-index: 1; padding: 0 4px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; font: 600 10px/15px system-ui, sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+.an-help { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: rgb(0 0 0 / .62); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); cursor: default; touch-action: none; }
+.an-hcard { width: min(640px, 100%); max-height: 100%; display: flex; flex-direction: column; border-radius: 12px; background: var(--surface, #1b1c20); border: 1px solid var(--border-strong, var(--border)); box-shadow: 0 24px 70px rgb(0 0 0 / .6); color: var(--fg); font-size: 12px; overflow: hidden; }
+.an-hh { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px 16px; border-bottom: 1px solid var(--border); }
+.an-hh b { font-size: 14px; font-weight: 600; }
+.an-hbody { overflow: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 4px 16px 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); column-gap: 24px; }
+.an-hbody h4 { margin: 12px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--subtle); }
+.an-hrow { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; line-height: 1.4; }
+.an-hk { flex: 0 0 auto; min-width: 84px; display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.an-hk kbd { font: 11px/1 ui-monospace, Consolas, monospace; padding: 3px 6px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--fg); }
+.an-hfoot { margin: 0; padding: 8px 16px 12px; color: var(--subtle); border-top: 1px solid var(--border); }
 .an-hint { color: var(--subtle); padding: 10px 8px; line-height: 1.5; }
 .an-hint p { margin: 0 0 8px; }
 .an-note { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; }

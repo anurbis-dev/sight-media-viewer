@@ -132,10 +132,20 @@ button:disabled { cursor: default; opacity: .4; }
 .main-body:not(.stacked) > .split-handle { width: 5px; cursor: col-resize; }
 .main-body.stacked > .split-handle { height: 5px; cursor: row-resize; }
 .split-handle:hover, .split-handle.drag { background: var(--accent); }
+.insp > .sec:first-child { margin-top: 0; }
+.insp .insp-name { font-weight: 600; font-size: var(--text-size); line-height: 1.25; margin: 6px 0 4px; overflow-wrap: anywhere; }
 .insp { width: var(--insp-w); flex: none; border-left: 1px solid var(--border); padding: var(--space-3); overflow: auto; min-height: 0; background: var(--surface); }
 .brand { display: flex; gap: var(--space-2); align-items: center; min-height: var(--ctl-h); }
 .brand > div { min-width: 0; }
-.mark { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--accent); font-size: 12px; font-weight: 700; color: #fff; }
+.mark { width: 24px; height: 24px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; position: relative; }
+.mark img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.mark:hover { opacity: .85; }
+.mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mark::after { content: ""; position: absolute; inset: -6px; } /* a bigger tap target than the 24 px icon */
+.about-modal { width: min(92vw, 560px); height: auto; max-height: min(86vh, 640px); }
+.about-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; padding: 12px 14px; overflow: auto; font-size: 12px; }
+.about-list dt { color: var(--subtle); white-space: nowrap; }
+.about-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; user-select: text; font-variant-numeric: tabular-nums; }
 .brand h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand h1 .ver { margin-left: 6px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--subtle); vertical-align: baseline; }
 .brand .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -157,6 +167,9 @@ button:disabled { cursor: default; opacity: .4; }
 .row .tiny { display: none; width: 22px; height: 22px; border-radius: 6px; color: var(--subtle); flex: none; }
 .row:hover .tiny { display: grid; place-items: center; }
 .row .tiny:hover { background: var(--surface-3); color: var(--fg); }
+/* Folder-tree expand control: a chevron, right when closed and down when open (like the section headers). */
+.tiny.tree-chev .chev { display: block; font-size: 15px; line-height: 1; transition: transform var(--motion-quick) var(--ease); }
+.tiny.tree-chev.open .chev { transform: rotate(90deg); }
 .badge { font-size: 11px; color: var(--subtle); font-variant-numeric: tabular-nums; }
 .src-row.dragging, .col-row.dragging, .tag-row.dragging, .sec-row.dragging { opacity: .4; }
 .col-row.drop-into { outline: 1px solid var(--accent); outline-offset: -1px; }
@@ -167,7 +180,8 @@ button:disabled { cursor: default; opacity: .4; }
 .src-folder.excluded > span { text-decoration: line-through; }
 /* Section headers sit on a tinted band (--sec-bg) a step up from the rows, so they never read as
    one more row of the list above them (feedback on the 0.54 Graphite port). */
-.sec { margin: 14px 0 4px; min-height: 26px; padding: 0 4px 0 var(--space-2); border-radius: var(--radius-sm); background: var(--sec-bg, var(--surface)); font-size: calc(var(--text-size) - 1px); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--fg); display: flex; align-items: center; }
+.sec { margin: 14px 0 4px; min-height: 26px; padding: 0 4px 0 var(--space-2); border-radius: var(--radius-sm); background: var(--sec-bg, var(--surface)); font-size: var(--sec-size, calc(var(--text-size) - 1px)); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--sec-fg, var(--fg)); display: flex; align-items: center; }
+.sec .sec-count { flex: none; margin: 0 6px; font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--subtle); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sec .sec-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sec button { width: 22px; height: 22px; border-radius: 6px; color: var(--subtle); flex: none; }
 .sec button:hover { background: var(--surface-2); color: var(--fg); }
@@ -193,7 +207,6 @@ button:disabled { cursor: default; opacity: .4; }
 .top-pop .sep { height: 1px; margin: 4px 6px; background: var(--border); }
 .top-pop .opt { padding: 0 10px; height: 34px; }
 input::placeholder, textarea::placeholder { color: var(--subtle); }
-.count { font-size: 12px; color: var(--subtle); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* overflow-anchor: none — the grid is virtual: renderGrid() moves .slice and swaps the cards above
    the view itself. With the browser's scroll anchoring on, Chromium "corrected" scrollTop by one
    row for that, the corrected position re-rendered the slice back, and the two flipped every frame
@@ -402,7 +415,9 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-frame > .split-handle { width: 5px; cursor: col-resize; }
 .uv-pane { position: relative; min-width: 0; height: 100%; overflow: hidden; background: #1b1b1f; }
 /* With the UV split on, the 3D shading bar centres on the model's half (--uv-left = split edge). */
-#v3dShade, #v3dAnim { left: calc(50% + var(--uv-left, 0px) / 2); }
+/* --an-right = width of the annotation notes panel on the right (annotate.js sets it on .light): the bar centres
+   on the strip that is still visible, between the UV split edge and the panel. */
+#v3dShade, #v3dAnim { left: calc(50% + (var(--uv-left, 0px) - var(--an-right, 0px)) / 2); }
 /* The animation bar (a model with clips): above the shading bar. */
 #v3dAnim { bottom: calc(64px + var(--hud-in, 0px)); align-items: center; }
 .v3d-anim .v3d-explode { width: 260px; cursor: pointer; }
@@ -469,6 +484,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
 /* Lightbox placeholder: the card thumbnail, stretched to the full image's box, shown while the full
    file loads. The full image stays transparent until it is decoded, then fades in over it. */
 .view-ph { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; user-select: none; pointer-events: none; }
+/* Lightbox scrub copy (short GOP, small) shown over the player while a drag scrubs a slow-seeking clip. */
+.view-scrub { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; user-select: none; pointer-events: none; }
 .view-media.loading { opacity: 0; }
 .view-media.reveal { transition: opacity .25s ease; }
 .view-hud { position: absolute; left: calc(8px + var(--hud-in, 0px)); bottom: calc(8px + var(--hud-in, 0px)); z-index: 2; pointer-events: none; font-size: 11px; color: var(--muted); background: rgb(10 10 11 / .7); border-radius: 6px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
@@ -493,8 +510,16 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .theme-actions .btn { height: 30px; padding: 0 10px; font-size: 11px; flex: none; }
 .settings-body label.field { margin: 4px 8px 0; }
 #scanIgnore { min-height: 96px; font-family: ui-monospace, Consolas, monospace; white-space: pre; }
+.df-modal { height: min(80vh, 640px); }
+.df-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.df-hint { font-size: 12px; color: var(--subtle); }
+#dfText { flex: 1; min-height: 0; resize: none; font-family: ui-monospace, Consolas, monospace; white-space: pre; font-size: 12px; }
 .ign-msg { flex: 1; align-self: center; font-size: 11px; color: var(--subtle); }
 .theme-list { padding: 0 4px; }
+.theme-row { gap: 4px; }
+.theme-row select { flex: 1; min-width: 0; }
+.theme-row .tiny { display: grid; place-items: center; width: var(--ctl-h, 28px); height: var(--ctl-h, 28px); flex: none; border-radius: 6px; color: var(--subtle); }
+.theme-row .tiny:hover { background: var(--surface-2); color: var(--fg); }
 /* Blender-style slider: click without dragging opens text-edit, drag scrubs at a fixed
    px→value rate (Shift = fine), the edge zones nudge by one step, right-click resets. */
 .bslider { position: relative; width: 128px; height: 26px; border-radius: 6px; background: var(--surface-3); overflow: hidden; cursor: ew-resize; user-select: none; touch-action: none; flex: none; }
@@ -576,14 +601,20 @@ label.field textarea { min-height: 72px; resize: vertical; }
   .insp { display: none; } .insp.open { display: block; position: fixed; inset: 20% 0 0; width: auto; z-index: 20; background: var(--surface); }
   .panel-handle { display: none; }
   .menu { display: grid; place-items: center; }
-  .count { display: none; }
 }
 /* Finger-sized targets on touch screens and in the narrow-screen drawers, whatever the theme's row height
    (after the base rules on purpose, so it wins the cascade). */
 @media (pointer: coarse), (max-width: 1023px) {
   :root { --ctl-h: 40px; }
   .row { min-height: 36px; }
+  /* Hover-only row buttons never show on touch; the folder chevron stays visible with a finger-sized hit area. */
+  /* The other row buttons keep their space while hidden (visibility, not display), so the chevron does not
+     jump when a tap makes the row :hover and a stray tap cannot land on the delete / exclude button. */
+  .row .tiny { display: grid; place-items: center; visibility: hidden; }
+  .row:hover .tiny { visibility: visible; }
+  .row .tiny.tree-chev { visibility: visible; width: 36px; height: 36px; margin: 0 -6px; }
   .brand #add { height: 34px; }
+  .mark::after { inset: -8px; } /* 24 px icon + 8 px halo = 40 px hit area; the look is unchanged */
 }
 @media (prefers-reduced-motion: reduce) {
   .shimmer { animation: none; color: var(--muted); background: none; }
@@ -597,7 +628,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 <div id="app">
   <aside class="side" id="side">
     <div class="brand">
-      <div class="mark">S</div>
+      <button class="mark" id="aboutBtn" type="button" title="About Sight" aria-label="About Sight"><img src="/static/favicon.svg" alt="" draggable="false"></button>
       <div><h1>Sight<span class="ver" id="verTag"></span></h1><div class="sub" id="buildTag" style="opacity:.7"></div></div>
       <button class="btn" id="add" title="Add a folder to the library">+ Folder</button>
     </div>
@@ -606,7 +637,6 @@ label.field textarea { min-height: 72px; resize: vertical; }
       <nav class="nav" id="nav"></nav>
     </div>
     <div class="opts" id="opts"></div>
-    <div class="sub" id="status"></div>
   </aside>
   <div class="panel-handle" id="sideHandle" title="Drag to resize · double-click to reset"></div>
   <div id="ctx" class="ctx" hidden></div>
@@ -633,6 +663,28 @@ label.field textarea { min-height: 72px; resize: vertical; }
       </div>
     </div>
   </div>
+  <div id="aboutOverlay" class="fb-overlay" hidden>
+    <div class="fb-modal about-modal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <div class="fb-head"><h2 id="aboutTitle">About Sight</h2><button class="btn ghost" id="aboutClose" type="button" aria-label="Close" style="width:32px;height:32px;padding:0">✕</button></div>
+      <dl class="about-list" id="aboutList"></dl>
+      <div class="fb-foot"><span class="fb-path" id="aboutMsg"></span><button class="btn ghost" id="aboutCopy" type="button">Copy</button></div>
+    </div>
+  </div>
+  <div id="dfOverlay" class="fb-overlay" hidden>
+    <div class="fb-modal df-modal">
+      <div class="fb-head"><h2>Default scan filters</h2><button class="btn ghost" id="dfClose" type="button" aria-label="Close" style="width:32px;height:32px;padding:0">✕</button></div>
+      <div class="df-body">
+        <div class="df-hint">The built-in list applied under your own Ignore list. Same syntax; <code>#</code> starts a comment. Editing it saves a copy in your Sight folder that replaces the shipped one.</div>
+        <textarea id="dfText" spellcheck="false" aria-label="Default scan filters"></textarea>
+      </div>
+      <div class="fb-foot">
+        <span class="ign-msg" id="dfMsg"></span>
+        <button class="btn ghost" id="dfCancel" type="button">Cancel</button>
+        <button class="btn ghost" id="dfRestore" type="button" hidden title="Delete your copy and go back to the list shipped with Sight">Restore shipped</button>
+        <button class="btn" id="dfSave" type="button">Save</button>
+      </div>
+    </div>
+  </div>
   <section class="main">
     <div class="top">
       <button class="menu" id="menu" aria-label="Menu">☰</button>
@@ -643,8 +695,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
         <div class="top-pop" id="viewOptPop" hidden></div>
         <button class="btn ghost icon" id="splitBtn" type="button" title="Show library alongside the board" hidden>◧</button>
+        <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
-      <div class="count" id="count"></div>
     </div>
     <div class="main-body" id="mainBody">
       <div class="grid" id="grid"></div>
@@ -668,6 +720,8 @@ import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelT
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
   setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
+// Sidebar icon per kind (ids of the ICONS catalogue) for the Types rows when "Sidebar icons" is on.
+const KIND_ICON = { image:"image", video:"film", audio:"music", model3d:"box", document:"file", font:"font", design:"palette" };
 const TILE_KEY = "sight.tileSize";
 const TILE_MIN = 48, TILE_MAX = 360, COMPACT = 72;
 const VIEW_MODE_KEY = "sight.viewMode";
@@ -699,6 +753,7 @@ const DEFAULT_THEME = {
   cardActiveColor: "#5b8cff", cardActiveBorder: 1,
   captions: "below", // "below" the thumbnail, or "over" it (the pre-0.54 look) — see capMetrics()
   themeRev: 2, // see migrateTheme()
+  secColor: "#e9eaec", secSize: 12, // section titles (the .sec band): Graphite's text colour / text size - 1, see secFallback()
   cardHover: 32, // hover frame brightness, % of the frame color mixed in on top of the base style
   waveColor: "#5b8cff", waveMode: "mirror",
   zoomSpeed: 1, zoomAxis: "y", zoomInvert: false,
@@ -717,11 +772,11 @@ const CLASSIC_LOOK = {
 };
 let themeMigrated = false; // set by migrateTheme() during state init; written back after boot
 const BUILTIN_THEMES = [
-  { name: "Graphite", builtin: true, vars: { bg: DEFAULT_THEME.bg, fg: DEFAULT_THEME.fg, border: DEFAULT_THEME.border, button: DEFAULT_THEME.button, accent: DEFAULT_THEME.accent, cardBg: DEFAULT_THEME.cardBg, cardActiveColor: DEFAULT_THEME.cardActiveColor, waveColor: DEFAULT_THEME.waveColor } },
-  { name: "Soft dark", builtin: true, vars: { bg: "#22242a", fg: "#eceef2", border: "#8ea3ff", button: "#e7e9ef", accent: "#8ea3ff", cardBg: "#2a2c33", cardActiveColor: "#8ea3ff", waveColor: "#8ea3ff" } },
-  { name: "Light", builtin: true, vars: { bg: "#f1f2ef", fg: "#1c1d1b", border: "#2f6fed", button: "#232420", accent: "#2f6fed", cardBg: "#ffffff", cardActiveColor: "#2f6fed", waveColor: "#2f6fed" } },
-  { name: "Warm", builtin: true, vars: { bg: "#f4ecdd", fg: "#3a2c1c", border: "#b5651d", button: "#3b2a1a", accent: "#b5651d", cardBg: "#fbf5ea", cardActiveColor: "#b5651d", waveColor: "#c17a3d" } },
-  { name: "Classic", builtin: true, vars: { ...CLASSIC_LOOK, accent: CLASSIC_LOOK.border, captions: "over", waveColor: "#5b8cff" } },
+  { name: "Graphite", builtin: true, vars: { secColor: DEFAULT_THEME.secColor, secSize: DEFAULT_THEME.secSize, bg: DEFAULT_THEME.bg, fg: DEFAULT_THEME.fg, border: DEFAULT_THEME.border, button: DEFAULT_THEME.button, accent: DEFAULT_THEME.accent, cardBg: DEFAULT_THEME.cardBg, cardActiveColor: DEFAULT_THEME.cardActiveColor, waveColor: DEFAULT_THEME.waveColor } },
+  { name: "Soft dark", builtin: true, vars: { secColor: "#eceef2", secSize: 12, bg: "#22242a", fg: "#eceef2", border: "#8ea3ff", button: "#e7e9ef", accent: "#8ea3ff", cardBg: "#2a2c33", cardActiveColor: "#8ea3ff", waveColor: "#8ea3ff" } },
+  { name: "Light", builtin: true, vars: { secColor: "#1c1d1b", secSize: 12, bg: "#f1f2ef", fg: "#1c1d1b", border: "#2f6fed", button: "#232420", accent: "#2f6fed", cardBg: "#ffffff", cardActiveColor: "#2f6fed", waveColor: "#2f6fed" } },
+  { name: "Warm", builtin: true, vars: { secColor: "#3a2c1c", secSize: 12, bg: "#f4ecdd", fg: "#3a2c1c", border: "#b5651d", button: "#3b2a1a", accent: "#b5651d", cardBg: "#fbf5ea", cardActiveColor: "#b5651d", waveColor: "#c17a3d" } },
+  { name: "Classic", builtin: true, vars: { ...CLASSIC_LOOK, secColor: CLASSIC_LOOK.fg, secSize: CLASSIC_LOOK.textSize - 1, accent: CLASSIC_LOOK.border, captions: "over", waveColor: "#5b8cff" } },
 ];
 // Fullscreen-preview masks: [id, label, width/height]. "free" = no mask (the preview fills the
 // stage); the rest clip the preview to a frame of that shape, centred in the stage.
@@ -842,7 +897,15 @@ async function loadAppDefaults(){
 const appDefaultsResp = await loadAppDefaults();
 const IS_DEV = appDefaultsResp.dev === true;
 const appDefaults = appDefaultsResp.defaults || {};
-let RUNTIME_DEFAULT_THEME = { ...DEFAULT_THEME, ...appDefaults.theme };
+// A theme without section-title keys (saved before they existed) keeps the old look: the title took the
+// text colour and text size - 1. secFallback() derives the two keys from the theme's own fg / textSize.
+function secFallback(o){
+  return {
+    secColor: o.secColor ?? o.fg ?? DEFAULT_THEME.fg,
+    secSize: o.secSize ?? (o.textSize ?? DEFAULT_THEME.textSize) - 1,
+  };
+}
+let RUNTIME_DEFAULT_THEME = { ...DEFAULT_THEME, ...secFallback(appDefaults.theme || {}), ...appDefaults.theme };
 let RUNTIME_DEFAULT_V3D = { ...DEFAULT_V3D, ...appDefaults.viewer3d };
 let RUNTIME_DEFAULT_TILE = clampTile(Number(appDefaults.tileSize) || 180);
 
@@ -870,12 +933,31 @@ function clampPanel(which, v){
   return Number.isFinite(n) && n > 0 ? Math.round(Math.min(max, Math.max(min, n))) : def;
 }
 function saveLayout(){
-  putSetting(LAYOUT_KEY, JSON.stringify({ details: state.details, navCollapse: state.navCollapse, navOrder: state.navOrder, settingsOpen: state.settingsOpen, showIcons: state.showIcons, canvasSplit: state.canvasSplit, canvasSplitRatio: state.canvasSplitRatio, canvasSplitStacked: state.canvasSplitStacked, sideW: state.sideW, inspW: state.inspW }));
+  putSetting(LAYOUT_KEY, JSON.stringify({ details: state.details, navCollapse: state.navCollapse, navOrder: state.navOrder, settingsOpen: state.settingsOpen, showIcons: state.showIcons, themeBase: state.themeBase, canvasSplit: state.canvasSplit, canvasSplitRatio: state.canvasSplitRatio, canvasSplitStacked: state.canvasSplitStacked, sideW: state.sideW, inspW: state.inspW }));
+}
+// The info panel (inspector). Wide screens: a docked panel shown / hidden by state.details (saved in
+// the layout). Narrow screens (< 1024 px, see the media query): a drawer, .open, never saved.
+const narrowMQ = window.matchMedia("(max-width: 1023px)");
+function applyDetails(){
+  const narrow = narrowMQ.matches;
+  insp.style.display = state.details || narrow ? "" : "none";
+  $("inspHandle").hidden = !state.details;
+  syncInfoBtn();
+}
+function syncInfoBtn(){
+  const on = narrowMQ.matches ? insp.classList.contains("open") : state.details;
+  const b = $("infoBtn");
+  b.classList.toggle("on", on);
+  b.setAttribute("aria-pressed", String(on));
 }
 function toggleDetails(){
+  if (narrowMQ.matches){
+    insp.classList.toggle("open");
+    if (insp.classList.contains("open")) renderInsp();
+    return;
+  }
   state.details = !state.details;
-  insp.style.display = state.details ? "" : "none";
-  $("inspHandle").hidden = !state.details;
+  applyDetails();
   if (state.details) renderInsp(); // previews sized while hidden (pixelation check) need a redo
   saveLayout();
 }
@@ -907,9 +989,10 @@ const state = {
   themes: loadThemeList(),
   settingsOpen: savedLayout.settingsOpen === true,
   showIcons: savedLayout.showIcons !== false,
+  themeBase: savedLayout.themeBase && typeof savedLayout.themeBase === "object" ? savedLayout.themeBase : null, // preset last picked / saved: { kind: "b"|"u", name }
   sideW: clampPanel("side", savedLayout.sideW), // sidebar / inspector widths, px (drag their inner edge)
   inspW: clampPanel("insp", savedLayout.inspW),
-  navCollapse: { types: false, sources: false, collections: false, tags: false, canvas: false, ...savedLayout.navCollapse },
+  navCollapse: { types: false, sources: false, collections: false, tags: false, canvas: false, inspFile: false, ...savedLayout.navCollapse },
   navOrder: loadNavOrder(),
   sourceTree: { expandedSources: new Set(), expandedPaths: new Set(), dirsCache: new Map() },
   v3d: loadV3D(),
@@ -922,7 +1005,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const grid = $("grid"), nav = $("nav"), insp = $("insp"), status = $("status"), canvasView = $("canvasView"), splitBtn = $("splitBtn"), splitHandle = $("splitHandle"), mainBody = $("mainBody");
+const grid = $("grid"), nav = $("nav"), insp = $("insp"), canvasView = $("canvasView"), splitBtn = $("splitBtn"), splitHandle = $("splitHandle"), mainBody = $("mainBody");
 let sliceEl = null, spaceEl = null;
 let visTimer = 0, pullTimer = 0, renderRAF = 0;
 const seenThumb = new Set();
@@ -1028,7 +1111,10 @@ function loadTheme(){
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem("sight.theme") || "null") || legacyTheme(); }
   catch { saved = legacyTheme(); }
-  const t = { ...RUNTIME_DEFAULT_THEME, ...migrateTheme(saved) };
+  const mig = migrateTheme(saved);
+  const t = { ...RUNTIME_DEFAULT_THEME, ...mig };
+  // A saved theme without the section-title keys keeps the old look; no saved theme keeps the runtime default.
+  if (Object.keys(mig).length && (mig.secColor === undefined || mig.secSize === undefined)) Object.assign(t, secFallback({ ...t, secColor: mig.secColor, secSize: mig.secSize }));
   t.videoCache = clampCache(t.videoCache);
   return t;
 }
@@ -1063,7 +1149,7 @@ function loadThemeList(){
   try { return JSON.parse(localStorage.getItem("sight.themes") || "[]"); } catch { return []; }
 }
 function saveThemeList(){ putSetting("sight.themes", JSON.stringify(state.themes)); }
-function saveTheme(){ putSetting("sight.theme", JSON.stringify(state.theme)); applyUi(); }
+function saveTheme(){ putSetting("sight.theme", JSON.stringify(state.theme)); applyUi(); renderThemeList(); }
 function applyUi(){
   const t = state.theme, r = document.documentElement.style;
   r.setProperty("--bg", t.bg);
@@ -1079,6 +1165,8 @@ function applyUi(){
   r.setProperty("--accent-soft", `color-mix(in oklab, ${accent} 24%, ${t.bg})`);
   r.setProperty("--accent-fg", `color-mix(in oklab, ${accent} 55%, ${t.fg})`);
   r.setProperty("--sec-bg", mixHex(t.bg, t.fg, 0.07));
+  r.setProperty("--sec-fg", t.secColor || t.fg);
+  r.setProperty("--sec-size", (Number(t.secSize) || t.textSize - 1) + "px");
   r.setProperty("--border", `color-mix(in oklab, ${t.border} 18%, transparent)`);
   r.setProperty("--border-strong", `color-mix(in oklab, ${t.border} 32%, transparent)`);
   r.setProperty("--font", fontStack(t.font));
@@ -1179,6 +1267,8 @@ function esc(s){
 // renderIconSvg/iconSpan below), the way a mask would.
 const ICONS = {
   folder: `<path d="M3 6h6l2 2h10v11H3z"/>`,
+  file: `<path d="M6 3h8l4 4v14H6z"/><polyline points="14,3 14,7 18,7"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>`,
+  font: `<polyline points="4,20 10,4 16,20"/><line x1="6.5" y1="14" x2="13.5" y2="14"/><line x1="19" y1="20" x2="19" y2="10"/>`,
   star: `<polygon points="12,2 14.9,9.1 22.5,9.5 16.5,14.3 18.6,21.5 12,17.3 5.4,21.5 7.5,14.3 1.5,9.5 9.1,9.1"/>`,
   heart: `<circle cx="8.5" cy="9" r="3.5"/><circle cx="15.5" cy="9" r="3.5"/><polygon points="5,10.5 12,19.5 19,10.5"/>`,
   camera: `<rect x="3" y="7" width="18" height="13" rx="2"/><rect x="8" y="4" width="8" height="3"/><circle cx="12" cy="13.5" r="3.5"/>`,
@@ -1337,8 +1427,8 @@ const ICONS = {
 // rather than a single flat grid — makes a large icon set actually skimmable. Every ICONS key
 // must appear in exactly one category here.
 const ICON_CATEGORIES = [
-  { label: "General", ids: ["folder", "tag", "bookmark", "star", "box", "layers", "key", "shield", "bolt", "target", "clock", "lock", "unlock", "gear", "link", "eye", "download", "upload", "trash", "pencil", "search", "compass", "calendar", "battery", "wifi", "bulb", "print"] },
-  { label: "Media", ids: ["camera", "film", "image", "music", "book", "palette", "mic", "play", "pause", "headphones", "speaker", "videocam", "radio", "disc", "ticket", "clapper", "brush"] },
+  { label: "General", ids: ["folder", "file", "tag", "bookmark", "star", "box", "layers", "key", "shield", "bolt", "target", "clock", "lock", "unlock", "gear", "link", "eye", "download", "upload", "trash", "pencil", "search", "compass", "calendar", "battery", "wifi", "bulb", "print"] },
+  { label: "Media", ids: ["font", "camera", "film", "image", "music", "book", "palette", "mic", "play", "pause", "headphones", "speaker", "videocam", "radio", "disc", "ticket", "clapper", "brush"] },
   { label: "Nature", ids: ["sun", "moon", "cloud", "leaf", "tree", "flower", "mountain", "snowflake", "droplet", "rainbow", "storm", "wave", "cactus", "volcano", "feather", "seedling", "shell", "palm"] },
   { label: "Food", ids: ["apple", "coffee", "pizza", "cake", "burger", "carrot", "egg", "icecream", "banana", "watermelon", "bread", "cheese", "cookie", "donut", "wine", "bottle"] },
   { label: "Signs", ids: ["warning", "info", "check", "cross", "question", "noentry", "arrowright", "plus", "arrowleft", "arrowup", "arrowdown", "minus", "alertcircle", "stop", "recycle", "like", "dislike"] },
@@ -1867,8 +1957,6 @@ function selectSet(ids, anchor){
 function paintSelection(){
   const set = new Set(state.selectedIds);
   for (const [id, el] of cardPool) el.classList.toggle("on", set.has(id));
-  const n = state.selectedIds.length;
-  $("count").textContent = n > 1 ? n + " selected" : String(state.items.length);
 }
 
 function idsInRect(rect){
@@ -2075,10 +2163,10 @@ new ResizeObserver(() => {
 }).observe(mainBody);
 new ResizeObserver(() => scheduleRender()).observe(grid);
 
-function row(label, count, on, click){
+function row(label, count, on, click, iconId = ""){
   const b = document.createElement("button");
   b.className = "row" + (on ? " on" : "");
-  b.innerHTML = `<span>${esc(label)}</span><em class="badge">${count ?? 0}</em>`;
+  b.innerHTML = `${state.showIcons && iconId ? iconSpan(iconId, "var(--subtle)", 15) : ""}<span>${esc(label)}</span><em class="badge">${count ?? 0}</em>`;
   if (typeof click === "function") b.onclick = click;
   return b;
 }
@@ -2236,7 +2324,7 @@ function renderFolderChildren(sid, path, depth, container){
     b.style.paddingLeft = (8 + depth * 12) + "px";
     // Excluding a folder excludes everything under it (server-side too), so an excluded row is a
     // leaf: no "+" to expand it and none of its subfolders are listed.
-    b.innerHTML = `<span>${esc(d.name)}</span>${d.excluded ? "" : `<button class="tiny" data-act="expand" type="button" aria-label="Expand">${open ? "−" : "+"}</button>`}<button class="tiny" data-act="exclude" type="button" aria-label="${d.excluded ? "Include in scan" : "Exclude from scan"}">${d.excluded ? "↺" : "×"}</button>`;
+    b.innerHTML = `<span>${esc(d.name)}</span>${d.excluded ? "" : `<button class="tiny tree-chev${open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"}"><span class="chev">›</span></button>`}<button class="tiny" data-act="exclude" type="button" aria-label="${d.excluded ? "Include in scan" : "Exclude from scan"}">${d.excluded ? "↺" : "×"}</button>`;
     b.onclick = (e) => {
       if (e.target.closest("button") || d.excluded) return;
       applyFilter({ folder: d.path });
@@ -2279,21 +2367,21 @@ function renderTypes(set){
   bindSectionDrag(wrap, "types");
   nav.append(wrap);
   if (state.navCollapse.types) return;
-  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.folder && !f.review, () => set({})));
+  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.folder && !f.review, () => set({}), "layers"));
   for (const k of Object.keys(KIND)){
-    wrap.append(row(KIND[k], c[k] || 0, f.kind === k, () => set({ kind: k })));
+    wrap.append(row(KIND[k], c[k] || 0, f.kind === k, () => set({ kind: k }), KIND_ICON[k]));
   }
   // A div (not row()'s button): it holds its own clean-up button, and buttons can't nest.
   const missRow = document.createElement("div");
   missRow.className = "row" + (f.missing ? " on" : "");
-  missRow.innerHTML = `<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
+  missRow.innerHTML = `${state.showIcons ? iconSpan("alertcircle", "var(--subtle)", 15) : ""}<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
   missRow.onclick = (e) => { if (e.target.closest("button")) purgeMissing(false); else set({ missing: true }); };
   wrap.append(missRow);
   // Review rows (lightbox review panel / annotate.js): only the ones with something in them, so a
   // library nobody reviews keeps a short list. The active one stays even when it empties.
   for (const [k, label] of REVIEW_ROWS){
     const n = c["review_" + k] || 0;
-    if (n || f.review === k) wrap.append(row(label, n, f.review === k, () => set({ review: k })));
+    if (n || f.review === k) wrap.append(row(label, n, f.review === k, () => set({ review: k }), "flag"));
   }
 }
 const REVIEW_ROWS = [["open", "Open notes"], ["review", "Needs review"], ["changes", "Changes requested"], ["approved", "Approved"]];
@@ -2429,7 +2517,7 @@ function ensureCanvasCtl(){
       // Shared with the library grid rather than re-implemented: the marquee modifier rules and the
       // nearest-neighbour switch for small (pixel-art) sources.
       combineSelection, markSmallSrc, syncPixelation,
-      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
+      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && $("aboutOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
       onContextMenu: showCanvasCtx,
     });
   }
@@ -2523,7 +2611,7 @@ function renderCanvasBoards(){
 
 function renderSources(set){
   const wrap = document.createElement("div");
-  wrap.append(sectionHeader("Sources", "sources", "", "folder"));
+  wrap.append(sectionHeader("Sources", "sources", `<span class="sec-count" id="srcCount">${statusHtml()}</span>`, "folder"));
   bindSectionDrag(wrap, "sources");
   nav.append(wrap);
   if (state.navCollapse.sources) return;
@@ -2533,7 +2621,7 @@ function renderSources(set){
     b.className = "row src-row" + (state.filter.source === s.id ? " on" : "");
     b.dataset.sid = s.id;
     const iconHtml = state.showIcons ? iconSpan("folder", "var(--subtle)", 15) : "";
-    b.innerHTML = `${iconHtml}<span>${esc(s.name)}</span><em class="badge">${s.count || 0}</em><button class="tiny" data-act="expand" type="button" aria-label="Expand folders">${open ? "−" : "+"}</button><button class="tiny" data-act="remove" type="button" aria-label="Remove source">×</button>`;
+    b.innerHTML = `${iconHtml}<span>${esc(s.name)}</span><em class="badge">${s.count || 0}</em><button class="tiny tree-chev${open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand folders"}"><span class="chev">›</span></button><button class="tiny" data-act="remove" type="button" aria-label="Remove source">×</button>`;
     b.onclick = (e) => {
       if (e.target.closest("button")) return;
       set({ source: s.id });
@@ -2848,12 +2936,15 @@ function bindTagHold(el, name){
   });
 }
 
-function renderStatus(){
+// The file counter ("N files" / the shimmering "scanning · N") lives in the Sources header; renderNav
+// builds it with statusHtml(), renderStatus() repaints it in place when only the numbers change.
+function statusHtml(){
   const n = state.total || state.meta.counts?.all || 0;
-  if (state.meta.scanning) status.innerHTML = `<span class="shimmer">scanning · ${n}</span>`;
-  else status.textContent = n + " files";
-  const sel = state.selectedIds.length;
-  $("count").textContent = sel > 1 ? sel + " selected" : String(state.items.length);
+  return state.meta.scanning ? `<span class="shimmer">scanning · ${n}</span>` : n + " files";
+}
+function renderStatus(){
+  const el = $("srcCount");
+  if (el) el.innerHTML = statusHtml();
 }
 
 function renderFfmpeg(){
@@ -2921,6 +3012,16 @@ async function refreshThumbs(){
   }
 }
 
+// Collapsible "File" block (preview + name + facts) of the single-file inspector; the state is
+// state.navCollapse.inspFile, saved with the layout. Collapsed, only the file name stays under the header.
+insp.addEventListener("click", (e) => {
+  const head = e.target.closest(".sec[data-insp-sec]");
+  if (!head) return;
+  const k = head.dataset.inspSec;
+  state.navCollapse[k] = !state.navCollapse[k];
+  saveLayout();
+  renderInsp();
+});
 function renderInsp(){
   const sel = selectedAssets();
   if (!sel.length){
@@ -2939,8 +3040,10 @@ function renderInsp(){
   let preview = `<div class="insp-thumb" data-thumb="${a.id}">${thumb ? `<img src="${thumb}" alt="" />` : `<div class="ph">${KIND[a.kind]||a.kind}</div>`}</div>`;
   if (a.status === "missing") preview = `<div style="color:var(--danger)">File not found</div>`;
   const st = a.status === "missing" ? "missing" : "on disk";
+  const fileOpen = !state.navCollapse.inspFile;
   insp.innerHTML = `
-    <div class="preview">${preview}</div>
+    <div class="sec toggle${fileOpen ? " open" : ""}" data-insp-sec="inspFile"><span class="sec-title">File</span><span class="chev">›</span></div>
+    ${fileOpen ? `<div class="preview">${preview}</div>
     <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:10px 0 2px;overflow-wrap:anywhere">${esc(a.name)}</h2>
     <div class="sub" style="word-break:break-all">${esc(a.path)}</div>
     <dl>
@@ -2948,7 +3051,7 @@ function renderInsp(){
       <dt>Size</dt><dd>${bytes(a.size)}</dd>
       <dt>Frame</dt><dd>${a.width && a.height ? a.width+"×"+a.height : "—"}</dd>
       <dt>Status</dt><dd>${st}</dd>
-    </dl>
+    </dl>` : `<h2 class="insp-name">${esc(a.name)}</h2>`}
     <label class="field">Rating
       <select id="rating">${[0,1,2,3,4,5].map(n => `<option value="${n}" ${a.rating===n?"selected":""}>${n ? n : "—"}</option>`).join("")}</select>
     </label>
@@ -4296,11 +4399,13 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         const solidKey = v.shadeBase === "solid" ? v.solidColor + "|" + v.solidMetal + "|" + v.solidRough : null;
         if (solidKey && shadeApplied.solid !== solidKey){
           obj.traverse((c) => {
-            const m = c.isMesh && c.material;
-            if (!m || !m.userData._v3dSolid) return;
-            m.color.set(v.solidColor);
-            m.metalness = v.solidMetal;
-            m.roughness = v.solidRough;
+            // (an array: a multi-material mesh with a cut-out part has one Solid material per group)
+            for (const m of [].concat((c.isMesh && c.material) || [])){
+              if (!m || !m.userData._v3dSolid) continue;
+              m.color.set(v.solidColor);
+              m.metalness = v.solidMetal;
+              m.roughness = v.solidRough;
+            }
           });
           shadeApplied.solid = solidKey;
         }
@@ -4895,6 +5000,7 @@ function attachViewer(stage, a, src, opts = {}){
   const wrap = stage.querySelector(".view");
   const el = stage.querySelector(".view-media");
   let phEl = stage.querySelector(".view-ph");
+  let scEl = null; // the scrub copy over a video (see loadScrubCopy)
   const hud = stage.querySelector(".view-hud");
   const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit", panD: null, zoomD: null };
   // Turn / mirror about the window's centre, in front of the picture's own translate + scale;
@@ -4938,6 +5044,59 @@ function attachViewer(stage, a, src, opts = {}){
     seekWant = null;
     if (Math.abs(t - el.currentTime) > 0.001) el.currentTime = t;
   }
+  // A long-GOP clip (a keyframe every few seconds) is slow to seek however fast the disk is: each
+  // seek decodes from the keyframe before it, so the cost grows towards the middle of each GOP
+  // (~230 ms for the 8.3 s GOP of a 416x960 phone clip) and a drag painted about one position in five.
+  // Two slow seeks during a scrub (not the first seek after open, a loop wrap or a frame step) ask
+  // the server for a scrub copy (Library.start_scrub_copy: small, a keyframe every 4 frames, ~2 ms a
+  // seek); once it has loaded, a scrub shows it over the player (same geometry, apply()) and hides it
+  // when the player itself has landed on the last position. The copy's frame times can differ from
+  // the original's by a fraction of a frame, so the hand-over may "pop" by that much.
+  const SLOW_SEEK_MS = 80, SLOW_SEEKS = 2, SCRUB_COPY_MIN_S = 3;
+  let seekAt = 0, slowSeeks = 0, scAsked = false, scWant = null, scGen = 0, scSeekGen = -1;
+  function loadScrubCopy(){
+    if (scAsked || opts.embedded || !light || !(el.duration >= SCRUB_COPY_MIN_S)) return;
+    scAsked = true;
+    convertForPlayback(a.id, null, () => !!light && light.video === el, "scrub").then((res) => {
+      if (!res.ok || !light || light.video !== el || !el.isConnected) return;
+      const v = document.createElement("video");
+      v.className = "view-scrub";
+      v.muted = true; v.playsInline = true; v.preload = "auto"; v.hidden = true;
+      v.src = `/api/video/scrub/${a.id}`;
+      v.addEventListener("error", () => { console.warn("Sight: the scrub copy did not load", a.id, v.error?.code); v.hidden = true; if (scEl === v) scEl = null; }, { once: true });
+      v.addEventListener("seeked", () => {
+        pumpScrubCopy();
+        if (light?.scrubbing && scWant == null && !v.seeking && scSeekGen === scGen) v.hidden = false; // not a seek from the last drag
+      });
+      el.after(v); // under the drawings and the HUD
+      scEl = v;
+      apply();
+    });
+  }
+  function pumpScrubCopy(){
+    if (!scEl || scWant == null || scEl.seeking || scEl.readyState < 1) return;
+    const t = scWant;
+    scWant = null;
+    if (Math.abs(t - scEl.currentTime) > 0.001){ scSeekGen = scGen; scEl.currentTime = t; }
+    else if (light?.scrubbing && !scEl.seeking) scEl.hidden = false;
+  }
+  function hideScrubCopy(){
+    if (!scEl || scEl.hidden) return;
+    const v = scEl;
+    let done = false;
+    // Only once the player has presented its own frame of the position, or the old one would flash.
+    const hide = () => { if (done) return; done = true; if (light && !light.scrubbing) v.hidden = true; };
+    if (el.requestVideoFrameCallback) el.requestVideoFrameCallback(hide);
+    setTimeout(hide, 250);
+  }
+  el.addEventListener("seeking", () => {
+    seekAt = performance.now();
+    // A seek that is no scrub nor its hand-over (frame step, marker jump): the copy goes at once.
+    if (scEl && light && !light.scrubbing && light.scrubT == null){ scEl.hidden = true; scWant = null; }
+  });
+  el.addEventListener("seeked", () => {
+    if (light?.scrubbing && seekAt && performance.now() - seekAt > SLOW_SEEK_MS && ++slowSeeks >= SLOW_SEEKS) loadScrubCopy();
+  });
   function seekVideo(t){
     const dur = el.duration || 0;
     if (!dur) return null;
@@ -4946,17 +5105,20 @@ function attachViewer(stage, a, src, opts = {}){
     paintVBar();
     seekWant = t;
     pumpSeek();
+    if (scEl && light?.scrubbing){ scWant = t; pumpScrubCopy(); }
     pushVideoFocus(el, a, 200); // keep the RAM window under the playhead while scrubbing
     return t;
   }
   // Hand the playhead back to the element once the last seek has landed.
   function settleScrub(){
-    if (light && !light.scrubbing && seekWant == null && !el.seeking){ light.scrubT = null; paintVBar(); }
+    if (light && !light.scrubbing && seekWant == null && !el.seeking){ light.scrubT = null; paintVBar(); hideScrubCopy(); }
   }
   function beginScrub(){
     if (!light) return;
     light.scrubbing = true;
     el.pause();
+    scGen++;
+    if (scEl){ scEl.hidden = true; scWant = null; } // shown again once it has landed on this drag's position
   }
   function endScrub(){
     if (!light || !light.scrubbing) return;
@@ -4986,6 +5148,11 @@ function attachViewer(stage, a, src, opts = {}){
       phEl.style.width = el.style.width;
       phEl.style.height = el.style.height;
       phEl.style.transform = el.style.transform;
+    }
+    if (scEl){
+      scEl.style.width = el.style.width;
+      scEl.style.height = el.style.height;
+      scEl.style.transform = el.style.transform;
     }
     // Same icon/pixel-art heuristic as thumbnails: only go crisp once we're actually magnifying
     // a small source past its native pixels, so ordinary photos keep smooth upscaling.
@@ -5377,7 +5544,7 @@ function toggleLight(a){
 
 const LIGHT_HINT = "A annotate · Shift+R turn · Shift+M mirror · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
 const LIGHT_HINT_VIDEO = "A annotate · Shift+R turn · Shift+M mirror · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const ANNOT_HINT = "B brush · P pencil · M marker · E eraser (Ctrl held) · L line · W arrow · R rect · O ellipse · T text · N pin · V select · Shift+Del clear · S / Shift+S screenshot · C notes · A exit";
+const ANNOT_HINT = "Annotating · ? = shortcuts · Esc leaves";
 function syncLightHint(){
   const el = $("lightHint");
   if (!el || !light) return;
@@ -6882,7 +7049,7 @@ async function purgeMissing(scoped){
   if (notes.length) alert(notes.join("\n"));
 }
 
-// Settings → Scanning → Ignore. The list lives in the library DB (the scanner needs it before any
+// Settings → Scan Filtering → Ignore. The list lives in the library DB (the scanner needs it before any
 // page is open), so it comes with /api/state; Apply hides matches and rescans every source.
 async function applyScanIgnore(){
   const ta = $("scanIgnore"), msg = $("scanIgnoreMsg");
@@ -6901,6 +7068,47 @@ async function applyScanIgnore(){
     msg.textContent = /404|405|Not Found|Method Not Allowed/.test(String(err)) ? "Restart Sight to load the new server code" : "Failed: " + String(err.message || err).slice(0, 120);
   }
 }
+
+// Default scan filters: the built-in list (app/initial_filtering.ini, or the user's copy in SIGHT_HOME).
+// Save / Restore rescan every source like Apply does and report in the Settings status line.
+async function dfOpen(){
+  $("dfMsg").textContent = "";
+  try {
+    const r = await api("/api/scan/defaults");
+    $("dfText").value = r.text || "";
+    $("dfRestore").hidden = !r.custom;
+    $("dfOverlay").hidden = false;
+    $("dfText").focus();
+  } catch (err) {
+    const m = $("scanIgnoreMsg");
+    if (m) m.textContent = /404|405|Not Found|Method Not Allowed/.test(String(err)) ? "Restart Sight to load the new server code" : "Failed: " + String(err.message || err).slice(0, 120);
+  }
+}
+function dfClose(){ $("dfOverlay").hidden = true; }
+async function dfSend(method, body){
+  const msg = $("scanIgnoreMsg");
+  $("dfMsg").textContent = "Saving…";
+  try {
+    const r = await api("/api/scan/defaults", body === undefined ? { method } : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    dfClose();
+    const parts = [];
+    if (r.hidden) parts.push(`${r.hidden} hidden`);
+    if (r.restored) parts.push(`${r.restored} restored`);
+    if (msg) msg.textContent = (parts.join(", ") || "Saved") + " · rescanning";
+    await refreshMeta();
+    resetList();
+  } catch (err) {
+    let m = String(err.message || err);
+    try { m = JSON.parse(m).detail || m; } catch {}
+    $("dfMsg").textContent = "Failed: " + String(m).slice(0, 160);
+    if (msg) msg.textContent = "Failed: " + String(m).slice(0, 160);
+  }
+}
+$("dfClose").onclick = dfClose;
+$("dfCancel").onclick = dfClose;
+$("dfOverlay").addEventListener("pointerdown", (e) => { if (e.target === $("dfOverlay")) dfClose(); });
+$("dfSave").onclick = () => dfSend("PUT", { text: $("dfText").value });
+$("dfRestore").onclick = () => { if (confirm("Delete your edited copy and go back to the default filters shipped with Sight?")) dfSend("DELETE"); };
 
 async function refreshMeta(){
   state.meta = await api("/api/state");
@@ -7117,6 +7325,8 @@ function paletteActions(){
 function resetAllSettings(){
   if (!confirm("Reset all settings to their defaults?")) return;
   state.theme = { ...RUNTIME_DEFAULT_THEME };
+  state.themeBase = { kind: "b", name: BUILTIN_THEMES[0].name };
+  saveLayout();
   Object.assign(state.v3d, RUNTIME_DEFAULT_V3D); // in place — the 3D render loop reads state.v3d live
   saveV3D();
   setTile(RUNTIME_DEFAULT_TILE);
@@ -7441,37 +7651,117 @@ function sliderRow(label, key, min, max, step, unit){
   return `<div class="opt"><span>${esc(label)}</span><div class="bslider" data-slider="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-unit="${unit || ""}"></div></div>`;
 }
 
-function renderThemeList(){
+const THEME_SAVE_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"/><rect x="8" y="3" width="7" height="5"/><rect x="8" y="13" width="8" height="8"/></svg>`;
+const THEME_DEV_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="8,8 3,12 8,16"/><polyline points="16,8 21,12 16,16"/><line x1="14" y1="5" x2="10" y2="19"/></svg>`;
+const THEME_RESET_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 3-6.2"/><polyline points="4,3 4,8 9,8"/></svg>`;
+// A preset's values as compared with the live theme: presets saved before the section-title keys existed
+// get them derived from their own fg / textSize, so they still match a theme that looks the same.
+const presetVars = (t) => ({ ...secFallback(t.vars), ...t.vars });
+const themeMatches = (t) => Object.entries(presetVars(t)).every(([k, v]) => state.theme[k] === v);
+function setThemeBase(kind, name){
+  state.themeBase = { kind, name };
+  saveLayout();
+}
+let themePopEl = null;
+function closeThemePop(){
+  if (themePopEl) themePopEl.hidden = true;
+}
+// Touch has no pointer-move: a tap outside the popover / its save button, or a scroll of the sidebar, closes it.
+document.addEventListener("pointerdown", (e) => {
+  if (!themePopEl || themePopEl.hidden) return;
+  if (themePopEl.contains(e.target) || e.target.closest?.("#themeSave")) return;
+  closeThemePop();
+}, true);
+$("sideScroll").addEventListener("scroll", closeThemePop, { passive: true });
+// Save popover of the theme row, anchored to the save button. Filled on every open: "Save to <name>" only
+// when the last picked base is one of the user's own themes. Auto-closes like every other popover.
+function openThemePop(anchor, userBase){
+  if (!themePopEl){
+    themePopEl = document.createElement("div");
+    themePopEl.className = "top-pop theme-pop";
+    themePopEl.style.position = "fixed";
+    document.body.append(themePopEl);
+    registerAutoClose(themePopEl, closeThemePop, anchor);
+  }
+  const pop = themePopEl;
+  pop.hidden = false;
+  pop.innerHTML = `
+    ${userBase ? `<button type="button" data-act="over">Save to “${esc(userBase.name)}”</button>` : ""}
+    <div class="opt"><input id="thSaveName" placeholder="Save as new…" style="flex:1;min-width:0;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface);padding:0 8px" /><button class="btn" id="thSaveGo" type="button" style="height:28px;width:auto;padding:0 10px">Save</button></div>`;
+  const r = anchor.getBoundingClientRect();
+  pop.style.minWidth = "220px";
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 236)) + "px";
+  pop.style.top = (r.bottom + 6) + "px";
+  const commit = (name, replaceIdx) => {
+    const entry = { name, vars: { ...state.theme } };
+    state.themes = replaceIdx >= 0 ? state.themes.map((t2, i) => i === replaceIdx ? entry : t2)
+      : [...state.themes.filter((t2) => t2.name !== name), entry];
+    saveThemeList();
+    setThemeBase("u", name);
+    renderThemeList(true);
+  };
+  const over = pop.querySelector('[data-act="over"]');
+  if (over) over.onclick = () => commit(userBase.name, state.themes.findIndex((t2) => t2.name === userBase.name));
+  const go = () => { const name = $("thSaveName").value.trim(); if (name) commit(name, -1); };
+  $("thSaveGo").onclick = go;
+  $("thSaveName").onkeydown = (e) => { if (e.key === "Enter"){ e.preventDefault(); go(); } };
+}
+function renderThemeList(force){
   const el = $("themeList");
   if (!el) return;
-  // Preselect the preset whose values match the current theme, else show a "Custom" placeholder.
-  const matches = (t) => Object.entries(t.vars).every(([k, v]) => state.theme[k] === v);
-  let cur = "";
-  BUILTIN_THEMES.forEach((t, i) => { if (!cur && matches(t)) cur = `b${i}`; });
-  state.themes.forEach((t, i) => { if (!cur && matches(t)) cur = `u${i}`; });
+  // Preselect the preset whose values match the current theme (the last picked one first), else "Custom".
+  const all = [...BUILTIN_THEMES.map((t, i) => ({ t, v: `b${i}`, kind: "b" })), ...state.themes.map((t, i) => ({ t, v: `u${i}`, kind: "u" }))];
+  const base = state.themeBase && all.find((x) => x.kind === state.themeBase.kind && x.t.name === state.themeBase.name);
+  const hit = base && themeMatches(base.t) ? base : all.find((x) => themeMatches(x.t));
+  const cur = hit ? hit.v : "";
+  // Values equal to another preset than the remembered one: that preset is now the base.
+  if (hit && hit !== base){ state.themeBase = { kind: hit.kind, name: hit.t.name }; saveLayout(); }
+  const userBase = base && base.kind === "u" ? base.t : null;
+  // saveTheme() calls this after every edit: rebuild only when the row would look different.
+  const sig = [cur, userBase ? userBase.name : "", state.themes.map((t) => t.name).join(",")].join("|");
+  if (!force && el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  closeThemePop();
   const opt = (v, name) => `<option value="${v}" ${cur === v ? "selected" : ""}>${esc(name)}</option>`;
   el.innerHTML = `
-    <label class="opt">Theme <select id="themeSel">
+    <div class="opt theme-row"><span>Theme</span> <select id="themeSel">
       ${cur ? "" : `<option value="" selected disabled>Custom</option>`}
       <optgroup label="Built-in">${BUILTIN_THEMES.map((t, i) => opt(`b${i}`, t.name)).join("")}</optgroup>
       ${state.themes.length ? `<optgroup label="My themes">${state.themes.map((t, i) => opt(`u${i}`, t.name)).join("")}</optgroup>` : ""}
-    </select>${cur.startsWith("u") ? '<button class="tiny" id="themeDel" type="button" aria-label="Delete theme" title="Delete theme">×</button>' : ""}</label>
+    </select>
+    ${cur ? "" : `<button class="tiny" id="themeSave" type="button" aria-label="Save theme" title="Save theme">${THEME_SAVE_ICON}</button>`}
+    ${cur.startsWith("u") ? '<button class="tiny" id="themeDel" type="button" aria-label="Delete theme" title="Delete theme">×</button>' : ""}
+    <button class="tiny" id="thReset" type="button" aria-label="Reset all to defaults" title="Reset all to defaults: theme, 3D viewer and tile size">${THEME_RESET_ICON}</button>
+    ${IS_DEV ? `<button class="tiny" id="thSaveDefault" type="button" aria-label="Save as app defaults (dev)" title="Developer mode: writes the current theme, 3D viewer settings and tile size to app/static/defaults.json">${THEME_DEV_ICON}</button>` : ""}
+    </div>
   `;
   $("themeSel").onchange = () => {
     const v = $("themeSel").value;
     const t = (v[0] === "b" ? BUILTIN_THEMES : state.themes)[Number(v.slice(1))];
     if (!t) return;
-    // A preset saved before 0.54 has no accent; its frame colour was the accent then.
-    state.theme = { ...DEFAULT_THEME, ...(t.vars.accent ? null : { accent: t.vars.border || DEFAULT_THEME.accent }), ...t.vars };
+    // A preset saved before 0.54 has no accent; its frame colour was the accent then. One saved before
+    // the section-title keys gets them derived from its own text colour / size.
+    state.theme = { ...DEFAULT_THEME, ...(t.vars.accent ? null : { accent: t.vars.border || DEFAULT_THEME.accent }), ...secFallback({ ...DEFAULT_THEME, ...t.vars, secColor: t.vars.secColor, secSize: t.vars.secSize }), ...t.vars };
+    setThemeBase(v[0], t.name);
     masonryCache = null;
     saveTheme();
     renderOptions();
+  };
+  const sv = $("themeSave");
+  if (sv) sv.onclick = () => openThemePop(sv, userBase);
+  $("thReset").onclick = resetAllSettings;
+  const dv = $("thSaveDefault");
+  if (dv) dv.onclick = async () => {
+    if (!(await saveAppDefaults())) return;
+    const btn = $("thSaveDefault"); // renderOptions() rebuilt the panel
+    btn.textContent = "✓";
+    setTimeout(() => { if (btn.isConnected) btn.innerHTML = THEME_DEV_ICON; }, 1600);
   };
   const del = $("themeDel");
   if (del) del.onclick = () => {
     state.themes = state.themes.filter((_, i) => `u${i}` !== cur);
     saveThemeList();
-    renderThemeList();
+    renderThemeList(true);
   };
 }
 
@@ -7481,23 +7771,17 @@ function renderOptions(){
   const fontKnown = FONT_CHOICES.some((f) => f[0] === t.font);
   el.classList.toggle("expanded", state.settingsOpen);
   el.innerHTML = `
-    <div class="sec toggle${state.settingsOpen ? " open" : ""}" id="settingsHead"><span class="sec-title">Settings</span><span class="chev">›</span></div>
+    <div class="sec toggle${state.settingsOpen ? " open" : ""}" id="settingsHead">${state.showIcons ? `<span class="sec-icon">${renderIconSvg("gear", "currentColor", 14)}</span>` : ""}<span class="sec-title">Settings</span><span class="chev">›</span></div>
     <div class="settings-body" id="settingsBody" ${state.settingsOpen ? "" : "hidden"}>
-      <div class="theme-actions">
-        <button class="btn ghost" id="thSaveAs" type="button">Save as theme…</button>
-        <button class="btn ghost" id="thReset" type="button" title="Theme, 3D viewer and tile size go back to the app defaults">Reset all to defaults</button>
-      </div>
-      ${IS_DEV ? `<div class="theme-actions"><button class="btn ghost" id="thSaveDefault" type="button" title="Developer mode: writes the current theme, 3D viewer settings and tile size to app/static/defaults.json">Save as app defaults (dev)</button></div>` : ""}
-      <div class="opt" id="thSaveRow" hidden><input id="thSaveName" placeholder="Theme name" style="flex:1;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);padding:0 8px" /><button class="btn" id="thSaveGo" type="button" style="height:28px;padding:0 10px">Save</button></div>
       <div class="theme-list" id="themeList"></div>
 
       <div class="settings-sub">View</div>
       <label class="opt">Sidebar icons <input type="checkbox" data-layout-opt="showIcons" ${state.showIcons ? "checked" : ""}></label>
 
-      <div class="settings-sub">Scanning</div>
+      <div class="settings-sub">Scan Filtering</div>
       <label class="field" title="Files and folders the library skips, one pattern per line:&#10;*.meta, Thumbs.db — a file or folder name anywhere (* ? [..] globs)&#10;Library/ — folders only (trailing slash)&#10;Library/PackageCache — that run of folders anywhere&#10;# comment. Case-insensitive, relative to each source folder.">Ignore (one pattern per line)
         <textarea id="scanIgnore" spellcheck="false" placeholder="*.meta&#10;Library/&#10;BurstCache/&#10;Thumbs.db">${esc(state.meta?.scanIgnore || "")}</textarea></label>
-      <div class="theme-actions"><span class="ign-msg" id="scanIgnoreMsg"></span><button class="btn ghost" id="scanIgnoreApply" type="button" title="Save the list, hide matching files and rescan every source">Apply</button></div>
+      <div class="theme-actions"><span class="ign-msg" id="scanIgnoreMsg"></span><button class="btn ghost icon" id="scanDefaults" type="button" title="Default filters (built-in list)" aria-label="Default filters (built-in list)">${renderIconSvg("shield", "currentColor", 16)}</button><button class="btn ghost" id="scanIgnoreApply" type="button" title="Save the list, hide matching files and rescan every source">Apply</button></div>
 
       <div class="settings-sub">Video</div>
       ${sliderRow("RAM cache", "videoCache", 32, 2048, 32, " MB")}
@@ -7509,12 +7793,14 @@ function renderOptions(){
       <label class="opt">Active frame <input type="color" data-color="cardActiveColor" value="${t.cardActiveColor}"></label>
       <label class="opt">Buttons <input type="color" data-color="button" value="${t.button}"></label>
       <label class="opt">Text <input type="color" data-color="fg" value="${t.fg}"></label>
+      <label class="opt">Section titles <input type="color" data-color="secColor" value="${t.secColor || t.fg}"></label>
       <label class="opt">Thumb block <input type="color" data-color="cardBg" value="${t.cardBg}"></label>
 
       <div class="settings-sub">Typography</div>
       <label class="opt">Font <select id="fontSel">${FONT_CHOICES.map(([n]) => `<option value="${esc(n)}" ${fontKnown && t.font === n ? "selected" : (!fontKnown && n === "Custom…" ? "selected" : "")}>${esc(n)}</option>`).join("")}</select></label>
       <label class="opt" id="fontCustomRow" ${fontKnown ? "hidden" : ""}>Custom <input id="fontCustom" value="${esc(fontKnown ? "" : t.font)}" placeholder="font-family" style="flex:1;height:26px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);padding:0 8px" /></label>
       ${sliderRow("Text size", "textSize", 10, 28, 1, "px")}
+      ${sliderRow("Section title size", "secSize", 9, 20, 1, "px")}
 
       <div class="settings-sub">Layout</div>
       <label class="opt">Thumbnails <select id="viewModeSel"><option value="grid" ${state.viewMode === "grid" ? "selected" : ""}>Square</option><option value="masonry" ${state.viewMode === "masonry" ? "selected" : ""}>Masonry (Pinterest)</option></select></label>
@@ -7543,13 +7829,14 @@ function renderOptions(){
     saveLayout();
     el.classList.toggle("expanded", state.settingsOpen);
     $("settingsHead").classList.toggle("open", state.settingsOpen);
+    closeThemePop();
     $("settingsBody").hidden = !state.settingsOpen;
   };
   el.querySelectorAll("[data-opt]").forEach((inp) => {
     inp.onchange = () => { state.theme[inp.dataset.opt] = inp.checked; saveTheme(); };
   });
   el.querySelectorAll("[data-layout-opt]").forEach((inp) => {
-    inp.onchange = () => { state[inp.dataset.layoutOpt] = inp.checked; saveLayout(); renderNav(); };
+    inp.onchange = () => { state[inp.dataset.layoutOpt] = inp.checked; saveLayout(); renderNav(); renderOptions(); };
   });
   el.querySelectorAll("[data-color]").forEach((inp) => {
     inp.oninput = () => { state.theme[inp.dataset.color] = inp.value; saveTheme(); };
@@ -7567,30 +7854,9 @@ function renderOptions(){
   $("waveModeSel").onchange = () => { state.theme.waveMode = $("waveModeSel").value; saveTheme(); };
   $("captionsSel").onchange = () => { state.theme.captions = $("captionsSel").value; masonryCache = null; saveTheme(); };
   $("zoomAxisSel").onchange = () => { state.theme.zoomAxis = $("zoomAxisSel").value; saveTheme(); };
-  $("thReset").onclick = resetAllSettings;
   $("scanIgnoreApply").onclick = applyScanIgnore;
+  $("scanDefaults").onclick = dfOpen;
   $("scanIgnore").oninput = (e) => { e.target.dataset.dirty = "1"; };
-  if (IS_DEV){
-    $("thSaveDefault").onclick = async () => {
-      if (!(await saveAppDefaults())) return;
-      const btn = $("thSaveDefault"); // renderOptions() rebuilt the panel
-      btn.textContent = "Saved ✓";
-      setTimeout(() => { btn.textContent = "Save as app defaults (dev)"; }, 1600);
-    };
-  }
-  $("thSaveAs").onclick = () => {
-    $("thSaveRow").hidden = false;
-    $("thSaveName").focus();
-  };
-  $("thSaveGo").onclick = () => {
-    const name = $("thSaveName").value.trim();
-    if (!name) return;
-    state.themes = [...state.themes.filter((t2) => t2.name !== name), { name, vars: { ...state.theme } }];
-    saveThemeList();
-    $("thSaveRow").hidden = true;
-    $("thSaveName").value = "";
-    renderThemeList();
-  };
   renderThemeList();
 }
 
@@ -7759,6 +8025,75 @@ async function fbOpen(){
   await fbNavigate(fbLastPath || fbRootsCache.shortcuts[0]?.path || "");
 }
 function fbClose(){ $("fbOverlay").hidden = true; }
+
+// About dialog: the brand mark opens it; the facts come from GET /api/app-info (one text list, Copy-able).
+let aboutText = "";
+function aboutClose(){ $("aboutOverlay").hidden = true; }
+let aboutToken = 0;
+async function aboutOpen(){
+  const token = ++aboutToken; // a slower, older response must not append into a newer open
+  $("aboutOverlay").hidden = false;
+  $("aboutTitle").textContent = "About Sight" + (state.meta.version ? " " + state.meta.version : "");
+  const list = $("aboutList");
+  list.textContent = "";
+  $("aboutMsg").textContent = "Loading…";
+  $("aboutCopy").disabled = true;
+  let a;
+  try {
+    const r = await fetch("/api/app-info", { cache: "no-store" });
+    if (!r.ok) throw new Error("server answered " + r.status);
+    a = await r.json();
+  } catch (e) {
+    if (token === aboutToken) $("aboutMsg").textContent = "Could not load app info: " + e.message;
+    return;
+  }
+  if (token !== aboutToken) return;
+  const upt = (s) => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + "d " : "") + (h || d ? h + "h " : "") + m + "m " + (s % 60) + "s"; };
+  const rows = [
+    ["Version", a.version],
+    ["Running from", a.frozen ? "frozen build" : "source"],
+    ["Python", a.python],
+    ["System", a.platform],
+    ["Starlette", a.starlette],
+    ["three.js", a.three],
+    ["Home (SIGHT_HOME)", a.home],
+    ["Library DB", a.dbPath + " (" + bytes(a.dbBytes) + ")"],
+    ["Assets", a.assets], ["Sources", a.sources], ["Thumbnails on disk", a.thumbnails],
+    ["ffmpeg", a.ffmpegPath || "not found"],
+    ["ffmpeg version", a.ffmpegVersion || "-"],
+    ["usd-core", a.usd || "not installed"],
+    ...(a.port ? [["Port", a.port]] : []), ["Dev mode", a.dev ? "yes" : "no"],
+    ["Uptime", upt(a.uptimeSec)],
+    ["Log file", a.logPath],
+  ];
+  aboutText = "Sight " + a.version + "\n" + rows.map(([k, v]) => k + ": " + v).join("\n");
+  for (const [k, v] of rows){
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = k; dd.textContent = String(v ?? "");
+    list.append(dt, dd);
+  }
+  $("aboutMsg").textContent = "";
+  $("aboutCopy").disabled = false;
+  $("aboutCopy").focus();
+}
+async function aboutCopy(){
+  let ok = false;
+  try { await navigator.clipboard.writeText(aboutText); ok = true; } catch (e) {}
+  if (!ok){
+    const ta = document.createElement("textarea");
+    ta.value = aboutText; ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (e) {}
+    ta.remove();
+  }
+  $("aboutMsg").textContent = ok ? "Copied" : "Copy failed - select the text instead";
+  $("aboutCopy").textContent = ok ? "Copied" : "Copy";
+  setTimeout(() => { $("aboutCopy").textContent = "Copy"; }, 1500);
+}
+$("aboutBtn").onclick = aboutOpen;
+$("aboutClose").onclick = aboutClose;
+$("aboutCopy").onclick = aboutCopy;
+$("aboutOverlay").addEventListener("pointerdown", (e) => { if (e.target === $("aboutOverlay")) aboutClose(); });
 $("fbClose").onclick = fbClose;
 $("fbCancel").onclick = fbClose;
 $("fbOverlay").addEventListener("pointerdown", (e) => { if (e.target === $("fbOverlay")) fbClose(); });
@@ -7840,13 +8175,21 @@ document.addEventListener("keydown", (e) => {
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   // Shortcut rule (keys.js): a combo fires only with EXACTLY its modifiers — use hotkey(e, "KeyD"),
   // never a bare e.key/e.code test, so Shift+D / Ctrl+D / Alt+D can't trigger the plain-D command.
-  if (hotkey(e, "Ctrl+KeyK")){ e.preventDefault(); togglePalette(); return; }
+  // The annotation help overlay ("?") is modal: it sees every key first and lets nothing else act.
+  if (light && annot.helpOpen()){ annot.onKey(e); return; }
+  // A modal (Add Folder, About, Default scan filters) owns the keyboard: the palette must not open behind it.
+  const modalOpen = !$("fbOverlay").hidden || !$("aboutOverlay").hidden || !$("dfOverlay").hidden;
+  if (hotkey(e, "Ctrl+KeyK") && !modalOpen){ e.preventDefault(); togglePalette(); return; }
   if (paletteOpen && hotkey(e, "Escape")){ e.preventDefault(); closePalette(); return; }
   if (paletteOpen) return;
   if (!colorPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeColorPop(); return; }
   if (!selPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeSelectPop(); return; }
+  if (themePopEl && !themePopEl.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeThemePop(); return; }
+  if (!$("dfOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); dfClose(); return; }
+  if (!$("dfOverlay").hidden) return;
   if (!$("fbOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); fbClose(); return; }
   if (!$("fbOverlay").hidden) return;
+  if (!$("aboutOverlay").hidden){ if (hotkey(e, "Escape")){ e.preventDefault(); aboutClose(); } return; }
   if (cmp.isOpen()){ if (cmp.onKey(e)) return; }
   if (hotkey(e, "KeyK") && !typing && !e.repeat){ e.preventDefault(); compareFromContext(); return; }
   // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles
@@ -8049,8 +8392,10 @@ function startWindowTracker(saved){
 applyUi();
 if (themeMigrated) putSetting("sight.theme", JSON.stringify(state.theme));
 applyPanelWidths();
-insp.style.display = state.details ? "" : "none";
-$("inspHandle").hidden = !state.details;
+applyDetails();
+narrowMQ.addEventListener("change", applyDetails);
+new MutationObserver(syncInfoBtn).observe(insp, { attributes: true, attributeFilter: ["class"] });
+$("infoBtn").onclick = toggleDetails;
 startWindowTracker(serverSettings?.window);
 applyViewDom();
 renderOptions();

@@ -673,6 +673,7 @@ def main() -> None:
         threading.Thread(target=_log_ffmpeg, daemon=True).start()
         lib.resume_watchers()
         app = build_app(lib, settings, dev)
+        app.state.port = port  # shown in About
         if dev:
             log("developer mode - 'Save as app defaults' rewrites app/static/defaults.json")
 

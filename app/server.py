@@ -7,6 +7,8 @@ import importlib.util
 import json
 import os
 import queue
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -41,6 +43,7 @@ def app_build_time() -> int:
 
 
 BUILD_TIME_MS = app_build_time()
+STARTED_AT = time.time()
 
 
 def pick_folder() -> str:
@@ -670,6 +673,23 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     def video_transcode_state(aid: str = "") -> dict:
         return lib.playback_status(aid)
 
+    # Scrub copy (Library.start_scrub_copy): asked by the lightbox once a seek of the clip is slow.
+    @app.post("/api/video/scrub")
+    async def video_scrub_start(request: Request) -> dict:
+        body = await json_body(request)
+        return await asyncio.to_thread(lib.start_scrub_copy, str(body.get("id") or ""))
+
+    @app.get("/api/video/scrub")
+    def video_scrub_state(aid: str = "") -> dict:
+        return lib.scrub_status(aid)
+
+    @app.get("/api/video/scrub/{aid}")
+    def video_scrub_file(aid: str, request: Request):
+        p = lib.scrub_copy_path(aid)
+        if not p:
+            raise HTTPException(404)
+        return serve_video(request, str(p), lib.video_cache)  # not the window's file: read from disk
+
     @app.get("/api/psd/{aid}/layers")
     def psd_layers(aid: str):
         layers = lib.psd_layers(aid)
@@ -1080,6 +1100,27 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             raise HTTPException(400, "text required")
         return lib.set_ignore(text)
 
+    @app.get("/api/scan/defaults")
+    def scan_defaults() -> dict:
+        return {"text": lib.default_filter, "custom": lib.default_custom}
+
+    @app.put("/api/scan/defaults")
+    async def put_scan_defaults(request: Request) -> dict:
+        text = (await json_body(request)).get("text")
+        if not isinstance(text, str) or len(text) > 50000:
+            raise HTTPException(400, "text required")
+        try:
+            return lib.set_default_filter(text)
+        except OSError as e:
+            raise HTTPException(500, f"Cannot write the filter file in the Sight folder: {e.strerror or e}")
+
+    @app.delete("/api/scan/defaults")
+    def reset_scan_defaults() -> dict:
+        try:
+            return lib.set_default_filter(None)
+        except OSError as e:
+            raise HTTPException(500, f"Cannot remove the filter file in the Sight folder: {e.strerror or e}")
+
     @app.delete("/api/sources/{sid}")
     def drop_source(sid: str) -> dict:
         lib.remove_source(sid)
@@ -1194,6 +1235,88 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     @app.get("/api/version")
     def version() -> dict:
         return {"buildMs": BUILD_TIME_MS}
+
+    _static_info: dict = {}
+    _ffmpeg_info: dict = {}
+
+    def static_info() -> dict:
+        """Facts that cannot change while the process runs (tool versions); probed once, on first use."""
+        if _static_info:
+            return _static_info
+        import platform
+
+        info: dict = {"python": platform.python_version(), "platform": platform.platform(),
+                      "frozen": bool(getattr(sys, "frozen", False))}
+        try:
+            import starlette
+
+            info["starlette"] = starlette.__version__
+        except Exception:
+            info["starlette"] = ""
+        try:  # the vendored three.js declares its revision as `const REVISION = '185'`
+            m = re.search(r"const REVISION = '(\w+)'", (STATIC / "vendor" / "three.core.js").read_text(encoding="utf-8")[:20000])
+            info["three"] = "r" + m.group(1) if m else ""
+        except OSError:
+            info["three"] = ""
+        info["usd"] = ""
+        if importlib.util.find_spec("pxr") is not None:
+            try:
+                from pxr import Usd
+
+                info["usd"] = ".".join(str(n) for n in Usd.GetVersion())
+            except Exception:
+                info["usd"] = "installed (version unreadable)"
+        _static_info.update(info)
+        return _static_info
+
+    def ffmpeg_info() -> dict:
+        """ffmpeg path + version line; cached only once found AND probed, so an ffmpeg installed (or a
+        probe that timed out) later shows up on the next open without a restart."""
+        if _ffmpeg_info:
+            return _ffmpeg_info
+        exe = lib.ffmpeg_exe()
+        out = {"ffmpegPath": exe or "", "ffmpegVersion": ""}
+        if exe:
+            try:
+                text = subprocess.run([exe, "-version"], capture_output=True, text=True, timeout=5,
+                                      creationflags=NO_WINDOW).stdout
+                out["ffmpegVersion"] = (text.splitlines() or [""])[0]
+            except Exception:
+                pass
+            if out["ffmpegVersion"]:
+                _ffmpeg_info.update(out)
+        return out
+
+    @app.get("/api/app-info")
+    def app_info() -> JSONResponse:
+        """Technical facts for the About dialog (the brand mark in the sidebar)."""
+        info = {**static_info(), **ffmpeg_info()}
+        db = lib.root / "library.db"
+        try:
+            thumbs = sum(1 for e in os.scandir(lib.thumbs) if e.is_file())
+        except OSError:
+            thumbs = 0
+        counts = {"assets": 0, "sources": 0}
+        for key, table in (("assets", "assets"), ("sources", "sources")):
+            try:
+                counts[key] = int(lib.query(f"SELECT COUNT(*) c FROM {table}")[0]["c"])
+            except Exception:
+                pass
+        info.update({
+            "version": APP_VERSION,
+            "buildMs": BUILD_TIME_MS,
+            "home": str(lib.root),
+            "dbPath": str(db),
+            "dbBytes": db.stat().st_size if db.exists() else 0,
+            "assets": counts["assets"],
+            "sources": counts["sources"],
+            "thumbnails": thumbs,
+            "port": getattr(app.state, "port", None),  # set by the launcher; the Host header can lie behind a proxy
+            "dev": dev,
+            "uptimeSec": int(time.time() - STARTED_AT),
+            "logPath": str(lib.root / "sight.log"),
+        })
+        return JSONResponse(info, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/settings")
     def get_settings() -> JSONResponse:

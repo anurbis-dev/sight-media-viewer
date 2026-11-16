@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import heapq
+import logging
 import json
 import os
 import queue
@@ -42,6 +43,10 @@ SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".sight", ".svn", ".hg",
     ".Trash", ".trashes", "System Volume Information",
 }
+# Built-in scan filter (see IgnoreRules): shipped next to this file, replaced by <SIGHT_HOME>/<same name>
+# when the user edits it (the app folder may be read-only in a frozen build).
+FILTER_INI = "initial_filtering.ini"
+SHIPPED_FILTER = Path(__file__).resolve().parent / FILTER_INI
 KIND_LABEL = {
     "image": "Images",
     "video": "Video",
@@ -129,17 +134,36 @@ def normpath(p: object) -> str:
     return os.path.normcase(os.path.normpath(str(p)))
 
 
+def fallback_filter_text() -> str:
+    """The built-in filter when the ini cannot be read: the hard-coded folder list."""
+    return "\n".join(sorted(f"{d}/" for d in SKIP_DIRS))
+
+
+def read_default_filter(home: Path) -> tuple[str, bool]:
+    """(text, custom): the user's copy in SIGHT_HOME if present, else the shipped ini, else the
+    hard-coded fallback. Never raises."""
+    for path, custom in ((Path(home) / FILTER_INI, True), (SHIPPED_FILTER, False)):
+        try:
+            return path.read_text(encoding="utf-8-sig").replace("\r\n", "\n"), custom
+        except (OSError, UnicodeDecodeError) as e:
+            if not custom:
+                logging.getLogger("sight").warning("default scan filter %s unreadable (%s): using the built-in folder list", path, e)
+            continue
+    return fallback_filter_text(), False
+
+
 class IgnoreRules:
-    """The user's scan ignore list (Settings → Scanning), one pattern per line, gitignore-like:
+    """The scan ignore rules: the built-in filter (initial_filtering.ini) plus the user's list
+    (Settings → Scan Filtering), one pattern per line, gitignore-like:
     `*.meta` / `Thumbs.db` match a file or folder name anywhere; a trailing `/` (`Library/`)
     matches folders only; a pattern with a `/` inside (`Library/PackageCache`) matches that run of
     names anywhere in the tree. `*`, `?` and `[..]` globs, case-insensitive; `#` starts a comment.
     Paths are taken relative to the source root, so the root's own name never matches."""
 
-    def __init__(self, text: str = "") -> None:
-        self.text = text or ""
+    def __init__(self, text: str = "", default_text: str = "") -> None:
+        self.text = text or ""  # the user's list only (what the DB and the settings field hold)
         self.rules: list[tuple[list[str], bool]] = []
-        for line in self.text.splitlines():
+        for line in (default_text or "").splitlines() + self.text.splitlines():
             line = line.strip().replace("\\", "/")
             if not line or line.startswith("#"):
                 continue
@@ -862,7 +886,8 @@ class Library:
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self._migrate()
         row = self.conn.execute("SELECT value FROM meta WHERE key='scan_ignore'").fetchone()
-        self.ignore = IgnoreRules(row["value"] if row else "")
+        self.default_filter, self.default_custom = read_default_filter(root)
+        self.ignore = IgnoreRules(row["value"] if row else "", self.default_filter)
         self.bus = Bus()
         # find_ffmpeg() can take ~150 ms (imageio-ffmpeg runs `ffmpeg -version`), so it runs off the
         # startup path. Readers go through ffmpeg_exe(), which waits for it.
@@ -900,6 +925,10 @@ class Library:
         self._play_lock = threading.Lock()
         self._play_jobs: dict[str, dict] = {}  # asset id -> state of its playback copy (see start_play_copy)
         self._play_slot = threading.Semaphore(1)  # one conversion at a time: they take every core
+        # Playback copies (someone waits on "Converting…") go before scrub copies: see _encode_copy.
+        self._play_cv = threading.Condition()
+        self._play_waiting = 0  # playback copies waiting for the slot
+        self._scrub_proc: subprocess.Popen | None = None  # the scrub encode holding the slot
         self._play_enc: dict[str, tuple[str, list[str], str] | None] = {}
         workers = max(2, min(4, os.cpu_count() or 2))
         for _ in range(workers):
@@ -1271,7 +1300,28 @@ class Library:
         unless they sit in an excluded folder. Then every source is rescanned for files that were
         never indexed because of the old list."""
         text = (text or "").replace("\r\n", "\n")
-        self.ignore = IgnoreRules(text)
+        return self._apply_ignore(text, persist_user=True)
+
+    def set_default_filter(self, text: str | None) -> dict:
+        """Write (text) or remove (None) the user's copy of initial_filtering.ini, then re-apply the
+        rules exactly like set_ignore does."""
+        user = self.root / FILTER_INI
+        if text is not None:
+            text = text.replace("\r\n", "\n")
+            shipped, _ = read_default_filter(SHIPPED_FILTER.parent / "no-user-copy")
+            if text == shipped:
+                text = None  # same as the shipped list: no user copy, so shipped updates still reach the user
+        if text is None:
+            user.unlink(missing_ok=True)
+        else:
+            tmp = user.with_name(FILTER_INI + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, user)
+        self.default_filter, self.default_custom = read_default_filter(self.root)
+        return self._apply_ignore(self.ignore.text, persist_user=False)
+
+    def _apply_ignore(self, text: str, persist_user: bool) -> dict:
+        self.ignore = IgnoreRules(text, self.default_filter)
         roots = {r["id"]: (r["path"], self.excluded_set(r["id"])) for r in self.query("SELECT id, path FROM sources")}
         hide: list[tuple[str]] = []
         show: list[tuple[str]] = []
@@ -1290,11 +1340,12 @@ class Library:
             elif ignored:
                 hide.append((r["id"],))
         with self.lock:
-            self.conn.execute(
-                "INSERT INTO meta(key, value) VALUES ('scan_ignore', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (text,),
-            )
+            if persist_user:
+                self.conn.execute(
+                    "INSERT INTO meta(key, value) VALUES ('scan_ignore', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (text,),
+                )
             self.conn.executemany("UPDATE assets SET status='excluded' WHERE id=?", hide)
             self.conn.executemany("UPDATE assets SET status='ready' WHERE id=?", show)
             self.conn.commit()
@@ -2195,14 +2246,62 @@ class Library:
             return None
         return f"{st.st_size}_{st.st_mtime_ns}"
 
-    def _play_copy(self, aid: str, stamp: str | None) -> Path | None:
+    # Scrub copies: a clip with a long GOP (a keyframe every few seconds) seeks slowly in the browser,
+    # since every seek decodes from the keyframe before it — ~0.9 ms a frame for 416x960 H.264, so
+    # ~230 ms just before the next keyframe of a 250-frame GOP. The lightbox asks for this small copy
+    # (≤ 960 px, no audio, a keyframe every 4 frames, no B-frames) once a seek of the clip is slow
+    # and shows it over the player while a drag scrubs; the player itself keeps the original.
+    # Named "<aid>_<stamp>.scrub<ext>" next to the playback copies, so the rename / delete / stale
+    # cleanups of "<aid>_*" cover it too.
+    SCRUB_TAG = ".scrub"
+    SCRUB_VF = "scale=w='min(960,iw)':h='min(960,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+    SCRUB_ENC = {
+        "mp4": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "fastdecode", "-crf", "26", "-g", "4",
+                "-bf", "0", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+        "webm": ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40", "-deadline", "realtime", "-cpu-used", "8",
+                 "-g", "4", "-pix_fmt", "yuv420p"],
+    }
+
+    def _play_copy(self, aid: str, stamp: str | None, tag: str = "") -> Path | None:
         if not stamp:
             return None
         for ext in self.PLAY_EXT:
-            p = self.thumbs / "video" / f"{aid}_{stamp}{ext}"
+            p = self.thumbs / "video" / f"{aid}_{stamp}{tag}{ext}"
             if p.exists():
                 return p
         return None
+
+    SCRUB_KEEP_BYTES = 1 << 30  # scrub copies kept in all (newest first); the one just made always stays
+    SCRUB_KEEP_FILES = 20
+
+    def _prune_scrub_copies(self, keep: Path) -> None:
+        """Deletes the oldest scrub copies beyond SCRUB_KEEP_FILES / SCRUB_KEEP_BYTES, never ``keep``.
+        They are made again on demand (the next slow scrub of that clip)."""
+        found = []
+        for p in (self.thumbs / "video").glob(f"*{self.SCRUB_TAG}.*"):
+            if p.suffix not in self.PLAY_EXT:
+                continue  # a .part / .log of a running job
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            found.append((p == keep, st.st_mtime, st.st_size, p))
+        found.sort(key=lambda f: (f[0], f[1]), reverse=True)  # the new copy, then newest first
+        total = 0
+        for n, (is_keep, _mtime, size, p) in enumerate(found):
+            total += size
+            if not is_keep and (n >= self.SCRUB_KEEP_FILES or total > self.SCRUB_KEEP_BYTES):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def scrub_copy_path(self, aid: str) -> Path | None:
+        """Asset ``aid``'s current scrub copy, or None."""
+        a = self.get_asset(aid)
+        if not a or a.get("kind") != "video":
+            return None
+        return self._play_copy(aid, self._play_stamp(a["path"]), self.SCRUB_TAG)
 
     def playback_path(self, a: dict) -> str:
         """The file the player reads for asset ``a``: its current playback copy when there is one."""
@@ -2234,61 +2333,79 @@ class Library:
         self._play_enc[ffmpeg] = found
         return found
 
-    def playback_status(self, aid: str) -> dict:
-        """{state, progress, error} of asset ``aid``'s playback copy: ready / working / failed / none."""
+    def _copy_encoder(self, ffmpeg: str, tag: str = "") -> tuple[str, list[str], str] | None:
+        """_play_encoder's choice; for a scrub copy (``tag``) the same container with the scrub settings."""
+        enc = self._play_encoder(ffmpeg)
+        if enc and tag == self.SCRUB_TAG:
+            enc = (enc[0], ["-an", "-vf", self.SCRUB_VF, *self.SCRUB_ENC[enc[2]]], enc[2])
+        return enc
+
+    def playback_status(self, aid: str, tag: str = "") -> dict:
+        """{state, progress, error} of asset ``aid``'s playback copy (``tag`` SCRUB_TAG: its scrub
+        copy): ready / working / failed / none."""
         a = self.get_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return {"state": "missing", "progress": 0, "error": "not a video in the library"}
         stamp = self._play_stamp(a["path"])
-        if self._play_copy(aid, stamp):
+        if self._play_copy(aid, stamp, tag):
             return {"state": "ready", "progress": 1, "error": ""}
         with self._play_lock:
-            job = self._play_jobs.get(aid)
+            job = self._play_jobs.get(aid + tag)
             if job and job["stamp"] == stamp:
                 return {"state": job["state"], "progress": job["progress"], "error": job["error"]}
         return {"state": "none", "progress": 0, "error": ""}
 
-    def start_playback_copy(self, aid: str) -> dict:
-        """Starts converting asset ``aid`` for playback unless its copy is current or running. A failed
-        attempt is tried again when asked; the caller polls playback_status for the outcome."""
+    def scrub_status(self, aid: str) -> dict:
+        return self.playback_status(aid, self.SCRUB_TAG)
+
+    def start_scrub_copy(self, aid: str) -> dict:
+        return self.start_playback_copy(aid, self.SCRUB_TAG)
+
+    def start_playback_copy(self, aid: str, tag: str = "") -> dict:
+        """Starts converting asset ``aid`` for playback (``tag`` SCRUB_TAG: its scrub copy) unless the
+        copy is current or running. A failed attempt is tried again when asked; the caller polls
+        playback_status for the outcome."""
         a = self.get_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return {"state": "missing", "progress": 0, "error": "not a video in the library"}
         stamp = self._play_stamp(a["path"])
-        if self._play_copy(aid, stamp):
+        if self._play_copy(aid, stamp, tag):
             return {"state": "ready", "progress": 1, "error": ""}
+        key = aid + tag
         with self._play_lock:
-            job = self._play_jobs.get(aid)
+            job = self._play_jobs.get(key)
             if job and job["stamp"] == stamp and job["state"] == "working":
                 return {"state": "working", "progress": job["progress"], "error": ""}
         ffmpeg = self.ffmpeg_exe()
-        enc = self._play_encoder(ffmpeg) if ffmpeg else None
+        enc = self._copy_encoder(ffmpeg, tag) if ffmpeg else None
         if not enc:
             why = "ffmpeg not found" if not ffmpeg else "ffmpeg has no H.264 or VP9 encoder"
             with self._play_lock:
-                self._play_jobs[aid] = {"stamp": stamp, "state": "failed", "progress": 0, "error": why}
+                self._play_jobs[key] = {"stamp": stamp, "state": "failed", "progress": 0, "error": why}
             return {"state": "failed", "progress": 0, "error": why}
         job = {"stamp": stamp, "state": "working", "progress": 0.0, "error": ""}
         with self._play_lock:
-            self._play_jobs[aid] = job
+            self._play_jobs[key] = job
         threading.Thread(
             target=self._run_playback_copy,
-            args=(aid, a["path"], stamp, ffmpeg, enc, float(a.get("duration") or 0), job),
-            name=f"play-copy-{aid}", daemon=True,
+            args=(aid, a["path"], stamp, ffmpeg, enc, float(a.get("duration") or 0), job, tag),
+            name=f"play-copy-{key}", daemon=True,
         ).start()
         return {"state": "working", "progress": 0, "error": ""}
 
     def _run_playback_copy(self, aid: str, src: str, stamp: str, ffmpeg: str,
-                           enc: tuple[str, list[str], str], duration: float, job: dict) -> None:
+                           enc: tuple[str, list[str], str], duration: float, job: dict, tag: str = "") -> None:
         ext, enc_args, container = enc
         d = self.thumbs / "video"
         d.mkdir(parents=True, exist_ok=True)
-        stem = f"{aid}_{stamp}"
+        stem = f"{aid}_{stamp}{tag}"
         tmp = d / f"{stem}.part"  # no media extension, so no lookup ever picks it up
         log = d / f"{stem}.log"
+        # A scrub copy's enc_args carry their own -an / -vf (start_playback_copy).
+        streams = ["-map", "0:v:0"] if tag else ["-map", "0:v:0", "-map", "0:a:0?", "-vf", self.PLAY_VF]
         cmd = [
             ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src,
-            "-map", "0:v:0", "-map", "0:a:0?", "-vf", self.PLAY_VF, *enc_args, "-ac", "2",
+            *streams, *enc_args, *([] if tag else ["-ac", "2"]),
             "-progress", "pipe:1", "-nostats", "-f", container, str(tmp),
         ]
         state, error = "failed", ""
@@ -2297,29 +2414,19 @@ class Library:
                 m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", _ffprobe_text(ffmpeg, Path(src)))
                 if m:
                     duration = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
-            # stderr goes to a file: a damaged stream can print more than a pipe buffer holds, and
-            # nothing reads the pipe while the progress lines are read.
-            with self._play_slot, open(log, "w", encoding="utf-8", errors="replace") as errf:
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
-                    errors="replace", creationflags=NO_WINDOW,
-                )
-                for line in proc.stdout:
-                    if line.startswith("out_time_us=") and duration > 0:
-                        try:
-                            done = int(line.split("=", 1)[1]) / 1e6 / duration
-                        except ValueError:
-                            continue
-                        with self._play_lock:
-                            job["progress"] = round(min(0.99, max(0.0, done)), 3)
-                proc.stdout.close()
-                rc = proc.wait()
+            rc = None
+            while rc is None:  # a scrub encode stopped for a playback copy starts over after it
+                rc = self._encode_copy(cmd, log, duration, job, bool(tag))
             if rc == 0 and tmp.exists() and tmp.stat().st_size > 0:
                 final = d / f"{stem}{ext}"
-                for old in d.glob(f"{aid}_*"):  # copies of earlier versions of this file
-                    if old.name not in (final.name, log.name, tmp.name):
+                for old in d.glob(f"{aid}_*"):  # copies of earlier versions of this file, of this kind only
+                    # a playback copy leaves the scrub copy (and its .part / .log) alone, and the other way round
+                    same_kind = ((self.SCRUB_TAG + ".") in old.name) == bool(tag)
+                    if same_kind and old.name not in (final.name, log.name, tmp.name):
                         old.unlink(missing_ok=True)
                 tmp.replace(final)
+                if tag:
+                    self._prune_scrub_copies(final)
                 state = "ready"
             else:
                 lines = [ln for ln in log.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
@@ -2333,8 +2440,76 @@ class Library:
                 job["state"] = state
                 job["progress"] = 1.0 if state == "ready" else job["progress"]
                 job["error"] = error
-                if state == "ready" and self._play_jobs.get(aid) is job:
-                    del self._play_jobs[aid]  # the copy itself answers from now on
+                if state == "ready" and self._play_jobs.get(aid + tag) is job:
+                    del self._play_jobs[aid + tag]  # the copy itself answers from now on
+
+    def _encode_copy(self, cmd: list[str], log: Path, duration: float, job: dict, scrub: bool) -> int | None:
+        """Runs one copy's ffmpeg under the one-at-a-time slot and returns its exit code. A playback
+        copy has priority: while one waits, scrub jobs hold back, and its arrival stops a running scrub
+        encode, which then returns None (the caller runs it again once the slot is free). So a playback
+        copy never waits for a scrub copy of a long clip."""
+        counted = False
+        with self._play_cv:
+            if scrub:
+                while self._play_waiting:
+                    self._play_cv.wait()
+            else:
+                self._play_waiting += 1
+                counted = True
+                running = self._scrub_proc
+                if running is not None:
+                    running.sight_stopped = True
+                    try:
+                        running.terminate()
+                    except OSError:
+                        pass
+        try:
+            with self._play_slot:
+                with self._play_cv:
+                    if counted:
+                        self._play_waiting -= 1
+                        counted = False
+                        self._play_cv.notify_all()
+                    elif self._play_waiting:
+                        return None  # a playback copy arrived while this scrub job waited for the slot
+                # stderr goes to a file: a damaged stream can print more than a pipe buffer holds, and
+                # nothing reads the pipe while the progress lines are read.
+                with open(log, "w", encoding="utf-8", errors="replace") as errf:
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
+                        errors="replace", creationflags=NO_WINDOW,
+                    )
+                    if scrub:
+                        with self._play_cv:
+                            self._scrub_proc = proc
+                            if self._play_waiting:  # arrived between the check above and here
+                                proc.sight_stopped = True
+                                try:
+                                    proc.terminate()
+                                except OSError:  # died on its own already
+                                    pass
+                    try:
+                        for line in proc.stdout:
+                            if line.startswith("out_time_us=") and duration > 0:
+                                try:
+                                    done = int(line.split("=", 1)[1]) / 1e6 / duration
+                                except ValueError:
+                                    continue
+                                with self._play_lock:
+                                    job["progress"] = round(min(0.99, max(0.0, done)), 3)
+                        proc.stdout.close()
+                        rc = proc.wait()
+                    finally:
+                        if scrub:
+                            with self._play_cv:
+                                if self._scrub_proc is proc:
+                                    self._scrub_proc = None
+                return None if getattr(proc, "sight_stopped", False) else rc
+        finally:
+            if counted:  # only when taking the slot failed
+                with self._play_cv:
+                    self._play_waiting -= 1
+                    self._play_cv.notify_all()
 
     def _decode_peaks(self, path: Path, bars: int = 96) -> tuple[list[int], int] | None:
         """Shared ffmpeg PCM decode + peak bucketing, used by both the interactive waveform

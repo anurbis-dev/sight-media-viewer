@@ -46,6 +46,7 @@ echo "Sight - build: compiling Sight.app (this can take a minute)"
   --noconfirm \
   --clean \
   --add-data "$DIR/app/static:app/static" \
+  --add-data "$DIR/app/initial_filtering.ini:app" \
   --collect-all pxr \
   --exclude-module tkinter \
   --exclude-module pxr.UsdPhysics \

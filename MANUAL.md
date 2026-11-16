@@ -4,6 +4,7 @@
   Sight watches them live; nothing is imported or duplicated.
 - **Search** — press `/` to jump to the search box (matches file names and tags). Moving the
   cursor onto a result takes focus off the search box, so Space previews it right away.
+- **About Sight** — click (or tap) the Sight icon at the top of the sidebar: version, Python / OS, library and ffmpeg paths, counts, uptime and log file. *Copy* puts the whole list on the clipboard (handy for bug reports); Esc, the x or a click outside closes it.
 - **Command palette** — `Ctrl/Cmd+K`: run actions, jump to a kind/collection/file.
 - **Filters** — sidebar lists kinds (image, video, audio, PSD, font, document, 3D model),
   tags and collections; click to filter, and drag assets into a collection to group them.
@@ -57,7 +58,8 @@
   of another view to go to it. Hold **Alt** with a drawing tool to work the picture without switching to
   the select tool: a drag orbits a 3D model or scrubs a video (sideways on the picture), and the toolbar and
   the notes panel stop taking the pointer until Alt is let go. With the select tool Alt keeps its own
-  duplicate-drag.
+  duplicate-drag on a drawing; Alt+drag on empty space scrubs the video (turns a picture), as without
+  annotating.
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
     eraser end erases too) · `L` line · `W` arrow · `R` rectangle · `O` ellipse · `T` text ·
@@ -89,7 +91,7 @@
     small equal squares, each cut to fill (as in the phone app), as many to a row as fit; right-drag up
     / down on the list makes them bigger / smaller (like the thumbnails in the library grid), kept, the reviewer name (field at the top), and the date. While a new note is being made — you draw, or type in the field — the picture is clean:
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
-    above the list filter the notes. `S` adds a screenshot of what you see, `Shift+S` one of an area
+    above the list filter the notes. `?` (or the ? button in the toolbar) opens a list of every annotation shortcut; Esc / ? / a click outside closes it, and nothing underneath reacts while it is open. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
     show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), double-click its text to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
@@ -111,7 +113,7 @@
     follow the mouse); then only the plate's head (number / label) moves the plate. In the note card the texts are listed under its pictures (a mark in a preview's
     corner shows which have one); click one to go to that frame / view, double-click to edit it.
     The PDF report and the reviewer page show them under the pictures. The arrow button on a note adds a
-    **reply** (Enter sends); double-click a reply to edit it, × deletes it. Resolving or reopening
+    **reply** (Enter sends); double-click a reply to edit it, × deletes it. **Dictation:** the mic button under the note field (and next to a reply, note or picture text while you edit it) listens and types what you say at the cursor; click it again, Esc or Alt+M stops; right-click / long-press it to pick the language (default: the browser's). Needs Chrome, Edge or Safari; Chrome / Edge send the audio to Google, so it is online only. Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
     reviewer attached to a reply (on the web page) show under it; click to enlarge. A reply that
@@ -128,7 +130,10 @@
     view changes: the file and the drawings on it stay as they are. Mirror and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
   - **Turn by hand** — Alt+drag on a picture turns it about its centre, to any angle (on a video Alt+drag
-    scrubs; Ctrl+Alt+drag turns the video); hold
+    scrubs; Ctrl+Alt+drag turns the video. A clip with few keyframes — many phone and screen
+    recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy
+    in the background and later drags show it, so every position along the way is drawn. Sight keeps
+    the newest 20 scrub copies, 1 GB at most, and makes one again when needed); hold
     Shift to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
@@ -143,6 +148,9 @@
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
     whole clip; the onion button shows drawings within ±1 s faded.
+    The frame-stamp button (Shift+F, annotation mode only) shows the current frame over the video; drag it (mouse, pen or finger) and it snaps to
+    a corner or the middle of a side. The ▾ next to it (or a tap on the stamp) sets what it shows, size, colours, backdrop,
+    font and position; the same look is burned into the report pictures.
   - **3D** — a drawing belongs to the camera view it was made in, and a note also saves the shading,
     lights, explode and field of view. A view also keeps which meshes were hidden (H / Ctrl+H / Alt+H)
     when it was made: a change of hidden meshes starts a new view, and going back to a view shows its
@@ -440,7 +448,9 @@
 - **Preview** — double-click an asset, or point at it and press Space, to open it full-screen.
   Space always previews the thumbnail under the cursor, whatever is selected, and leaves the
   selection as it was. ←/→ move to the next/previous asset and ↑/↓ move one row up/down in the
-  thumbnail grid; `D` toggles the details panel; drag up/down on the grid resizes tiles.
+  thumbnail grid; `D` (or the panel button at the right end of the top bar, which also works by touch) toggles the
+  details panel; its "File" block (preview + name + facts) collapses by its header; the total file
+  count sits in the Sources header; drag up/down on the grid resizes tiles.
   `Esc` closes the preview; with none open it clears the thumbnail selection.
   Opening or stepping onto a heavy asset (a 3D model, a PSD, anything over 100 MB) with Space or
   the arrow keys has a short cooldown (~0.7 s), and holding the key down does nothing — so a burst
@@ -461,7 +471,11 @@
   tile size, inspector/sidebar sections) and the app window's position, size and maximized state
   are saved to `settings.json` in the Sight data folder (`~/.sight`, or `SIGHT_HOME`) and come
   back on the next launch, whichever port or browser profile it opens on.
-  **Reset all to defaults** (Settings panel, or `Ctrl/Cmd+K`) puts the theme, 3D viewer settings and
+  **Themes** — the *Theme* row at the top of Settings picks a preset; once you change a value it shows
+  *Custom* and a save button appears: *Save to <name>* (when you started from one of your own themes) or
+  *Save as new…*. The × deletes one of your themes. *Section titles* (colour) and *Section title size*
+  restyle the sidebar headers and the Settings header.
+  **Reset all to defaults** (the round-arrow button in the theme row, or `Ctrl/Cmd+K`) puts the theme, 3D viewer settings and
   tile size back to the app defaults; your saved views, model turns and named themes stay.
 - **Color picker** — clicking any color swatch (theme colors, 3D viewer colors, icon color) opens
   a small picker next to it: drag in the square for shade, on the strip for hue, type a hex code,
@@ -503,12 +517,16 @@
   - Boards, their items, crops and the camera position are saved automatically.
 - **Excluding folders** — the × next to a subfolder removes it from the library; everything
   under it goes with it, so its subfolders aren't listed while it's excluded.
-- **Ignore list** — Settings → Scanning → Ignore skips files and folders by name in every source,
+- **Ignore list** — Settings → Scan Filtering → Ignore skips files and folders by name in every source,
   one pattern per line, then *Apply*: `*.meta` or `Thumbs.db` (a file or folder name anywhere,
   `*` `?` `[..]` wildcards), `Library/` (folders only), `Library/PackageCache` (that folder path
   anywhere), `#` for comments. Case-insensitive. Hidden files keep their tags and ratings and come
   back when the pattern is removed. `.obj` files that are compiled code (Unity BurstCache, Visual
   Studio build output) are skipped automatically — they are not 3D meshes.
+- **Default filters** — under your Ignore list Sight applies a built-in list (`app/initial_filtering.ini`:
+  Thumbs.db, .DS_Store, *.tmp, *.part, *.db, .git/, node_modules/ ...). Open it with the shield button
+  next to *Apply* (Settings → Scan Filtering), edit it and *Save* (a copy goes to your Sight folder and
+  replaces the shipped one; sources are rescanned), or *Restore shipped* to go back. Works the same on a phone.
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
   The green strip on the timeline is the RAM cache: a window around the playhead whose size is
