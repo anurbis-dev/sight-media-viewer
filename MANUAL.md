@@ -222,9 +222,10 @@
 - **Phone app (Sight Review)** — review pictures, videos and 3D models on a phone or tablet, offline, without
   Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews
-  made in Safari before installing stay in Safari. One button opens everything — the big *Open a file* on an
-  empty home screen, the small *＋ Open* in the bar once there are reviews: the phone offers the photo library,
-  the camera and Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD, Gaussian splats — or a `.srev` someone sent). Nothing is
+  made in Safari before installing stay in Safari. Two open buttons — big ones on an
+  empty home screen, two small icons in the bar once there are reviews: *Photo or video* opens the phone's
+  gallery; *Open a file…* opens Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD,
+  Gaussian splats, picked together with their textures — or a `.srev` someone sent). Nothing is
   uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
   changes it). The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide

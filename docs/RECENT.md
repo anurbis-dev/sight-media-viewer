@@ -14,6 +14,20 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.53.1 — 2026-11-16 — Phone: the gallery button is back (two open buttons again)
+- **What:** (phone home) two open buttons again, as before 0.51.0: *Photo or video* (the gallery) and *Open a
+  file…* (Files: 3D models with textures, `.srev`, any media) — big on an empty home, two icons in the bar once
+  there are reviews.
+- **Where:** `mobile/js/app.js` `renderHome` (the pre-0.51.0 code restored from git, comment and subtitle updated),
+  `mobile/index.html` (`.bar .mini .ib`, two-column `.opens`), MANUAL.
+- **Notes:** why two: Android opens its photo picker only for `accept` limited to `image/*` / `video/*`; an input
+  with no `accept` (which 3D and `.srev` need) gets Camera / Camcorder / Files and no gallery — a page cannot add
+  a gallery item to that menu. iOS shows its photo library either way. The 0.51.0 entry's "the OS offers photo
+  library, camera and Files" was true on iOS only. The gallery button takes one file (`multiple` off, as before);
+  `test_pwa`'s `openButtons == 1` counts `label.pick-file` only, still one.
+  Review (fresh agent): no code bugs (restore matches the pre-0.51.0 code, tests' selectors / counts hold); found
+  ARCHITECTURE's "Home open button" still describing the single button — rewritten; the same reviewer confirmed the fix.
+
 ## 0.53.0 — 2026-11-15 — 3D: USD in the lightbox + USD animation, splats on the phone, notes' look on the phone; phone UV sets, background, grid cells
 - **What:** (Sight) the lightbox opens `.usd` / `.usda` / `.usdc`, a `.usdz` without usd-core, and plays **USD
   animation** (moving transforms, skeletons) — an animated `.usdz` is read in the browser instead of the server's
@@ -407,19 +421,3 @@ Add new entries directly below this line.
   handler (video only) never clears — the flag is set only for a video turn; (3) an Alt-scrub press now calls
   `preventDefault()`, as the turn does, so it does not start a native text selection. Not tested in a browser:
   checked by reading the code and `node --check` on the inline script. Not committed.
-
-## 0.45.1 — 2026-11-13 — Annotations: fixes to the 0.45.0 lock
-- **What:** review of 0.45.0 found four gaps, fixed here. (1) The Hold selector changed the on-screen time of a
-  baked drawing: it now changes only editable drawings, and it is not shown for a selection with none. (2) Front /
-  Back (Ctrl+] / Ctrl+[) could put a new drawing under a baked one or give two drawings the same z: Front now puts the
-  selection above every drawing, Back below every drawing, keeping the order inside the selection. (3) A baked
-  drawing had handles and a box it did nothing to: now it gets only a dashed outline (it is still selected for Delete);
-  the box and handles are for the editable selection. (4) Pre-existing: a copy (Ctrl+D, Ctrl+V) of a reply's drawing
-  kept `data.reply`, so once added to a note it was left out of that note's own pictures; copies now clear it.
-- **Where:** `app/static/annotate.js` — `renderSel` (`editSel` for the box and handles, dashed rect for baked),
-  `renderProps` / the `data-shold` handler, `reorder`, `duplicateSelection`, `paste`. `app/version.py`.
-- **Notes:** supersedes the 0.45.0 remark that the properties panel does nothing for a baked drawing: the Hold
-  selector still shows (for an editable selection; its value is read from the first editable drawing that has a
-  time), and the other controls only ever change editable drawings.
-  Not tested in a browser: checked by reading the code and `node --check`. Undo of a Front / Back step is the
-  generic z snapshot, as before.

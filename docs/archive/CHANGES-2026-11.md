@@ -2,6 +2,22 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.45.1 — 2026-11-13 — Annotations: fixes to the 0.45.0 lock
+- **What:** review of 0.45.0 found four gaps, fixed here. (1) The Hold selector changed the on-screen time of a
+  baked drawing: it now changes only editable drawings, and it is not shown for a selection with none. (2) Front /
+  Back (Ctrl+] / Ctrl+[) could put a new drawing under a baked one or give two drawings the same z: Front now puts the
+  selection above every drawing, Back below every drawing, keeping the order inside the selection. (3) A baked
+  drawing had handles and a box it did nothing to: now it gets only a dashed outline (it is still selected for Delete);
+  the box and handles are for the editable selection. (4) Pre-existing: a copy (Ctrl+D, Ctrl+V) of a reply's drawing
+  kept `data.reply`, so once added to a note it was left out of that note's own pictures; copies now clear it.
+- **Where:** `app/static/annotate.js` — `renderSel` (`editSel` for the box and handles, dashed rect for baked),
+  `renderProps` / the `data-shold` handler, `reorder`, `duplicateSelection`, `paste`. `app/version.py`.
+- **Notes:** supersedes the 0.45.0 remark that the properties panel does nothing for a baked drawing: the Hold
+  selector still shows (for an editable selection; its value is read from the first editable drawing that has a
+  time), and the other controls only ever change editable drawings.
+  Not tested in a browser: checked by reading the code and `node --check`. Undo of a Front / Back step is the
+  generic z snapshot, as before.
+
 ## 0.45.0 — 2026-11-13 — Annotations: drawings added to a note are fixed
 - **What:** a drawing already added to a note (or to a reply) can no longer be edited. It can still be selected and
   deleted from the frame (Delete, Shift+Delete, the bin, Ctrl+A then Delete, the eraser in full mode). Moving,

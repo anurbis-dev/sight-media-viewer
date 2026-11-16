@@ -564,10 +564,12 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   The root never scrolls (a scroll listener resets it); the list scrolls inside `.plist`.
   Themes: `html[data-theme=light|dark]` (Settings, `sight-review:theme`), none = system; the
   stage, overlays (`--ov*`) and the canvas (`--rd-*`) follow it.
-- **Home open button**: one picker for every kind (no `accept`, `multiple`: the OS offers the photo
-  library, the camera and Files; `openAny` sorts it out). A big `.opens` button while there is no review
-  at all, otherwise a small rectangular *＋ Open* in the bar (`.mini .obtn`); one is removed once the list
-  is in. The label carries both `pick-file` and `pick-media` (tests use either).
+- **Home open buttons**: two pickers, both into `openAny`. *Photo or video* (`label.pick-media`,
+  `accept="image/*,video/*"`, one file) — on Android only such an `accept` opens the photo picker
+  (gallery); *Open a file…* (`label.pick-file`, no `accept`, `multiple`: 3D models with their textures,
+  `.srev`, any media) — with no `accept` Android offers only Camera / Camcorder / Files. iOS shows its
+  photo library either way. Big `.opens` buttons while there is no review at all, otherwise two `.ib`
+  icons in the bar (`.mini`); one set is removed once the list is in. Multi-file tests go to `pick-file`.
 - **Home list**: `reviewRow` — swipe left / right uncovers the bin / eye (`.sw`), hold + drag
   reorders (`sight-review:order` in localStorage, new reviews first), hide for now =
   `sight-review:hidden` in sessionStorage. While dragging, the DOM is not reordered (that drops the

@@ -443,28 +443,29 @@ async function renderHome(){
   root.className = "home";
   const bar = el("header", "bar"), ttl = el("div", "ttl");
   ttl.appendChild(el("b", "", "Sight Review"));
-  // One open button for every kind (a picture, a video, a 3D model with its textures, a .srev): a big one on
-  // an empty home screen, a small "Open" one in the bar next to Settings once there is a review (renderHome
-  // keeps one of them when the list is in). No accept filter: iOS / Android then offer the photo library,
-  // the camera and Files in one menu. Labels carry pick-file and pick-media (tests use either).
-  const OPEN_SUB = "Picture · video · 3D model · Sight review (.srev)";
+  // The two open buttons: big ones on an empty home screen, two small icons in the bar next to
+  // Settings once there is a review (renderHome keeps one set when the list is in). Two, not one: with
+  // accept="image/*,video/*" Android opens its photo picker (the gallery); with no accept (needed for 3D
+  // models and .srev) it offers only Camera / Camcorder / Files — no gallery. iOS shows its photo library
+  // either way. Labels carry pick-media / pick-file (tests use them).
   const mini = el("div", "mini");
-  const ml = el("label", "obtn pick-file pick-media"); ml.title = "Open a picture, video, 3D model or Sight review"; ml.setAttribute("aria-label", ml.title);
-  ml.innerHTML = ico("plus", 18) + "<span>Open</span>";
-  ml.appendChild(picker("", true, openAny));
-  mini.appendChild(ml);
+  [["photo", "Photo or video", "image/*,video/*", "pick-media"], ["file", "Open a file…", "", "pick-file"]].forEach(([icon, title, accept, cls]) => {
+    const l = el("label", "ib " + cls); l.title = title; l.setAttribute("aria-label", title);
+    l.innerHTML = ico(icon, 20);
+    l.appendChild(picker(accept, cls === "pick-file", openAny));
+    mini.appendChild(l);
+  });
   mini.hidden = true;
   bar.appendChild(el("span")); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
   const main = el("main");
   const opens = el("div", "opens");
-  const l1 = el("label", "main pick-file pick-media");
-  l1.innerHTML = ico("plus", 26);
-  l1.appendChild(el("b", "", "Open a file"));
-  l1.appendChild(el("small", "", OPEN_SUB));
-  l1.appendChild(el("small", "", "3D: pick the model together with its textures"));
-  l1.appendChild(picker("", true, openAny));
-  opens.appendChild(l1);
+  const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
+  l1.appendChild(el("b", "", "Photo or video")); l1.appendChild(el("small", "", "from the gallery"));
+  l1.appendChild(picker("image/*,video/*", false, openAny));
+  l2.appendChild(el("b", "", "Open a file…")); l2.appendChild(el("small", "", "Files: media, a 3D model (with its textures), or a .srev review"));
+  l2.appendChild(picker("", true, openAny));
+  opens.appendChild(l1); opens.appendChild(l2);
   opens.hidden = true;
   main.appendChild(opens);
   // Opened over plain HTTP (a custom domain without HTTPS enforced): no service worker there, so no
