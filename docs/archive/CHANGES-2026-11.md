@@ -2,6 +2,70 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.57.0 — 2026-11-16 — Settings: section title colour / size, compact theme row, gear icon
+- **What:** two theme settings for the sidebar section headers — *Section titles* (colour, in Colors) and
+  *Section title size* (Typography, 9–20 px); they style the `.sec` band, the Settings header included. The theme
+  block is one row: the Theme select, a save icon that appears only while the values match no preset (its popover:
+  *Save to <name>* when the last picked base is one of your own themes, and *Save as new…*), a × for a user theme,
+  a reset icon, and (dev mode) the *app defaults* icon. The Settings header shows a gear when Sidebar icons is on.
+- **Where:** `index.html` — `.sec` CSS (`--sec-fg`, `--sec-size`), `.theme-row`, `DEFAULT_THEME` (`secColor`
+  "#e9eaec", `secSize` 12), `BUILTIN_THEMES` (explicit sec keys), `secFallback`, `loadTheme`, `applyUi`,
+  `saveTheme` (re-renders the row, guarded by a signature), `renderThemeList` (rewritten), `openThemePop` /
+  `closeThemePop` / `setThemeBase` / `themeMatches` / `presetVars`, `resetAllSettings`, `renderOptions`;
+  `app/static/defaults.json`; MANUAL, ARCHITECTURE.
+- **Notes:** a saved theme or user preset without the sec keys gets them from its own `fg` / `textSize − 1`
+  (`secFallback`, applied only when a saved theme exists — with none, defaults.json wins, so reload and Reset agree).
+  A 0.54 theme with a custom text size therefore shows *Custom* after the upgrade (its derived size differs from
+  the preset's explicit 12). The last picked base is `state.themeBase = {kind, name}` in `sight.layout`
+  (persisted when preset matching changes it). The popover is a body-level `.top-pop`: besides `registerAutoClose`
+  (pointer-move driven, useless on touch) it closes on an outside pointerdown, Escape (in the main keydown, after
+  the select popup), when Settings collapses and when the sidebar scrolls. `.light-info .sec` keeps its own look.
+  Review (fresh agent) found: the fallback overwrote defaults.json values on a fresh install (fixed); the gear not
+  refreshing when Sidebar icons is toggled (fixed); the popover never closing on touch (fixed); `themeBase` not
+  persisted after matching (fixed). The same reviewer confirmed every fix, nothing new.
+
+## 0.56.0 — 2026-11-16 — Review mode: shortcut help under "?", no exit cross, 3D bars centred beside the notes panel
+- **What:** the annotation hotkey hints are no longer inline text: a "?" button at the end of the annotation
+  toolbar (or `Shift+?`) opens a modal list of every annotate-mode shortcut, grouped (general, editing, drawing
+  tools, notes and panels, moving the selection, video, 3D). While it is open nothing underneath reacts — pointer,
+  wheel and keys are swallowed; Esc, ?, the backdrop, ✕ (also Enter / Space on it) close it. The × that only left
+  the mode is gone from the drawing tools bar (A, Esc or the lightbox annotate button leave it; the notes panel's
+  × stays). The lightbox's annotate hint reads "Annotating · ? = shortcuts · Esc leaves". On a 3D model the shading
+  and animation bars centre on the area left of the notes panel instead of the full width.
+- **Where:** `app/static/annotate.js` (`keyTable()` rows `[combo, handler, label, group]`, `helpGroups`,
+  `keyName`, `openHelp` / `closeHelp` / `toggleHelp`, `helpOpen()` in the API, the guard at the top of `onKey`,
+  `.an-help*` CSS, `.light.an-panel-on { --an-right: 320px }`); `index.html` (early keydown guard
+  `if (light && annot.helpOpen())`, `ANNOT_HINT`, `#v3dShade, #v3dAnim { left: calc(50% + (var(--uv-left) −
+  var(--an-right)) / 2) }`); MANUAL, ARCHITECTURE.
+- **Notes:** the help is rendered from the same table that fires the keys, so it cannot drift — a new shortcut is
+  a labelled row in `keyTable()`; rows without a label are not listed (the reserved D row is labelled only for
+  3D). `keyTable()` runs per key / per open, so labels follow the current file's kind. `--an-right` is a CSS
+  constant because the panel has a fixed 320 px width and no media rule; `.an-top` / `.an-toast` already shift by
+  160 px. At 420 px wide the panel covers the lightbox annotate button — hide the panel first (C or its ×).
+  Review (fresh agent): no bugs; three nits fixed (the D row listed for images, the Esc label missing the pin-focus
+  step, Enter / Space on the help's ✕ swallowed). The same reviewer confirmed them, nothing new.
+
+## 0.55.0 — 2026-11-16 — About dialog behind the brand mark; icon variants to choose from
+- **What:** the "S" tile in the sidebar is now the Sight icon (`favicon.svg`, so favicon and mark are one file)
+  and a button: click / tap / Enter opens *About Sight <version>* — version, source or frozen build, Python, OS,
+  Starlette, three.js, `SIGHT_HOME`, library DB path and size, asset / source / thumbnail counts, ffmpeg path and
+  version, usd-core, port, dev mode, uptime, log file — with a Copy button. `docs/tmp/icon-variants.html` shows
+  seven icon proposals (eye, viewfinder S, horizon S, aperture, thumbnail grid, slanted S, focus dot) at 16–256 px;
+  the user picked 7, *focus dot* (a ring with the focus point off-centre): `app/static/favicon.svg` is now that
+  mark (64-unit box, 6-unit strokes = 1.5 px at 16 px).
+- **Where:** `app/server.py` (`GET /api/app-info`, `static_info()` cached once, `ffmpeg_info()` cached only once a
+  version line was read, `STARTED_AT`); `Sight.py` (`app.state.port`); `index.html` (`#aboutBtn`, `#aboutOverlay`
+  on the `.fb-modal` pattern, `aboutOpen` / `aboutClose` / `aboutCopy`, `.mark` / `.about-*` CSS, Esc branch after
+  `fbOverlay`, `aboutOverlay` in the canvas `keysEnabled`); MANUAL, ARCHITECTURE.
+- **Notes:** three.js revision is parsed from `vendor/three.core.js` (`three.module.js` only re-exports it).
+  Counts, DB size and uptime are live; the thumbnail count is the top-level files of `thumbs/` (cheap). The port
+  row is dropped when `app.state.port` is unset (tests build the app without Sight.py). A late response is dropped
+  by `aboutToken`; a non-OK answer shows one line in the footer. While About is open every other key is swallowed
+  (it is modal; it cannot be opened over the lightbox, which covers the sidebar). Touch: 40 px hit area via
+  `.mark::after` in the coarse-pointer block. Review (fresh agent, ran the endpoint) found: a failed ffmpeg probe
+  cached for good (fixed), `request.url.port` wrong behind a proxy (fixed: listen port), interleaved opens
+  duplicating rows (fixed: token), 24 px tap target (fixed). The same reviewer confirmed every fix, nothing new.
+
 ## 0.54.0 — 2026-11-16 — Desktop: Graphite theme (compact, Inter), captions under thumbnails, resizable side panels
 - **What:** new default look *Graphite*, picked from five variants on a mock-up stand: Inter 13 px, 26 px menu rows,
   30 px controls, sidebar 208 / inspector 260 px, one blue accent, frameless cards with name + one info line

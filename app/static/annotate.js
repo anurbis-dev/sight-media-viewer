@@ -2656,7 +2656,7 @@ export function createAnnotator(host){
     let box = track.querySelector(".an-marks");
     const v = S.kind === "video" ? video() : null;
     const dur = v && Number.isFinite(v.duration) ? v.duration : (S.asset?.duration || 0);
-    if (!v || !dur){ box?.remove(); return; }
+    if (!v || !dur){ box?.remove(); host.marksChanged?.(); return; }
     if (!box){
       box = document.createElement("div");
       box.className = "an-marks";
@@ -2679,6 +2679,7 @@ export function createAnnotator(host){
         : `<i class="an-mk" data-t="${t}" style="left:${(t / dur * 100).toFixed(3)}%" title="Drawing at ${fmtTime(t, S.fps)}"></i>`;
     });
     box.innerHTML = html;
+    host.marksChanged?.(); // a sequence of clips (index.html) shows this clip's marks on its own bar too
   }
   // The timeline's marks: {t, note?, num?}. A note has a mark on each frame it stands on (noteFrames:
   // its drawings' and its picture texts' frames — not the frame it was written on); a frame with only
@@ -2704,9 +2705,13 @@ export function createAnnotator(host){
     const v = video();
     if (!v) return false;
     v.pause();
+    if (!(v.duration > 0) || v.readyState < 1) return true; // no metadata yet: nothing to step (nor to cross)
     const fd = frameDur();
     // From the frame on screen (floor): rounding skipped a frame from its second half.
-    v.currentTime = clamp((Math.floor(v.currentTime / fd + 1e-6) + n) * fd + fd * 0.01, 0, v.duration || 0);
+    const t = (Math.floor(v.currentTime / fd + 1e-6) + n) * fd + fd * 0.01;
+    // A sequence of clips (index.html): past either end, the step moves into the neighbouring clip.
+    if ((t < 0 || t > (v.duration || 0) - fd * 0.5) && host.seqEdge?.(n, fd)) return true;
+    v.currentTime = clamp(t, 0, v.duration || 0);
     return true;
   }
   function jumpMarker(dir){
@@ -2714,7 +2719,8 @@ export function createAnnotator(host){
     if (!v) return false;
     const ts = markerTimes(), cur = v.currentTime, eps = frameDur() * 0.5;
     const t = dir > 0 ? ts.find((x) => x > cur + eps) : [...ts].reverse().find((x) => x < cur - eps);
-    if (t == null){ toast(dir > 0 ? "No later marker" : "No earlier marker"); return true; }
+    // A sequence of clips: the nearest marker in the clips after / before this one.
+    if (t == null){ if (!host.seqMarker?.(dir)) toast(dir > 0 ? "No later marker" : "No earlier marker"); else v.pause(); return true; }
     v.pause();
     v.currentTime = landAt(t);
     return true;
@@ -3563,6 +3569,9 @@ export function createAnnotator(host){
     mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, importFile, explodeChanged,
     isOn: () => S.on,
     supports: () => supported(),
+    // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
+    marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),
+    loading: () => !!S.loading, // the open asset's rows are still being fetched (its marks are not known yet)
     // For the board view (canvas.js): save pending edits, drop a half-drawn gesture, the drawings' bounds, modal state.
     flush: () => flush(), abortGesture, modal: () => !!help || !!stampPop && !stampPop.hidden,
     bounds: () => { let b = null; for (const it of S.items.values()){ if (!isDrawing(it)) continue; const x = boundsOf(it); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x.slice(); } return b; },

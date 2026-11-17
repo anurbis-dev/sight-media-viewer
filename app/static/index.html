@@ -211,7 +211,14 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
    the view itself. With the browser's scroll anchoring on, Chromium "corrected" scrollTop by one
    row for that, the corrected position re-rendered the slice back, and the two flipped every frame
    (the grid blinked between two rows, seen while dragging slowly). */
-.grid { position: relative; overflow: auto; overflow-anchor: none; flex: 1; min-width: 0; min-height: 0; padding: var(--space-4); cursor: default; user-select: none; -webkit-user-select: none; }
+.grid { position: relative; overflow: auto; overflow-anchor: none; flex: 1; min-width: 0; min-height: 0; padding: var(--space-4); cursor: default; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+/* Touch selection mode (long-press a tile): a bar within thumb reach, above the narrow-screen drawers (z 20). */
+.touch-selbar { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; max-width: calc(100vw - 32px); box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-2, var(--bg)); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+.touch-selbar[hidden] { display: none; }
+.touch-selbar .ts-count { font-size: 13px; color: var(--fg); white-space: nowrap; }
+.touch-selbar .btn { min-height: 40px; white-space: nowrap; }
+body.touch-sel-on .grid { padding-bottom: 88px; }
+body.touch-sel-on .insp.open { bottom: 84px; }
 .grid.panning { cursor: grabbing; }
 .space { position: relative; width: 100%; }
 .slice { position: absolute; left: 0; right: 0; top: 0; display: grid; gap: var(--grid-gap); align-content: start; grid-auto-rows: var(--row-h, auto); }
@@ -479,6 +486,22 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .vtrack { flex: 1; height: 12px; border-radius: 999px; background: var(--surface-3); position: relative; cursor: pointer; touch-action: none; }
 .vcache { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #2f9d5b; border-radius: inherit; pointer-events: none; opacity: .85; }
 .vplay { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; background: var(--fg); border-radius: 1px; pointer-events: none; box-shadow: 0 0 0 1px rgb(0 0 0 / .35); }
+/* Sequence (clips back to back): one segment per clip above the clip's own timeline. */
+.seqbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px 0; border-top: 1px solid var(--border); background: var(--bg); flex: none; }
+.seqbar[hidden] { display: none; }
+.seqbar:not([hidden]) + .vbar { border-top: 0; }
+.seqbar .seq-b { width: 34px; padding: 0; flex: none; }
+.seqbar .seq-b.on { color: var(--accent); }
+.seq-track { flex: 1; min-width: 0; height: 18px; position: relative; border-radius: 4px; overflow: hidden; background: var(--surface-3); cursor: pointer; touch-action: none; }
+.seq-segs { position: absolute; inset: 0; display: flex; }
+.seq-seg { flex: none; height: 100%; min-width: 2px; box-sizing: border-box; padding: 0 5px; border-right: 1px solid var(--bg); background: color-mix(in oklab, var(--accent) 34%, var(--surface-3)); color: var(--fg); font-size: 10px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.seq-seg:nth-child(even) { background: color-mix(in oklab, var(--accent) 17%, var(--surface-3)); }
+.seq-seg.cur { box-shadow: inset 0 0 0 1px var(--accent); }
+.seq-marks { position: absolute; inset: 0; pointer-events: none; }
+.seq-mk { position: absolute; top: 0; width: 2px; height: 5px; margin-left: -1px; border-radius: 1px; background: var(--muted); }
+.seq-mk.note { height: 7px; width: 4px; margin-left: -2px; background: color-mix(in oklab, var(--accent) 70%, var(--fg)); }
+.seq-head { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--fg); pointer-events: none; box-shadow: 0 0 0 1px rgb(0 0 0 / .35); }
+.seq-buf { position: absolute; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
 .view { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; }
 .view-media { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; }
 /* Lightbox placeholder: the card thumbnail, stretched to the full image's box, shown while the full
@@ -640,6 +663,11 @@ label.field textarea { min-height: 72px; resize: vertical; }
   </aside>
   <div class="panel-handle" id="sideHandle" title="Drag to resize · double-click to reset"></div>
   <div id="ctx" class="ctx" hidden></div>
+  <div class="touch-selbar" id="touchSelBar" hidden>
+    <span class="ts-count" id="tsCount"></span>
+    <button class="btn" id="tsSeq" type="button" hidden>▶▶ Play in sequence</button>
+    <button class="btn ghost" id="tsClose" type="button" style="width:40px;padding:0" aria-label="Leave selection mode" title="Leave selection mode">✕</button>
+  </div>
   <div id="colorPop" class="color-pop" hidden></div>
   <div id="selPop" class="ctx sel-pop" hidden></div>
   <div id="palette" class="palette-overlay" hidden>
@@ -694,6 +722,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
         <div class="top-pop" id="sortPop" hidden></div>
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
         <div class="top-pop" id="viewOptPop" hidden></div>
+        <button class="btn ghost" id="seqBtn" type="button" title="Play the selected videos one after another, in the order they were selected (Space over a selected one)" hidden>▶▶ Sequence</button>
         <button class="btn ghost icon" id="splitBtn" type="button" title="Show library alongside the board" hidden>◧</button>
         <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
@@ -714,7 +743,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
-import { hotkey } from "/static/keys.js";
+import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
@@ -1015,6 +1044,10 @@ let light = null;
 // points it at each asset (setAsset) and at the viewer that shows it (bind2d / bind3d).
 const annot = createAnnotator({
   api: (path, opts) => api(path, opts),
+  // Sequence: a frame step past either end of the clip moves into the neighbouring clip (fd = frame length).
+  seqEdge: (n, fd) => seqEdge(n, fd),
+  seqMarker: (dir) => seqMarker(dir),
+  marksChanged: () => seqMarksFromAnnot(),
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   toast: (text) => flashV3DToast(text),
@@ -1645,7 +1678,9 @@ function ensureCard(a, i, L, pos){
     el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div><div class="rv" hidden></div>`;
     el.draggable = false;
     el.addEventListener("pointerdown", (ev) => {
-      el.draggable = ev.button === 0 && !ev.ctrlKey && !ev.metaKey;
+      // Not for a finger: a held touch would start an HTML5 drag (whose dragstart replaces the selection)
+      // instead of the long-press that selects.
+      el.draggable = ev.button === 0 && !ev.ctrlKey && !ev.metaKey && ev.pointerType !== "touch";
     });
     el.addEventListener("dragstart", (ev) => {
       const id = el.dataset.id;
@@ -1943,6 +1978,7 @@ function disposeObj3d(obj){
 }
 
 function selectOnly(id){
+  state.touchSelect = false; // any "select only this" / clear ends touch selection mode
   state.selected = id;
   state.selectedIds = id ? [id] : [];
   state.anchor = id;
@@ -1971,6 +2007,46 @@ function selectSet(ids, anchor){
 function paintSelection(){
   const set = new Set(state.selectedIds);
   for (const [id, el] of cardPool) el.classList.toggle("on", set.has(id));
+  const nSeq = seqSelection().length;
+  const sb = document.getElementById("seqBtn");
+  if (sb) sb.hidden = nSeq < 2;
+  syncTouchSel(nSeq);
+}
+// Touch selection mode (docs/PLAN-viewer.md): a long-press on a tile starts it with just that tile; while it
+// is on, a finger tap toggles a tile (appending, so click order holds) and a double tap opens nothing. It ends
+// whenever the selection is cleared or replaced (selectOnly) or becomes empty. The bottom bar shows the count,
+// *Play in sequence* (2+ videos) and ✕.
+function syncTouchSel(nSeq){
+  if (state.touchSelect && !state.selectedIds.length) state.touchSelect = false;
+  const bar = document.getElementById("touchSelBar");
+  if (!bar) return;
+  const on = !!state.touchSelect && !grid.hidden;
+  bar.hidden = !on;
+  document.body.classList.toggle("touch-sel-on", on);
+  if (!on) return;
+  const n = state.selectedIds.length;
+  document.getElementById("tsCount").textContent = `${n} selected`;
+  document.getElementById("tsSeq").hidden = (nSeq ?? seqSelection().length) < 2;
+}
+const LONG_PRESS_MS = 500;
+let longPress = null;
+let lastGridPtr = ""; // the last grid press's pointerType: decides a click's input (not a PointerEvent in older Safari)
+const fingerish = (type) => type === "touch" || type === "pen"; // no keyboard modifiers to select with
+function cancelLongPress(){ if (longPress){ clearTimeout(longPress.timer); longPress = null; } }
+function startLongPress(e, id){
+  cancelLongPress();
+  longPress = { x: e.clientX, y: e.clientY, id, timer: setTimeout(() => {
+    const lp = longPress;
+    longPress = null;
+    if (!lp) return;
+    skipClick = true; // the finger's release click must not run clickSelect (it would replace the selection)
+    if (!state.touchSelect){
+      selectOnly(lp.id);           // a fresh selection: selectOnly drops the flag, so set it after
+      state.touchSelect = true;
+      insp.classList.remove("open"); // the narrow-screen inspector would cover the bar
+    } else toggleSelect(lp.id);
+    paintSelection();
+  }, LONG_PRESS_MS) };
 }
 
 function idsInRect(rect){
@@ -2026,7 +2102,7 @@ function cardFromEvent(e){
 }
 
 grid.addEventListener("dblclick", (e) => {
-  if (skipClick) return;
+  if (skipClick || state.touchSelect) return; // in touch selection mode two quick taps are two toggles
   const card = cardFromEvent(e);
   if (!card) return;
   const a = state.items.find(x => x.id === card.dataset.id);
@@ -2083,6 +2159,8 @@ grid.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   const onCard = cardFromEvent(e);
   const ctrl = e.ctrlKey || e.metaKey;
+  lastGridPtr = e.pointerType;
+  if (fingerish(e.pointerType) && onCard && !ctrl && !e.shiftKey) startLongPress(e, onCard.dataset.id);
   if (ctrl){
     e.preventDefault();
     marquee = {
@@ -2095,7 +2173,8 @@ grid.addEventListener("pointerdown", (e) => {
     bindPtr();
     return;
   }
-  if (!onCard && !e.shiftKey){
+  // In touch selection mode a finger on empty space scrolls, never boxes over (and wipes) the selection.
+  if (!onCard && !e.shiftKey && !(state.touchSelect && fingerish(e.pointerType))){
     e.preventDefault();
     marquee = { x: e.clientX, y: e.clientY, mode: "replace", active: false, origin: state.selectedIds.slice(), cardId: null };
     bindPtr();
@@ -2130,8 +2209,10 @@ function onPtrMove(e){
 
 function onPtrUp(e){
   const m = marquee, t = tileDrag;
-  if (m && !m.active && m.cardId) clickSelect(m.cardId, { shiftKey: e.shiftKey, ctrlKey: true, metaKey: e.metaKey });
-  else if (m && !m.active && !m.cardId && m.mode === "replace") selectOnly(null);
+  // pointercancel = the browser took the pointer (a touch scroll): an abort, not a click on empty space.
+  const cancelled = e.type === "pointercancel";
+  if (m && !m.active && m.cardId && !cancelled) clickSelect(m.cardId, { shiftKey: e.shiftKey, ctrlKey: true, metaKey: e.metaKey });
+  else if (m && !m.active && !m.cardId && m.mode === "replace" && !cancelled) selectOnly(null);
   if (t && !t.moved && t.cardId) showCtx(e.clientX, e.clientY, t.cardId);
   else if (t && !t.moved && !t.cardId) showGridCtx(e.clientX, e.clientY);
   if (m?.active || t?.moved) skipClick = true;
@@ -2142,10 +2223,17 @@ function onPtrUp(e){
   unbindPtr();
 }
 
+// A long-press stays a press: moving the finger (a scroll) or the browser taking the pointer cancels it.
+grid.addEventListener("pointermove", (e) => { if (longPress && Math.hypot(e.clientX - longPress.x, e.clientY - longPress.y) > 10) cancelLongPress(); });
+grid.addEventListener("pointerup", cancelLongPress);
+grid.addEventListener("pointercancel", cancelLongPress);
 grid.addEventListener("click", (e) => {
   if (skipClick){ skipClick = false; return; }
   if (e.ctrlKey || e.metaKey) return;
   const card = cardFromEvent(e);
+  // Touch selection mode: a finger tap on a tile toggles it (mouse clicks keep their meaning).
+  // Empty space does nothing then (a missed tile must not drop the selection; ✕ / Esc end the mode).
+  if (state.touchSelect && fingerish(lastGridPtr)){ if (card) toggleSelect(card.dataset.id); return; }
   if (!card){
     if (!e.shiftKey) selectOnly(null);
     return;
@@ -2411,6 +2499,7 @@ function applyViewDom(){
   const showCanvas = state.view === "canvas";
   const split = showCanvas && state.canvasSplit;
   grid.hidden = showCanvas && !state.canvasSplit;
+  syncTouchSel(); // the touch selection bar belongs to the grid
   canvasView.hidden = !showCanvas;
   splitBtn.hidden = !showCanvas;
   splitBtn.classList.toggle("on", state.canvasSplit);
@@ -4690,11 +4779,11 @@ const TEXT_EXT = new Set([
   ".log", ".ini", ".cfg", ".toml",
 ]);
 
-function fillStage(stage, a){
+function fillStage(stage, a, opts = {}){
   dispose3d("light3d");
   const src = previewSrc(a);
   if (a.kind === "video" || a.kind === "image" || a.ext === ".psd"){
-    attachViewer(stage, a, src);
+    attachViewer(stage, a, src, opts.adopt ? { adopt: opts.adopt } : {});
   } else if (a.kind === "model3d"){
     stage.innerHTML = `<div class="view3d" id="light3d"></div>`;
     boot3d("light3d", a.id, `/api/file/${a.id}`, a.ext, thumbSrc(a), stage.firstElementChild);
@@ -4920,6 +5009,7 @@ function paintVBar(){
     cache.style.width = "0%";
   }
   light.bar.querySelector("[data-mem]").textContent = snap ? `RAM ${Math.round(snap.bytes / 1048576)} / ${snap.mb} MB` : "";
+  if (light.seq) paintSeqBar(false);
 }
 // Tell the server where the playhead is (throttled: minGap ms between posts, with a trailing post
 // so the last position always gets through). Every post carries the RAM budget from the settings,
@@ -4937,9 +5027,10 @@ function pushVideoFocus(el, a, minGap){
     body: JSON.stringify({ id: a.id, t: t || 0, duration: Number.isFinite(el.duration) ? el.duration : 0, mb: clampCache(state.theme.videoCache) }),
   }).then((r) => r.json()).then((snap) => { if (light && light.video === el) applyCacheSnap(snap); }).catch(() => {});
 }
-function startVideoCache(el, a){
+// keep: the element already streams the file (a preloaded sequence clip) — don't reload it.
+function startVideoCache(el, a, keep){
   releaseMedia(false);
-  el.src = `/api/file/${a.id}`;
+  if (!keep) el.src = `/api/file/${a.id}`;
   watchPlayable(el, a);
   pushVideoFocus(el, a, 0);
   // The window keeps filling after the focus reply, so poll to keep the strip honest.
@@ -4962,7 +5053,8 @@ function watchPlayable(el, a){
     const res = await convertForPlayback(a.id, (p) => show(`Converting for playback… ${Math.round(p * 100)}%`),
       () => !!light && light.video === el);
     if (!light || light.video !== el) return;
-    if (!res.ok){ show(`Cannot play this file: ${res.error}`); return; }
+    // A sequence jump waiting to land on this clip never will: let frame / marker keys move on again.
+    if (!res.ok){ show(`Cannot play this file: ${res.error}`); if (light.seq) light.seq.pendT = light.seq.pendPlay = null; return; }
     show("");
     el.src = `/api/file/${a.id}?copy=${Date.now()}`;
     pushVideoFocus(el, a, 0);
@@ -5015,7 +5107,19 @@ function attachViewer(stage, a, src, opts = {}){
   const ph = isVid || cached || opts.embedded ? "" : thumbSrc(a);
   stage.innerHTML = `<div class="view" id="view">${ph ? `<img class="view-ph" alt="" decoding="sync" src="${ph}" draggable="false" />` : ""}<${isVid ? "video" : "img"} class="view-media${isVid || cached ? "" : " loading"}" ${isVid ? 'autoplay playsinline preload="auto"' : `alt="" ${cached ? 'decoding="sync" ' : ""}src="${src}"`} draggable="false" /><div class="view-hud" id="viewHud"></div></div>`;
   const wrap = stage.querySelector(".view");
+  // Sequence: the next clip was preloaded in a hidden <video> (seqPreload); it takes the new element's place
+  // in this same task, so it never leaves the document and keeps its decoded first frame — a seamless cut.
+  if (isVid && opts.adopt){
+    const ad = opts.adopt;
+    ad.className = "view-media"; ad.removeAttribute("style"); ad.draggable = false;
+    // `<video … />` is not self-closing in HTML: the HUD after it was parsed as its child — keep it with the element.
+    const made = stage.querySelector(".view-media");
+    while (made.firstChild) ad.appendChild(made.firstChild);
+    made.replaceWith(ad);
+  }
   const el = stage.querySelector(".view-media");
+  // A sequence jump that lands paused (frame step, scrub) must not start playing before it is placed.
+  if (isVid && !opts.adopt && light?.seq?.pendPlay === false) el.autoplay = false;
   let phEl = stage.querySelector(".view-ph");
   let scEl = null; // the scrub copy over a video (see loadScrubCopy)
   const hud = stage.querySelector(".view-hud");
@@ -5046,6 +5150,7 @@ function attachViewer(stage, a, src, opts = {}){
   }
   if (light && !opts.embedded){
     light.video = isVid ? el : null; light.setZoom = (n) => toScale(n);
+    light.vctl = isVid ? { seek: (t) => seekVideo(t), begin: () => beginScrub(), end: () => endScrub() } : null;
     light.turn = () => setTurn({ rot: turn.rot + 90, mir: turn.mir });
     light.mirror = () => setTurn({ rot: turn.rot, mir: !turn.mir });
     light.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
@@ -5219,7 +5324,7 @@ function attachViewer(stage, a, src, opts = {}){
     const nh = isVid ? el.videoHeight : el.naturalHeight;
     if (nw && nh) vs.nat = { w: nw, h: nh };
     openMode();
-    if (isVid) paintVBar();
+    if (isVid){ paintVBar(); seqOnReady(el); }
     else reveal();
   }
   // Fade the full image in over the thumbnail once it is decoded; the thumbnail stays fully opaque
@@ -5280,8 +5385,16 @@ function attachViewer(stage, a, src, opts = {}){
       pushVideoFocus(el, a, 1000); // playback: slide the RAM window about once a second
     });
     el.addEventListener("seeked", () => { pumpSeek(); settleScrub(); });
+    // Sequence: cut on the end of playback only — a scrub or a seek to the very end fires "ended" too (paused).
+    el.addEventListener("timeupdate", () => { if (!el.paused) el._seqPlayedAt = performance.now(); });
+    el.addEventListener("playing", () => { el._seqPlayedAt = performance.now(); });
+    el.addEventListener("ended", () => {
+      if (!light?.seq || light.video !== el || light.scrubbing || light.scrubT != null) return;
+      if (!(performance.now() - (el._seqPlayedAt || -1e9) < 1500)) return;
+      seqAdvance();
+    });
     bindVBar(el, seekVideo, beginScrub, endScrub);
-    startVideoCache(el, a);
+    startVideoCache(el, a, !!opts.adopt);
   }
   // A single click toggles play/pause; a double click still frames/100%s the picture. Both start
   // as "click" events, so the first one is held back briefly — long enough for a second to arrive
@@ -5438,6 +5551,339 @@ function bindVBar(el, seekVideo, beginScrub, endScrub){
   };
 }
 
+// ---- Sequence: selected videos played back to back (docs/PLAN-viewer.md) ---------------------------
+// light.seq = { list: [asset], i, durs: [s], loop, buf, pendT, pendPlay }. Each clip is shown by the normal
+// showInLight path, so its own notes / drawings / fps come with it (annotate.js setAsset). The next clip is
+// preloaded in a hidden muted <video> (seqPreload) and adopted by attachViewer at the cut (seqAdvance).
+// pendT / pendPlay: where a clip opened by seqGo lands once its metadata is in (pendT < 0 = from the end).
+// One pass over the items (assetById is a linear find; paintSelection runs on every marquee move).
+function seqCandidates(ids){
+  if (!ids.length) return [];
+  const byId = new Map(state.items.map((a) => [a.id, a]));
+  return ids.map((id) => byId.get(id)).filter((a) => a && a.kind === "video" && a.status !== "missing");
+}
+function seqSelection(){ return seqCandidates(state.selectedIds); }
+function openSequence(list){
+  if (!list || list.length < 2){ flash("Sequence: select 2 or more videos"); return; }
+  if (light) closeLight();
+  toggleLight(list[0]);
+  if (!light) return;
+  light.seq = { list, i: 0, durs: list.map((a) => Number(a.duration) || 0), loop: false, buf: null, pendT: null, pendPlay: null, marks: list.map(() => []) };
+  list.forEach((a, k) => { if (k) seqLoadMarks(k); }); // clip 0 is on screen: annotate reports its marks
+  seqProbe(light.seq);
+  light.el.querySelector(".seqbar").hidden = false;
+  light.el.querySelector(".t").textContent = `Clip 1/${list.length} · ${list[0].name}`;
+  paintSeqBar(true);
+  seqPreload();
+}
+function endSequence(){
+  if (!light?.seq) return;
+  seqDropBuf();
+  light.seq = null;
+  light.el.querySelector(".seqbar").hidden = true;
+}
+// Known durations; an unknown one (not probed yet) borrows the average so the bar still splits sensibly.
+// Marker times of clip k from its rows: a mark per frame with a drawing or a note's picture text on it — the
+// timeline's rule (annotate.js marks()), approximated: drawings' `ctx.t` (a note mark when the drawing belongs
+// to a note, `data.note`) and notes' caption frames ("t:<s>" keys). note: drawn taller.
+async function seqLoadMarks(k){
+  const s = light?.seq, a = s?.list[k];
+  if (!a) return;
+  let rows = [];
+  try { rows = await api(`/api/annotations?asset_id=${encodeURIComponent(a.id)}`); } catch { return; }
+  if (light?.seq !== s || s.i === k) return; // the clip on screen reports its own marks
+  const out = [];
+  const add = (t, note) => {
+    if (!(t >= 0)) return;
+    const m = out.find((x) => Math.abs(x.t - t) < 0.0015);
+    if (m) m.note = m.note || note; else out.push({ t, note });
+  };
+  for (const r of rows || []){
+    if (r.kind === "status" || r.data?.deleted) continue;
+    const isNote = r.kind === "note";
+    if (!isNote) add(Number(r.data?.ctx?.t), !!r.data?.note); // a drawing of a note marks a note frame
+    else for (const key of Object.keys(r.data?.captions || {})) if (key.startsWith("t:")) add(Number(key.slice(2)), true);
+  }
+  s.marks[k] = out;
+  seqRepaintSoon();
+}
+function seqMarksFromAnnot(){
+  const s = light?.seq;
+  if (!s || !light.video || annot.loading()) return; // still loading: keep the fetched estimate meanwhile
+  s.marks[s.i] = annot.marks();
+  seqRepaintSoon();
+}
+let seqRepaintRaf = 0;
+function seqRepaintSoon(){
+  if (seqRepaintRaf) return;
+  seqRepaintRaf = requestAnimationFrame(() => { seqRepaintRaf = 0; paintSeqBar(true); });
+}
+// Shift+, / . found no marker left in this clip: the nearest one in the clips after / before it.
+function seqMarker(dir){
+  const s = light?.seq;
+  if (!s) return false;
+  // The last jump has not landed, or this clip's marks are not loaded yet: stay rather than skip over them.
+  if (s.pendT != null || annot.loading()) return true;
+  for (let k = s.i + dir; k >= 0 && k < s.list.length; k += dir){
+    const ts = (s.marks[k] || []).map((m) => m.t).filter((t) => !(s.durs[k] > 0) || t <= s.durs[k]).sort((x, y) => x - y);
+    if (!ts.length) continue;
+    seqGo(k, (dir > 0 ? ts[0] : ts[ts.length - 1]) + 0.001, false);
+    return true;
+  }
+  return false;
+}
+// Which clips the browser cannot play, found up front (the server has no such check: POST /api/video/transcode
+// converts any file without a copy, so it is asked only for these). A conversion takes about the clip's length,
+// so the next clips' start early (seqConvertAhead); a clip reached before its copy is ready waits on
+// "Converting…" through the player's own fallback (watchPlayable, which joins the same job). The clip on screen
+// is the player's.
+function seqProbePlayable(src){
+  return new Promise((res) => {
+    const v = document.createElement("video");
+    v.muted = true; v.preload = "metadata";
+    let done = false;
+    const end = (ok) => { if (done) return; done = true; v.removeAttribute("src"); try { v.load(); } catch {} res(ok); };
+    v.addEventListener("loadedmetadata", () => end(!!v.videoWidth));
+    v.addEventListener("error", () => end(false));
+    setTimeout(() => end(true), 8000); // no answer: leave it to the player
+    v.src = src;
+  });
+}
+async function seqProbe(s){
+  s.unplayable = new Set();
+  s.converted = new Set();
+  const i0 = s.i;
+  for (let d = 1; d < s.list.length; d++){
+    if (light?.seq !== s) return;
+    const k = (i0 + d) % s.list.length; // the clips ahead first: their conversions start soonest
+    if (k === s.i) continue;
+    if (await seqProbePlayable(`/api/file/${s.list[k].id}`)) continue;
+    if (light?.seq !== s) return;
+    s.unplayable.add(k);
+    seqConvertAhead(s);
+  }
+}
+// One conversion at a time, and only for the next two clips: the server encodes one job at a time, so a queue
+// of every clip would hold back the clip the user jumps to, and keep the CPU busy after the sequence is closed.
+async function seqConvertAhead(s){
+  if (!s?.unplayable || s.converting || light?.seq !== s) return;
+  const n = s.list.length;
+  let k = -1;
+  for (const d of [1, 2]){
+    const j = s.i + d;
+    const c = j < n ? j : s.loop ? j % n : -1;
+    if (c >= 0 && c !== s.i && s.unplayable.has(c) && !s.converted.has(c)){ k = c; break; }
+  }
+  if (k < 0) return;
+  s.converting = true;
+  const res = await convertForPlayback(s.list[k].id, null, () => light?.seq === s);
+  s.converting = false;
+  s.converted.add(k);
+  if (light?.seq !== s) return;
+  // A preload of this clip made before the copy existed failed: load it again (now from the copy).
+  if (res.ok && s.buf?.k === k && s.buf.bad){ seqDropBuf(); seqPreload(); }
+  seqConvertAhead(s);
+}
+function seqDurs(){
+  const d = light.seq.durs, known = d.filter((x) => x > 0);
+  const avg = known.length ? known.reduce((s, x) => s + x, 0) / known.length : 10;
+  return d.map((x) => (x > 0 ? x : avg));
+}
+function seqSetDur(k, d){
+  const s = light?.seq;
+  if (!s || !(d > 0) || !Number.isFinite(d) || Math.abs((s.durs[k] || 0) - d) < 0.005) return;
+  s.durs[k] = d;
+  paintSeqBar(true);
+}
+function seqLocate(T){
+  const d = seqDurs();
+  let acc = 0;
+  for (let k = 0; k < d.length; k++){
+    // Never exactly at the end: a seek there fires "ended".
+    if (T < acc + d[k] || k === d.length - 1) return { k, t: Math.max(0, Math.min(d[k] - 0.001, T - acc)) };
+    acc += d[k];
+  }
+  return { k: 0, t: 0 };
+}
+function paintSeqBar(segs){
+  const s = light?.seq;
+  if (!s) return;
+  const bar = light.el.querySelector(".seqbar");
+  const d = seqDurs(), total = d.reduce((a, x) => a + x, 0) || 1;
+  if (segs){
+    bar.querySelector(".seq-segs").innerHTML = s.list.map((a, k) =>
+      `<div class="seq-seg${k === s.i ? " cur" : ""}" style="width:${(d[k] / total * 100).toFixed(4)}%" title="${esc(`${k + 1}. ${a.name}`)}">${esc(a.name)}</div>`).join("");
+    bar.querySelector("[data-seq=loop]").classList.toggle("on", s.loop);
+    let acc = 0, mk = "";
+    s.list.forEach((a, k) => {
+      for (const m of s.marks?.[k] || []) if (m.t <= d[k]) mk += `<i class="seq-mk${m.note ? " note" : ""}" style="left:${((acc + m.t) / total * 100).toFixed(4)}%"></i>`;
+      acc += d[k];
+    });
+    bar.querySelector(".seq-marks").innerHTML = mk;
+  }
+  const el = light.video;
+  const cur = light.scrubT != null ? light.scrubT : (el ? el.currentTime || 0 : 0);
+  const T = d.slice(0, s.i).reduce((a, x) => a + x, 0) + Math.min(cur, d[s.i]);
+  bar.querySelector(".seq-head").style.left = (T / total * 100) + "%";
+  bar.querySelector("[data-gt]").textContent = `${fmtTime(T)} / ${fmtTime(total)}`;
+}
+// Open clip k at local time t (t < 0: that far before its end), playing or paused. Not seamless: the
+// cut by playback goes through seqAdvance, which adopts the preloaded clip instead.
+function seqGo(k, t, play){
+  const s = light?.seq;
+  if (!s || k < 0 || k >= s.list.length) return;
+  if (k === s.i && light.vctl && light.video?.duration){
+    const d = light.video.duration;
+    light.vctl.seek(t < 0 ? Math.max(0, d + t) : t);
+    if (play) light.video.play().catch(() => {}); else light.video.pause();
+    return;
+  }
+  if (t === 0 && seqAdopt(k, play)) return;
+  s.pendT = t; s.pendPlay = !!play;
+  showInLight(s.list[k], { seqPend: true });
+  seqPreload();
+}
+function seqJump(dir){
+  const s = light?.seq;
+  if (!s) return;
+  let k = s.i + dir;
+  if (k < 0 || k >= s.list.length){ if (!s.loop) return; k = (k + s.list.length) % s.list.length; }
+  seqGo(k, 0, !!light.video && !light.video.paused);
+}
+function seqToggleLoop(){
+  const s = light?.seq;
+  if (!s) return;
+  s.loop = !s.loop;
+  paintSeqBar(true);
+  seqPreload(); // the last clip now preloads the first one
+}
+// annotate.js: a frame step past the clip's end / start lands on the next clip's first / the previous clip's last frame.
+function seqEdge(n, fd){
+  const s = light?.seq;
+  if (!s) return false;
+  if (s.pendT != null) return true; // the last jump has not landed yet: don't run on into further clips
+  const k = s.i + (n > 0 ? 1 : -1);
+  if (k < 0 || k >= s.list.length) return false;
+  // Backwards: just before the end shows the last frame whatever that clip's rate (fd is this clip's).
+  seqGo(k, n > 0 ? 0 : -0.001, false);
+  return true;
+}
+// The clip's metadata is in (attachViewer onReady): learn its length, land a pending jump.
+function seqOnReady(el){
+  const s = light?.seq;
+  // Not before it gives a picture: an unplayable file is converted first (watchPlayable) and loads again.
+  if (!s || light.video !== el || !el.videoWidth) return;
+  seqSetDur(s.i, el.duration);
+  if (s.pendT != null){
+    const d = el.duration || 0;
+    const t = Math.min(d, Math.max(0, s.pendT < 0 ? d + s.pendT : s.pendT));
+    s.pendT = null;
+    if (t > 0.0005) el.currentTime = t;
+  }
+  if (s.pendPlay === false) el.pause();
+  else if (s.pendPlay) el.play().catch(() => {});
+  s.pendPlay = null;
+}
+// The playing clip ended: cut to the next one (or the first, looping) — seamlessly when it is preloaded.
+function seqAdvance(){
+  const s = light?.seq;
+  if (!s) return;
+  let k = s.i + 1;
+  if (k >= s.list.length){ if (!s.loop) return; k = 0; }
+  if (!seqAdopt(k, true)) seqGo(k, 0, true);
+}
+// Show clip k from its start using the preloaded element, if that is the one ready. False: not preloaded.
+function seqAdopt(k, play){
+  const s = light?.seq, b = s?.buf;
+  if (!b || b.k !== k || b.bad || b.el.readyState < 2 || !b.el.videoWidth) return false;
+  const old = light.video;
+  s.buf = null; s.pendT = s.pendPlay = null;
+  // The wanted mute state, not old.muted: a just-adopted clip is still muted until its first frame.
+  const muted = old ? (old._seqWantMuted ?? old.muted) : false;
+  b.el._seqWantMuted = muted;
+  b.el.volume = old ? old.volume : 1;
+  b.el.autoplay = !!play; // so a converted copy swapped in later (watchPlayable) resumes only if it was playing
+  showInLight(s.list[k], { adopt: b.el });
+  const v = light.video;
+  if (play) v?.play().catch(() => {});
+  // Picture first: a muted element starts presenting ~30-60 ms sooner (measured in Chromium), and unmuting
+  // a playing one does not stall it — so the sound joins with the first new frame (a few ms of audio lost).
+  if (v && !muted){
+    let done = false;
+    const unmute = () => { if (!done){ done = true; if (light?.video === v) v.muted = false; v._seqWantMuted = undefined; } };
+    if (play && v.requestVideoFrameCallback) v.requestVideoFrameCallback(unmute);
+    setTimeout(unmute, play ? 150 : 0);
+  }
+  seqPreload();
+  return true;
+}
+function seqPreload(){
+  const s = light?.seq;
+  if (!s) return;
+  let k = s.i + 1;
+  if (k >= s.list.length) k = s.loop ? 0 : -1;
+  if (k === s.i) k = -1;
+  if (s.buf && s.buf.k === k) return;
+  seqDropBuf();
+  if (k < 0) return;
+  const v = document.createElement("video");
+  v.className = "seq-buf";
+  v.muted = true; v.playsInline = true; v.preload = "auto";
+  const b = { k, el: v, bad: false };
+  // A clip the browser cannot decode is not adopted: the plain path converts it (watchPlayable).
+  v.addEventListener("error", () => { b.bad = true; });
+  v.addEventListener("loadedmetadata", () => { if (!v.videoWidth) b.bad = true; seqSetDur(k, v.duration); });
+
+  v.src = `/api/file/${s.list[k].id}`;
+  light.el.appendChild(v);
+  s.buf = b;
+}
+function seqDropBuf(){
+  const b = light?.seq?.buf;
+  if (!b) return;
+  light.seq.buf = null;
+  b.el.removeAttribute("src");
+  try { b.el.load(); } catch {}
+  b.el.remove();
+}
+// The sequence bar: prev / next / loop buttons (touch) and a track to tap / drag across all clips.
+function bindSeqBar(bar){
+  bar.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-seq]");
+    if (!b || !light?.seq) return;
+    if (b.dataset.seq === "prev") seqJump(-1);
+    else if (b.dataset.seq === "next") seqJump(1);
+    else if (b.dataset.seq === "loop") seqToggleLoop();
+  });
+  const track = bar.querySelector(".seq-track");
+  let drag = null;
+  const at = (e) => {
+    const r = track.getBoundingClientRect();
+    const d = seqDurs(), total = d.reduce((a, x) => a + x, 0);
+    return seqLocate(Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(r.width, 1))) * total);
+  };
+  const move = (e) => {
+    if (!drag || !light?.seq) return;
+    const { k, t } = at(e);
+    const s = light.seq;
+    if (k !== s.i){ if (drag.began){ light.vctl?.end(); drag.began = false; } seqGo(k, t, false); return; }
+    if (!light.vctl) return;
+    if (!drag.began){ light.vctl.begin(); drag.began = true; }
+    if (light.vctl.seek(t) == null) s.pendT = t; // metadata not in yet: land there once it is
+  };
+  track.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !light?.seq) return;
+    e.preventDefault();
+    track.setPointerCapture(e.pointerId);
+    drag = { began: false };
+    move(e);
+  });
+  track.addEventListener("pointermove", move);
+  const up = () => { if (drag?.began) light?.vctl?.end(); drag = null; };
+  track.addEventListener("pointerup", up);
+  track.addEventListener("pointercancel", up);
+}
+
 function toggleLight(a){
   if (!a || a.status === "missing") return;
   if (light && light.id === a.id){ closeLight(); return; }
@@ -5499,6 +5945,13 @@ function toggleLight(a){
     <button class="v3d-gear" id="psdBtn" data-tools="psd" type="button" title="Layers (D)" hidden>☰</button>
     <div class="v3d-panel" id="psdPanel" hidden></div>
     <div class="v3d-toast" id="v3dToast"></div>
+    <div class="seqbar" hidden>
+      <button class="btn ghost seq-b" data-seq="prev" type="button" title="Previous clip (←)" aria-label="Previous clip">⏮</button>
+      <button class="btn ghost seq-b" data-seq="next" type="button" title="Next clip (→)" aria-label="Next clip">⏭</button>
+      <div class="seq-track" title="The sequence — tap / drag to move through all clips"><div class="seq-segs"></div><div class="seq-marks"></div><i class="seq-head"></i></div>
+      <span class="vtime" data-gt>0:00</span>
+      <button class="btn ghost seq-b" data-seq="loop" type="button" title="Loop the whole sequence (Shift+L)" aria-label="Loop the sequence">⟲</button>
+    </div>
     <div class="vbar" hidden>
       <span class="vtime" data-cur>0:00</span>
       <div class="vtrack"><i class="vcache"></i><i class="vplay"></i></div>
@@ -5507,7 +5960,8 @@ function toggleLight(a){
     </div>`;
   wrap.querySelector("#lightClose").onclick = () => closeLight();
   document.body.append(wrap);
-  light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null };
+  light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null, seq: null, vctl: null };
+  bindSeqBar(wrap.querySelector(".seqbar"));
   annot.mount(wrap);
   wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
   wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
@@ -5579,15 +6033,25 @@ function syncLightTools(kind){
   light.el.querySelectorAll("[data-tools]").forEach((el) => { el.hidden = el.dataset.tools !== kind; });
 }
 
-function showInLight(a){
+function showInLight(a, opts = {}){
   if (!light) return;
   flushRotatedThumb();
+  // Sequence: follow the clip being shown; any other file (versions, compare's "open") ends the sequence.
+  if (light.seq){
+    const k = light.seq.list.findIndex((x) => x.id === a.id);
+    // (A clip left keeps the marks annotate last reported for it — exact, and newer than a re-read racing its save.)
+    // A clip left before annotate had its rows never reported marks: fetch them (no edit to race with yet).
+    if (k !== light.seq.i && annot.loading()) seqLoadMarks(light.seq.i);
+    if (k < 0) endSequence(); else { light.seq.i = k; seqConvertAhead(light.seq); }
+    if (light.seq && !opts.seqPend) light.seq.pendT = light.seq.pendPlay = null; // a jump's landing is only for seqGo's own clip
+  }
   releaseMedia(a.kind !== "video");
   light.id = a.id;
   light.snap = null;
   light.scrubT = null;
   light.scrubbing = false;
   light.video = null;
+  light.vctl = null;
   light.audio = null;
   light.setZoom = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
   light.turn = light.mirror = null; // set by attachViewer (pictures, PSD, video)
@@ -5599,7 +6063,7 @@ function showInLight(a){
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
   // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
   insp.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch {} });
-  light.el.querySelector(".t").textContent = a.name;
+  light.el.querySelector(".t").textContent = light.seq ? `Clip ${light.seq.i + 1}/${light.seq.list.length} · ${a.name}` : a.name;
   const bar = light.bar;
   if (bar){
     bar.hidden = a.kind !== "video";
@@ -5629,7 +6093,8 @@ function showInLight(a){
   light.sceneInfo = null;
   renderLightInfo();
   annot.setAsset(a); // before fillStage: the viewer it mounts binds itself to this asset
-  fillStage(light.el.querySelector(".light-frame"), a);
+  fillStage(light.el.querySelector(".light-frame"), a, opts);
+  if (light.seq) paintSeqBar(true);
   syncUvPane(); // the new stage has no UV pane yet; boot3d re-adds it once the model is up
 }
 
@@ -5655,6 +6120,7 @@ function closeLight(){
   // context is released — like the inspector viewer's reboot — only once the fade has finished.
   const releaseGL = dispose3d("light3d", true);
   annot.unmount();
+  seqDropBuf();
   const el = light.el;
   const vid = light.video;
   light = null;
@@ -6591,6 +7057,7 @@ function showCtx(x, y, id){
   const cols = state.meta.collections || [];
   menu.innerHTML = `
     <button type="button" data-act="open">Open</button>
+    ${seqCandidates(ids).length >= 2 ? `<button type="button" data-act="seq">▶▶ Play in sequence (${seqCandidates(ids).length})</button>` : ""}
     <button type="button" data-act="reveal">Reveal in File System</button>
     <button type="button" data-act="find">Find in Folder</button>
     <button type="button" data-act="native">Open Natively</button>
@@ -6620,6 +7087,9 @@ function showCtx(x, y, id){
       hideCtx();
       const a = assetById(id);
       if (a) toggleLight(a);
+    } else if (act === "seq"){
+      hideCtx();
+      openSequence(seqCandidates(ids));
     } else if (act === "reveal"){
       hideCtx();
       revealAssets(ids);
@@ -7055,6 +7525,7 @@ async function purgeMissing(scoped){
   }
   const gone = new Set(r.ids || []);
   state.selectedIds = state.selectedIds.filter((id) => !gone.has(id));
+  syncTouchSel();
   await refreshMeta();
   if (state.filter.missing && !(state.meta.counts || {}).missing) state.filter.missing = false;
   renderNav();
@@ -7320,6 +7791,7 @@ function paletteActions(){
     } },
     { label: "Import review file (.srev)…", run: () => pickReviewFile() },
     { label: "Compare versions / selected files", hint: "K", run: () => compareFromContext() },
+    ...(seqSelection().length >= 2 ? [{ label: "Play selected videos in sequence", hint: "Space", run: () => openSequence(seqSelection()) }] : []),
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
     ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
@@ -7933,6 +8405,9 @@ function renderViewOptPop(){
 }
 $("viewOptBtn").onclick = () => toggleTopPop("viewOptPop", renderViewOptPop);
 splitBtn.onclick = toggleCanvasSplit;
+$("seqBtn").onclick = () => openSequence(seqSelection());
+$("tsSeq").onclick = () => openSequence(seqSelection());
+$("tsClose").onclick = () => selectOnly(null);
 
 // Only one of the two top-bar dropdowns is open at a time; tracked by element id so the button
 // that owns it can show an "active" state.
@@ -8299,12 +8774,30 @@ document.addEventListener("keydown", (e) => {
       return;
     }
     if (light){ closeLight(); return; }
-    // Space previews the thumbnail under the cursor; what is selected doesn't matter.
+    // Space previews the thumbnail under the cursor; what is selected doesn't matter — except over one of
+    // 2+ selected videos, where it plays the selected videos back to back (Sequence, in selection order).
     const a = assetUnderPointer();
     if (!a && lastPtr && document.elementFromPoint(lastPtr.x, lastPtr.y)?.closest(".citem.missing")){ flash("File is missing"); return; }
     if (!a || heavyKeyBlocked(e, a)) return;
+    const seqList = state.selectedIds.includes(a.id) ? seqSelection() : [];
+    if (seqList.length >= 2 && seqList.some((x) => x.id === a.id)){ openSequence(seqList); return; }
     toggleLight(a);
     return;
+  }
+  // Sequence: ← / → go to the previous / next clip (never out to the grid's neighbours), ↑ / ↓ do nothing,
+  // Home goes back to the first clip's start, Shift+L loops the whole sequence.
+  if (light?.seq && !typing){
+    // While annotating, the arrows stay the annotator's (nudge) even with nothing selected to move. Arrows with
+    // any other modifiers are swallowed too: the grid-stepping branch below would leave the sequence.
+    const arrows = annot.isOn() ? [] : [["ArrowLeft", () => seqJump(-1)], ["ArrowRight", () => seqJump(1)]];
+    for (const m of ["", "Shift+", "Ctrl+", "Alt+", "Ctrl+Shift+", "Alt+Shift+", "Ctrl+Alt+", "Ctrl+Alt+Shift+"])
+      for (const k of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]) arrows.push([m + k, () => {}]);
+    const sq = [
+      ...arrows,
+      ["Home", () => seqGo(0, 0, !!light.video && !light.video.paused)],
+      ["Shift+KeyL", () => { if (!e.repeat) seqToggleLoop(); }],
+    ];
+    if (runHotkeys(e, sq)){ e.preventDefault(); return; }
   }
   if (light && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !typing){
     e.preventDefault();

@@ -414,6 +414,23 @@
     each clip's span; 🔈 picks whose sound plays.
   - Wheel zooms around the cursor, right / middle drag pans (left drag in the tile layouts),
     double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
+- **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
+  is kept; a Shift-range or a marquee adds them in grid order) and press Space over one of them, or
+  click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back
+  to back in the full-screen viewer, cut to cut with no black frame. The bar above the timeline shows
+  every clip as a segment (alternating shades, name inside); tap or drag it to move through the whole
+  sequence, the timeline under it is the current clip's own. ⏮ / ⏭ or `←` / `→` go to the previous /
+  next clip's start, `Home` to the first clip, ⟲ or `Shift+L` loops the whole sequence; `,` / `.` step
+  frames across the cuts. Ticks on the sequence bar mark every clip's drawings and notes (the taller ones
+  are notes); `Shift+,` / `Shift+.` jump to the previous / next one, on into the other clips. A clip the
+  browser cannot play is converted as soon as the sequence opens, so it is usually ready by its turn. Each clip keeps its own notes and drawings: the notes panel and the drawings
+  switch with the clip on screen, and a note written there belongs to that clip. While annotating, the
+  arrows stay the nudge keys. Opening any other file from the viewer ends the sequence; `Esc` closes.
+- **Selecting by touch** — hold a tile for half a second to start touch selection with just that tile;
+  then each tap adds or removes a tile (the order you tap is the sequence order) and a double tap opens
+  nothing. A bar at the bottom shows how many are selected, *▶▶ Play in sequence* (2+ videos) and ✕;
+  ✕ or `Esc` ends it (a tap that misses a tile does nothing then). A stylus works like a finger. Moving
+  the finger while holding just scrolls.
 - **Missing files** — files that were moved or deleted stay in the library as "Missing" (sidebar),
   and show up right away (no need to switch views/sources to see it — the grid updates live).
   To clear them out: hover the Missing row and click 🧹 (whole library), run "Remove missing files
@@ -447,8 +464,8 @@
   selection (stale or black-backed tiles), use the ⟳ button in the details panel, "Refresh
   thumbnail(s)" in the right-click menu, or "Refresh thumbnails of selection" in the palette.
 - **Preview** — double-click an asset, or point at it and press Space, to open it full-screen.
-  Space always previews the thumbnail under the cursor, whatever is selected, and leaves the
-  selection as it was. ←/→ move to the next/previous asset and ↑/↓ move one row up/down in the
+  Space previews the thumbnail under the cursor whatever is selected, and leaves the selection as
+  it was — except over one of two or more selected videos, where it plays them in sequence (below). ←/→ move to the next/previous asset and ↑/↓ move one row up/down in the
   thumbnail grid; `D` (or the panel button at the right end of the top bar, which also works by touch) toggles the
   details panel; its "File" block (preview + name + facts) collapses by its header; the total file
   count sits in the Sources header; drag up/down on the grid resizes tiles.

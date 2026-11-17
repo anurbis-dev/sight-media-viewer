@@ -613,6 +613,27 @@ once the last v/ver/version/rev/r + digits token is cut out), `PUT /api/assets/{
 per item (subqueries `_REVIEW_SQL` / `_OPEN_NOTES_SQL`); `/api/state` counts carry `review_*`.
 Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
 
+**Sequence** (index.html, `openSequence` … `bindSeqBar`) — selected videos played back to back in the
+lightbox. `light.seq = {list, i, durs, loop, buf, pendT, pendPlay}`; every clip is shown through the
+ordinary `showInLight`, so annotate.js's `setAsset` brings that clip's own notes / fps (nothing is merged,
+FORMAT.md `t:` keys stay local). `showInLight` follows the clip by id and ends the sequence for any file
+not in it. The next clip is preloaded in a hidden muted `<video class="seq-buf">` inside `.light`
+(`seqPreload`); on `ended` `seqAdvance` passes it to `showInLight(a, {adopt})` → `attachViewer`, which
+puts it in the place of the element it would have made **in the same task** (so it never leaves the
+document and keeps its decoded first frame) and does not reset its `src` (`startVideoCache(…, keep)`).
+Gotcha: `<video … />` in the stage markup is not self-closing — the HUD is parsed as its child, so the
+adopted element takes the made one's children. Non-adopted moves (`seqGo`: jumps, frame steps across a
+cut, scrubbing the bar into another clip) land via `pendT` (< 0 = from the end) / `pendPlay` in
+`seqOnReady`, called from the viewer's `onReady`; `autoplay` is turned off for a jump that lands paused.
+annotate.js's `stepFrame` calls `host.seqEdge(n, fd)` past either end of a clip. `light.vctl` exposes
+the viewer's `seekVideo / beginScrub / endScrub` for the sequence bar. Marks: `s.marks[k]` = `[{t, note}]` — the clip on
+screen reports annotate.js's own `marks()` through `host.marksChanged` (called by `renderMarks`); other clips
+are read from `/api/annotations` (`seqLoadMarks`, an approximation: drawings' `ctx.t`, notes' caption frames),
+re-read when the player leaves them. `jumpMarker` with no marker left asks `host.seqMarker(dir)`. Playability:
+`seqProbe` loads each other clip's metadata once (hidden `<video preload=metadata>`) and POSTs a playback copy
+only for those without a picture — never for all (`start_playback_copy` transcodes anything without a copy).
+Touch selection mode (`state.touchSelect`, long-press) — see RECENT 0.66.0.
+
 **Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
 Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared
 zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is drawn whole at the

@@ -29,7 +29,10 @@ command. On macOS it plays the role of Quick Look, on Windows it replaces the Qu
 
 # Plan — clips in sequence ("Sequence" mode)
 
-Designed with the owner on 2026-11-17. Not started. Desktop Sight only (mouse / keyboard and touch
+Designed with the owner on 2026-11-17. **Stage 1 done in 0.65.0** (core playback, keys, sequence bar —
+see docs/RECENT.md); **stage 2 (touch long-press selection + bottom bar) done in 0.66.0**; **stage 3 (all-clip markers, Shift+, . across clips,
+up-front playability probe + conversion of the next clips) done in 0.67.0**; server RAM-cache prefetch
+deliberately not done (see RECENT 0.67.0). Desktop Sight only (mouse / keyboard and touch
 screen); not in the phone app for now, not in `.srev` / the HTML page (each clip is reviewed on its own).
 
 ## Goal
@@ -59,8 +62,8 @@ clip's own notes and drawings switching in as the playhead crosses into it.
   `selectOnly(id)` keeps the selection almost never empty). While it is on, a plain tap with
   `pointerType === "touch"` toggles the tile (mouse clicks unchanged) and the grid's `dblclick` is
   ignored (else two quick taps toggle twice and open the preview). The flag drops whenever the
-  selection is cleared (inside `selectOnly`, both the null and single-id paths — covers the
-  empty-space tap and Esc) and whenever the selection becomes empty (last tile toggled off, items
+  selection is cleared (inside `selectOnly`, both the null and single-id paths — covers ✕ and
+  Esc; as built in 0.66.0 a finger tap on empty space does nothing in the mode) and whenever the selection becomes empty (last tile toggled off, items
   leaving the list). Implementation traps (index.html grid pointer code):
   - set `skipClick = true` when the timer fires (pointerdown resets it), or the release `click`
     runs `clickSelect` → `selectOnly` and wipes the toggle (and opens the inspector < 1024 px);

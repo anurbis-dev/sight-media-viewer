@@ -14,6 +14,82 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.67.0 — 2026-11-17 — Sequence: every clip's markers, Shift+, / . across clips, up-front conversion (stage 3)
+- **What:** the sequence bar shows tick marks for every clip's drawings / notes (taller = a note's);
+  `Shift+,` / `Shift+.` continue into the previous / next clips when the current one has no further marker. A
+  clip the browser cannot play is found when the sequence opens and converted ahead of its turn.
+- **Where:** index.html — `seqLoadMarks`, `seqMarksFromAnnot`, `seqRepaintSoon`, `seqMarker`,
+  `seqProbePlayable` / `seqProbe` / `seqConvertAhead`, marks in `paintSeqBar`, `.seq-mk` CSS; annotate.js —
+  `renderMarks` → `host.marksChanged`, `jumpMarker` → `host.seqMarker`, API `marks()` / `loading()`.
+- **Notes:** the clip on screen reports annotate.js's exact marks; the others are an estimate from their rows
+  (drawings' `ctx.t`, a note mark when `data.note` links it; notes' caption frames) fetched once at open. A
+  clip left keeps the marks annotate last reported — a re-read raced the debounced save and dropped new marks.
+  `seqMarker` stays put while a jump is pending or the clip's rows are loading (else a fast double press skips a
+  clip). Conversion: probes load metadata only; `POST /api/video/transcode` goes out only for clips without a
+  picture, **one at a time and only for the next two clips** — the server encodes one job at a time, so queuing
+  all of them held back the clip the user jumps to and kept ffmpeg busy after closing. Deliberately not done:
+  extending the server RAM cache (`SlidingVideoCache`, one file) to prefetch the next clip — the hidden preload
+  `<video>` already pulls the next clip's head; worth it only for slow network drives.
+- Review (fresh agent): conversions queued for every clip at once, the left clip's re-read racing its save, a
+  just-opened clip reporting no marks (Shift+. skipping it), markers past a clip's end, per-clip fetch / repaint
+  cost; fixed (landing at t + 1 ms instead of annotate's quarter-frame kept: correct for stored frame starts).
+  Re-review: a clip left while its rows were loading kept no marks, a jump into a clip whose conversion failed
+  blocked frame / marker keys (pendT never cleared), probes started from clip 0 — fixed; confirmed by the same
+  reviewer.
+
+## 0.66.0 — 2026-11-17 — Touch selection by long-press (Sequence stage 2)
+- **What:** on a touch screen (finger or stylus) holding a grid tile ~0.5 s starts touch selection mode with
+  just that tile; then a tap toggles a tile (appended, so tap order = sequence order), a double tap opens
+  nothing, a tap on empty space does nothing (owner's choice: a missed tile must not drop the selection). A
+  bottom bar shows "N selected", *▶▶ Play in sequence* (2+ videos) and ✕; ✕ / Esc end the mode.
+- **Where:** index.html — `syncTouchSel`, `startLongPress` / `cancelLongPress`, `lastGridPtr` / `fingerish`
+  (after `paintSelection`), grid pointerdown / click / dblclick / pointermove / pointercancel, `onPtrUp`,
+  card `draggable`, `selectOnly` (drops `state.touchSelect`), `applyViewDom`, `#touchSelBar` + CSS.
+- **Notes:** the mode is the explicit flag `state.touchSelect`, set **after** `selectOnly` (which drops it);
+  it also drops when the selection becomes empty (`syncTouchSel` from `paintSelection`). `selectSet` paths
+  (Ctrl+A, marquee, find in folder) keep it, as specced. A click's input is decided by the same gesture's
+  pointerdown (`lastGridPtr`), not the click's own `pointerType` (older Safari clicks are no PointerEvents).
+  The long-press sets `skipClick` when it fires, so the release click does not run `clickSelect`. Cards are
+  not `draggable` for touch (a held finger would start an HTML5 drag whose dragstart replaces the selection);
+  a pen keeps drag-to-board (drag starts only on movement, a still pen gets the long-press). Behaviour
+  change outside the mode too: `pointercancel` (a touch scroll) is now an abort in `onPtrUp` — it no longer
+  clears the selection as a click on empty space. The bar hides with the grid (full-screen board) and the
+  narrow-screen inspector stops above it. `navigator.vibrate` was dropped (no user activation in a timer).
+- Review (fresh agent): 8 findings — scroll from empty space wiping the selection (marquee + pointercancel),
+  a missed tap ending the mode, click type taken from the click, pen left out, bar over the board, bar
+  covering the inspector, vibrate; fixed (the mode surviving `selectSet` kept as specced). The re-review
+  caught that the first fix also blocked pen drag-to-board — restored; confirmed by the same reviewer.
+
+## 0.65.0 — 2026-11-17 — Play in sequence (stage 1 of docs/PLAN-viewer.md "clips in sequence")
+- **What:** 2+ selected videos play back to back in the lightbox (Space over one of the selected videos,
+  top-bar *▶▶ Sequence*, right-click menu, palette), in selection (click) order, cut to cut without a black
+  frame. A sequence bar above the clip's timeline: a segment per clip (alternating accent shades, name),
+  playhead, tap / drag across all clips, ⏮ / ⏭ / ⟲ buttons. Keys: ← / → clip, Home first clip, Shift+L loop,
+  `,` / `.` cross cuts; ↑ / ↓ and arrows with modifiers do nothing (never step out to grid neighbours). Each
+  clip keeps its own notes / drawings (shown through the normal `showInLight` → `annot.setAsset`).
+- **Where:** index.html — `seqCandidates` … `bindSeqBar` (before `toggleLight`), `.seqbar` markup + CSS,
+  `attachViewer` (`opts.adopt`, `ended` listener, `light.vctl`, `seqOnReady`), `showInLight(a, opts)`,
+  `fillStage(…, opts)`, `startVideoCache(…, keep)`, `closeLight`, Space / sequence keys, `paintSelection`
+  (`#seqBtn`), context menu, palette; annotate.js `stepFrame` → `host.seqEdge`. ARCHITECTURE "Sequence".
+- **Notes:** seamless = the next clip is preloaded in a hidden muted `<video class="seq-buf">` and adopted
+  (moved into the stage in the same task, src kept). Measured in headless Chromium: the first frame of the
+  new clip is on screen at once but held ~70 ms before playback moves on (play() start latency); a muted
+  element starts ~30-60 ms sooner, so the adopted clip starts muted and unmutes on its first new frame
+  (`_seqWantMuted` keeps the wanted state across quick adopts). Tried and dropped: a play+pause warm-up and
+  creeping the buffer at rate 1/16 before the cut — neither shortened the start. `ended` cuts only after real
+  playback (`_seqPlayedAt` from `timeupdate` / `playing`), never on a scrub / seek to the end. Not in this
+  stage (PLAN-viewer.md): touch multi-select by long-press + bottom bar, markers of all clips on the sequence
+  bar and Shift+, / . across clips, server RAM-cache prefetch of the next clip, probing / converting clips up
+  front. Known: `#seqBtn` is only refreshed with the selection (may stay shown after a filter change —
+  clicking then just flashes); segment widths settle as clip durations load (assets often have none stored).
+  The title shows "Clip i/n · name" (the planned frame number is not in the title).
+- Review (fresh agent): 12 findings — key repeat running through clips before metadata, modifier+arrows
+  leaving the sequence, `ended` on a scrub to the end, pending landing lost on a converted clip / applied to
+  the wrong clip, O(n²) selection check, Space over a selected non-video, prev / next not reusing the
+  preloaded clip, last-frame landing by the wrong fps, adopted element's autoplay; all fixed except the stale
+  button and segment widths shifting during a drag (accepted). The fixes' re-review found two more (clips
+  staying muted after quick adopts, `ended` ignored after a very short play) — fixed; confirmed by the same reviewer.
+
 ## 0.64.2 — 2026-11-17 — macOS: dictation no longer kills Chrome
 - **What:** on a Mac, pressing the dictation mic a second time (after allowing the microphone) made the whole
   browser quit ("Google Chrome quit unexpectedly", user report on 0.62.1).
@@ -317,67 +393,3 @@ Add new entries directly below this line.
   Review (fresh agent): no crash-level bugs; found the touch chevron hidden until hover with a 22 px hit area
   (fixed, which surfaced the "×" bug above), static aria labels (fixed), a sentence spliced into ARCHITECTURE
   (fixed). The same reviewer confirmed every fix, nothing new.
-
-## 0.57.0 — 2026-11-16 — Settings: section title colour / size, compact theme row, gear icon
-- **What:** two theme settings for the sidebar section headers — *Section titles* (colour, in Colors) and
-  *Section title size* (Typography, 9–20 px); they style the `.sec` band, the Settings header included. The theme
-  block is one row: the Theme select, a save icon that appears only while the values match no preset (its popover:
-  *Save to <name>* when the last picked base is one of your own themes, and *Save as new…*), a × for a user theme,
-  a reset icon, and (dev mode) the *app defaults* icon. The Settings header shows a gear when Sidebar icons is on.
-- **Where:** `index.html` — `.sec` CSS (`--sec-fg`, `--sec-size`), `.theme-row`, `DEFAULT_THEME` (`secColor`
-  "#e9eaec", `secSize` 12), `BUILTIN_THEMES` (explicit sec keys), `secFallback`, `loadTheme`, `applyUi`,
-  `saveTheme` (re-renders the row, guarded by a signature), `renderThemeList` (rewritten), `openThemePop` /
-  `closeThemePop` / `setThemeBase` / `themeMatches` / `presetVars`, `resetAllSettings`, `renderOptions`;
-  `app/static/defaults.json`; MANUAL, ARCHITECTURE.
-- **Notes:** a saved theme or user preset without the sec keys gets them from its own `fg` / `textSize − 1`
-  (`secFallback`, applied only when a saved theme exists — with none, defaults.json wins, so reload and Reset agree).
-  A 0.54 theme with a custom text size therefore shows *Custom* after the upgrade (its derived size differs from
-  the preset's explicit 12). The last picked base is `state.themeBase = {kind, name}` in `sight.layout`
-  (persisted when preset matching changes it). The popover is a body-level `.top-pop`: besides `registerAutoClose`
-  (pointer-move driven, useless on touch) it closes on an outside pointerdown, Escape (in the main keydown, after
-  the select popup), when Settings collapses and when the sidebar scrolls. `.light-info .sec` keeps its own look.
-  Review (fresh agent) found: the fallback overwrote defaults.json values on a fresh install (fixed); the gear not
-  refreshing when Sidebar icons is toggled (fixed); the popover never closing on touch (fixed); `themeBase` not
-  persisted after matching (fixed). The same reviewer confirmed every fix, nothing new.
-
-## 0.56.0 — 2026-11-16 — Review mode: shortcut help under "?", no exit cross, 3D bars centred beside the notes panel
-- **What:** the annotation hotkey hints are no longer inline text: a "?" button at the end of the annotation
-  toolbar (or `Shift+?`) opens a modal list of every annotate-mode shortcut, grouped (general, editing, drawing
-  tools, notes and panels, moving the selection, video, 3D). While it is open nothing underneath reacts — pointer,
-  wheel and keys are swallowed; Esc, ?, the backdrop, ✕ (also Enter / Space on it) close it. The × that only left
-  the mode is gone from the drawing tools bar (A, Esc or the lightbox annotate button leave it; the notes panel's
-  × stays). The lightbox's annotate hint reads "Annotating · ? = shortcuts · Esc leaves". On a 3D model the shading
-  and animation bars centre on the area left of the notes panel instead of the full width.
-- **Where:** `app/static/annotate.js` (`keyTable()` rows `[combo, handler, label, group]`, `helpGroups`,
-  `keyName`, `openHelp` / `closeHelp` / `toggleHelp`, `helpOpen()` in the API, the guard at the top of `onKey`,
-  `.an-help*` CSS, `.light.an-panel-on { --an-right: 320px }`); `index.html` (early keydown guard
-  `if (light && annot.helpOpen())`, `ANNOT_HINT`, `#v3dShade, #v3dAnim { left: calc(50% + (var(--uv-left) −
-  var(--an-right)) / 2) }`); MANUAL, ARCHITECTURE.
-- **Notes:** the help is rendered from the same table that fires the keys, so it cannot drift — a new shortcut is
-  a labelled row in `keyTable()`; rows without a label are not listed (the reserved D row is labelled only for
-  3D). `keyTable()` runs per key / per open, so labels follow the current file's kind. `--an-right` is a CSS
-  constant because the panel has a fixed 320 px width and no media rule; `.an-top` / `.an-toast` already shift by
-  160 px. At 420 px wide the panel covers the lightbox annotate button — hide the panel first (C or its ×).
-  Review (fresh agent): no bugs; three nits fixed (the D row listed for images, the Esc label missing the pin-focus
-  step, Enter / Space on the help's ✕ swallowed). The same reviewer confirmed them, nothing new.
-
-## 0.55.0 — 2026-11-16 — About dialog behind the brand mark; icon variants to choose from
-- **What:** the "S" tile in the sidebar is now the Sight icon (`favicon.svg`, so favicon and mark are one file)
-  and a button: click / tap / Enter opens *About Sight <version>* — version, source or frozen build, Python, OS,
-  Starlette, three.js, `SIGHT_HOME`, library DB path and size, asset / source / thumbnail counts, ffmpeg path and
-  version, usd-core, port, dev mode, uptime, log file — with a Copy button. `docs/tmp/icon-variants.html` shows
-  seven icon proposals (eye, viewfinder S, horizon S, aperture, thumbnail grid, slanted S, focus dot) at 16–256 px;
-  the user picked 7, *focus dot* (a ring with the focus point off-centre): `app/static/favicon.svg` is now that
-  mark (64-unit box, 6-unit strokes = 1.5 px at 16 px).
-- **Where:** `app/server.py` (`GET /api/app-info`, `static_info()` cached once, `ffmpeg_info()` cached only once a
-  version line was read, `STARTED_AT`); `Sight.py` (`app.state.port`); `index.html` (`#aboutBtn`, `#aboutOverlay`
-  on the `.fb-modal` pattern, `aboutOpen` / `aboutClose` / `aboutCopy`, `.mark` / `.about-*` CSS, Esc branch after
-  `fbOverlay`, `aboutOverlay` in the canvas `keysEnabled`); MANUAL, ARCHITECTURE.
-- **Notes:** three.js revision is parsed from `vendor/three.core.js` (`three.module.js` only re-exports it).
-  Counts, DB size and uptime are live; the thumbnail count is the top-level files of `thumbs/` (cheap). The port
-  row is dropped when `app.state.port` is unset (tests build the app without Sight.py). A late response is dropped
-  by `aboutToken`; a non-OK answer shows one line in the footer. While About is open every other key is swallowed
-  (it is modal; it cannot be opened over the lightbox, which covers the sidebar). Touch: 40 px hit area via
-  `.mark::after` in the coarse-pointer block. Review (fresh agent, ran the endpoint) found: a failed ffmpeg probe
-  cached for good (fixed), `request.url.port` wrong behind a proxy (fixed: listen port), interleaved opens
-  duplicating rows (fixed: token), 24 px tap target (fixed). The same reviewer confirmed every fix, nothing new.
