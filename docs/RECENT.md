@@ -14,6 +14,31 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.76.0 — 2026-11-17 — One web page for a sequence's review (multi-clip plan, stage 2)
+- **What:** Sequence → Export → *Web page, all clips* writes **one** page (was one per clip). It has a clip strip on
+  top (name, notes, open notes; a dot = changed here), ‹ / › buttons, `←` / `→` (not in text fields, the full-screen
+  picture, the drawing canvas or a sheet). The bottom bar counts every clip; *Download reply* = one `.srev` bundle of
+  the changed clips with the page's bundle id; *Discard* asks this clip / all clips (Esc / Cancel / backdrop close);
+  the clip's details (tap the title) have *Download this clip's reply* — a plain package for Sight < 0.75. Switching
+  clips resets the search / state filter. A sequence with one clip with notes gets the ordinary one-clip page.
+- **Where:** review.py (`build_html` → `_page`, new `build_html_all`; page script: `useClip`, `switchClip`, `CL`,
+  `slotKey`, `changesOf` / `editsOf`, `clipCounts`, `paintStrip`, `replyPackage(c)`, `download` / `downloadClip`,
+  `discard`, `header()` clears first, `closeEmpty(target, noRender)`; `plate_js` exposes `hotkey` / `runHotkeys`),
+  server.py (`/api/review/export/html-all`, returns `clips`, `missing`), index.html (`seqExportAll` html → one post),
+  tests/page_multi_e2e.cjs + test_review_page.py `MultiClipPage`, MANUAL, ARCHITECTURE, PLAN-multiclip.
+- **Notes:** data block is now `{clips: [{report, package, edits?}], bundle?, copy?}` (a one-clip page too; `bundle`
+  only with 2+ clips). One-clip page invariants kept: storage key `sight-review:<asset id>:<exported_at>[:copy]`,
+  reply = plain package (`page_e2e.cjs` passes unchanged). Multi-clip key `sight-review:<bundle id>:<asset id>[:copy]`.
+  All clips' edits live in memory (`CL[i].E`, the shown one is `E`; `editsOf(c)` reads the right one) and each save
+  writes the shown clip's slot. The page's clips = clips with notes (client scan, as before); a tombstone-only clip
+  is not on the page (deletes travel in the `.srev` bundle). A composer with a picture still loading counts as not
+  empty and cannot send (`dr.pending`). Stage 3 (phone) not started.
+- Review (fresh agent): no correctness bugs; low items fixed — a picture still loading was lost on a clip switch
+  (field closed as empty), search / filter carried over to the next clip, discard sheet had no keyboard close,
+  missing clips dropped silently from html-all, the strip scrolled on every save. Re-review: names of missing clips
+  came out as "clip" and Send could be pressed mid-load → fixed; then Send could stay disabled after a re-render
+  mid-load → fixed (`render()` when the field was replaced); all confirmed by the same reviewer.
+
 ## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
 - **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
   instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle
@@ -346,22 +371,3 @@ Add new entries directly below this line.
 - Review (fresh agent): the `pkill -f` pattern was a raw regex (odd characters, `.../browser` also matching
   `.../browser2`) and could run before the browser started — now ERE-escaped, anchored at the path's end, run twice
   1 s apart; confirmed by the same reviewer.
-
-## 0.64.1 — 2026-11-17 — Instant native launch splash (Windows)
-- **What:** the launch splash (the Sight logo) shows at once and closes when the page is ready. It was a PowerShell
-  window started only after 1 s (PowerShell costs ~0.7 s of CPU to start), so it appeared ~1.7 s in or never.
-- **Where:** new `app/splash_win.py` (stdlib ctypes: layered, topmost, click-through, no-taskbar window, GDI+ draws
-  `app/splash.png` into a premultiplied DIB, DPI-aware, centred on the monitor under the cursor); `app/splash.png`
-  (512 px, rendered from `favicon.svg`); `Sight.py` (`Splash`, `--splash` handled at the very top for the frozen exe,
-  started first thing in `main()` before `bootstrap()`); `build_exe.bat` (ships `splash.png`); `tests/test_splash_win.py`.
-  Removed: `app/splash_screen.ps1`, `LazySplash`, `start_splash` (no PowerShell fallback).
-- **Notes:** out of process on purpose: a bad window procedure can only kill the splash, never Sight. Source runs use
-  `pythonw -I -S app/splash_win.py IMAGE EVENT 45`; the frozen build `Sight.exe --splash ...`. The splash waits on a
-  named manual-reset event `Local\SightSplash-<pid>`; the launcher creates and holds the event before starting it. Its
-  name goes into env `SIGHT_SPLASH` so the `bootstrap()` re-exec into the venv reuses the same splash (exactly one);
-  `Splash.forget_env()` pops it right after `bootstrap()` returns and in main()'s finally, so the browser / workers /
-  a nested Sight never inherit it. Close points unchanged (ready ping, `_open()` finally, `main()` finally); 45 s cap
-  (a hard-killed Sight leaves it up to 45 s — accepted). Keep `splash_win.py` stdlib-only and import-light (only `sys`
-  at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
-- Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
-  event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.

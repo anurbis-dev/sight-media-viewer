@@ -5911,7 +5911,7 @@ async function seqExportAll(kind){
   if (seqExporting || annot.busy()){ say("An export is already running", 2500); return; }
   seqExporting = true;
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-  let back = null, moved = false, saved = 0;
+  let back = null, moved = false;
   try {
     await annot.flush();
     if (kind === "pkg"){   // one bundle, straight from the stored rows; the server picks the clips (notes or tombstones)
@@ -5932,7 +5932,6 @@ async function seqExportAll(kind){
     const post = (url, body) => api(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     light.video?.pause();
     const reports = [], skipped = [];
-    let lastName = "";
     for (const [j, k] of ks.entries()){
       if (light?.seq !== s) throw new Error("the sequence was closed");
       say(`Clip ${j + 1} of ${ks.length}: ${esc(s.list[k].name)}…`, 120000);
@@ -5943,25 +5942,23 @@ async function seqExportAll(kind){
       // Another clip came on screen meanwhile (a click on the sequence bar, a frame step across a cut): its pictures
       // would sit under this clip's notes — leave the clip out rather than mix them.
       if (s.i !== k || annot.assetId() !== s.list[k].id || rep?.asset_id !== s.list[k].id){ skipped.push(s.list[k].name); continue; }
-      if (kind === "html"){
-        const r = await post("/api/review/export/html", { ...rep, reveal: j === ks.length - 1 });
-        saved++; lastName = r.name;
-      } else reports.push(rep);
+      reports.push(rep);
     }
     let msg = "";
-    if (kind === "html"){
-      msg = saved ? `Saved ${plural(saved, "web page")} · last: <b>${esc(lastName)}</b>` : "Nothing exported";
-    } else if (reports.length){
-      say(kind === "pdf" ? "Building the PDF…" : "Building the ZIP…", 120000);
-      const r = await post(`/api/review/export/${kind}-all`, { reports, reveal: true });
-      msg = kind === "pdf" ? `Saved <b>${esc(r.name)}</b> · ${plural(reports.length, "clip")}, ${plural(r.pages, "page")}`
+    if (reports.length){
+      say({ html: "Building the web page…", pdf: "Building the PDF…" }[kind] || "Building the ZIP…", 120000);
+      // One web page for all the clips (multi-clip page; one clip → a plain one-clip page).
+      const r = await post(`/api/review/export/${kind}-all`, { reports, author: reviewerName(), reveal: true });
+      msg = kind === "html" ? `Saved <b>${esc(r.name)}</b> · ${plural(r.clips || reports.length, "clip")} — opens in any browser; replies come back as one .srev file`
+          + (r.missing?.length ? ` · left out (no longer in the library): ${esc(r.missing.join(", "))}` : "")
+        : kind === "pdf" ? `Saved <b>${esc(r.name)}</b> · ${plural(reports.length, "clip")}, ${plural(r.pages, "page")}`
         : `Saved <b>${esc(r.name)}</b> · ${plural(reports.length, "clip")}, ${plural(r.notes, "note")}, ${plural(r.pictures, "picture")}`;
     } else msg = "Nothing exported";
     if (skipped.length) msg += ` · skipped (did not load, or another clip came on screen): ${esc(skipped.join(", "))}`;
     say(msg, skipped.length ? 7000 : 4500);
   } catch (e){
     console.warn(e);
-    say(`Export failed${e?.message ? ": " + esc(e.message) : ""}${saved ? ` (${plural(saved, "web page")} saved before)` : ""}`, 5000);
+    say(`Export failed${e?.message ? ": " + esc(e.message) : ""}`, 5000);
   } finally {
     seqExporting = false;
     if (back && light?.seq === s){

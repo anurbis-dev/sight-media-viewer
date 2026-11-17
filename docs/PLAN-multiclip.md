@@ -50,6 +50,12 @@ reports — a package needs no pictures) and the server keeps the clips with not
 
 ## Stage 2 — the multi-clip web page
 
+**Done in 0.76.0** (see RECENT). Deviations: every clip's edits stay in memory (`CL[i].E`, written to its slot on
+each save), so "Download the page" reads memory, not the slots; the page's clips are the clips with notes (the
+client's scan, as before) — a clip with only tombstones is not on the page (its deletes travel in the `.srev`
+bundle; a page's clip re-sends its package's tombstones anyway); "This clip's reply" sits in the clip's details
+(tap the title).
+
 The page script (review.py `build_html`, one IIFE) holds page-wide state from one clip — `R`, `PKG`, `rows`, `E`,
 `KEY`, `VIEW_KEY`, `M`, `VEC`, `noteById` / `numById`, `exported`, `drafts`, `openReply`, `newOpen` — fixed element
 ids (`#app`, `#seg`, `#details`, `#from`, `#dl`, `#dlpage`, `#reset`, `#status`), a document click listener and a

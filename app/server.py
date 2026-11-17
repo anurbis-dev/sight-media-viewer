@@ -1058,6 +1058,39 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         out.write_text(page, encoding="utf-8")
         return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
 
+    # A sequence's review as one web page (index.html seqExportAll "html"): per report the clip's package; one
+    # report makes a plain one-clip page (review.build_html_all).
+    @app.post("/api/review/export/html-all")
+    async def export_review_html_all(request: Request) -> dict:
+        reps, names, body = await _all_reports(request)
+        author = str(body.get("author") or "")
+        missing: list[str] = []
+
+        def build() -> tuple[str, int, str]:
+            clips, seen, first = [], set(), ""
+            for r, name in zip(reps, names):
+                a = lib.get_asset(str(r.get("asset_id") or ""))
+                if not a:  # (_all_reports names it "clip": the report's title is the clip's name)
+                    missing.append(str(r.get("title") or name))
+                if not a or a["id"] in seen:
+                    continue
+                seen.add(a["id"])
+                first = first or a["name"]
+                pkg = review.build_package(a, lib.annotations_for_asset(a["id"]), lib.root, author, APP_VERSION,
+                                           lib.annotation_tombstones(a["id"]))
+                clips.append(({k: r.get(k) for k in ("title", "subtitle", "meta", "cover", "coverSize", "notes", "media")}, pkg))
+            if not clips:
+                raise HTTPException(404, "none of the clips is in the library")
+            title = f"Sequence review — {len(clips)} clip{'' if len(clips) == 1 else 's'}"
+            return review.build_html_all(clips, APP_VERSION, title), len(clips), first
+
+        page, n, first = await asyncio.to_thread(build)
+        stem = review.safe_name(f"Sequence review ({n} clips)" if n > 1 else f"{Path(first).stem} review")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".html")
+        out.write_text(page, encoding="utf-8")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "clips": n, "missing": missing}
+
     @app.post("/api/review/export/package")
     async def export_review_package(request: Request) -> dict:
         body = await json_body(request)

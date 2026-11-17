@@ -449,12 +449,18 @@
   browser cannot play is converted as soon as the sequence opens, so it is usually ready by its turn. Each clip keeps its own notes and drawings: the notes panel and the drawings
   switch with the clip on screen, and a note written there belongs to that clip. While annotating, the
   arrows stay the nudge keys. **Export** (notes panel → *Export ▾* → *…, all clips*) takes the review of every
-  clip in the sequence that has notes: one PDF (a section per clip), one ZIP (a folder per clip), a web
-  page per clip, or one `.srev` review file for all of them (a clip whose notes were all deleted since is
+  clip in the sequence that has notes: one PDF (a section per clip), one ZIP (a folder per clip), one web
+  page for all of them, or one `.srev` review file for all of them (a clip whose notes were all deleted since is
   included too, so the deletes reach the other side); for the PDF, ZIP and web pages the viewer visits the clips
   to picture them, then returns to where you were. Importing such a file (drag it in, or *Import review file*) merges every clip it holds that
   is in your library and tells you in one message how many were updated, which are not in your library and which
   could not be read; the others still land. Older Sight versions (before 0.75) cannot open it.
+  The **web page for all clips** has a strip of the clips on top (name, notes, open notes; a dot marks a clip
+  changed on the page): tap one, use the ‹ / › buttons at its ends, or `←` / `→` (not while typing). The bottom
+  bar counts every clip's changes; *Download reply* gives one `.srev` with the clips answered, *Discard* asks
+  whether to drop this clip's changes or every clip's. For a Sight older than 0.75, tap the clip's title and use
+  *Download this clip's reply* (a review file for that clip alone). A sequence with one clip with notes gets
+  the ordinary one-clip page.
   Opening any other file from the viewer ends the sequence; `Esc` closes.
 - **Selecting by touch** — hold a tile for half a second to start touch selection with just that tile;
   then each tap adds or removes a tile (the order you tap is the sequence order) and a double tap opens

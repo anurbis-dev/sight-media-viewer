@@ -2,6 +2,25 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.64.1 — 2026-11-17 — Instant native launch splash (Windows)
+- **What:** the launch splash (the Sight logo) shows at once and closes when the page is ready. It was a PowerShell
+  window started only after 1 s (PowerShell costs ~0.7 s of CPU to start), so it appeared ~1.7 s in or never.
+- **Where:** new `app/splash_win.py` (stdlib ctypes: layered, topmost, click-through, no-taskbar window, GDI+ draws
+  `app/splash.png` into a premultiplied DIB, DPI-aware, centred on the monitor under the cursor); `app/splash.png`
+  (512 px, rendered from `favicon.svg`); `Sight.py` (`Splash`, `--splash` handled at the very top for the frozen exe,
+  started first thing in `main()` before `bootstrap()`); `build_exe.bat` (ships `splash.png`); `tests/test_splash_win.py`.
+  Removed: `app/splash_screen.ps1`, `LazySplash`, `start_splash` (no PowerShell fallback).
+- **Notes:** out of process on purpose: a bad window procedure can only kill the splash, never Sight. Source runs use
+  `pythonw -I -S app/splash_win.py IMAGE EVENT 45`; the frozen build `Sight.exe --splash ...`. The splash waits on a
+  named manual-reset event `Local\SightSplash-<pid>`; the launcher creates and holds the event before starting it. Its
+  name goes into env `SIGHT_SPLASH` so the `bootstrap()` re-exec into the venv reuses the same splash (exactly one);
+  `Splash.forget_env()` pops it right after `bootstrap()` returns and in main()'s finally, so the browser / workers /
+  a nested Sight never inherit it. Close points unchanged (ready ping, `_open()` finally, `main()` finally); 45 s cap
+  (a hard-killed Sight leaves it up to 45 s — accepted). Keep `splash_win.py` stdlib-only and import-light (only `sys`
+  at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
+- Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
+  event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.
+
 ## 0.64.0 — 2026-11-17 — Missing files on boards
 - **What:** a board card whose file is gone (source removed, or asset flagged missing) is a clear "Missing"
   placeholder with the file name and its full path instead of an empty card. Adding the folder again (or a late
