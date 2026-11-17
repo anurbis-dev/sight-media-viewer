@@ -67,6 +67,11 @@ createDictation({ lang, provider, onInterim(text), onFinal(text), onState("start
 
 ## 5. Done now vs. later
 
+**Tier 2 done in 0.70.0** (owner asked for automatic language detection): Settings → Dictation (engine + Groq key),
+`app/stt.py` + `/api/stt/status|key|transcribe`, the `groq` provider in `dictation.js` (one MediaRecorder per
+phrase, cut by a pause of 0.7 s or at 20 s, no language = Whisper detects it). See RECENT 0.70.0.
+
+
 Now (no backend code):
 - `dictation.js` with the `webspeech` provider; mic button in the composer; floating mic on reply, note-edit
   and picture-text fields; shortcut Alt+M (help overlay row); language popover (right-click /

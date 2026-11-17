@@ -48,7 +48,124 @@ const PROVIDERS = {
       };
     },
   },
-  // groq: later, through a backend proxy that holds the key (docs/PLAN-stt.md).
+  // Whisper through Groq (tier 2, docs/PLAN-stt.md): finds the language itself. The server holds the key
+  // (/api/stt/*); the page records one phrase at a time — a pause in the speech (or 20 s) closes it — and posts
+  // it. No live words: the bubble says "Transcribing…" while a phrase is out. Each phrase is its own recording
+  // (a MediaRecorder restarted per phrase), so every upload is a complete file.
+  groq: {
+    available: () => !!(navigator.mediaDevices?.getUserMedia && globalThis.MediaRecorder && (globalThis.AudioContext || globalThis.webkitAudioContext)),
+    create(o){
+      const SILENCE_MS = 700, MAX_MS = 20000, MIN_SPEECH_MS = 250, LEVEL = 0.018;
+      const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported?.(m)) || "";
+      const lang = (o.lang || "").split("-")[0];   // "" = let Whisper detect it
+      let want = false, ended = true, dropped = false, stream = null, actx = null, raf = 0, lastT = 0, heard = false;
+      let ph = null;              // the phrase being recorded: { rec, chunks, at, voiceMs, quietSince, seq }
+      let open = 0;               // recorders not yet stopped + uploads not yet answered: the session ends at 0
+      let seqNext = 0, seqOut = 0; const done = new Map();   // answers go into the field in phrase order
+      const finishIfIdle = () => { if (!want && open === 0) end(); };
+      const deliver = () => {
+        while (done.has(seqOut)){ const t = done.get(seqOut); done.delete(seqOut); seqOut++; if (t && !dropped) o.onFinal(t); }
+      };
+      const send = async (blob, seq) => {
+        open++; o.onInterim("Transcribing…");
+        let text = "";
+        try {
+          const r = await fetch(`/api/stt/transcribe${lang ? "?lang=" + encodeURIComponent(lang) : ""}`, { method: "POST", headers: { "content-type": blob.type || "audio/webm" }, body: blob });
+          const j = await r.json().catch(() => ({}));
+          if (!dropped){
+            if (r.ok) text = j.text || "";
+            else { want = false; o.onError("stt-" + (j.error || "failed")); }
+          }
+        } catch { if (!dropped){ want = false; o.onError("stt-server"); } }
+        finally {
+          done.set(seq, text); deliver();
+          open--;
+          if (!dropped && open === (ph ? 1 : 0)) o.onInterim("");
+          finishIfIdle();
+        }
+      };
+      // A new recorder starts before the old one stops (a cut at 20 s falls mid-speech: no word lost in between).
+      const newPhrase = () => {
+        const p = { chunks: [], at: performance.now(), voiceMs: 0, quietSince: 0, seq: seqNext++ };
+        p.rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        p.rec.ondataavailable = (e) => { if (e.data?.size) p.chunks.push(e.data); };
+        p.rec.onstop = () => {
+          open--;
+          // Speech heard (or the level meter never worked — a suspended AudioContext reads zeros: send it anyway).
+          const blob = new Blob(p.chunks, { type: p.rec.mimeType || mime || "audio/webm" });
+          if (!dropped && (p.voiceMs >= MIN_SPEECH_MS || !heard) && blob.size >= 1200) send(blob, p.seq);
+          else { done.set(p.seq, ""); deliver(); }
+          finishIfIdle();
+        };
+        open++;
+        p.rec.start();
+        ph = p;
+      };
+      const cut = () => {
+        const old = ph;
+        if (!old || old.rec.state !== "recording") return;
+        if (want) newPhrase(); else ph = null;
+        old.rec.stop();
+      };
+      const end = () => {
+        if (ended) return;
+        ended = true; want = false; ph = null;
+        cancelAnimationFrame(raf);
+        try { stream?.getTracks().forEach((t) => t.stop()); } catch {}
+        try { actx?.close(); } catch {}
+        stream = actx = null;
+        o.onInterim(""); o.onState("idle");
+      };
+      const watch = (an) => {
+        const buf = new Float32Array(an.fftSize);
+        const loop = (t) => {
+          if (ended) return;
+          if (an.getFloatTimeDomainData) an.getFloatTimeDomainData(buf); else buf.fill(0);
+          let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          const rms = Math.sqrt(sum / buf.length), dt = lastT ? t - lastT : 0; lastT = t;
+          if (rms > 0) heard = true;
+          const p = ph;
+          if (p){
+            if (rms > LEVEL){ p.voiceMs += dt; p.quietSince = 0; } else if (!p.quietSince) p.quietSince = t;
+            if (want && ((p.voiceMs >= MIN_SPEECH_MS && p.quietSince && t - p.quietSince > SILENCE_MS) || t - p.at > MAX_MS)) cut();
+          }
+          raf = requestAnimationFrame(loop);
+        };
+        raf = requestAnimationFrame(loop);
+      };
+      return {
+        async start(){
+          want = true; ended = false; dropped = false; heard = false; open = 0; seqNext = seqOut = 0; done.clear();
+          o.onState("starting");
+          try {
+            // No key: say so before anything is recorded (the first phrase would be lost otherwise).
+            const st = await fetch("/api/stt/status").then((r) => r.json()).catch(() => null);
+            if (!want){ end(); return; }
+            if (!st){ o.onError("stt-server"); end(); return; }
+            if (!st.configured){ o.onError("stt-no-key"); end(); return; }
+            let s;
+            try { s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+            catch (e){ o.onError(e?.name === "NotAllowedError" ? "not-allowed" : "audio-capture"); end(); return; }
+            // Stopped while the permission prompt was open: release this stream right away (the mic light goes off).
+            if (!want || ended){ s.getTracks().forEach((t) => t.stop()); end(); return; }
+            stream = s;
+            const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
+            actx = new AC();
+            await actx.resume?.().catch(() => {});   // created after an await: it may start suspended (Safari)
+            const an = actx.createAnalyser(); an.fftSize = 2048;
+            actx.createMediaStreamSource(stream).connect(an);
+            if (!want || ended){ end(); return; }
+            watch(an);
+            newPhrase();
+            o.onState("listening");
+          } catch { o.onError("audio-capture"); end(); }
+        },
+        // The phrase being recorded and those in flight still land, in order; then the session ends.
+        stop(){ want = false; if (ph?.rec.state === "recording") cut(); else finishIfIdle(); if (ended === false && open === 0) end(); },
+        abort(){ want = false; dropped = true; const p = ph; ph = null; try { if (p?.rec.state === "recording") p.rec.stop(); } catch {} end(); },
+      };
+    },
+  },
 };
 
 export function createDictation({ lang, provider = "webspeech", onInterim = () => {}, onFinal = () => {}, onState = () => {}, onError = () => {} } = {}){
@@ -66,6 +183,14 @@ export function createDictation({ lang, provider = "webspeech", onInterim = () =
 export function insertAtCaret(ta, text){
   let t = String(text).trim();
   if (!t) return;
+  // The field has lost the focus meanwhile (Whisper's last phrase lands after a blur): append, keep the focus where it is.
+  if (document.activeElement !== ta && ta.dataset.dictLate != null){
+    const v0 = ta.value;
+    if (v0 && !/\s$/.test(v0)) t = " " + t;
+    ta.setRangeText(t, v0.length, v0.length, "end");
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: t }));
+    return;
+  }
   const v = ta.value, s = ta.selectionStart ?? v.length, e = ta.selectionEnd ?? s;
   const before = v.slice(0, s), after = v.slice(e);
   if (before && !/\s$/.test(before) && !/^[,.;:!?)\]»”…]/.test(t)) t = " " + t;
@@ -102,7 +227,8 @@ const CSS = `
 .dict-pop button.sel { color: var(--accent, #4c9aff); }
 `;
 
-export function createDictationUI({ root = document, getLang = () => "", setLang = () => {}, toast = () => {}, floating = "", host = document.body, registerAutoClose = null } = {}){
+// getEngine(): "webspeech" (the browser) or "groq" (Whisper on the server's key — detects the language).
+export function createDictationUI({ root = document, getLang = () => "", setLang = () => {}, getEngine = () => "webspeech", toast = () => {}, floating = "", host = document.body, registerAutoClose = null } = {}){
   if (!document.getElementById("dict-style")){
     const st = document.createElement("style"); st.id = "dict-style"; st.textContent = CSS; document.head.appendChild(st);
   }
@@ -112,11 +238,15 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
   let fl = null, flTa = null;      // the floating mic and the field it is next to
   let bubble = null, pop = null;
   const buttons = new Map();   // button → () => its field
-  const langOf = () => getLang() || navigator.language || "en-US";
-  const label = () => `Dictation (${langOf()}) — Alt+M. Right-click or long-press: language`;
+  const engine = () => (getEngine() === "groq" && PROVIDERS.groq.available() ? "groq" : "webspeech");
+  const supported = () => PROVIDERS[engine()].available();
+  // Whisper with no language picked detects it; the browser's recogniser needs one (its "auto" = the browser's).
+  const langOf = () => getLang() || (engine() === "groq" ? "" : navigator.language || "en-US");
+  const langName = () => langOf() || "auto-detect";
+  const label = () => `Dictation (${engine() === "groq" ? "Whisper, " : ""}${langName()}) — Alt+M. Right-click or long-press: language`;
 
   function paint(prune){
-    for (const [b, get] of buttons){ if (prune && !b.isConnected){ buttons.delete(b); continue; } const mine = !!cur && get() === cur.ta; b.classList.toggle("on", mine); b.classList.toggle("na", !dictationSupported()); b.title = dictationSupported() ? (mine ? "Stop dictation (Esc)" : label()) : "Dictation needs Chrome, Edge or Safari"; b.setAttribute("aria-pressed", mine ? "true" : "false"); }
+    for (const [b, get] of buttons){ if (prune && !b.isConnected){ buttons.delete(b); continue; } const mine = !!cur && get() === cur.ta; b.classList.toggle("on", mine); b.classList.toggle("na", !supported()); b.title = supported() ? (mine ? "Stop dictation (Esc)" : label()) : "Dictation needs Chrome, Edge or Safari"; b.setAttribute("aria-pressed", mine ? "true" : "false"); }
   }
   function place(el, ta, below){
     const r = ta.getBoundingClientRect();
@@ -128,14 +258,14 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     if (!cur) return;
     if (!bubble){ bubble = document.createElement("div"); bubble.className = "dict-pv"; host.appendChild(bubble); }
     bubble.hidden = false;
-    bubble.textContent = text || `Listening… (${langOf()})`;
+    bubble.textContent = text || `Listening… (${langName()})`;
     place(bubble, cur.ta, false);
   }
   const hideBubble = () => { if (bubble) bubble.hidden = true; };
 
   function finish(){
     const c = cur; cur = null;
-    if (c){ c.ta.removeEventListener("blur", c.onBlur); c.ta.removeEventListener("keydown", c.onKey, true); }
+    if (c){ c.ta.removeEventListener("blur", c.onBlur); c.ta.removeEventListener("keydown", c.onKey, true); delete c.ta.dataset.dictLate; }
     hideBubble(); paint();
   }
   function stop(discard){
@@ -150,27 +280,37 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     "network": "Speech service unreachable — Chrome and Edge need an internet connection for dictation",
     "language-not-supported": "This language is not supported for dictation",
     "no-speech": "No speech heard",
+    "stt-no-key": "Whisper dictation needs a Groq key — Settings → Dictation",
+    "stt-bad-key": "Groq did not accept the key — check it in Settings → Dictation",
+    "stt-rate": "Groq's limit for now is reached — try again in a minute",
+    "stt-offline": "Groq is unreachable — check the internet connection",
+    "stt-server": "The Sight server did not answer",
+    "stt-failed": "Whisper could not transcribe that phrase",
   };
   function start(ta, btn){
-    if (!dictationSupported()){
+    if (!supported()){
       toast("Dictation is not available in this browser — use Chrome, Edge or Safari"); return;
     }
     if (cur) stop(true);
     const c = { ta, btn, ended: false };
     c.dict = createDictation({
+      provider: engine(),
       lang: langOf(),
       onInterim: (t) => { if (cur === c && ta.isConnected) showBubble(t); },
       onFinal: (t) => { if (cur === c && ta.isConnected) insertAtCaret(ta, t); },
       onState: (s) => { if (cur !== c) return; if (!ta.isConnected){ stop(true); return; } if (s === "idle") finish(); },
       onError: (code) => { if (cur !== c) return; c.dict.abort(); finish(); toast(messages[code] || `Dictation stopped (${code})`); },
     });
-    c.onBlur = () => stop(true);
+    // Leaving the field: the browser's words are already in; Whisper's phrases still out are appended to the note
+    // composer when they land (the focus stays where it went; a field that left the page gets nothing).
+    // (Not the editors that save on blur — the floating ones: a phrase landing after their save would be lost.)
+    c.onBlur = () => { if (engine() === "groq" && !(floating && ta.matches(floating))){ ta.dataset.dictLate = ""; stop(false); } else stop(true); };
     // Enter sends / saves the field: the words in flight go nowhere.
     c.onKey = (e) => { if (hotkey(e, "Enter")) stop(true); };
     ta.addEventListener("blur", c.onBlur);
     ta.addEventListener("keydown", c.onKey, true);
     cur = c; paint(); showBubble("");
-    c.dict.start();
+    Promise.resolve(c.dict.start()).catch(() => {});
   }
   function toggle(ta, btn){
     if (!ta) return;
@@ -185,10 +325,11 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     closePop();
     pop = document.createElement("div"); pop.className = "dict-pop";
     const now = getLang();
+    const g = engine() === "groq";
     for (const [code, name] of LANGS){
-      const b = document.createElement("button"); b.type = "button"; b.textContent = code ? `${name} · ${code}` : name;
+      const b = document.createElement("button"); b.type = "button"; b.textContent = code ? `${name} · ${code}` : g ? "Auto (detect the language)" : name;
       if (code === now) b.classList.add("sel");
-      b.onclick = () => { setLang(code); closePop(); paint(); toast(`Dictation language: ${code || "auto (" + (navigator.language || "en-US") + ")"}`); };
+      b.onclick = () => { setLang(code); closePop(); paint(); toast(`Dictation language: ${code || (g ? "auto-detect" : "auto (" + (navigator.language || "en-US") + ")")}`); };
       pop.appendChild(b);
     }
     pop.addEventListener("mousedown", (e) => e.preventDefault());   // keep the field focused (a blur would end an edit)

@@ -14,6 +14,62 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.70.0 — 2026-11-17 — Dictation with automatic language detection (Whisper via Groq)
+- **What:** Settings → Dictation: engine *Browser* (as before) or *Whisper (Groq)* plus a Groq API key. With
+  Whisper the mic's language "Auto" really detects the language (owner's request; the browser's recogniser
+  cannot — its "auto" is the browser's language). Words arrive phrase by phrase (after each pause), not live.
+- **Where:** new `app/stt.py` (`GroqStt`), `app/server.py` `/api/stt/status|key|transcribe`, `dictation.js`
+  provider `groq` + `getEngine` in `createDictationUI`, annotate.js (passes `getEngine`), index.html
+  `bindDictationSettings` + Settings markup, `tests/test_stt.py`. PLAN-stt.md (tier 2 done), ARCHITECTURE, MANUAL.
+- **Notes:** the key lives only in `<SIGHT_HOME>/stt.json` (0600), never in settings.json / the page / logs;
+  `/api/stt/status` says only whether one is set. Stdlib `urllib` multipart, model `whisper-large-v3-turbo`, no
+  `language` field = detect. Phrases: one MediaRecorder per phrase (each upload a complete file), cut by 0.7 s of
+  quiet after ≥ 0.25 s of voice (AnalyserNode RMS), or at 20 s. Not testable from the dev container (Groq is not
+  reachable here): verified up to the POST and the "unreachable" toast with Chromium's fake microphone. Phrases are
+  delivered in order (numbered), the next recorder starts before the old stops (no word lost at a 20 s cut), the
+  session ends only when every recorder and upload is done, a missing key is reported before recording, leaving
+  the composer still appends the phrases in flight (editors that save on blur drop them, Enter drops them).
+  `/api/stt/transcribe` takes `audio/*` only (another site's "simple" POST cannot spend the quota) and checks the
+  size first; urllib never follows a redirect (it would re-send the key).
+- Review (fresh agent): mic left on when stopped during the permission prompt, phrases out of order, last phrase
+  lost on blur / just after a cut, suspended AudioContext dropping everything, a word lost at the 20 s cut, no-key
+  reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
+  briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
+  — fixed; confirmed by the same reviewer.
+
+## 0.69.1 — 2026-11-17 — Sequence: no black frame across a cut, picture scrub runs through clips
+- **What:** scrubbing back (or forward) across a cut no longer flashes black; dragging on the picture scrubs the
+  whole sequence and runs on into the neighbouring clips instead of stopping at the clip's ends.
+- **Where:** index.html `seqHold` / `seqKeepStill` / `seqDropHold` / `seqReleaseHold`, `seqDragTo`, `seqNow`,
+  `seqScrubBegin`, the attachViewer scrub hand-over (`sd.handed`), `bindSeqBar` (uses `seqDragTo`), `.seq-hold` CSS.
+- **Notes:** a clip opened from scratch shows nothing until decoded, so the frame on screen is held as a canvas
+  (the visible scrub copy, else the player, else — mid-seek, when nothing can be drawn — the last presented frame
+  of that same element) placed with the player's box and turn / mirror / zoom transform inside a box clipped like
+  the frame; it goes when the new clip presents its frame (rVFC, 250 ms fallback; 1.5 s cap). The picture scrub is
+  handed to window listeners once it starts (each cut replaces the stage and the element holding the pointer);
+  a release outside the window ends it on the next move without a button.
+- Review (fresh agent): hold skipped mid-seek, wrong source while the scrub copy shows, geometry for turned /
+  masked views, stuck drag after a release outside, a swallowed tap after a cancelled hand-over, rVFC not firing,
+  timer of chained holds, `seqNow` before a landing; re-review: the mid-seek still placed with another clip's
+  geometry — all fixed; confirmed by the same reviewer.
+
+## 0.69.0 — 2026-11-17 — Compare annotating: splits by Alt / finger, screenshot of the whole comparison
+- **What:** while annotating in the compare's Swipe, `Alt`+drag moves the nearest split (as Alt scrubs a video in
+  the viewer) and a finger / stylus landing within 24 px of a split moves it — no stroke for that press, no need to
+  leave annotating. The annotator's screenshot (`S`, area `Shift+S`) is now the comparison as shown — every visible
+  layer in its split region or tile, Difference, dimmed clips, split lines and names — with the drawings on top
+  (owner: "that is the point of commenting a comparison"); it was the selected layer alone.
+- **Where:** compare.js `wantsPress`, `onDown` (`altPan`; drags keep their `pid`), `captureView`, `C.viewWrap`;
+  annotate.js `onDown` → `host.passThrough`, `composeView` → `host.captureView` (drawings clipped to the surface),
+  `capture()` area offset; index.html `cmpAnnot` hooks, compare `annotating`.
+- **Notes:** `passThrough` is asked after the edit / pen-eraser handling and not while an area is being picked or
+  with Alt on the select tool (its duplicate-drag). Outside annotating Alt+left still pans in Swipe. A video layer
+  caught mid-seek (`readyState` < 2) is drawn as nothing (black) in the screenshot — left as is (rare). Note
+  previews / report pictures still show the annotated layer's own frame (the screenshot is what shows the comparison).
+- Review (fresh agent): a resting palm's split drag following the pen (no pointer id on the drag), Alt duplicate-
+  drag lost with the select tool, area capture / text edit / pen eraser presses taken near a split, drawings not
+  clipped to their tile, label size; fixed (black hole for a seeking video left).
+
 ## 0.68.0 — 2026-11-17 — Annotating in the version compare; notes remember the comparison
 - **What:** compare (K) has *✎ Annotate* / `A`: the notes panel and drawing tools on the **selected layer**
   (owner's choice) — notes / drawings go to that file at its own frame. A note made there stores the
@@ -319,81 +375,3 @@ Add new entries directly below this line.
   Esc closes it), `stampDrag` stuck after a cut-off drag (reset in unmount / toggle / layer creation, `lostpointercapture`),
   Alt gestures blocked on the stamp (fixed), ▾ touch size / `tabular-nums` (fixed). The same reviewer confirmed the
   fixes; its last gap (Esc inside a focused slider stopped at the popover) is fixed by letting Escape through.
-
-## 0.59.2 — 2026-11-16 — Video: Alt-scrub with the select tool; smooth mid-clip scrubbing of long-GOP clips
-- **What:** with the annotate select tool (V) active, Alt+drag on empty space scrubs a video (or turns a picture)
-  again. Clips with long GOPs (phone / screen recordings: the user's sample has keyframes only at 0 and 8.3 s) now
-  scrub smoothly in the middle: after two slow seeks during a drag Sight makes a small short-GOP **scrub copy** in
-  the background (≤ 960 px, no audio, keyframe every 4 frames) and shows it over the player while dragging; the
-  player lands on the full-quality frame when the drag ends.
-- **Where:** `annotate.js` `onDown` (Alt in empty space passes to the viewer); `app/library.py` (`SCRUB_TAG` /
-  `SCRUB_VF` / `SCRUB_ENC`, `scrub_copy_path`, `scrub_status`, `start_scrub_copy`, the playback-copy job code takes
-  a `tag`, jobs keyed `aid+tag`, kind-aware cleanup, `_prune_scrub_copies`, `_encode_copy` with the playback-first
-  priority: `_play_cv`, `_play_waiting`, `_scrub_proc`); `app/server.py` (`POST /api/video/scrub`,
-  `GET /api/video/scrub/{aid}`); `video-playable.js` (`convertForPlayback(…, kind)`); `index.html` `attachViewer`
-  (`.view-scrub` overlay, `loadScrubCopy` / `pumpScrubCopy` / `hideScrubCopy`, `SLOW_SEEKS` / `SLOW_SEEK_MS` /
-  `SCRUB_COPY_MIN_S`, `scGen`); `tests/test_playback_copy.py` (8 tests); MANUAL, ARCHITECTURE.
-- **Notes:** root cause measured in Edge: a browser seek decodes from the previous keyframe, so on the sample a seek
-  took 5 ms at 0.1 s and up to 230 ms at 8.1 s (≈ 27 ms per second of distance); in a 120-move drag over 3 s only
-  24 positions painted mid-clip vs 70 at the start; the RAM cache was irrelevant (the file fits in it). With the copy
-  91 of 91 frames paint. The copy is never played (`playback_path` ignores it), lives in `thumbs/video/<aid>_<stamp>.scrub.<ext>`
-  (the `<aid>_*` rename / delete globs cover it), is requested lazily (the first scrub of a slow clip is still choppy
-  until it exists; clips < 3 s never ask), capped to the newest 20 files / 1 GB (`SCRUB_KEEP_FILES` / `SCRUB_KEEP_BYTES`,
-  oldest by mtime, never the one just made). One ffmpeg at a time (`_play_slot`); a playback copy (the "Converting…"
-  the user waits for) has priority: a running scrub encode is terminated, returns None and is re-run when the slot
-  is free (its job stays "working"; under a steady stream of playback jobs it waits). The overlay shows only while
-  `light.scrubbing`, only for a seek of the current drag (`scGen`), is hidden on frame steps / marker jumps and
-  after the player presents its own frame (rVFC, ≤ 250 ms); copy and original can differ by a fraction of a frame at
-  the hand-over. Left: a changed file's old-stamp scrub copy lingers until the next rescan / scrub; the webm branch
-  (`libvpx-vp9 -g 4`) is untested; Playwright's Chromium has no H.264, test with Edge (`channel: "msedge"`).
-  Review (fresh agent): trigger too eager and uncapped (fixed: scrub-only slow seeks, two needed, min duration,
-  cap), stale overlay frame for up to 250 ms (fixed), silent copy errors (warn), missing tests (added); second
-  pass found playback copies queued behind a minutes-long scrub encode (fixed: priority + abort, two tests); third
-  pass confirmed everything, two nits (unguarded `terminate()` — wrapped; a copy finished right before the
-  terminate is redone, rare).
-
-## 0.59.1 — 2026-11-16 — 3D: alpha cut-outs for USD / USDZ in every shading mode
-- **What:** a UsdPreviewSurface whose `opacity` reads a texture now renders its cut-outs (leaf cards, fences):
-  `opacityThreshold` 0 / unset → BLEND, > 0 → MASK with that cutoff, on both paths (server GLB conversion and USD
-  read in the browser). Cut-outs survive Solid, Vertex, Normal, X-ray, the inspector highlight and the grid thumbnail.
-- **Where:** `app/usdz_convert.py` (`_Materials._fill` opacity, `_alpha_into_base`, `_bake_alpha`, `_as_8bit`);
-  `app/library.py` (`USDZ_CONVERTER_VERSION` 4 → cached conversions redone); `vendor/jsm/loaders/usd/USDComposer.js`
-  (`_applyPreviewSurface`, Sight patch: a separate opacity texture → alphaMap clone tagged `userData.usdAlphaChannel`);
-  `app/static/model3d-core.js` (`usdMaterialsAsSight` from `parseUsd`, exported `keepAlpha`, `applyBaseMaterial`
-  one temp material per group, `xrayMaterial`, `meshHighlight`); `index.html` (Solid retint for material arrays);
-  `tests/test_usdz_convert.py` (`TestOpacity`); ARCHITECTURE, MANUAL.
-- **Notes:** the user's `Stylized_Palm_tree_set.usdz` (Sketchfab export) still draws opaque **on purpose**: its
-  materials wire no `opacity` at all and every texture is a JPEG without alpha — the leaf image has its cut-out area
-  flattened to white. usdview / Quick Look show the same white cards; making it work would need a white chroma-key
-  guess (not added; re-export the asset with its alpha instead). glTF has no alpha map, so a separate opacity texture
-  is baked into the base colour's A channel (16-bit masks scaled, not clipped); three samples an alphaMap's G channel,
-  so the browser path redraws the channel into G. All USD materials are double-sided on both paths (the gprim's
-  `doubleSided` is not followed; honouring it would hide open shells). Temp materials read the map's alpha through
-  `onBeforeCompile`; `material.clone()` drops that hook, fine because originals never carry it. X-ray scales
-  `alphaTest` by 0.3 so MASK cards do not vanish. Limits: opacity on its own UV set / transform, opacity scale /
-  bias and float (`F`) masks are not handled; after a bake the unused original base image stays in the GLB.
-  Review (fresh agent, run by the block's author): 16-bit masks became binary (fixed), a multi-material mesh was cut
-  by one part's texture (fixed); the same reviewer confirmed both, nothing new.
-
-## 0.59.0 — 2026-11-16 — Settings: Scan Filtering with a built-in default filter list
-- **What:** Settings "Scanning" is now "Scan Filtering". A list shipped with the app, `app/initial_filtering.ini`
-  (OS junk, temp / partial files, databases, shortcuts, VCS / build folders, `.sight/`), applies under the user's
-  Ignore list — the scanner skips the union of both. A shield button next to Apply opens "Default scan filters"
-  to read / edit that list (Save / Restore shipped). Edits are stored as `<SIGHT_HOME>/initial_filtering.ini`,
-  which replaces the shipped file; saving text equal to the shipped list removes the copy again.
-- **Where:** `app/initial_filtering.ini`; `app/library.py` (`read_default_filter`, `IgnoreRules(user, default)` —
-  the one merge point, `Library.set_default_filter`, `_apply_ignore` shared with `set_ignore`); `app/server.py`
-  (`GET / PUT / DELETE /api/scan/defaults`); `index.html` (`#dfOverlay`, `dfOpen` / `dfSend`, an Esc branch in the
-  main keydown); `build_exe.bat` / `build_app_macos.sh` (`--add-data` for the ini); tests `tests/test_scan_ignore.py`,
-  `tests/scan_filter_modal.cjs`; MANUAL (Scan Filtering), ARCHITECTURE (merge order, endpoints).
-- **Notes:** the DB meta `scan_ignore` still holds only the user's list; `/api/state` is unchanged. `.log` / `.ini` /
-  `.cfg` are shown as text, so they are never in the ini — a test asserts no extension Sight shows is filtered.
-  File-style globs match folder names too (`Shots.bak/` would vanish), so the shipped list only has patterns no
-  media folder would carry (`*.bak`, `*.temp`, `*.lock`, `*~` deliberately left out; `Library/` and `*.meta` are
-  commented examples only). `SKIP_DIRS` stays the fallback when the ini is unreadable (one warning line, bare
-  `logging` → stderr / `sight.log` in a frozen build). The user copy is written atomically (`.tmp` + `os.replace`);
-  an unwritable home returns a 500 with `detail`, shown in the modal. The scanner only skips, never deletes.
-  Not verified: a frozen build actually carrying the ini (no build was run). Review (fresh agent) found: the
-  file-style globs pruning folders (fixed: six patterns dropped + a folder test); saving the unchanged shipped
-  text created a permanent custom copy that would miss future shipped updates (fixed); non-atomic write and a
-  bare "Failed" (fixed); silent fallback (logged). The same reviewer confirmed every fix, nothing new.

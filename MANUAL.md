@@ -113,7 +113,7 @@
     follow the mouse); then only the plate's head (number / label) moves the plate. In the note card the texts are listed under its pictures (a mark in a preview's
     corner shows which have one); click one to go to that frame / view, double-click to edit it.
     The PDF report and the reviewer page show them under the pictures. The arrow button on a note adds a
-    **reply** (Enter sends); double-click a reply to edit it, × deletes it. **Dictation:** the mic button under the note field (and next to a reply, note or picture text while you edit it) listens and types what you say at the cursor; click it again, Esc or Alt+M stops; right-click / long-press it to pick the language (default: the browser's). Needs Chrome, Edge or Safari; Chrome / Edge send the audio to Google, so it is online only. Resolving or reopening
+    **reply** (Enter sends); double-click a reply to edit it, × deletes it. **Dictation:** the mic button under the note field (and next to a reply, note or picture text while you edit it) listens and types what you say at the cursor; click it again, Esc or Alt+M stops; right-click / long-press it to pick the language (default: the browser's). Needs Chrome, Edge or Safari; Chrome / Edge send the audio to Google, so it is online only. **Whisper** (Settings → Dictation → Engine *Whisper (Groq)*, with your Groq API key saved there) detects the language by itself — leave the language on *Auto* — and punctuates better; each phrase is sent to Groq after you pause, so the words appear phrase by phrase rather than as you speak. The key stays on the Sight server (never shown again; empty + *Save key* removes it). Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
     reviewer attached to a reply (on the web page) show under it; click to enlarge. A reply that
@@ -417,10 +417,12 @@
     time). Click a layer chip (or a tile) to annotate another file. A note written here remembers the
     comparison — the files, their order, reference, layout and offsets: its card in the viewer has
     *⧉ Compare · N files*, which opens it again on the note's frame, and `K` on that file brings the same
-    files back (the newest such note wins) instead of its versions. While annotating, the drawing tools own the left
-    button / finger and their keys (`[` `]` brush size, `R` `V` `L` tools, `Shift+,` / `.` markers): leave
-    annotating (`A` / Esc) to move splits by touch, shift layers or change the reference by key. The
-    screenshot tool takes the selected layer's picture, not the split / difference view on screen.
+    files back (the newest such note wins) instead of its versions. While annotating, the left button draws: `Alt`+drag
+    moves the nearest split (as it scrubs a video in the viewer), and a finger or stylus that lands on a split
+    moves it instead of drawing. The tools' keys (`[` `]` brush size, `R` `V` `L` tools, `Shift+,` / `.`
+    markers) win over the compare's; leave annotating (`A` / Esc) to shift layers or change the reference by
+    key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
+    layer in its split or tile, Difference, the split lines and names — with the drawings on top.
   - Wheel zooms around the cursor, right / middle drag pans (left drag in the tile layouts),
     double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
@@ -428,7 +430,9 @@
   click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back
   to back in the full-screen viewer, cut to cut with no black frame. The bar above the timeline shows
   every clip as a segment (alternating shades, name inside); tap or drag it to move through the whole
-  sequence, the timeline under it is the current clip's own. ⏮ / ⏭ or `←` / `→` go to the previous /
+  sequence, the timeline under it is the current clip's own. Dragging on the picture scrubs the whole sequence
+  too: it runs on past a clip's start or end into the neighbouring clip (the last frame stays on screen until
+  the next clip's frame is ready — no black flash). ⏮ / ⏭ or `←` / `→` go to the previous /
   next clip's start, `Home` to the first clip, ⟲ or `Shift+L` loops the whole sequence; `,` / `.` step
   frames across the cuts. Ticks on the sequence bar mark every clip's drawings and notes (the taller ones
   are notes); `Shift+,` / `Shift+.` jump to the previous / next one, on into the other clips. A clip the

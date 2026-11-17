@@ -310,6 +310,7 @@ export function createCompare(host){
         media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
       }
     }
+    C.viewWrap = wrap;
     if (!wrap || !media){ host.onView(null); return; }
     const geom = () => {
       const x = parseFloat(media.style.left) || 0, y = parseFloat(media.style.top) || 0;
@@ -687,16 +688,30 @@ export function createCompare(host){
     window.addEventListener("resize", C.onResize);
   }
   function boxOf(e){ return e.target.closest(".cmp-box, .cmp-cell"); }
+  // While annotating (the annotator asks first, host.passThrough): in swipe a mouse moves a split with Alt held
+  // (as Alt scrubs a video in the viewer), a finger or pen moves the split it lands on — drawing is skipped then.
+  function wantsPress(e){
+    if (!C || P.layout !== "swipe" || !C.splits.length || e.button !== 0) return false;
+    if (e.altKey) return true;
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return false;
+    const box = C.stage.querySelector(".cmp-box");
+    if (!box) return false;
+    const r = box.getBoundingClientRect(), horiz = P.dir === "x";
+    const px = horiz ? e.clientX - r.left : e.clientY - r.top, span = horiz ? r.width : r.height;
+    return C.splits.some((p) => Math.abs(p * span - px) <= 24);
+  }
   function onDown(e){
     const box = boxOf(e);
     if (!box) return;
     if (box.classList.contains("cmp-cell")) select(box.dataset.id);
-    const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (P.layout !== "swipe" || e.altKey || !C.splits.length));
+    // (Alt+left pans in swipe, except while annotating: there Alt+left moves a split, see wantsPress.)
+    const altPan = e.altKey && !host.annotating?.();
+    const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (P.layout !== "swipe" || altPan || !C.splits.length));
     if (!pan && e.button !== 0) return;
     e.preventDefault();
     C.stage.setPointerCapture(e.pointerId);
     if (pan){
-      C.drag = { kind: "pan", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box };
+      C.drag = { kind: "pan", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box, pid: e.pointerId };
       return;
     }
     // Swipe: grab the split nearest to the pointer and move it there.
@@ -704,7 +719,7 @@ export function createCompare(host){
     const f = horiz ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
     let k = 0, best = Infinity;
     C.splits.forEach((p, i) => { const d = Math.abs(p - f); if (d < best){ best = d; k = i; } });
-    C.drag = { kind: "split", k, box };
+    C.drag = { kind: "split", k, box, pid: e.pointerId }; // (only this pointer moves it: a pen drawing meanwhile must not)
     moveSplit(e);
   }
   function moveSplit(e){
@@ -716,7 +731,7 @@ export function createCompare(host){
   }
   function onMove(e){
     const d = C?.drag;
-    if (!d) return;
+    if (!d || e.pointerId !== d.pid) return;
     if (d.kind === "split"){ moveSplit(e); return; }
     const ref = refLayer(), W = d.box.clientWidth, H = d.box.clientHeight;
     const rw = ref.nw || 1600, rh = ref.nh || 900, s = Math.min(W / rw, H / rh) * C.view.zoom;
@@ -724,7 +739,7 @@ export function createCompare(host){
     C.view.cy = d.cy - (e.clientY - d.y) / (rh * s);
     place();
   }
-  function onUp(){ if (C) C.drag = null; }
+  function onUp(e){ if (C && (!C.drag || e.pointerId === C.drag.pid)) C.drag = null; }
   function onWheel(e){
     const box = boxOf(e);
     if (!box) return;
@@ -810,7 +825,72 @@ export function createCompare(host){
     paintTime();
   }
   function relayout(){ if (C) requestAnimationFrame(() => place()); }
-  return { open, close, isOpen: () => !!C, onKey, session, pause, seekLayer, relayout, selectedId: () => C?.sel || null,
+  // The view on screen as a picture, for the annotator's screenshot: every visible layer where and how it is
+  // shown (swipe regions, tiles, Difference, dimmed clips outside their span), split lines and name labels.
+  // Swipe: the box; tiles: the whole stage. ox / oy: the annotated surface's place in it (CSS px).
+  function captureView(dpr){
+    if (!C) return null;
+    const root = P.layout === "swipe" ? C.stage.querySelector(".cmp-box") : C.stage;
+    if (!root) return null;
+    const R = root.getBoundingClientRect();
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(R.width * dpr)); cv.height = Math.max(1, Math.round(R.height * dpr));
+    const cx = cv.getContext("2d");
+    cx.fillStyle = "#000";
+    cx.fillRect(0, 0, cv.width, cv.height);
+    const rel = (el) => { const b = el.getBoundingClientRect(); return { x: b.left - R.left, y: b.top - R.top, w: b.width, h: b.height }; };
+    const boxes = P.layout === "swipe" ? [root] : [...root.querySelectorAll(".cmp-cell")];
+    for (const box of boxes){
+      const B = rel(box);
+      cx.save();
+      cx.beginPath(); cx.rect(B.x * dpr, B.y * dpr, B.w * dpr, B.h * dpr); cx.clip();
+      for (const ly of box.querySelectorAll(".cmp-ly")){
+        const m = ly.querySelector(".cmp-m");
+        if (!m) continue;
+        cx.save();
+        const cp = /inset\(([^)]*)\)/.exec(ly.style.clipPath || "");
+        if (cp){
+          const v = cp[1].trim().split(/\s+/).map((x) => parseFloat(x) / 100 || 0); // top right bottom left, in %
+          const [t, r, b, l] = v.length === 4 ? v : [v[0], v[1] ?? v[0], v[2] ?? v[0], v[3] ?? v[1] ?? v[0]];
+          cx.beginPath();
+          cx.rect((B.x + l * B.w) * dpr, (B.y + t * B.h) * dpr, (1 - l - r) * B.w * dpr, (1 - t - b) * B.h * dpr);
+          cx.clip();
+        }
+        if (ly.style.mixBlendMode === "difference") cx.globalCompositeOperation = "difference";
+        if (ly.classList.contains("out")) cx.globalAlpha = 0.12;
+        const x = parseFloat(m.style.left) || 0, y = parseFloat(m.style.top) || 0, w = parseFloat(m.style.width) || 0, h = parseFloat(m.style.height) || 0;
+        const nw = m.videoWidth || m.naturalWidth || w, nh = m.videoHeight || m.naturalHeight || h;
+        if (nw && nh && w && h){
+          const s = Math.min(w / nw, h / nh);
+          try { cx.drawImage(m, (B.x + x + (w - nw * s) / 2) * dpr, (B.y + y + (h - nh * s) / 2) * dpr, nw * s * dpr, nh * s * dpr); } catch {}
+        }
+        cx.restore();
+      }
+      cx.restore();
+    }
+    cx.fillStyle = "rgba(255,255,255,.85)";
+    for (const sp of root.querySelectorAll(".cmp-split")){
+      const S = rel(sp), horiz = sp.classList.contains("x");
+      if (horiz) cx.fillRect((S.x + S.w / 2 - 1) * dpr, 0, 2 * dpr, cv.height);
+      else cx.fillRect(0, (S.y + S.h / 2 - 1) * dpr, cv.width, 2 * dpr);
+    }
+    cx.font = `${11 * dpr}px system-ui, sans-serif`;
+    cx.textBaseline = "middle";
+    for (const lb of root.querySelectorAll(".cmp-lbl")){
+      if (lb.hidden) continue;
+      const L = rel(lb), text = lb.textContent.trim();
+      if (!L.w || !text) continue;
+      cx.fillStyle = "rgba(0,0,0,.6)";
+      cx.fillRect(L.x * dpr, L.y * dpr, L.w * dpr, L.h * dpr);
+      const dot = lb.querySelector("i");
+      if (dot){ const D = rel(dot); cx.fillStyle = dot.style.background || "#fff"; cx.beginPath(); cx.arc((D.x + D.w / 2) * dpr, (D.y + D.h / 2) * dpr, D.w / 2 * dpr, 0, Math.PI * 2); cx.fill(); }
+      cx.fillStyle = "#fff";
+      cx.fillText(text, (L.x + (dot ? rel(dot).w + 12 : 8)) * dpr, (L.y + L.h / 2) * dpr, Math.max(1, L.w - 20) * dpr);
+    }
+    const W = C.viewWrap ? rel(C.viewWrap) : { x: 0, y: 0 };
+    return { cv, ox: W.x, oy: W.y };
+  }
+  return { open, close, isOpen: () => !!C, onKey, session, pause, seekLayer, relayout, selectedId: () => C?.sel || null, wantsPress, captureView,
     ready: () => C?.fpsReady || Promise.resolve() };
 }
 

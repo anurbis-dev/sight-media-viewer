@@ -626,13 +626,24 @@ adopted element takes the made one's children. Non-adopted moves (`seqGo`: jumps
 cut, scrubbing the bar into another clip) land via `pendT` (< 0 = from the end) / `pendPlay` in
 `seqOnReady`, called from the viewer's `onReady`; `autoplay` is turned off for a jump that lands paused.
 annotate.js's `stepFrame` calls `host.seqEdge(n, fd)` past either end of a clip. `light.vctl` exposes
-the viewer's `seekVideo / beginScrub / endScrub` for the sequence bar. Marks: `s.marks[k]` = `[{t, note}]` — the clip on
+the viewer's `seekVideo / beginScrub / endScrub` for the sequence bar. Drags through the sequence (the bar, and the
+picture scrub — handed over by attachViewer once it starts, `seqScrubBegin`, on window listeners because the stage
+and the element holding the pointer are replaced at each cut) go through `seqDragTo(drag, T)`. Every non-adopted
+`seqGo` holds the frame on screen as a canvas over `.light-stage` (`seqHold`) until the new clip presents its
+frame (`seqReleaseHold` from `seqOnReady`, 1.5 s cap). Marks: `s.marks[k]` = `[{t, note}]` — the clip on
 screen reports annotate.js's own `marks()` through `host.marksChanged` (called by `renderMarks`); other clips
 are read from `/api/annotations` (`seqLoadMarks`, an approximation: drawings' `ctx.t`, notes' caption frames),
 re-read when the player leaves them. `jumpMarker` with no marker left asks `host.seqMarker(dir)`. Playability:
 `seqProbe` loads each other clip's metadata once (hidden `<video preload=metadata>`) and POSTs a playback copy
 only for those without a picture — never for all (`start_playback_copy` transcodes anything without a copy).
 Touch selection mode (`state.touchSelect`, long-press) — see RECENT 0.66.0.
+
+**Dictation engines** (`dictation.js`): `webspeech` (browser) and `groq` (Whisper, auto language) — chosen by the UI
+setting `sight.dictation.engine` (Settings → Dictation; annotate.js passes `getEngine`). `groq` records one phrase
+per MediaRecorder (an AnalyserNode RMS gate: 0.7 s of quiet after ≥ 0.25 s of voice, or 20 s) and POSTs it to
+`/api/stt/transcribe?lang=xx` (no `lang` = detect). Server: `app/stt.py` `GroqStt` — the key only in
+`<SIGHT_HOME>/stt.json` (0600, never in settings.json / page), stdlib multipart POST to Groq
+`whisper-large-v3-turbo`; errors come back as `{error: no-key|bad-key|rate|offline|failed}` → the mic's toasts.
 
 **Annotating in compare** (index.html `cmpAnnot`) — a second `createAnnotator` instance mounted on the compare
 overlay (`host.onOpen` → `mount(C.el)`); compare reports the selected layer's viewer after every rebuild /
@@ -645,6 +656,12 @@ must not drive the element: annotate.js goes through `vidPause` / `vidSeek`, whi
 `openCompareSession` (the lightbox's annotator — not the compare's own). `compareFromContext` asks
 `latestCompareSession(focus)` before the file's versions. Keys while compare is open: the annotator's (when on)
 → `A` → compare's. On close, a lightbox underneath is reloaded if anything was annotated (its notes are stale).
+`host.passThrough(e)` (→ `cmp.wantsPress`: swipe, Alt+left or a touch / pen press within 24 px of a split) makes
+the annotator's capture `onDown` leave the press to compare (whose Alt+left pans only when not annotating).
+`host.captureView(dpr)` (→ `cmp.captureView`) paints the screenshot: swipe box or whole stage from the media
+elements' boxes, the layers' `clip-path: inset()` regions, `mix-blend-mode: difference` as canvas
+`difference`, `.out` at 0.12, split lines and labels; `{cv, ox, oy}` places the annotated surface in it
+(`composeView` draws the drawings there; an area capture offsets its rect).
 
 **Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
 Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared

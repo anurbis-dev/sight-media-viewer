@@ -971,9 +971,12 @@ export function createAnnotator(host){
     if (!e.altKey && e.target.closest?.(".an-stamp")) return;  // the frame stamp has its own drag
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
-    if (altCam() && e.button === 0) return; // Alt held: the viewer's own press (orbit, scrub), not ours
     const pen = e.pointerType === "pen";
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
+    // The host's own control under the press (compare: a split under the finger, Alt+drag) — not while an area is
+    // being picked, with the pen's eraser end, or Alt with the select tool (its duplicate-drag).
+    if (!S.region && !penEraser && !(e.altKey && S.tool === "select") && host.passThrough?.(e)) return;
+    if (altCam() && e.button === 0) return; // Alt held: the viewer's own press (orbit, scrub), not ours
     if (e.button !== 0 && !penEraser) return; // middle / right: the viewer's pan / zoom
     if (S.kind === "video"){ const v = video(); if (v) vidPause(v); }
     // A playing model stops too: a drawing belongs to the pose it is made at (ctx.anim).
@@ -2931,6 +2934,18 @@ export function createAnnotator(host){
     const bg = getComputedStyle(surfaceEl()).backgroundColor;
     cx.fillStyle = bg && bg !== "rgba(0, 0, 0, 0)" ? bg : getComputedStyle(document.body).getPropertyValue("--bg").trim() || "#151619";
     cx.fillRect(0, 0, cv.width, cv.height);
+    // The host paints what is on screen itself (compare: every layer in its split / tile, blend mode, labels);
+    // ox / oy: where this surface sits in that picture. The drawings go on top, in this surface's geometry.
+    const hv = S.b2 && host.captureView?.(dpr);
+    if (hv){
+      const hx = hv.cv.getContext("2d");
+      hx.save();
+      hx.beginPath(); hx.rect(dpr * hv.ox, dpr * hv.oy, dpr * g.w, dpr * g.h); hx.clip(); // (on screen they stay in this surface)
+      hx.setTransform(dpr * g.s, 0, 0, dpr * g.s, dpr * (g.ox + hv.ox), dpr * (g.oy + hv.oy));
+      if (!S.hidden) drawItems(hx, visibleDrawings());
+      hx.restore();
+      return { cv: hv.cv, dpr, ox: hv.ox, oy: hv.oy };
+    }
     if (S.b2){
       const m = S.b2.media;
       cx.setTransform(dpr * g.s, 0, 0, dpr * g.s, dpr * g.ox, dpr * g.oy);
@@ -3021,7 +3036,8 @@ export function createAnnotator(host){
       if (rect){
         const c2 = document.createElement("canvas"), dpr = res.dpr;
         c2.width = Math.round(rect[2] * dpr); c2.height = Math.round(rect[3] * dpr);
-        c2.getContext("2d").drawImage(cv, rect[0] * dpr, rect[1] * dpr, c2.width, c2.height, 0, 0, c2.width, c2.height);
+        const ox = res.ox || 0, oy = res.oy || 0; // (rect is in this surface's pixels)
+        c2.getContext("2d").drawImage(cv, (rect[0] + ox) * dpr, (rect[1] + oy) * dpr, c2.width, c2.height, 0, 0, c2.width, c2.height);
         cv = c2;
       }
       const r = await uploadCanvas(cv);
@@ -3455,6 +3471,7 @@ export function createAnnotator(host){
     lightEl.classList.add("an-host");  // the CSS below keys on this (the lightbox and a board view share it)
     if (host.board) lightEl.classList.add("an-bhost");
     S.dict = createDictationUI({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
+      getEngine: () => readJSON("sight.dictation.engine", "webspeech"),
       getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) });
     S.bar = buildBar(lightEl);
     S.ui = buildPanel(lightEl);

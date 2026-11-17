@@ -20,6 +20,7 @@ from .fileinfo import NO_WINDOW
 from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
+from .stt import GroqStt, SttError
 from .version import APP_VERSION
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -1391,6 +1392,40 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             "logPath": str(lib.root / "sight.log"),
         })
         return JSONResponse(info, headers={"Cache-Control": "no-store"})
+
+    # Dictation through Groq Whisper (app/stt.py): the key is set here and never read back by the page.
+    stt = GroqStt(lib.root)
+
+    @app.get("/api/stt/status")
+    def stt_status() -> JSONResponse:
+        return JSONResponse(stt.status(), headers={"Cache-Control": "no-store"})
+
+    @app.put("/api/stt/key")
+    async def stt_key(request: Request) -> dict:
+        if not stt.set_key((await json_body(request)).get("key", "")):
+            raise HTTPException(400, "not a key")
+        return stt.status()
+
+    @app.post("/api/stt/transcribe")
+    async def stt_transcribe(request: Request) -> JSONResponse:
+        # Audio only: another site's form / text/plain "simple" POST is refused (an audio type needs a CORS
+        # preflight, which this server never answers), so no page can spend the user's Groq quota. Size first.
+        ctype = request.headers.get("content-type", "")
+        if not ctype.lower().startswith("audio/"):
+            raise HTTPException(415, "audio required")
+        try:
+            size = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            size = 0
+        if size > 20 * 1048576:
+            raise HTTPException(413, "audio too long")
+        data = await request.body()
+        lang = request.query_params.get("lang", "")
+        try:
+            text = await asyncio.to_thread(stt.transcribe, data, ctype, lang)  # a network call: off the event loop
+        except SttError as e:
+            return JSONResponse({"error": e.code}, status_code=502 if e.code in ("failed", "offline", "rate") else 412)
+        return JSONResponse({"text": text}, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/settings")
     def get_settings() -> JSONResponse:
