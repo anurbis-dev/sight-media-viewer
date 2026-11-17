@@ -6,7 +6,8 @@
   notes are written in (Cyrillic, CJK ...) renders with MuPDF's bundled fallback fonts.
 - .srev package (legacy extension .sightreview): one JSON file holding the media's identity,
   every annotation row and the screenshots (base64), so a review can be mailed / sent by messenger
-  and opened on another machine that has the same media file in its library.
+  and opened on another machine that has the same media file in its library. A bundle (same
+  extension, format "sight-review-bundle") holds several packages, one per clip of a sequence.
   The format of everything in it is specified in docs/FORMAT.md.
 - HTML page: a self-contained reviewer page; it inlines app/static/review-core.js (the drawing
   primitives and merge rules shared with Sight and the mobile app) and app/static/review-draw.js
@@ -22,6 +23,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -490,18 +492,148 @@ def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_ve
     }
 
 
-def parse_package(raw: bytes) -> dict:
+def _load_json(raw: bytes):
     try:
-        pkg = json.loads(raw.decode("utf-8-sig"))
+        return json.loads(raw.decode("utf-8-sig"))
     except Exception as e:
         raise ValueError("Not a Sight review file") from e
+
+
+def _check_package(pkg) -> dict:
     if not isinstance(pkg, dict) or pkg.get("format") != PACKAGE_FORMAT:
         raise ValueError("Not a Sight review file")
-    if int(pkg.get("version") or 0) > PACKAGE_VERSION:
+    try:
+        version = int(pkg.get("version") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Review file is incomplete") from None
+    if version > PACKAGE_VERSION:
         raise ValueError("This review file was made by a newer Sight")
     if not isinstance(pkg.get("annotations"), list) or not isinstance(pkg.get("asset"), dict):
         raise ValueError("Review file is incomplete")
     return pkg
+
+
+def parse_package(raw: bytes) -> dict:
+    return _check_package(_load_json(raw))
+
+
+# ---- .srev bundle: several packages (one per clip) in one file; docs/FORMAT.md "Bundle" ---------
+
+BUNDLE_FORMAT = "sight-review-bundle"
+BUNDLE_VERSION = 1
+
+
+def build_bundle(packages: list[dict], author: str, app_version: str, title: str = "",
+                 bid: str | None = None) -> dict:
+    out = {
+        "format": BUNDLE_FORMAT,
+        "version": BUNDLE_VERSION,
+        "id": bid or _new_id(),
+        "app": f"Sight {app_version}",
+        "exported_at": int(time.time() * 1000),
+        "author": author,
+        "packages": list(packages),
+    }
+    if title:
+        out["title"] = title
+    return out
+
+
+def parse_review_file(raw: bytes) -> tuple[dict | None, list]:
+    """A .srev file -> (bundle header or None, entries). A plain package gives (None, [pkg]) and
+    raises ValueError like parse_package. A bundle gives its header (every key but `packages`) and
+    one entry per inner package: the checked package, or the ValueError it failed with — a damaged
+    clip is reported for that clip, not for the whole file."""
+    obj = _load_json(raw)
+    if not isinstance(obj, dict) or obj.get("format") != BUNDLE_FORMAT:
+        return None, [_check_package(obj)]
+    try:
+        version = int(obj.get("version") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Review file is incomplete") from None
+    if version > BUNDLE_VERSION:
+        raise ValueError("This review file was made by a newer Sight")
+    pkgs = obj.get("packages")
+    if not isinstance(pkgs, list):
+        raise ValueError("Review file is incomplete")
+    if not pkgs:
+        raise ValueError("This review file holds no clips")
+    entries: list = []
+    for p in pkgs:
+        try:
+            entries.append(_check_package(p))
+        except ValueError as e:
+            meta = p.get("asset") if isinstance(p, dict) else None
+            e.clip_name = str(meta.get("name") or "") if isinstance(meta, dict) else ""  # for the report
+            entries.append(e)
+    return {k: v for k, v in obj.items() if k != "packages"}, entries
+
+
+def find_review_asset(lib, pkg: dict) -> dict | None:
+    """The library asset a package belongs to: the same id (same path on this machine), then
+    wherever this review's rows already live (an earlier import), then name + size / kind."""
+    meta = pkg["asset"]
+    a = None
+    if meta.get("id"):
+        a = lib.get_asset(str(meta["id"]))
+        a = a if a and a.get("status") == "ready" else None
+    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+    return a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
+
+
+def import_package(lib, pkg: dict, asset: dict | None = None) -> dict:
+    """Merges one checked package into the library (synchronous; the server runs it in a thread).
+    -> {ok: True, asset_id, added, updated, deleted, author} | {ok: False, missing, asset}.
+    Raises ValueError("Review file is damaged (…)") when the rows do not merge (rolled back)."""
+    meta = pkg["asset"]
+    a = asset or find_review_asset(lib, pkg)
+    if not a:
+        return {"ok": False, "missing": meta.get("name") or "", "asset": meta}
+    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+    shot_map: dict[str, str] = {}
+    shots = pkg.get("shots") if isinstance(pkg.get("shots"), dict) else {}
+    for sid, url in shots.items():
+        data = decode_data_url(url) if isinstance(url, str) else None
+        if data:
+            shot_map[str(sid)] = put_shot(lib.root, str(sid), data)
+    deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
+    try:
+        stats = lib.import_annotations(a["id"], rows, deleted, shot_map)
+    # (a value sqlite cannot bind, such as an object for shape_kind, is the file's fault too)
+    except (TypeError, ValueError, AttributeError, sqlite3.InterfaceError, sqlite3.ProgrammingError) as e:
+        raise ValueError(f"Review file is damaged ({e})") from e
+    return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or ""}
+
+
+def import_review_file(lib, raw: bytes) -> dict:
+    """POST /api/review/import: a plain package -> import_package's result (raises ValueError for an
+    unreadable / damaged file). A bundle -> {ok: True, bundle: True, id, author, results: [one per
+    package, in order]}, each result import_package's or {ok: False, error} (damaged) or
+    {ok: False, duplicate: n} (matched the same local file as entry n, 0-based); every entry carries
+    `name`. Packages are committed one by one: one failing never undoes or blocks the others."""
+    head, entries = parse_review_file(raw)
+    if head is None:
+        return import_package(lib, entries[0])
+    results: list[dict] = []
+    seen: dict[str, int] = {}
+    for i, e in enumerate(entries):
+        if isinstance(e, ValueError):
+            results.append({"ok": False, "error": str(e), "name": getattr(e, "clip_name", "")})
+            continue
+        name = str(e["asset"].get("name") or "")
+        try:
+            a = find_review_asset(lib, e)
+            if a and a["id"] in seen:
+                results.append({"ok": False, "duplicate": seen[a["id"]], "name": name})
+                continue
+            if a:  # (taken even if this one turns out damaged: a second copy of the clip is still not merged)
+                seen[a["id"]] = i
+            res = import_package(lib, e, a)
+        except Exception as x:  # this clip only: a damaged row, a picture that would not save
+            res = {"ok": False, "error": str(x) or x.__class__.__name__}
+        results.append({**res, "name": name})
+    return {"ok": True, "bundle": True, "id": str(head.get("id") or ""), "author": str(head.get("author") or ""),
+            "results": results}
 
 
 # ---- HTML page for reviewers without Sight ------------------------------------------------------

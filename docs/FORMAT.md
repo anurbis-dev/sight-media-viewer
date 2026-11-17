@@ -3,7 +3,7 @@
 The data contract shared by Sight, the HTML reviewer page, the mobile app (docs/PLAN-mobile.md)
 and the owner's tracker. Sight stores the same rows in its `annotations` table; a `.srev` file is
 those rows plus the media's identity and the pictures. Code that reads or writes this data:
-`app/review.py` (`build_package`, `parse_package`), `app/library.py` (`import_annotations` and
+`app/review.py` (`build_package`, `parse_package`, `build_bundle`, `parse_review_file`), `app/library.py` (`import_annotations` and
 friends — the reference merge), `app/static/review-core.js` (rendering + the JS port of the merge),
 `app/static/annotate.js` (Sight's editor), `mobile/js/model.js` (the phone app: every row it
 writes, the package it builds / merges).
@@ -54,6 +54,30 @@ UTF-8 JSON (a BOM is accepted on import).
 | `annotations` | array of rows | required |
 | `deleted` | `[{id, deleted_at}]` | tombstones of rows deleted on the sending side (since 0.17; older Sight ignores it) |
 | `shots` | `{shotId: dataURL}` | pictures referenced by notes / replies (`data:image/jpeg;base64,…` or PNG) |
+
+## Bundle (`.srev` too) — several clips in one file
+
+A sequence's review (Sight 0.75+): an envelope around complete packages, one per clip. Every package in it is
+exactly a package as above (its own `asset`, `annotations`, `deleted`, `shots`) and merges by the same rules.
+
+| Key | Type | |
+|-----|------|--|
+| `format` | `"sight-review-bundle"` | required; import tells a bundle from a package by this, not by the extension |
+| `version` | `1` | required; a newer one is refused ("made by a newer Sight") |
+| `id` | string | a random bundle id (16 hex), made by the exporter; the HTML page's storage key and the phone's group key use it, and a reply bundle keeps it |
+| `app`, `exported_at`, `author` | | as in a package |
+| `title` | string | optional, e.g. `"Sequence review — 3 clips"` |
+| `packages` | array of packages | required, at least one; in clip order; one asset at most once |
+
+- A bundle with one package is legal; an empty one is an error ("holds no clips").
+- An inner package that fails a package's checks (format, version, `asset`, `annotations`) is reported for that
+  clip only; the others are imported. Each package is committed on its own (no rollback across packages).
+- Two packages that match the same local file (for example by name + size) import once: the later one is
+  reported as "same file as clip N".
+- Clips are in the bundle when they have notes **or** tombstones (deletes since the last send must still travel).
+  Board rows are never in a bundle.
+- Older Sight (< 0.75) and older phone apps reject a bundle as "Not a Sight review file". A one-clip reply from
+  the HTML page stays a plain package for that reason.
 
 ### Asset identity
 

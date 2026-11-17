@@ -232,7 +232,7 @@ export function createAnnotator(host){
   let toastTimer = 0;
   function toast(text, ms = 1800){
     const el = S.light?.querySelector(".an-toast");
-    if (!el){ host.toast?.(text); return; }
+    if (!el){ host.toast?.(text, ms); return; }
     el.innerHTML = text;
     el.classList.add("on");
     clearTimeout(toastTimer);
@@ -1835,7 +1835,7 @@ export function createAnnotator(host){
           <button type="button" data-exall="pdf" title="One PDF: a section per clip">PDF report, all clips…</button>
           <button type="button" data-exall="zip" title="One ZIP: a folder per clip, then a folder per note">Notes as ZIP, all clips…</button>
           <button type="button" data-exall="html" title="A web page per clip">Web pages, all clips…</button>
-          <button type="button" data-exall="pkg" title="A review file per clip">Review files (.srev), all clips…</button>
+          <button type="button" data-exall="pkg" title="One review file holding every clip with notes, or whose notes were deleted since (needs Sight 0.75 or later to open)">Review file (.srev), all clips…</button>
         </div>
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
@@ -3406,6 +3406,7 @@ export function createAnnotator(host){
       toast("Import failed", 3000);
       return;
     }
+    if (r.bundle){ await importedBundle(r); return; }
     const parts = [["new", r.added], ["updated", r.updated], ["deleted", r.deleted]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
     toast(parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 3500);
     await host.openAsset?.(r.asset_id);
@@ -3415,6 +3416,36 @@ export function createAnnotator(host){
       await load(S.asset); toggle(true); togglePanel(true);
     }
     host.onReviewChanged?.(r.asset_id);
+  }
+  // A bundle (several clips' packages in one .srev, docs/FORMAT.md "Bundle"): one summary toast; an affected clip
+  // that is open reloads (its undo history would restore pre-merge states); nothing new opens unless exactly one
+  // clip was updated — then it opens as for a single package.
+  async function importedBundle(r){
+    const res = Array.isArray(r.results) ? r.results : [];
+    const ok = res.filter((x) => x.ok), changed = ok.filter((x) => x.added || x.updated || x.deleted);
+    const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+    const names = (xs) => xs.map((x) => esc(x.name || "?")).join(", ");
+    const missing = res.filter((x) => !x.ok && x.missing != null), bad = res.filter((x) => !x.ok && x.error);
+    const dup = res.filter((x) => !x.ok && x.duplicate != null);
+    const parts = [];
+    if (changed.length) parts.push(`${plural(changed.length, "clip")} updated`);
+    if (ok.length > changed.length) parts.push(`${ok.length - changed.length} already up to date`);
+    if (missing.length) parts.push(`${missing.length} not in your library: <b>${names(missing)}</b>`);
+    if (bad.length) parts.push(`${bad.length} damaged${bad.some((x) => x.name) ? ": " + names(bad.filter((x) => x.name)) : ""}`);
+    if (dup.length) parts.push(dup.map((x) => `${esc(x.name || "?")}: same file as clip ${x.duplicate + 1}`).join(" · "));
+    const head = `Review of ${plural(res.length, "clip")}${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}`;
+    toast(`${head}: ${parts.join(" · ") || "nothing imported"}`, missing.length || bad.length || dup.length ? 7000 : 4000);
+    if (changed.length === 1){
+      const aid = changed[0].asset_id;
+      await host.openAsset?.(aid);
+      if (S.asset?.id === aid){ S.undo = []; S.redo = []; await load(S.asset); toggle(true); togglePanel(true); }
+      host.onReviewChanged?.(aid);
+      return;
+    }
+    for (const x of ok){
+      if (S.asset?.id === x.asset_id){ S.undo = []; S.redo = []; await load(S.asset); }
+      host.onReviewChanged?.(x.asset_id);
+    }
   }
 
   // ---- mode -----------------------------------------------------------------------------------

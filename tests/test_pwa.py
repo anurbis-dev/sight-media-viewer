@@ -47,21 +47,11 @@ def has_playwright() -> bool:
 
 
 def sight_import(lib: Library, raw: bytes) -> tuple[dict, dict]:
-    """What POST /api/review/import does with a package."""
-    pkg = review.parse_package(raw)
-    meta = pkg["asset"]
-    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
-    a = lib.get_asset(str(meta["id"])) if meta.get("id") else None
-    a = a if a and a.get("status") == "ready" else None
-    a = a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
-    if not a:
-        raise AssertionError(f"Sight found no asset for {meta.get('name')}")
-    shot_map = {}
-    for sid, url in (pkg.get("shots") or {}).items():
-        data = review.decode_data_url(url)
-        if data:
-            shot_map[str(sid)] = review.put_shot(lib.root, str(sid), data)
-    return a, lib.import_annotations(a["id"], rows, pkg.get("deleted") or [], shot_map)
+    """What POST /api/review/import does with a package (the same function)."""
+    res = review.import_review_file(lib, raw)
+    if not res.get("ok"):
+        raise AssertionError(f"Sight found no asset for {res.get('missing')}")
+    return lib.get_asset(res["asset_id"]), res
 
 
 class Build(unittest.TestCase):

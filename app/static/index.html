@@ -1097,7 +1097,8 @@ const annot = createAnnotator({
   exportBusy: () => seqExporting,
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
-  toast: (text) => flashV3DToast(text),
+  // (no lightbox, e.g. a review file dropped on the grid: the page's own toast, plain text)
+  toast: (text, ms) => { if (light) flashV3DToast(text); else flash(htmlToText(text), ms); },
   appVersion: () => state.meta?.version || "",
   // The lightbox panels' shared middle-drag scroll (attachPanScroll), so the review panel scrolls the same way.
   panScroll: (el) => attachPanScroll(el),
@@ -1120,7 +1121,8 @@ const annot = createAnnotator({
   onModeChange: () => syncLightHint(),
   openCompare: (ids, focus) => openCompare(ids, focus),
   // A note added / resolved or the review state changed: the grid pill and the sidebar counts.
-  onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
+  // (a bundle import also lands on sequence clips that are not on screen: their timeline marks are re-read)
+  onReviewChanged: (aid) => { scheduleRefreshItems(); scheduleMeta(); seqReviewChanged(aid); },
 });
 // The same tools on a Canvas board (annotate.js board mode): a second annotator, mounted in the board view by
 // canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
@@ -5752,6 +5754,10 @@ async function seqLoadMarks(k){
   s.marks[k] = out;
   seqRepaintSoon();
 }
+function seqReviewChanged(aid){
+  const s = light?.seq;
+  if (s) s.list.forEach((a, k) => { if (a.id === aid && k !== s.i) seqLoadMarks(k); });
+}
 function seqMarksFromAnnot(){
   const s = light?.seq;
   if (!s || !light.video || annot.loading()) return; // still loading: keep the fetched estimate meanwhile
@@ -5879,6 +5885,10 @@ function paintSeqBar(segs){
 // so they come one per clip. The pictures need each clip on screen (annotate.js gatherReport seeks and draws it):
 // the clips are visited one by one, then the sequence goes back to where it was.
 let seqExporting = false;
+// A toast written as HTML (annotate.js) for a plain-text toast.
+function htmlToText(t){
+  return String(t).replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+}
 function reviewerName(){ try { return localStorage.getItem("sight.reviewer") || ""; } catch { return ""; } }
 async function seqWaitClip(s, k, ms){
   const a = s.list[k], t0 = Date.now();
@@ -5897,13 +5907,20 @@ async function seqExportAll(kind){
   const s = light?.seq;
   if (!s) return;
   // The lightbox's toast (HTML); once the lightbox is gone, the page's own (plain text).
-  const say = (t, ms) => { if (light) annot.toast(t, ms); else flash(t.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"), ms); };
+  const say = (t, ms) => { if (light) annot.toast(t, ms); else flash(htmlToText(t), ms); };
   if (seqExporting || annot.busy()){ say("An export is already running", 2500); return; }
   seqExporting = true;
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   let back = null, moved = false, saved = 0;
   try {
     await annot.flush();
+    if (kind === "pkg"){   // one bundle, straight from the stored rows; the server picks the clips (notes or tombstones)
+      say("Saving the review file…", 60000);
+      const r = await api("/api/review/export/package-all", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ asset_ids: s.list.map((a) => a.id), author: reviewerName(), reveal: true }) });
+      say(r?.clips ? `Saved <b>${esc(r.name || "")}</b> · ${plural(r.clips, "clip")}` : "No clip in the sequence has notes", r?.clips ? 4500 : 2500);
+      return;
+    }
     say("Looking for clips with notes…", 60000);
     const has = await Promise.all(s.list.map((a) => api(`/api/annotations?asset_id=${encodeURIComponent(a.id)}`)
       .then((rows) => (rows || []).some((r) => r.kind === "note" && !r.data?.deleted)).catch(() => false)));
@@ -5913,12 +5930,6 @@ async function seqExportAll(kind){
     const ks = s.list.map((_, k) => k).filter((k) => has[k]);
     if (!ks.length){ say("No clip in the sequence has notes", 2500); return; }
     const post = (url, body) => api(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    if (kind === "pkg"){   // no pictures: straight from the stored rows
-      let last = null;
-      for (const [j, k] of ks.entries()) last = await post("/api/review/export/package", { asset_id: s.list[k].id, author: reviewerName(), reveal: j === ks.length - 1 });
-      say(`Saved ${plural(ks.length, "review file")} · last: <b>${esc(last?.name || "")}</b>`, 4500);
-      return;
-    }
     light.video?.pause();
     const reports = [], skipped = [];
     let lastName = "";

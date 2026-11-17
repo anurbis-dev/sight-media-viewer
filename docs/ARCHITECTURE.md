@@ -378,7 +378,8 @@ out and the next span's fade in, linearly over the gap (1 s at the clip's ends);
 each (`seqGo` + `seqWaitClip`: clip on screen, annotator bound and loaded, fps known), takes `annot.report(kind)`
 (= `gatherReport`), then POSTs `/api/review/export/pdf-all` | `zip-all` (`review.build_pdf_all` merges per-clip
 PDFs and numbers the pages through; `build_zip_all` puts each clip under "NN name/") or one `/export/html` per
-clip; `.srev` per clip needs no pictures. Afterwards `seqGo` back to the clip / time it started from.
+clip; `.srev` needs no pictures and no visits: `/export/package-all` with every clip id, the server keeps the clips
+with notes or tombstones and writes one bundle (FORMAT.md "Bundle", `review.build_bundle`). Afterwards `seqGo` back to the clip / time it started from.
 
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
@@ -622,8 +623,11 @@ lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK
 `POST /api/review/export/zip` (`gatherReport(false, true)` — every picture note gets its own
 picture — → `review.build_zip`: a folder per note with its pictures under their `file` names, extension
 from the bytes, and "Note NN.txt"), `POST /api/review/export/html` (the page's report: clean pictures + `coverSize` / `media`, see
-"HTML reviewer page"; the page embeds the report and the package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
-else name+size, else name+kind; 404 `{missing}` if no match). Import **merges**
+"HTML reviewer page"; the page embeds the report and the package, see `review.build_html`), `POST /api/review/import` (raw file body → `review.import_review_file`, the one import
+function the tests call too; asset matched by id, then the asset holding most of its row ids, else name+size, else
+name+kind; 404 `{missing}` if no match). A bundle answers 200 `{ok, bundle, id, author, results}`, one result per
+package (`import_package`'s, or `{ok: false, error}` / `{duplicate: n}` when two packages match one local file),
+each committed on its own. Import **merges**
 (`Library.import_annotations`, one transaction, rolled back on a malformed row): rows keep their
 ids (an id that already belongs to another asset gets a stable derived one), the later **content
 stamp** wins (`_content_at`: a note's `data.edited_at`, else `data.created`; a drawing's

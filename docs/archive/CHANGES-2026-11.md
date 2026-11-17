@@ -2,6 +2,23 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.64.0 — 2026-11-17 — Missing files on boards
+- **What:** a board card whose file is gone (source removed, or asset flagged missing) is a clear "Missing"
+  placeholder with the file name and its full path instead of an empty card. Adding the folder again (or a late
+  thumbnail) brings the pictures back without reloading the page. Space on a placeholder says "File is missing".
+- **Where:** `app/library.py` (`board_items.asset_name` / `asset_path` migration + backfill, `add_board_item`,
+  `_migrate_asset`), `app/static/canvas.js` (`fillItemEl`, `forgetAssets`, `refreshMissing`, placeholder CSS,
+  `createBody`), `app/static/index.html` (SSE hook, `assetUnderPointer`, Space), `tests/test_board_missing.py`,
+  `docs/ARCHITECTURE.md`, `MANUAL.md`.
+- **Notes:** `_migrate_asset` previously never touched board items (a moved file left its cards dangling); it now
+  rewrites `asset_id` + snapshot (bumps revision). Snapshot is server-owned: not PATCHable; POST falls back to the
+  body copy only when the asset row is missing. Backfill runs once, only when the columns are added; cards whose
+  asset was already deleted stay without a name ("Unknown file"). `getAsset` caches per page (null = 404 only; other failures are not cached and leave the card alone), `refreshMissing` evicts. Cards in state `ok` are re-checked only on `source` / scan-end events, so a file deleted under a live
+  source shows the placeholder after the next scan, not instantly. Checked with Playwright (remove / re-add source,
+  placeholder text, Space toast) on desktop; touch relies on the text being on the card (no hover needed).
+- Review: fresh-agent review found 2 medium (non-404 errors shown as missing; refresh storm/flicker) + 4 low (migration backfill crash-safety, getAsset race, selectedAssetIds during refresh, uncapped snapshot) — fixed. Re-review found a card left blank after a
+  failed (non-404) first lookup: one retry sweep 5 s later (`retryTimer`, at most every 5 s). All confirmed by the same reviewer.
+
 ## 0.63.0 — 2026-11-17 — Drawings and review notes on Canvas boards
 - **What:** the lightbox annotation tools now work on Canvas boards: brush / pencil / highlighter / eraser / line /
   arrow / rect / ellipse / text / pin / select-transform / undo / styles, plus the notes panel (notes, replies,

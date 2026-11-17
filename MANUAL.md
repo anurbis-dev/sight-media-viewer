@@ -449,8 +449,12 @@
   browser cannot play is converted as soon as the sequence opens, so it is usually ready by its turn. Each clip keeps its own notes and drawings: the notes panel and the drawings
   switch with the clip on screen, and a note written there belongs to that clip. While annotating, the
   arrows stay the nudge keys. **Export** (notes panel → *Export ▾* → *…, all clips*) takes the review of every
-  clip in the sequence that has notes: one PDF (a section per clip), one ZIP (a folder per clip), or a web
-  page / `.srev` file per clip; the viewer visits the clips to picture them, then returns to where you were.
+  clip in the sequence that has notes: one PDF (a section per clip), one ZIP (a folder per clip), a web
+  page per clip, or one `.srev` review file for all of them (a clip whose notes were all deleted since is
+  included too, so the deletes reach the other side); for the PDF, ZIP and web pages the viewer visits the clips
+  to picture them, then returns to where you were. Importing such a file (drag it in, or *Import review file*) merges every clip it holds that
+  is in your library and tells you in one message how many were updated, which are not in your library and which
+  could not be read; the others still land. Older Sight versions (before 0.75) cannot open it.
   Opening any other file from the viewer ends the sequence; `Esc` closes.
 - **Selecting by touch** — hold a tile for half a second to start touch selection with just that tile;
   then each tap adds or removes a tile (the order you tap is the sequence order) and a double tap opens

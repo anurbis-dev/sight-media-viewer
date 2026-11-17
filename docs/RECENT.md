@@ -14,6 +14,32 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
+- **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
+  instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle
+  (drop, Export menu, palette) merges every clip in the library and shows one summary ("2 clips updated · 1 not in
+  your library: x · 1 damaged · y: same file as clip 1"); the others still land. Exactly one clip updated → it
+  opens as for a plain package; otherwise nothing new opens, open affected clips reload (undo cleared) and the
+  sequence's off-screen timeline marks are re-read. Also: the import toast without a lightbox (dropped on the grid)
+  now shows (page `flash`, plain text) — before it went to `#v3dToast`, which exists only in the lightbox.
+- **Where:** review.py (`parse_review_file`, `build_bundle`, `find_review_asset`, `import_package`,
+  `import_review_file`), server.py (`/api/review/import` → `import_review_file`; new `/api/review/export/package-all`
+  with `asset_ids`), annotate.js (`importedBundle`, toast passes `ms`), index.html (`seqExportAll` "pkg",
+  `seqReviewChanged`, `htmlToText`, main host `toast`), tests/test_review_bundle.py, tests/test_pwa.py
+  (`sight_import` calls the shared function), FORMAT.md, MANUAL, ARCHITECTURE, PLAN-multiclip.
+- **Notes:** packages inside are unchanged and merge by the same code (merge parity untouched). A plain package's
+  import response is exactly as before (404 missing / 400 damaged); a bundle is always 200 with `results` per
+  package, each committed on its own. Damaged-file 400s now also cover sqlite binding errors and a non-numeric
+  `version` (were 500). Two packages matching one local file: the first claims it even if it turns out damaged;
+  the later is reported as duplicate (no second try). Older Sight (< 0.75) rejects a bundle as "Not a Sight review
+  file" — the stage-2 page's one-clip reply must stay a plain package. Stage 2 (multi-clip page) and 3 (phone) not
+  started.
+- Review (fresh agent): damaged inner package lost its name in the report; a duplicate after a damaged first copy
+  was imported again; `package-all` iterated a string `asset_ids` per char / 500 on a number; a bundle opened a clip
+  even when nothing changed; MANUAL said the `.srev` export visits clips; fixed. Re-review: fixes confirmed except a
+  `continue` that skipped reloading the first changed clip when several changed (stale rows + undo over the merge);
+  removed, confirmed by the same reviewer.
+
 ## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
 - **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
   drawing out and the next annotated frame's in. Now, while drawing on a video with onion on, between two frames
@@ -339,20 +365,3 @@ Add new entries directly below this line.
   at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
 - Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
   event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.
-
-## 0.64.0 — 2026-11-17 — Missing files on boards
-- **What:** a board card whose file is gone (source removed, or asset flagged missing) is a clear "Missing"
-  placeholder with the file name and its full path instead of an empty card. Adding the folder again (or a late
-  thumbnail) brings the pictures back without reloading the page. Space on a placeholder says "File is missing".
-- **Where:** `app/library.py` (`board_items.asset_name` / `asset_path` migration + backfill, `add_board_item`,
-  `_migrate_asset`), `app/static/canvas.js` (`fillItemEl`, `forgetAssets`, `refreshMissing`, placeholder CSS,
-  `createBody`), `app/static/index.html` (SSE hook, `assetUnderPointer`, Space), `tests/test_board_missing.py`,
-  `docs/ARCHITECTURE.md`, `MANUAL.md`.
-- **Notes:** `_migrate_asset` previously never touched board items (a moved file left its cards dangling); it now
-  rewrites `asset_id` + snapshot (bumps revision). Snapshot is server-owned: not PATCHable; POST falls back to the
-  body copy only when the asset row is missing. Backfill runs once, only when the columns are added; cards whose
-  asset was already deleted stay without a name ("Unknown file"). `getAsset` caches per page (null = 404 only; other failures are not cached and leave the card alone), `refreshMissing` evicts. Cards in state `ok` are re-checked only on `source` / scan-end events, so a file deleted under a live
-  source shows the placeholder after the next scan, not instantly. Checked with Playwright (remove / re-add source,
-  placeholder text, Space toast) on desktop; touch relies on the text being on the card (no hover needed).
-- Review: fresh-agent review found 2 medium (non-404 errors shown as missing; refresh storm/flicker) + 4 low (migration backfill crash-safety, getAsset race, selectedAssetIds during refresh, uncapped snapshot) — fixed. Re-review found a card left blank after a
-  failed (non-404) first lookup: one retry sweep 5 s later (`retryTimer`, at most every 5 s). All confirmed by the same reviewer.

@@ -14,6 +14,9 @@ file" (review.py `parse_package`, mobile model.js `parsePackage`) — clean, if 
 
 ## Stage 1 — the bundle format, Sight's import and export (backend, FORMAT.md, annotate.js import UI)
 
+**Done in 0.75.0** (see RECENT). Deviation: `package-all` takes `asset_ids` (every clip of the sequence, no
+reports — a package needs no pictures) and the server keeps the clips with notes or tombstones.
+
 - **FORMAT.md, new section "Bundle"**: `{format: "sight-review-bundle", version: 1, id, app, exported_at, author,
   title?, packages: [package, …]}`. `id`: a random bundle id (the page's storage key and the phone's group key
   use it). Each entry is a complete package (its own `asset`, `annotations`, `deleted`, `shots`; shots stay per
