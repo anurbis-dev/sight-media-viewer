@@ -2,6 +2,69 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.52.0 — 2026-11-15 — Text plate: resizable, no "…" line under the text
+- **What:** (everywhere: Sight lightbox, phone viewer, HTML reviewer page) the picture text plate no longer adds a
+  "…" line under the text while more is below — that line came and went with the scroll and changed the plate's
+  height; now only the last shown line fades out (mask, 1.2em). The plate is resizable: a small bar just outside the
+  middle of its free edge (mouse or finger) — a top / bottom plate stays centred (height by up / down, width by
+  sideways), a side plate grows into the picture; double-click / double-tap the bar = default size. One size for
+  top / bottom, one for the sides, kept per device as shares of the host.
+- **Where:** `app/static/caption-plate.js` (`.scp-grip`, `.sz` CSS, `paintSize`, `orient`, resize branch in
+  `down` / `move` / `up`, `lostpointercapture` now ends any gesture, `.editing`); `mobile/index.html` and
+  `app/review.py` set the new `--scp-bmax`; `MANUAL.md`.
+- **Notes:** the size never goes past the host's room in CSS (`--scp-bmax` for a bottom plate's width — the phone /
+  reviewer page keep the pencil / download button free; height ≤ host − `--scp-b` − `--scp-t`; side plates leave
+  90 px). Minimum: 120 px wide, head + two lines high (measured at the press). The grip sits outside the plate so a
+  tap on the head still folds it (`test_touch` taps there). While editing in place the plate takes the field's
+  height. Stored state `{side, min, hz, vt}`; older `{side, min}` reads as no size. In a page loaded through
+  Playwright `route` + `setContent` pointer capture does not work — test the plate from a served file.
+  Review (fresh agent) found, fixed: a grown bottom plate could cover the phone's pencil / the page's button, and
+  a tall one the top bars (CSS caps above); a capture lost mid-drag (plate hidden) left the gesture set and froze
+  touch gestures (now ended in `lostpointercapture`, any kind); the minimum height left less than a line and the
+  editor cramped; the fade hid most of the fifth line (1.6em → 1.2em); a small grip / 3 px threshold on touch
+  (bigger hit box on coarse pointers, 8 px); stale comments. Left: a side plate past its CSS cap stores a bigger
+  share than shown (no visible effect). The same reviewer confirmed every fix, then found two small ones, fixed: editing
+  collapsed a resized side plate (the editing rule is top / bottom only); a wide bottom plate could reach under a
+  landscape notch (`--scp-bxmin`, the phone sets it to its left inset); a top plate uses it too). The reviewer confirmed both.
+
+## 0.51.0 — 2026-11-15 — 3D: animation (Sight + phone), phone mesh pick / hide / UV, shading / grid / light bar; one Open button
+- **What:** (phone home) one *Open* button for every kind (big *Open a file* on an empty home, *＋ Open* in the bar):
+  no `accept`, so the OS offers photo library, camera and Files. (phone 3D) a tap picks a mesh (orange); a row under
+  the header: *Hide*, *Only this*, *UV* (its UVs over its texture in the full-screen viewer), *Show all*, ✕; a tap
+  on nothing lets it go. Bottom bar (in `els.tp`): Shading / Grid / Light / Explode icons, each opens its choices in a
+  row above (the explode slider moved here from the header). Animated models (glTF / FBX clips), Sight and phone:
+  play / pause + time slider (+ clip picker). A 3D view now also keeps the animation pose (`ctx.anim {clip, t}`):
+  drawings show only on that pose, going to a view / clicking a note puts it back, pictures / exports are taken there.
+- **Where:** `app/static/model3d-core.js` — moved here from index.html and shared: `ENV_PRESETS`,
+  `applyBaseMaterial` (now takes the solid params; temp materials copy the original's `side`), `applyXray`,
+  `setWireOverlay`, the inspector's highlight (`highlightMaterials`, `meshHighlight` — follows `c.visible`) and UV
+  picture (`createUvPainter`, `readbackCanvas`, `textureQuad`); new `createAnimator`. `review-core.js` `animMatch`.
+  `index.html`: glTF loaders copy `animations` onto the scene, `v3dAnim`, `#v3dAnim` bar / `paintAnimBar`,
+  `bindAnnot3d` (`getAnim / setAnim / withAnim / getAnimState / setAnimState / pauseAnim`). `annotate.js`: views
+  carry `anim` (`rebuildViews`, `ctxNow`, `viewMatches`, `goView`, `view3dPic`, the export loop, `tick` sig has the
+  view, not the time). Phone: `mobile/js/model3d.js` (`setShading / setGrid / setLight`, `pick / select / uvPicture`,
+  `onTap`, `anim`, `still` with a pose), `mobile/js/app.js` (`paint3dTools` rewritten, `paintAnim`, `paintSel3d`,
+  `tap3d`, `showUv`, `applyLook3d` / `sight-review:v3d`; `liveLook / viewFits / findVk / ctx3d / goView / viewPic`
+  with anim; home open button), `mobile/js/model.js` (`animOf`, `views3d`, `drawCtx`), `mobile/index.html`.
+  Tests: `tests/pwa_3d_tools.cjs` + `test_pwa.test_model_tools`, `fixtures_3d.make_glb(anim=True)` (two boxes, clip
+  "Lift" moving Box 2, UVs). Docs: FORMAT (ctx.anim), ARCHITECTURE, MANUAL.
+- **Notes:** animator + explode: every pose change puts the rig's parts at rest, lets the mixer pose, re-bases
+  `it.pos`, re-explodes (so they stack); built right after the rig in both viewers, so an animated model now opens
+  at clip 0, t 0 (not the bind pose; framing / floor / rig were measured before — older drawings on such a model
+  were made on the bind pose). Last pose = duration − 1 ms (a looping action at its duration shows t 0). A view's
+  `anim` is fixed when the view is made (like `hidden`); a view with none, or a viewer with no clips, matches any
+  pose. Pressing on the model in annotate mode / opening the phone's pencil pauses the clip (a drawing belongs to
+  its pose); the export pauses and resumes. Phone shading / grid / light are the device's, not the review's, and
+  view stills always use Textured + Studio without grid / selection (pictures are cached). Not done: a desktop
+  shortcut for play / pause; Sight's lights / floor on the phone; shading restored from Sight's `v3d` on the phone.
+  Review (fresh agent) found, fixed: phone view pictures took the phone's shading / light into the cache; scrubbing
+  while playing rebuilt the bar under the finger; Sight's clip picker kept the last model's names; Sight's annotate
+  panel repainted every frame while playing (lost clicks); drawing on a playing model hid the drawing at once; a view
+  with a pose never matched on a viewer without clips; the export took views at a moving pose; a stuck "finger"
+  count could kill taps; the highlight outlived a hidden mesh; a misplaced comment; several photos picked → only
+  the first, silently (now a toast). The same reviewer confirmed every fix and found nothing new. Left (low): taps
+  on animated skinned meshes may miss (cached bounding sphere).
+
 ## 0.50.0 — 2026-11-15 — Cut / copy / paste of selected drawings (Sight, reviewer page, phone)
 - **What:** (Sight lightbox) `Ctrl+X` cuts the selected drawings (`Ctrl+C` / `Ctrl+V` were there); the first
   paste after a cut puts them back where they were, later pastes / pastes after a copy step 20 px down-right.

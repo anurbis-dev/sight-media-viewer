@@ -7979,6 +7979,12 @@ let fbState = null, fbRootsCache = null, fbLastPath = "";
 function fbCrumbs(path){
   const isWin = path.includes("\\") || /^[A-Za-z]:/.test(path);
   const sep = isWin ? "\\" : "/";
+  // A UNC path (\\server\share\...) has a two-part root: one crumb for "\\server\share\".
+  const unc = isWin && path.startsWith("\\\\") ? path.slice(2).split(sep).filter(Boolean) : null;
+  if (unc && unc.length >= 2){
+    const root = "\\\\" + unc[0] + sep + unc[1];
+    return [{ name: root, path: root + sep }, ...unc.slice(2).map((name, i) => ({ name, path: root + sep + unc.slice(2, i + 3).join(sep) }))];
+  }
   const parts = path.split(sep).filter(Boolean);
   if (!parts.length) return isWin ? [] : [{ name: "/", path: "/" }];
   return parts.map((name, i) => {
@@ -7988,34 +7994,53 @@ function fbCrumbs(path){
     return { name, path: p };
   });
 }
+let fbNavToken = 0;
 async function fbNavigate(path){
+  const token = ++fbNavToken; // a slower, older listing (network drive) must not replace a newer one
   try {
     const data = await api("/api/fs/list?path=" + encodeURIComponent(path || ""));
+    if (token !== fbNavToken) return;
     fbState = data;
     fbLastPath = data.path;
     fbRender();
   } catch {
-    $("fbList").innerHTML = `<div class="fb-empty">Can't open this folder.</div>`;
+    if (token !== fbNavToken) return;
+    // The folder shown is the one that failed (reopened after its drive went away): start over at home.
+    if (fbState && path === fbState.path){
+      fbState = null; fbLastPath = "";
+      if (path) return fbNavigate("");
+    }
+    // Stay in the folder shown (its path is what "Add this folder" adds) and say which one failed.
+    fbRender(path);
   }
 }
-function fbRender(){
-  if (!fbState) return;
+function fbRender(failedPath){
+  if (!fbState){
+    $("fbPath").textContent = ""; $("fbCrumbs").innerHTML = ""; // no folder open: nothing to add
+    if (failedPath !== undefined) $("fbList").innerHTML = `<div class="fb-empty">Can't open this folder.</div>`;
+    return;
+  }
   $("fbPath").textContent = fbState.path;
   $("fbPath").title = fbState.path;
   const crumbs = fbCrumbs(fbState.path);
   $("fbCrumbs").innerHTML = crumbs.map((c, i) => `<button type="button" class="fb-crumb${i === crumbs.length - 1 ? " cur" : ""}" data-path="${esc(c.path)}">${esc(c.name)}</button>${i < crumbs.length - 1 ? '<span class="fb-sep">›</span>' : ""}`).join("");
   $("fbCrumbs").querySelectorAll(".fb-crumb").forEach((b) => { b.onclick = () => fbNavigate(b.dataset.path); });
   const dirs = fbState.dirs || [];
-  $("fbList").innerHTML = dirs.length
+  const fail = failedPath !== undefined ? `<div class="fb-empty">Can't open ${esc(failedPath || "this folder")}.</div>` : "";
+  $("fbList").innerHTML = fail + (dirs.length
     ? dirs.map((d) => `<button type="button" class="fb-item" data-path="${esc(d.path)}"><span>📁</span><span>${esc(d.name)}</span></button>`).join("")
-    : `<div class="fb-empty">No subfolders here.</div>`;
+    : (fail ? "" : fbState.denied ? `<div class="fb-empty">${esc(fbDeniedText())}</div>` : `<div class="fb-empty">No subfolders here.</div>`));
   $("fbList").querySelectorAll(".fb-item").forEach((b) => { b.onclick = () => fbNavigate(b.dataset.path); });
+}
+function fbDeniedText(){
+  return /Mac/.test(navigator.platform || navigator.userAgent)
+    ? "macOS doesn't let Sight read this folder. Allow it in System Settings → Privacy & Security → Files and Folders (or Full Disk Access) for Sight or the app that started it, then open the folder again."
+    : "No permission to read this folder.";
 }
 async function fbOpen(){
   $("fbOverlay").hidden = false;
-  if (!fbRootsCache){
-    try { fbRootsCache = await api("/api/fs/roots"); } catch { fbRootsCache = { drives: [], shortcuts: [] }; }
-  }
+  // Asked on every open: a drive plugged in or a share mounted since the last time shows up.
+  try { fbRootsCache = await api("/api/fs/roots"); } catch { fbRootsCache = fbRootsCache || { drives: [], shortcuts: [] }; }
   $("fbSide").innerHTML = [
     fbRootsCache.shortcuts.map((s) => `<button type="button" class="fb-item" data-path="${esc(s.path)}"><span>${esc(s.name)}</span></button>`).join(""),
     fbRootsCache.drives.length ? `<div class="settings-sub">Drives</div>` : "",
@@ -8105,7 +8130,9 @@ $("fbSelect").onclick = async () => {
     await refreshMeta();
     resetList();
   } catch (err) {
-    alert("Could not add that folder: " + err.message);
+    let why = err.message;
+    try { why = JSON.parse(why).detail || why; } catch {}
+    alert("Could not add that folder: " + why);
   }
 };
 $("add").onclick = () => { fbOpen(); };
@@ -8219,7 +8246,14 @@ document.addEventListener("keydown", (e) => {
   }
   if (hotkey(e, "Escape")){
     if (light){ closeLight(); return; }
+    // The open Settings panel covers the whole sidebar: Esc closes it, from one of its own fields first of all.
+    // Only while it is on screen (a closed narrow-screen drawer hides it) and not from a field elsewhere.
+    const opts = $("opts"), inOpts = !!opts?.contains(document.activeElement);
+    const settingsShown = state.settingsOpen && !!opts?.offsetParent && (!typing || inOpts);
+    const closeSettings = () => { if (inOpts) document.activeElement.blur(); $("settingsHead").click(); };
+    if (settingsShown && inOpts){ closeSettings(); return; }
     if (document.activeElement === $("q") || state.filter.q){ clearSearch(); $("q").blur(); return; }
+    if (settingsShown){ closeSettings(); return; }
     if (!typing && state.selectedIds.length) selectOnly(null);
     $("side").classList.remove("open");
     insp.classList.remove("open");

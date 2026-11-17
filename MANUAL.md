@@ -468,6 +468,8 @@
 - **Panel widths** — drag the inner edge of the sidebar or of the inspector (mouse, pen or finger) to
   make it wider or narrower (the thumbnails keep their size, the number of columns changes); double-click
   the edge for the default width. The widths are remembered.
+- **Settings panel** — the *Settings* header at the bottom of the sidebar opens the panel over the whole
+  sidebar; click the header again or press Esc to close it (it stays open across restarts until closed).
 - **Settings are remembered** — every option (Settings panel, 3D viewer rig, saved camera views,
   tile size, inspector/sidebar sections) and the app window's position, size and maximized state
   are saved to `settings.json` in the Sight data folder (`~/.sight`, or `SIGHT_HOME`) and come

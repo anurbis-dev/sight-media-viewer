@@ -46,6 +46,18 @@ BUILD_TIME_MS = app_build_time()
 STARTED_AT = time.time()
 
 
+class RevalidatedStatic(StaticFiles):
+    """/static with `Cache-Control: no-cache`. Without a header the browser caches the modules by its own
+    heuristic (a share of the file's age), so after an update the page (index.html is no-store) could run
+    with last version's annotate.js / canvas.js / keys.js — a mixed app with dead buttons. no-cache keeps
+    the cache but asks every time; the ETag answer is a 304 on localhost."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 def pick_folder() -> str:
     import shutil
     import subprocess
@@ -113,6 +125,27 @@ def fs_roots() -> dict:
                 drives.append({"name": f"{letter}:", "path": str(p)})
     else:
         drives.append({"name": "/", "path": "/"})
+        if sys.platform == "darwin":
+            # External and network drives mount under /Volumes; the startup disk's entry there is a
+            # link back to "/", already listed. Only /Volumes itself is read (DirEntry answers from
+            # its listing), never a drive behind it: a stalled network share must not hang the picker.
+            try:
+                with os.scandir("/Volumes") as it:
+                    vols = sorted(it, key=lambda e: e.name.lower())
+            except OSError:
+                vols = []
+            for v in vols:
+                try:
+                    if v.name.startswith("."):
+                        continue
+                    if v.is_symlink():
+                        if os.readlink(v.path).rstrip("/") == "":
+                            continue
+                    elif not v.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                drives.append({"name": v.name, "path": v.path})
     shortcuts = [
         ("Home", home),
         ("Desktop", home / "Desktop"),
@@ -129,11 +162,19 @@ def fs_roots() -> dict:
 
 def fs_list_dir(path: Path) -> list[dict]:
     """Immediate subdirectories of `path`, lazily listed (no precomputed has-children)."""
+    return fs_list_dir_checked(path)[0]
+
+
+def fs_list_dir_checked(path: Path) -> tuple[list[dict], bool]:
+    """fs_list_dir plus whether the listing was refused (macOS privacy protection gives EPERM for
+    Desktop, Documents, Downloads and external drives until Sight is allowed)."""
     out: list[dict] = []
     try:
         entries = sorted(path.iterdir(), key=lambda e: e.name.lower())
-    except (PermissionError, OSError):
-        return out
+    except PermissionError:
+        return out, True
+    except OSError:
+        return out, False
     for e in entries:
         if e.name in SKIP_DIRS or e.name.startswith("."):
             continue
@@ -142,7 +183,7 @@ def fs_list_dir(path: Path) -> list[dict]:
                 out.append({"name": e.name, "path": str(e)})
         except OSError:
             continue
-    return out
+    return out, False
 
 
 def reveal_path(path: str) -> None:
@@ -1059,12 +1100,39 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    def add_source_or_400(path: str) -> dict:
+        # A folder deleted / a drive unplugged while the picker was open: a 400 with the reason, not a 500.
+        # Checked here, not by catching OSError around add_source: that also raises from the watcher
+        # (inotify limit, network share) after the row is saved, which is not a rejected folder.
+        # Checked on the resolved path, the one add_source stores (a link such as Windows'
+        # "My Documents" refuses listing itself while its target is readable).
+        try:
+            real = Path(path).expanduser().resolve()
+            ok = real.is_dir()
+        except (OSError, ValueError, RuntimeError):
+            ok = False
+        if not ok:
+            raise HTTPException(400, "Not a folder")
+        try:
+            with os.scandir(real) as it:
+                next(it, None)
+        except PermissionError:
+            # A source the scanner cannot read would sit in the library with 0 files (macOS privacy).
+            raise HTTPException(400, "No permission to read this folder"
+                                + (" - allow Sight in System Settings > Privacy & Security > Files and Folders" if sys.platform == "darwin" else ""))
+        except OSError:
+            pass
+        try:
+            return lib.add_source(path)
+        except ValueError as e:  # gone between the check and add_source
+            raise HTTPException(400, str(e) or "Not a folder")
+
     @app.post("/api/sources/pick")
     def pick() -> dict:
         path = pick_folder()
         if not path:
             return {"cancelled": True}
-        return lib.add_source(path)
+        return add_source_or_400(path)
 
     @app.get("/api/fs/roots")
     def fs_roots_route() -> dict:
@@ -1072,18 +1140,22 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
 
     @app.get("/api/fs/list")
     def fs_list_route(path: str = "") -> dict:
-        p = Path(path) if path else Path.home()
+        # abspath, not resolve(): on Windows resolve() turns a mapped network drive (Z:\) into its
+        # UNC path, so the browser would leave the drive the user picked. add_source still resolves.
         try:
-            p = p.resolve()
-        except OSError:
+            p = Path(os.path.abspath(path)) if path else Path.home()
+        except (OSError, ValueError):
             raise HTTPException(400, "invalid path")
         if not p.exists() or not p.is_dir():
             raise HTTPException(400, "not a directory")
         parent = p.parent
+        # A refused listing (macOS privacy protection) is reported, not shown as an empty folder.
+        dirs, denied = fs_list_dir_checked(p)
         return {
             "path": str(p),
             "parent": str(parent) if parent != p else None,
-            "dirs": fs_list_dir(p),
+            "dirs": dirs,
+            "denied": denied,
         }
 
     @app.post("/api/sources")
@@ -1091,7 +1163,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         path = str((await json_body(request)).get("path") or "")
         if not path:
             raise HTTPException(400, "path required")
-        return lib.add_source(path)
+        return add_source_or_400(path)
 
     @app.put("/api/scan/ignore")
     async def scan_ignore(request: Request) -> dict:
@@ -1353,6 +1425,6 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             return {"ok": True, "path": str(DEFAULTS_FILE)}
 
     if STATIC.exists():
-        app.mount("/static", StaticFiles(directory=STATIC), name="static")
+        app.mount("/static", RevalidatedStatic(directory=STATIC), name="static")
 
     return app
