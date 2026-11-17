@@ -20,7 +20,7 @@ from .fileinfo import NO_WINDOW
 from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
-from .stt import GroqStt, SttError
+from .stt import SttError, SttService
 from .version import APP_VERSION
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -1004,6 +1004,44 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
         return {**res, "notes": notes, "pictures": pictures}
 
+    # A sequence's review in one file (index.html seqExportAll): every clip's report (gatherReport) in order.
+    async def _all_reports(request: Request) -> tuple[list, list, dict]:
+        body = await json_body(request)
+        reps = [r for r in body.get("reports") or [] if isinstance(r, dict)]
+        if not reps or len(reps) > 500:
+            raise HTTPException(400, "reports required")
+        names = []
+        for r in reps:
+            a = lib.get_asset(str(r.get("asset_id") or ""))
+            names.append(a["name"] if a else "clip")
+        return reps, names, body
+
+    @app.post("/api/review/export/pdf-all")
+    async def export_review_pdf_all(request: Request) -> dict:
+        reps, names, body = await _all_reports(request)
+        stem = review.safe_name(f"Sequence review ({len(reps)} clips)")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".pdf")
+        try:
+            pages = await asyncio.to_thread(review.build_pdf_all, reps, lib.root, out, f"Review — {', '.join(names)}"[:300])
+        except Exception as e:  # PyMuPDF / Pillow errors: report, don't 500 with a traceback
+            out.unlink(missing_ok=True)
+            raise HTTPException(500, f"PDF export failed: {e}")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "pages": pages}
+
+    @app.post("/api/review/export/zip-all")
+    async def export_review_zip_all(request: Request) -> dict:
+        reps, names, body = await _all_reports(request)
+        stem = review.safe_name(f"Sequence notes ({len(reps)} clips)")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".zip")
+        try:
+            notes, pictures = await asyncio.to_thread(review.build_zip_all, reps, lib.root, out, names)
+        except Exception as e:
+            out.unlink(missing_ok=True)
+            raise HTTPException(500, f"ZIP export failed: {e}")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "notes": notes, "pictures": pictures}
+
     @app.post("/api/review/export/html")
     async def export_review_html(request: Request) -> dict:
         body = await json_body(request)
@@ -1393,23 +1431,26 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         })
         return JSONResponse(info, headers={"Cache-Control": "no-store"})
 
-    # Dictation through Groq Whisper (app/stt.py): the key is set here and never read back by the page.
-    stt = GroqStt(lib.root)
+    # Dictation through the user's own speech-to-text service (app/stt.py): the key is set here and never read back.
+    stt = SttService(lib.root)
 
     @app.get("/api/stt/status")
     def stt_status() -> JSONResponse:
         return JSONResponse(stt.status(), headers={"Cache-Control": "no-store"})
 
-    @app.put("/api/stt/key")
-    async def stt_key(request: Request) -> dict:
-        if not stt.set_key((await json_body(request)).get("key", "")):
-            raise HTTPException(400, "not a key")
+    @app.put("/api/stt/config")
+    async def stt_config(request: Request) -> dict:
+        # JSON only: a cross-site "simple" POST/PUT cannot set it (application/json needs a preflight, never answered).
+        if not request.headers.get("content-type", "").lower().startswith("application/json"):
+            raise HTTPException(415, "json required")
+        if not stt.configure(await json_body(request)):
+            raise HTTPException(400, "invalid service settings")
         return stt.status()
 
     @app.post("/api/stt/transcribe")
     async def stt_transcribe(request: Request) -> JSONResponse:
         # Audio only: another site's form / text/plain "simple" POST is refused (an audio type needs a CORS
-        # preflight, which this server never answers), so no page can spend the user's Groq quota. Size first.
+        # preflight, which this server never answers), so no page can spend the user's quota. Size first.
         ctype = request.headers.get("content-type", "")
         if not ctype.lower().startswith("audio/"):
             raise HTTPException(415, "audio required")
@@ -1419,7 +1460,13 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             size = 0
         if size > 20 * 1048576:
             raise HTTPException(413, "audio too long")
-        data = await request.body()
+        # Read with a cap: a chunked upload carries no Content-Length.
+        buf = bytearray()
+        async for chunk in request.stream():
+            buf += chunk
+            if len(buf) > 20 * 1048576:
+                raise HTTPException(413, "audio too long")
+        data = bytes(buf)
         lang = request.query_params.get("lang", "")
         try:
             text = await asyncio.to_thread(stt.transcribe, data, ctype, lang)  # a network call: off the event loop

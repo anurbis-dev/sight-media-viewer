@@ -67,10 +67,11 @@ createDictation({ lang, provider, onInterim(text), onFinal(text), onState("start
 
 ## 5. Done now vs. later
 
-**Tier 2 done in 0.70.0** (owner asked for automatic language detection): Settings → Dictation (engine + Groq key),
-`app/stt.py` + `/api/stt/status|key|transcribe`, the `groq` provider in `dictation.js` (one MediaRecorder per
-phrase, cut by a pause of 0.7 s or at 20 s, no language = Whisper detects it). See RECENT 0.70.0.
-
+**Tier 2 done in 0.70.0 as Groq, generalised in 0.71.0** (owner: no vendor lock-in, keep the app small):
+the `service` provider talks to any OpenAI-compatible `/audio/transcriptions` endpoint the user enters in
+Settings → Dictation (address, model, optional key) — a local whisper server covers tier 3 without bundling
+anything. A language chip next to each mic flips between the two recent languages (the browser engine needs one
+up front). Sections 1–4 above still say "Groq": read them as "the user's service". See RECENT 0.71.0.
 
 Now (no backend code):
 - `dictation.js` with the `webspeech` provider; mic button in the composer; floating mic on reply, note-edit
@@ -79,7 +80,6 @@ Now (no backend code):
   session on silence.
 
 Later:
-- Settings field for an engine choice and the Groq key; `/api/stt/transcribe` proxy; `groq` provider.
 - Dictation in other text fields (library search, item notes, tags) via the same `floating` selector.
 - Spoken punctuation commands ("new line", "comma") if people ask; a free-form language entry.
 

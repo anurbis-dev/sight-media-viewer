@@ -390,6 +390,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .info-fab.on { color: var(--accent); border-color: var(--accent); }
 .light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
+.stt-row[hidden] { display: none !important; }
 .light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
 .light-info h4:first-child { margin-top: 0; }
 .light-info dl { display: grid; grid-template-columns: 116px 1fr; gap: 1px 12px; font-size: inherit; color: inherit; margin: 0; }
@@ -465,6 +466,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .v3d-gear[hidden], .v3d-shade[hidden], .v3d-explode[hidden], .v3d-sep[hidden] { display: none; }
 /* The same for the lightbox's .btn icons (mirror, annotate): .btn's display would beat [hidden]. */
 .btn[hidden] { display: none; }
+#boardAnnoBtn.on, #boardNotesBtn.on { color: var(--accent); }
+#boardNotesBtn { position: relative; }
 .v3d-help { padding: 6px 8px 2px; font-size: 11px; line-height: 1.55; color: var(--subtle); }
 .v3d-toast { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); z-index: 12; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--fg); background: rgb(10 10 11 / .75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease); }
 .v3d-toast.on { opacity: 1; }
@@ -726,6 +729,9 @@ label.field textarea { min-height: 72px; resize: vertical; }
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
         <div class="top-pop" id="viewOptPop" hidden></div>
         <button class="btn ghost" id="seqBtn" type="button" title="Play the selected videos one after another, in the order they were selected (Space over a selected one)" hidden>▶▶ Sequence</button>
+        <button class="btn ghost icon an-btn" id="boardNotesBtn" type="button" title="The board's notes — read them, click a picture to go there (C)" aria-label="Board notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
+        <button class="btn ghost icon" id="boardEyeBtn" type="button" aria-label="Show / hide drawings" hidden></button>
+        <button class="btn ghost icon an-btn" id="boardAnnoBtn" type="button" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
         <button class="btn ghost icon" id="splitBtn" type="button" title="Show library alongside the board" hidden>◧</button>
         <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
@@ -888,22 +894,39 @@ function pushSettings(unloading){
     keepalive: !!unloading && body.length < 60000,
   }).catch(() => {});
 }
-// Settings → Dictation: the engine (a UI setting, read by annotate.js's mic) and the Groq key (server only).
+// Settings → Dictation: the engine (a UI setting, read by annotate.js's mic) and the user's own speech-to-text
+// service (URL / model / key, kept by the server only — the key is never sent back).
 function bindDictationSettings(){
-  const eng = $("dictEngine"), msg = $("groqMsg");
+  const eng = $("dictEngine"), msg = $("sttMsg");
   if (!eng) return;
   let v = "webspeech";
   try { v = JSON.parse(localStorage.getItem("sight.dictation.engine")) || v; } catch {}
-  eng.value = v === "groq" ? "groq" : "webspeech";
-  eng.onchange = () => putSetting("sight.dictation.engine", JSON.stringify(eng.value));
-  const show = (st) => { msg.textContent = st?.configured ? "Key saved · audio goes to Groq" : "No key — Whisper needs one"; };
+  eng.value = v === "service" ? "service" : "webspeech";
+  const rows = () => document.querySelectorAll(".stt-row").forEach((r) => { r.hidden = eng.value !== "service"; });
+  rows();
+  eng.onchange = () => { putSetting("sight.dictation.engine", JSON.stringify(eng.value)); rows(); };
+  let saved = null;   // the last status from the server (Forget key re-sends its address, not unsaved edits)
+  const host = (u) => { try { return new URL(u).host; } catch { return u; } };
+  const show = (st) => {
+    if (!st) return;
+    const lost = saved?.hasKey && !st.hasKey && saved.url !== st.url;
+    saved = st;
+    $("sttUrl").value = st.url || ""; $("sttModel").value = st.model || "";
+    $("sttKey").placeholder = st.hasKey ? "saved (leave empty to keep)" : "none";
+    msg.textContent = !st.configured ? "Not set up"
+      : `Audio goes to ${host(st.url)}${lost ? " · the key was removed with the old address — enter it again if needed" : ""}`;
+  };
+  const put = (body) => api("/api/stt/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   api("/api/stt/status").then(show).catch(() => {});
-  $("groqSave").onclick = async () => {
-    const inp = $("groqKey");
-    try {
-      show(await api("/api/stt/key", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: inp.value.trim() }) }));
-      inp.value = "";
-    } catch { msg.textContent = "That does not look like a Groq key"; }
+  $("sttSave").onclick = async () => {
+    const k = $("sttKey"), body = { url: $("sttUrl").value.trim(), model: $("sttModel").value.trim() };
+    if (k.value.trim()) body.key = k.value.trim();
+    try { show(await put(body)); k.value = ""; }
+    catch { msg.textContent = "Check the address (http:// or https://) and the model name"; }
+  };
+  $("sttForget").onclick = async () => {
+    if (!saved?.url) return;
+    try { show(await put({ url: saved.url, model: saved.model || "", key: "" })); } catch {}
   };
 }
 function putSetting(key, value){
@@ -1069,6 +1092,9 @@ const annot = createAnnotator({
   seqEdge: (n, fd) => seqEdge(n, fd),
   seqMarker: (dir) => seqMarker(dir),
   marksChanged: () => seqMarksFromAnnot(),
+  seqClips: () => light?.seq?.list.length || 0,
+  seqExport: (kind) => seqExportAll(kind),
+  exportBusy: () => seqExporting,
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   toast: (text) => flashV3DToast(text),
@@ -1101,13 +1127,17 @@ const annot = createAnnotator({
 // `frameRect` moves the board camera to a picked note's drawings.
 const boardAnnot = createAnnotator({
   board: true,
+  notesBtn: () => $("boardNotesBtn"),
+  eyeBtn: () => $("boardEyeBtn"),
+  notesBtnShown: () => state.view === "canvas",
   api: (path, opts) => api(path, opts),
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   toast: (text) => flashV3DToast(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
-  frameRect: (x0, y0, x1, y1) => canvasCtl?.frameRect(x0, y0, x1, y1),
+  frameRect: (x0, y0, x1, y1, opts) => canvasCtl?.frameRect(x0, y0, x1, y1, opts),
+  boardView: () => canvasCtl?.viewRect() || null,
   onModeChange: () => canvasCtl?.syncAnnotUi(),
 });
 // Version compare (compare.js) — K in the grid (2+ selected files, or the versions of the one
@@ -1119,6 +1149,8 @@ let cmpAnnotUsed = new Set(); // files annotated in this compare (the lightbox r
 let cmpView = null;           // the selected layer's viewer as compare last reported it (null: none visible)
 const cmpAnnot = createAnnotator({
   api: (path, opts) => api(path, opts),
+  showWhileWatching: false,   // drawings only while annotating here: the compare has no eye button
+  readPanel: false,           // nor a notes button: its panel comes with the drawing mode only
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   toast: (text) => flash(text),
@@ -2603,6 +2635,9 @@ function applyViewDom(){
   syncTouchSel(); // the touch selection bar belongs to the grid
   canvasView.hidden = !showCanvas;
   splitBtn.hidden = !showCanvas;
+  $("boardAnnoBtn").hidden = !showCanvas;
+  $("boardNotesBtn").hidden = !showCanvas;
+  if (!showCanvas) $("boardEyeBtn").hidden = true;   // (shown by the board's annotator while drawing, paintEye)
   splitBtn.classList.toggle("on", state.canvasSplit);
   splitHandle.hidden = !split;
   mainBody.classList.toggle("stacked", split && state.canvasSplitStacked);
@@ -2689,7 +2724,8 @@ let activePane = "library";
 // The lightbox UV split works the same way: F / digits go to the UV pane or the 3D view under the cursor.
 let lightPane = "3d";
 document.addEventListener("pointerover", (e) => {
-  if (canvasView.contains(e.target)) activePane = "canvas";
+  // (The board's own buttons in the top bar — pen, notes — count as the board: its keys must follow them.)
+  if (canvasView.contains(e.target) || e.target.closest?.("#boardAnnoBtn, #boardNotesBtn, #boardEyeBtn")) activePane = "canvas";
   else if (grid.contains(e.target)) activePane = "library";
   const t = e.target.closest ? e.target : null;
   if (t?.closest("#uvPane")) lightPane = "uv";
@@ -2724,6 +2760,7 @@ function ensureCanvasCtl(){
       keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && $("aboutOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
       onContextMenu: showCanvasCtx,
       annot: boardAnnot,
+      annButton: $("boardAnnoBtn"),
     });
   }
   return canvasCtl;
@@ -5837,6 +5874,91 @@ function paintSeqBar(segs){
 }
 // Open clip k at local time t (t < 0: that far before its end), playing or paused. Not seamless: the
 // cut by playback goes through seqAdvance, which adopts the preloaded clip instead.
+// Export → "…, all clips": the review of every clip in the sequence that has notes. The PDF and the ZIP are one
+// file each (the server joins the clips' reports); the web page and the .srev are per file by design (FORMAT.md),
+// so they come one per clip. The pictures need each clip on screen (annotate.js gatherReport seeks and draws it):
+// the clips are visited one by one, then the sequence goes back to where it was.
+let seqExporting = false;
+function reviewerName(){ try { return localStorage.getItem("sight.reviewer") || ""; } catch { return ""; } }
+async function seqWaitClip(s, k, ms){
+  const a = s.list[k], t0 = Date.now();
+  const ok = () => light?.seq === s && s.i === k && s.pendT == null && light.video?.videoWidth > 0
+    && annot.assetId() === a.id && annot.ready();
+  while (!ok()){
+    if (light?.seq !== s || Date.now() - t0 > ms) return false;
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  // The frame rate titles the pictures ("f 52"): give its probe a moment.
+  const t1 = Date.now();
+  while (!annot.fpsKnown() && Date.now() - t1 < 3000) await new Promise((r) => setTimeout(r, 60));
+  return true;
+}
+async function seqExportAll(kind){
+  const s = light?.seq;
+  if (!s) return;
+  // The lightbox's toast (HTML); once the lightbox is gone, the page's own (plain text).
+  const say = (t, ms) => { if (light) annot.toast(t, ms); else flash(t.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"), ms); };
+  if (seqExporting || annot.busy()){ say("An export is already running", 2500); return; }
+  seqExporting = true;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  let back = null, moved = false, saved = 0;
+  try {
+    await annot.flush();
+    say("Looking for clips with notes…", 60000);
+    const has = await Promise.all(s.list.map((a) => api(`/api/annotations?asset_id=${encodeURIComponent(a.id)}`)
+      .then((rows) => (rows || []).some((r) => r.kind === "note" && !r.data?.deleted)).catch(() => false)));
+    if (light?.seq !== s) throw new Error("the sequence was closed");
+    // Where to come back to: taken now (a playing clip may have moved on during the scan).
+    back = { k: s.i, t: light.video?.currentTime || 0, play: !!light.video && !light.video.paused };
+    const ks = s.list.map((_, k) => k).filter((k) => has[k]);
+    if (!ks.length){ say("No clip in the sequence has notes", 2500); return; }
+    const post = (url, body) => api(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (kind === "pkg"){   // no pictures: straight from the stored rows
+      let last = null;
+      for (const [j, k] of ks.entries()) last = await post("/api/review/export/package", { asset_id: s.list[k].id, author: reviewerName(), reveal: j === ks.length - 1 });
+      say(`Saved ${plural(ks.length, "review file")} · last: <b>${esc(last?.name || "")}</b>`, 4500);
+      return;
+    }
+    light.video?.pause();
+    const reports = [], skipped = [];
+    let lastName = "";
+    for (const [j, k] of ks.entries()){
+      if (light?.seq !== s) throw new Error("the sequence was closed");
+      say(`Clip ${j + 1} of ${ks.length}: ${esc(s.list[k].name)}…`, 120000);
+      if (s.i !== k || !light.video){ moved = true; seqGo(k, 0, false); }
+      if (!(await seqWaitClip(s, k, 45000))){ skipped.push(s.list[k].name); continue; }
+      const rep = await annot.report(kind);
+      if (light?.seq !== s) throw new Error("the sequence was closed");
+      // Another clip came on screen meanwhile (a click on the sequence bar, a frame step across a cut): its pictures
+      // would sit under this clip's notes — leave the clip out rather than mix them.
+      if (s.i !== k || annot.assetId() !== s.list[k].id || rep?.asset_id !== s.list[k].id){ skipped.push(s.list[k].name); continue; }
+      if (kind === "html"){
+        const r = await post("/api/review/export/html", { ...rep, reveal: j === ks.length - 1 });
+        saved++; lastName = r.name;
+      } else reports.push(rep);
+    }
+    let msg = "";
+    if (kind === "html"){
+      msg = saved ? `Saved ${plural(saved, "web page")} · last: <b>${esc(lastName)}</b>` : "Nothing exported";
+    } else if (reports.length){
+      say(kind === "pdf" ? "Building the PDF…" : "Building the ZIP…", 120000);
+      const r = await post(`/api/review/export/${kind}-all`, { reports, reveal: true });
+      msg = kind === "pdf" ? `Saved <b>${esc(r.name)}</b> · ${plural(reports.length, "clip")}, ${plural(r.pages, "page")}`
+        : `Saved <b>${esc(r.name)}</b> · ${plural(reports.length, "clip")}, ${plural(r.notes, "note")}, ${plural(r.pictures, "picture")}`;
+    } else msg = "Nothing exported";
+    if (skipped.length) msg += ` · skipped (did not load, or another clip came on screen): ${esc(skipped.join(", "))}`;
+    say(msg, skipped.length ? 7000 : 4500);
+  } catch (e){
+    console.warn(e);
+    say(`Export failed${e?.message ? ": " + esc(e.message) : ""}${saved ? ` (${plural(saved, "web page")} saved before)` : ""}`, 5000);
+  } finally {
+    seqExporting = false;
+    if (back && light?.seq === s){
+      if (moved) seqGo(back.k, back.t, back.play);
+      else if (back.play && light.video?.paused) light.video.play().catch(() => {});
+    }
+  }
+}
 function seqGo(k, t, play){
   const s = light?.seq;
   if (!s || k < 0 || k >= s.list.length) return;
@@ -6108,7 +6230,9 @@ function toggleLight(a){
     <div class="light-bar">
       <span class="t"></span>
       <span class="light-hint" id="lightHint"></span>
-      <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Annotate &amp; review (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg><span class="an-badge" hidden></span></button>
+      <button class="btn ghost an-btn" id="notesBtn" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
+      <button class="btn ghost" id="drawEyeBtn" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
+      <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Draw &amp; write notes — the drawing tools (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
       <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
@@ -8489,11 +8613,15 @@ function renderOptions(){
       ${sliderRow("RAM cache", "videoCache", 32, 2048, 32, " MB")}
 
       <div class="settings-sub">Dictation</div>
-      <label class="field" title="Browser: free, words appear as you speak, one language at a time (pick it with a right-click on the mic).&#10;Whisper (Groq): detects the language by itself, better punctuation; needs your Groq API key; the audio of each phrase is sent to Groq; the text comes after each pause.">Engine
-        <select id="dictEngine"><option value="webspeech">Browser — live, one language</option><option value="groq">Whisper (Groq) — detects the language</option></select></label>
-      <label class="field" title="Kept by the Sight server only (stt.json in Sight's own data folder), never shown again. Empty + Save removes it.">Groq API key
-        <input type="password" id="groqKey" autocomplete="off" spellcheck="false" placeholder="gsk_…"></label>
-      <div class="theme-actions"><span class="ign-msg" id="groqMsg"></span><button class="btn ghost" id="groqSave" type="button">Save key</button></div>
+      <label class="field" title="Browser: built in, nothing to set up, words appear as you speak. The chip next to the mic (RU / EN…) switches the language in one tap; right-click or long-press it for all languages.&#10;My service: any speech-to-text service you like that speaks the OpenAI-compatible /audio/transcriptions API — a local whisper server, OpenAI, Groq and others. The audio of each phrase goes there; the text comes after each pause.">Engine
+        <select id="dictEngine"><option value="webspeech">Browser (built in)</option><option value="service">My service (OpenAI-compatible)</option></select></label>
+      <label class="field stt-row" title="The full transcription address, for example&#10;http://localhost:8000/v1/audio/transcriptions (a local whisper server)&#10;https://api.openai.com/v1/audio/transcriptions&#10;https://api.groq.com/openai/v1/audio/transcriptions">Address
+        <input type="url" id="sttUrl" autocomplete="off" spellcheck="false" placeholder="http://localhost:8000/v1/audio/transcriptions"></label>
+      <label class="field stt-row" title="The service's model name, e.g. whisper-1 (OpenAI), whisper-large-v3-turbo (Groq), Systran/faster-whisper-small (local). Empty = whisper-1.">Model
+        <input type="text" id="sttModel" autocomplete="off" spellcheck="false" placeholder="whisper-1"></label>
+      <label class="field stt-row" title="Only if the service needs one. Kept by the Sight server only (stt.json in Sight's own data folder), never shown again. Changing the address drops the saved key.">API key
+        <input type="password" id="sttKey" autocomplete="off" spellcheck="false" placeholder="none"></label>
+      <div class="theme-actions stt-row"><span class="ign-msg" id="sttMsg"></span><button class="btn ghost" id="sttForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sttSave" type="button">Save</button></div>
 
       <div class="settings-sub">Colors</div>
       <label class="opt">Backdrop <input type="color" data-color="bg" value="${t.bg}"></label>
@@ -8941,6 +9069,7 @@ document.addEventListener("keydown", (e) => {
     if (cmpAnnot.isOn() && cmpAnnot.onKey(e)) return;
     if (!typing && !e.repeat && hotkey(e, "KeyA")){ e.preventDefault(); cmpToggleAnnot(); return; }
     if (cmp.onKey(e)) return;
+    if (hotkey(e, "Shift+KeyH") || hotkey(e, "KeyC")) return;   // never the lightbox's eye / notes panel behind the compare
   }
   if (hotkey(e, "KeyK") && !typing && !e.repeat){ e.preventDefault(); compareFromContext(); return; }
   // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles

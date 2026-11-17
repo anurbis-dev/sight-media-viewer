@@ -48,16 +48,17 @@ const PROVIDERS = {
       };
     },
   },
-  // Whisper through Groq (tier 2, docs/PLAN-stt.md): finds the language itself. The server holds the key
-  // (/api/stt/*); the page records one phrase at a time — a pause in the speech (or 20 s) closes it — and posts
+  // The user's own speech-to-text service (Settings → Dictation; any OpenAI-compatible /audio/transcriptions):
+  // Whisper-type services find the language themselves. The server holds the URL and key (/api/stt/*);
+  // the page records one phrase at a time — a pause in the speech (or 20 s) closes it — and posts
   // it. No live words: the bubble says "Transcribing…" while a phrase is out. Each phrase is its own recording
   // (a MediaRecorder restarted per phrase), so every upload is a complete file.
-  groq: {
+  service: {
     available: () => !!(navigator.mediaDevices?.getUserMedia && globalThis.MediaRecorder && (globalThis.AudioContext || globalThis.webkitAudioContext)),
     create(o){
       const SILENCE_MS = 700, MAX_MS = 20000, MIN_SPEECH_MS = 250, LEVEL = 0.018;
       const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported?.(m)) || "";
-      const lang = (o.lang || "").split("-")[0];   // "" = let Whisper detect it
+      const lang = (o.lang || "").split("-")[0];   // "" = let the service detect it
       let want = false, ended = true, dropped = false, stream = null, actx = null, raf = 0, lastT = 0, heard = false;
       let ph = null;              // the phrase being recorded: { rec, chunks, at, voiceMs, quietSince, seq }
       let open = 0;               // recorders not yet stopped + uploads not yet answered: the session ends at 0
@@ -138,11 +139,11 @@ const PROVIDERS = {
           want = true; ended = false; dropped = false; heard = false; open = 0; seqNext = seqOut = 0; done.clear();
           o.onState("starting");
           try {
-            // No key: say so before anything is recorded (the first phrase would be lost otherwise).
+            // Not set up: say so before anything is recorded (the first phrase would be lost otherwise).
             const st = await fetch("/api/stt/status").then((r) => r.json()).catch(() => null);
             if (!want){ end(); return; }
             if (!st){ o.onError("stt-server"); end(); return; }
-            if (!st.configured){ o.onError("stt-no-key"); end(); return; }
+            if (!st.configured){ o.onError("stt-not-set"); end(); return; }
             let s;
             try { s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
             catch (e){ o.onError(e?.name === "NotAllowedError" ? "not-allowed" : "audio-capture"); end(); return; }
@@ -183,7 +184,7 @@ export function createDictation({ lang, provider = "webspeech", onInterim = () =
 export function insertAtCaret(ta, text){
   let t = String(text).trim();
   if (!t) return;
-  // The field has lost the focus meanwhile (Whisper's last phrase lands after a blur): append, keep the focus where it is.
+  // The field has lost the focus meanwhile (the service's last phrase lands after a blur): append, keep the focus where it is.
   if (document.activeElement !== ta && ta.dataset.dictLate != null){
     const v0 = ta.value;
     if (v0 && !/\s$/.test(v0)) t = " " + t;
@@ -207,6 +208,8 @@ export function insertAtCaret(ta, text){
 
 // ---- UI -------------------------------------------------------------------------------------
 export const SHORTCUT = "Alt+KeyM";
+export const SWITCH = "Alt+Shift+KeyM";   // next language of the recent pair
+const RECENT_KEY = "sight.dictation.recent";
 export const LANGS = [["", "Auto (browser language)"], ["en-US", "English (US)"], ["en-GB", "English (UK)"], ["ru-RU", "Русский"], ["uk-UA", "Українська"],
   ["de-DE", "Deutsch"], ["fr-FR", "Français"], ["es-ES", "Español"], ["it-IT", "Italiano"], ["pt-BR", "Português (BR)"], ["pl-PL", "Polski"], ["tr-TR", "Türkçe"],
   ["ja-JP", "日本語"], ["ko-KR", "한국어"], ["zh-CN", "中文"]];
@@ -225,9 +228,14 @@ const CSS = `
 .dict-pop button { text-align: left; padding: 7px 12px; border-radius: 6px; font-size: 12px; color: var(--fg, #eee); min-height: 30px; }
 .dict-pop button:hover { background: var(--surface-2, rgb(127 127 127 / .2)); }
 .dict-pop button.sel { color: var(--accent, #4c9aff); }
+.dict-lang { height: 22px; min-width: 26px; padding: 0 5px; border: 1px solid var(--border, #444); border-radius: 11px; background: transparent; color: var(--muted, #999); font: 600 10px/20px var(--font, system-ui); letter-spacing: .03em; cursor: pointer; flex: none; }
+.dict-lang:hover { color: var(--fg, #eee); background: var(--surface-2, rgb(127 127 127 / .2)); }
+.dict-lang.fl { position: fixed; z-index: 60; background: var(--surface-3, #2a2b31); box-shadow: 0 1px 4px rgb(0 0 0 / .4); }
+.dict-lang[hidden] { display: none; }
+@media (pointer: coarse) { .dict-lang { height: 28px; min-width: 34px; border-radius: 14px; font-size: 11px; } }
 `;
 
-// getEngine(): "webspeech" (the browser) or "groq" (Whisper on the server's key — detects the language).
+// getEngine(): "webspeech" (the browser) or "service" (the user's speech-to-text service, set up in Settings).
 export function createDictationUI({ root = document, getLang = () => "", setLang = () => {}, getEngine = () => "webspeech", toast = () => {}, floating = "", host = document.body, registerAutoClose = null } = {}){
   if (!document.getElementById("dict-style")){
     const st = document.createElement("style"); st.id = "dict-style"; st.textContent = CSS; document.head.appendChild(st);
@@ -238,15 +246,52 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
   let fl = null, flTa = null;      // the floating mic and the field it is next to
   let bubble = null, pop = null;
   const buttons = new Map();   // button → () => its field
-  const engine = () => (getEngine() === "groq" && PROVIDERS.groq.available() ? "groq" : "webspeech");
+  const engine = () => (getEngine() === "service" && PROVIDERS.service.available() ? "service" : "webspeech");
   const supported = () => PROVIDERS[engine()].available();
-  // Whisper with no language picked detects it; the browser's recogniser needs one (its "auto" = the browser's).
-  const langOf = () => getLang() || (engine() === "groq" ? "" : navigator.language || "en-US");
+  // The service with no language picked detects it; the browser's recogniser needs one (its "auto" = the browser's).
+  const langOf = () => getLang() || (engine() === "service" ? "" : navigator.language || "en-US");
   const langName = () => langOf() || "auto-detect";
-  const label = () => `Dictation (${engine() === "groq" ? "Whisper, " : ""}${langName()}) — Alt+M. Right-click or long-press: language`;
+  const label = () => `Dictation (${engine() === "service" ? "service, " : ""}${langName()}) — Alt+M. Right-click or long-press: language`;
+  // The two languages used last: the chip next to each mic flips between them in one tap (Alt+Shift+M).
+  const fullCode = (c) => LANGS.find(([k]) => k && k.toLowerCase() === (c || "").toLowerCase())?.[0]
+    || LANGS.find(([k]) => k && k.split("-")[0] === (c || "").split("-")[0])?.[0] || c;
+  function recent(){
+    let r = null;
+    try { r = JSON.parse(localStorage.getItem(RECENT_KEY)); } catch {}
+    r = Array.isArray(r) ? r.filter((x) => typeof x === "string" && x) : [];
+    const nav = fullCode(navigator.language || "en-US");
+    for (const d of [nav, nav.startsWith("en") ? "ru-RU" : "en-US"]) if (r.length < 2 && !r.includes(d)) r.push(d);
+    return r.slice(0, 2);
+  }
+  function remember(code){
+    if (!code) return;
+    const r = [code, ...recent().filter((x) => x !== code)].slice(0, 2);
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(r)); } catch {}
+  }
+  const shortName = () => (langOf() ? langOf().split("-")[0].toUpperCase() : "AUTO");
+  function pickLang(code, quiet){
+    setLang(code); remember(code); paint();
+    if (!quiet) toast(`Dictation language: ${code || (engine() === "service" ? "auto-detect" : "auto (" + (navigator.language || "en-US") + ")")}`);
+    // Mid-dictation: let the words already heard land, then listen again in the new language.
+    // (Not when the user is already stopping it: the new language is then only for next time.)
+    if (cur && !cur.stopping){ cur.restart = true; stop(false); }
+  }
+  function cycle(){
+    const now = fullCode(langOf()), r = recent();   // "ru" (a bare browser code) = "ru-RU" of the pair
+    const next = r.find((x) => x !== now) || r[0];
+    pickLang(next);
+  }
+  const chips = new Map();   // mic button → its language chip
 
   function paint(prune){
+    for (const [b, chip] of chips){
+      if (prune && !b.isConnected){ chips.delete(b); chip.remove(); continue; }
+      if (!b.classList.contains("fl") && b.isConnected && chip.previousElementSibling !== b) b.after(chip);
+      chip.hidden = b.hidden || !supported(); chip.textContent = shortName();
+      chip.title = `Dictation language: ${langName()} — click: switch to the other recent one (Alt+Shift+M). Right-click or long-press: all languages`;
+    }
     for (const [b, get] of buttons){ if (prune && !b.isConnected){ buttons.delete(b); continue; } const mine = !!cur && get() === cur.ta; b.classList.toggle("on", mine); b.classList.toggle("na", !supported()); b.title = supported() ? (mine ? "Stop dictation (Esc)" : label()) : "Dictation needs Chrome, Edge or Safari"; b.setAttribute("aria-pressed", mine ? "true" : "false"); }
+    if (fl && flTa && !fl.hidden) placeFloat();   // the floating chip's width follows its text
   }
   function place(el, ta, below){
     const r = ta.getBoundingClientRect();
@@ -267,11 +312,12 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     const c = cur; cur = null;
     if (c){ c.ta.removeEventListener("blur", c.onBlur); c.ta.removeEventListener("keydown", c.onKey, true); delete c.ta.dataset.dictLate; }
     hideBubble(); paint();
+    if (c?.restart && !dead && c.ta.isConnected && document.activeElement === c.ta) start(c.ta, c.btn);
   }
   function stop(discard){
     const c = cur;
     if (!c) return;
-    if (discard){ c.dict.abort(); finish(); } else c.dict.stop();   // stop() lets the last words land, then onState idle
+    if (discard){ c.dict.abort(); finish(); } else { c.stopping = true; c.dict.stop(); }   // stop() lets the last words land, then onState idle
   }
   const messages = {
     "not-allowed": "Microphone is blocked — allow it for this page in the browser's site settings",
@@ -280,12 +326,12 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     "network": "Speech service unreachable — Chrome and Edge need an internet connection for dictation",
     "language-not-supported": "This language is not supported for dictation",
     "no-speech": "No speech heard",
-    "stt-no-key": "Whisper dictation needs a Groq key — Settings → Dictation",
-    "stt-bad-key": "Groq did not accept the key — check it in Settings → Dictation",
-    "stt-rate": "Groq's limit for now is reached — try again in a minute",
-    "stt-offline": "Groq is unreachable — check the internet connection",
+    "stt-not-set": "No speech-to-text service set up — Settings → Dictation",
+    "stt-bad-key": "The speech-to-text service did not accept the key — Settings → Dictation",
+    "stt-rate": "The speech-to-text service's limit is reached — try again in a minute",
+    "stt-offline": "The speech-to-text service is unreachable — check its address and the connection",
     "stt-server": "The Sight server did not answer",
-    "stt-failed": "Whisper could not transcribe that phrase",
+    "stt-failed": "The speech-to-text service could not transcribe that phrase",
   };
   function start(ta, btn){
     if (!supported()){
@@ -299,14 +345,14 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
       onInterim: (t) => { if (cur === c && ta.isConnected) showBubble(t); },
       onFinal: (t) => { if (cur === c && ta.isConnected) insertAtCaret(ta, t); },
       onState: (s) => { if (cur !== c) return; if (!ta.isConnected){ stop(true); return; } if (s === "idle") finish(); },
-      onError: (code) => { if (cur !== c) return; c.dict.abort(); finish(); toast(messages[code] || `Dictation stopped (${code})`); },
+      onError: (code) => { if (cur !== c) return; c.restart = false; c.dict.abort(); finish(); toast(messages[code] || `Dictation stopped (${code})`); },
     });
-    // Leaving the field: the browser's words are already in; Whisper's phrases still out are appended to the note
+    // Leaving the field: the browser's words are already in; the service's phrases still out are appended to the note
     // composer when they land (the focus stays where it went; a field that left the page gets nothing).
     // (Not the editors that save on blur — the floating ones: a phrase landing after their save would be lost.)
-    c.onBlur = () => { if (engine() === "groq" && !(floating && ta.matches(floating))){ ta.dataset.dictLate = ""; stop(false); } else stop(true); };
+    c.onBlur = () => { c.restart = false; if (engine() === "service" && !(floating && ta.matches(floating))){ ta.dataset.dictLate = ""; stop(false); } else stop(true); };
     // Enter sends / saves the field: the words in flight go nowhere.
-    c.onKey = (e) => { if (hotkey(e, "Enter")) stop(true); };
+    c.onKey = (e) => { if (hotkey(e, "Enter")){ c.restart = false; stop(true); } };
     ta.addEventListener("blur", c.onBlur);
     ta.addEventListener("keydown", c.onKey, true);
     cur = c; paint(); showBubble("");
@@ -314,7 +360,7 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
   }
   function toggle(ta, btn){
     if (!ta) return;
-    if (cur && cur.ta === ta){ stop(false); return; }
+    if (cur && cur.ta === ta){ cur.restart = false; stop(false); return; }
     if (document.activeElement !== ta) ta.focus({ preventScroll: true });
     start(ta, btn || null);
   }
@@ -325,11 +371,11 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     closePop();
     pop = document.createElement("div"); pop.className = "dict-pop";
     const now = getLang();
-    const g = engine() === "groq";
+    const g = engine() === "service";
     for (const [code, name] of LANGS){
       const b = document.createElement("button"); b.type = "button"; b.textContent = code ? `${name} · ${code}` : g ? "Auto (detect the language)" : name;
       if (code === now) b.classList.add("sel");
-      b.onclick = () => { setLang(code); closePop(); paint(); toast(`Dictation language: ${code || (g ? "auto-detect" : "auto (" + (navigator.language || "en-US") + ")")}`); };
+      b.onclick = () => { closePop(); pickLang(code); };
       pop.appendChild(b);
     }
     pop.addEventListener("mousedown", (e) => e.preventDefault());   // keep the field focused (a blur would end an edit)
@@ -339,7 +385,7 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     pop.style.left = Math.max(4, Math.min(innerWidth - pop.offsetWidth - 4, r.right - pop.offsetWidth)) + "px";
     pop.style.top = Math.max(4, Math.min(innerHeight - pop.offsetHeight - 4, r.top - pop.offsetHeight - 4 < 4 ? r.bottom + 4 : r.top - pop.offsetHeight - 4)) + "px";
   }
-  document.addEventListener("pointerdown", (e) => { if (!dead && pop && !pop.contains(e.target) && !e.target.closest?.(".dict-mic")) closePop(); }, sigC);
+  document.addEventListener("pointerdown", (e) => { if (!dead && pop && !pop.contains(e.target) && !e.target.closest?.(".dict-mic, .dict-lang")) closePop(); }, sigC);
 
   // A mic button for a field: getTa() returns the field it dictates into (null → nothing happens).
   function mic(btn, getTa){
@@ -353,6 +399,18 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     const cancel = () => clearTimeout(lp);
     btn.addEventListener("pointerup", cancel); btn.addEventListener("pointercancel", cancel); btn.addEventListener("pointerleave", cancel);
     btn.addEventListener("click", (e) => { if (longed){ e.stopImmediatePropagation(); longed = false; } }, true);
+    // The language chip: tap flips between the two recent languages, right-click / long-press lists them all.
+    const chip = document.createElement("button"); chip.type = "button"; chip.className = "dict-lang";
+    if (btn.classList.contains("fl")){ chip.classList.add("fl"); host.appendChild(chip); }
+    chips.set(btn, chip);
+    chip.addEventListener("mousedown", (e) => e.preventDefault());
+    chip.addEventListener("contextmenu", (e) => { e.preventDefault(); openPop(chip); });
+    let clp = 0, clonged = false;
+    chip.addEventListener("pointerdown", (e) => { clonged = false; if (e.pointerType === "mouse") return; clp = setTimeout(() => { clonged = true; openPop(chip); }, 550); });
+    const ccancel = () => clearTimeout(clp);
+    chip.addEventListener("pointerup", ccancel); chip.addEventListener("pointercancel", ccancel); chip.addEventListener("pointerleave", ccancel);
+    chip.addEventListener("click", (e) => { e.stopPropagation(); if (clonged){ clonged = false; return; } if (pop) closePop(); cycle(); });
+    paint();
     return btn;
   }
   function newMic(cls){ const b = document.createElement("button"); if (cls) b.classList.add(cls); return b; }
@@ -364,15 +422,17 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
     const r = flTa.getBoundingClientRect();
     fl.style.left = Math.max(2, Math.min(innerWidth - 30, r.right - 32)) + "px";
     fl.style.top = Math.max(2, Math.min(innerHeight - 30, r.bottom - 32)) + "px";
+    const chip = chips.get(fl);
+    if (chip){ chip.style.left = (parseFloat(fl.style.left) - chip.offsetWidth - 4) + "px"; chip.style.top = (parseFloat(fl.style.top) + (28 - chip.offsetHeight) / 2) + "px"; }
   }
-  function hideFloat(){ if (fl) fl.hidden = true; flTa = null; }
+  function hideFloat(){ if (fl){ fl.hidden = true; const c = chips.get(fl); if (c) c.hidden = true; } flTa = null; }
   if (floating){
     root.addEventListener("focusin", (e) => {
       if (dead) return;
       const t = e.target;
       if (!t.matches?.(floating)) return;
       if (!fl){ fl = mic(newMic("fl"), () => flTa); host.appendChild(fl); }
-      flTa = t; fl.hidden = false; placeFloat(); paint();
+      flTa = t; fl.hidden = false; paint(); placeFloat();
       t.addEventListener("input", placeFloat, sig);
       t.addEventListener("blur", () => { t.removeEventListener("input", placeFloat); if (flTa === t) hideFloat(); }, { once: true, ...sig });
     }, sig);
@@ -383,7 +443,11 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
   document.addEventListener("keydown", (e) => {
     if (dead) return;
     if (pop && hotkey(e, "Escape")) closePop();
-    if (cur && hotkey(e, "Escape")) stop(false);
+    if (cur && hotkey(e, "Escape")){ cur.restart = false; stop(false); }
+    else if (hotkey(e, SWITCH)){
+      const a = document.activeElement;
+      if (a && a.tagName === "TEXTAREA" && (cur?.ta === a || a.matches(floating || ".dict-ok") || a.dataset.dict != null)){ e.preventDefault(); e.stopPropagation(); cycle(); }
+    }
     else if (hotkey(e, SHORTCUT)){
       const a = document.activeElement;
       if (a && a.tagName === "TEXTAREA" && (cur?.ta === a || a.matches(floating || ".dict-ok") || a.dataset.dict != null)){ e.preventDefault(); e.stopPropagation(); toggle(a, cur?.btn || null); }
@@ -399,6 +463,6 @@ export function createDictationUI({ root = document, getLang = () => "", setLang
 
   return {
     mic, toggle, stop: (discard) => stop(!!discard), listening: () => cur?.ta || null, closePop, paint,
-    destroy(){ dead = true; ac.abort(); clearInterval(tick); stop(true); closePop(); fl?.remove(); bubble?.remove(); },
+    destroy(){ dead = true; ac.abort(); clearInterval(tick); stop(true); closePop(); fl?.remove(); bubble?.remove(); for (const c of chips.values()) c.remove(); },
   };
 }

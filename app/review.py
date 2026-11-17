@@ -21,6 +21,7 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -181,7 +182,7 @@ def _pic_rows(pics: list, max_h: float, min_h: float, indent: float = 0.0) -> st
     return "".join(out)
 
 
-def build_pdf(payload: dict, root: Path, out: Path) -> int:
+def build_pdf(payload: dict, root: Path, out: Path, number: bool = True) -> int:
     """payload: {title, subtitle, meta: [[label, value]], cover, notes: [{num, ctx, author, date,
     text, status (open|progress|done), frame, shots: [id], frameCaption, more: [{frame, caption}] (more
     frames / views the note was drawn on), replies: [{author, date, text, event, shots: [id]}]}]} — images
@@ -284,12 +285,8 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
     writer.close()
     doc = pymupdf.open("pdf", buf.getvalue())
     total = doc.page_count
-    footer = str(payload.get("footer") or "")
-    for i, page in enumerate(doc):
-        label = f"{i + 1} / {total}"
-        page.insert_text((PAGE[0] - MARGIN - 30, PAGE[1] - 22), label, fontsize=7.5, color=(0.55, 0.55, 0.58))
-        if footer and footer.isascii():
-            page.insert_text((MARGIN, PAGE[1] - 22), footer, fontsize=7.5, color=(0.55, 0.55, 0.58))
+    if number:
+        _number_pages(doc, str(payload.get("footer") or ""))
     doc.set_metadata({"title": str(payload.get("title") or "Review"), "creator": "Sight"})
     doc.save(str(out), garbage=3, deflate=True)
     doc.close()
@@ -302,6 +299,39 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
         os.rmdir(tmp)
     except OSError:
         pass
+    return total
+
+
+def _number_pages(doc, footer: str) -> None:
+    total = doc.page_count
+    for i, page in enumerate(doc):
+        page.insert_text((PAGE[0] - MARGIN - 30, PAGE[1] - 22), f"{i + 1} / {total}", fontsize=7.5, color=(0.55, 0.55, 0.58))
+        if footer and footer.isascii():
+            page.insert_text((MARGIN, PAGE[1] - 22), footer, fontsize=7.5, color=(0.55, 0.55, 0.58))
+
+
+def build_pdf_all(reports: list, root: Path, out: Path, title: str) -> int:
+    """Several clips' reports (each a build_pdf payload) as one PDF: each clip starts on a new page, the pages
+    are numbered through. Returns the page count."""
+    import pymupdf
+
+    tmp = Path(tempfile.mkdtemp(prefix="sight-pdfall-"))
+    doc = pymupdf.open()
+    footer = ""
+    try:
+        for i, rep in enumerate(reports):
+            part = tmp / f"p{i}.pdf"
+            build_pdf(rep, root, part, number=False)
+            with pymupdf.open(str(part)) as d:
+                doc.insert_pdf(d)
+            footer = footer or str(rep.get("footer") or "")
+        total = doc.page_count
+        _number_pages(doc, footer)
+        doc.set_metadata({"title": title, "creator": "Sight"})
+        doc.save(str(out), garbage=3, deflate=True)
+    finally:
+        doc.close()
+        shutil.rmtree(tmp, ignore_errors=True)
     return total
 
 
@@ -340,63 +370,86 @@ def build_zip(payload: dict, root: Path, out: Path, media_name: str) -> tuple[in
     payload is the PDF report's (gatherReport) with those names. Returns (notes, pictures)."""
     import zipfile
 
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        return _zip_report(z, payload, root, media_name, "")
+
+
+def build_zip_all(reports: list, root: Path, out: Path, names: list) -> tuple[int, int]:
+    """Several clips' notes in one ZIP: a folder per clip ("01 clip_name"), inside it what build_zip makes for
+    that clip. names: each report's media file name. Returns (notes, pictures) over all clips."""
+    import zipfile
+
+    width = max(2, len(str(len(reports))))
+    notes = pictures = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for i, (rep, name) in enumerate(zip(reports, names)):
+            folder = _zip_part(f"{str(i + 1).zfill(width)} {os.path.splitext(name)[0]}", f"Clip {i + 1}")
+            n, p = _zip_report(z, rep, root, name, folder + "/")
+            notes += n
+            pictures += p
+    return notes, pictures
+
+
+def _zip_report(z, payload: dict, root: Path, media_name: str, prefix: str) -> tuple[int, int]:
+    """build_zip's content for one report into the open ZipFile z, every path under prefix ("" or "folder/")."""
+    import zipfile
+
     notes = [n for n in payload.get("notes") or [] if isinstance(n, dict)]
     width = max(2, len(str(len(notes))))
     pictures = 0
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        used: set[str] = set()
+    used: set[str] = set()
 
-        def put(folder: str, file: str, data: bytes) -> str:
-            stem, ext = os.path.splitext(file)
-            ext = _image_ext(data) if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif", "") else ext
-            name, k = f"{stem}{ext}", 2
-            while (folder + "/" + name).lower() in used:
-                name, k = f"{stem} ({k}){ext}", k + 1
-            used.add((folder + "/" + name).lower())
-            # JPEG / PNG are packed already: store them.
-            z.writestr(zipfile.ZipInfo((folder + "/" if folder else "") + name, time.localtime()[:6]), data,
-                       compress_type=zipfile.ZIP_STORED)
-            return name
+    def put(folder: str, file: str, data: bytes) -> str:
+        stem, ext = os.path.splitext(file)
+        ext = _image_ext(data) if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif", "") else ext
+        name, k = f"{stem}{ext}", 2
+        while (folder + "/" + name).lower() in used:
+            name, k = f"{stem} ({k}){ext}", k + 1
+        used.add((folder + "/" + name).lower())
+        # JPEG / PNG are packed already: store them.
+        z.writestr(zipfile.ZipInfo(prefix + (folder + "/" if folder else "") + name, time.localtime()[:6]), data,
+                   compress_type=zipfile.ZIP_STORED)
+        return name
 
-        cover = decode_data_url(payload.get("cover") or "")
-        if cover:
-            put("", _zip_part(media_name, "cover") + ".jpg", cover)
+    cover = decode_data_url(payload.get("cover") or "")
+    if cover:
+        put("", _zip_part(media_name, "cover") + ".jpg", cover)
+        pictures += 1
+    for i, n in enumerate(notes):
+        num = str(n.get("num") or i + 1)
+        folder = f"Note {num.zfill(width)}"
+        lines = [f"Note {num} · {STATE_LABEL.get(str(n.get('status') or 'open'), 'Open')}"]
+        by = " · ".join(str(x) for x in (n.get("ctx"), n.get("author"), n.get("date")) if x)
+        if by:
+            lines.append(by)
+        lines += ["", str(n.get("text") or "").strip() or "(no text)"]
+        texts: list[tuple[str, str]] = []
+        frame = decode_data_url(n.get("frame") or "")
+        if frame:
+            name = put(folder, _zip_part(n.get("frameFile"), f"Note {num}"), frame)
             pictures += 1
-        for i, n in enumerate(notes):
-            num = str(n.get("num") or i + 1)
-            folder = f"Note {num.zfill(width)}"
-            lines = [f"Note {num} · {STATE_LABEL.get(str(n.get('status') or 'open'), 'Open')}"]
-            by = " · ".join(str(x) for x in (n.get("ctx"), n.get("author"), n.get("date")) if x)
-            if by:
-                lines.append(by)
-            lines += ["", str(n.get("text") or "").strip() or "(no text)"]
-            texts: list[tuple[str, str]] = []
-            frame = decode_data_url(n.get("frame") or "")
-            if frame:
-                name = put(folder, _zip_part(n.get("frameFile"), f"Note {num}"), frame)
+            texts.append((name, str(n.get("frameText") or "")))
+        for m in n.get("more") or []:
+            data = decode_data_url((m or {}).get("frame") or "") if isinstance(m, dict) else None
+            if data:
+                name = put(folder, _zip_part(m.get("file"), f"Note {num}"), data)
                 pictures += 1
-                texts.append((name, str(n.get("frameText") or "")))
-            for m in n.get("more") or []:
-                data = decode_data_url((m or {}).get("frame") or "") if isinstance(m, dict) else None
-                if data:
-                    name = put(folder, _zip_part(m.get("file"), f"Note {num}"), data)
-                    pictures += 1
-                    texts.append((name, str(m.get("text") or "")))
-            caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
-            files = n.get("shotFiles") if isinstance(n.get("shotFiles"), dict) else {}
-            for k, sid in enumerate(n.get("shots") or []):
-                p = shot_path(root, str(sid))
-                if not p:
-                    continue
-                name = put(folder, _zip_part(files.get(str(sid)), f"Note {num} picture {k + 1}"), p.read_bytes())
-                pictures += 1
-                texts.append((name, str(caps.get(str(sid)) or "")))
-            if n.get("picText") and not frame:
-                texts.insert(0, ("Picture", str(n["picText"])))
-            for name, text in texts:
-                if text.strip():
-                    lines += ["", f"== {name} ==", text.strip()]
-            z.writestr(f"{folder}/{folder}.txt", "\n".join(lines) + "\n")
+                texts.append((name, str(m.get("text") or "")))
+        caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
+        files = n.get("shotFiles") if isinstance(n.get("shotFiles"), dict) else {}
+        for k, sid in enumerate(n.get("shots") or []):
+            p = shot_path(root, str(sid))
+            if not p:
+                continue
+            name = put(folder, _zip_part(files.get(str(sid)), f"Note {num} picture {k + 1}"), p.read_bytes())
+            pictures += 1
+            texts.append((name, str(caps.get(str(sid)) or "")))
+        if n.get("picText") and not frame:
+            texts.insert(0, ("Picture", str(n["picText"])))
+        for name, text in texts:
+            if text.strip():
+                lines += ["", f"== {name} ==", text.strip()]
+        z.writestr(f"{prefix}{folder}/{folder}.txt", "\n".join(lines) + "\n")
     return len(notes), pictures
 
 

@@ -11,6 +11,8 @@ writes, the package it builds / merges).
 > Rows with `scope='board'` (`board_id`, drawings and notes made on a Canvas board, Sight 0.63+) use the
 > same row shapes but live only in the library database: they have no asset, are never written to a `.srev`
 > / HTML page / PDF, and are not read by import.
+> A board note's `ctx` is `{bv: {x, y, w, h}}` (Sight 0.73+): the board rectangle on screen when it was written
+> (world units), used to fly the camera back there; board drawings have no `ctx`.
 
 ## Rules for changing the format
 

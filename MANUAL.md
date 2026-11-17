@@ -49,11 +49,18 @@
   It stays open while you flip through files and is remembered next time.
 - **PSD layers** — in the lightbox of a PSD press `D` (or the ☰ button bottom-right) for the layer
   list; click a layer to view it alone, "Composite" to return to the full image.
+- **Reading notes** — the speech-bubble button in the lightbox's top bar (its badge counts the notes) or `C`
+  opens the notes panel without the drawing tools: read the notes and replies, click a note or its picture to go
+  to its frame / view (only its drawings show; Esc shows all again). The same button sits in the top bar for a
+  board; there a note's picture is the part of the board you were looking at when you wrote it, and a click on it
+  glides the camera back there.
 - **Annotations & review** — in the lightbox of an image, PSD, video or 3D model press `A`
   (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
   appears at the top with a second row that always shows the settings of the current tool — or of
   the selected drawings, which stay editable: every drawing is a vector object you can select, move,
-  scale, rotate, restyle and delete at any time. In a 3D model a note shows a picture of each camera
+  scale, rotate, restyle and delete at any time. With annotating off, a picture's or video's drawings still
+  show while you just watch (a video's on their frames as it plays); the eye button next to the pen (or
+  `Shift+H`) hides / shows them — the one eye, in the top bar, while drawing too (a board's sits next to its pen). In a 3D model a note shows a picture of each camera
   view its drawings were made from (its own view first), like a video note's frames; click a picture
   of another view to go to it. Hold **Alt** with a drawing tool to work the picture without switching to
   the select tool: a drag orbits a 3D model or scrubs a video (sideways on the picture), and the toolbar and
@@ -93,7 +100,7 @@
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `?` (or the ? button in the toolbar) opens a list of every annotation shortcut; Esc / ? / a click outside closes it, and nothing underneath reacts while it is open. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
-    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), double-click its text to edit, the clock marks it *In progress* (someone took
+    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it.
     **Picture texts** — the note's text is its topic; each of its pictures (the image, a video frame,
@@ -113,7 +120,7 @@
     follow the mouse); then only the plate's head (number / label) moves the plate. In the note card the texts are listed under its pictures (a mark in a preview's
     corner shows which have one); click one to go to that frame / view, double-click to edit it.
     The PDF report and the reviewer page show them under the pictures. The arrow button on a note adds a
-    **reply** (Enter sends); double-click a reply to edit it, × deletes it. **Dictation:** the mic button under the note field (and next to a reply, note or picture text while you edit it) listens and types what you say at the cursor; click it again, Esc or Alt+M stops; right-click / long-press it to pick the language (default: the browser's). Needs Chrome, Edge or Safari; Chrome / Edge send the audio to Google, so it is online only. **Whisper** (Settings → Dictation → Engine *Whisper (Groq)*, with your Groq API key saved there) detects the language by itself — leave the language on *Auto* — and punctuates better; each phrase is sent to Groq after you pause, so the words appear phrase by phrase rather than as you speak. The key stays on the Sight server (never shown again; empty + *Save key* removes it). Resolving or reopening
+    **reply** (Enter sends); double-click a reply to edit it, × deletes it. **Dictation:** the mic button under the note field (and next to a reply, note or picture text while you edit it) listens and types what you say at the cursor; click it again, Esc or Alt+M stops; the small language chip next to it (RU / EN…) switches between the two languages you used last in one tap (Alt+Shift+M from the field; mid-dictation it carries on in the new language); right-click / long-press the chip or the mic for all languages (default: the browser's). Needs Chrome, Edge or Safari; Chrome / Edge send the audio to Google, so it is online only. Or use **any speech-to-text service you like** (Settings → Dictation → Engine *My service*): paste its OpenAI-compatible transcription address (a local whisper server such as `http://localhost:8000/v1/audio/transcriptions`, or OpenAI, Groq…), the model name and, if it needs one, an API key, then *Save*. Whisper-type services detect the language by themselves (leave the language on *Auto*); each phrase is sent after you pause, so words appear phrase by phrase. The key stays on the Sight server (never shown again; *Forget key* removes it; changing the address drops it). Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
     reviewer attached to a reply (on the web page) show under it; click to enlarge. A reply that
@@ -147,7 +154,10 @@
     of those frames, numbered in the top-left corner. Click a marker to go there. `,` / `.`
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
-    whole clip; the onion button shows drawings within ±1 s faded.
+    whole clip; onion skin — right-click or long-press the eye in the top bar (a way of viewing, drawing or not; remembered)
+    — cross-fades between annotated frames: as the playhead moves on,
+    the last frame's drawings fade out and the next annotated frame's fade in (over the last / first second at
+    the clip's ends).
     The frame-stamp button (Shift+F, annotation mode only) is on by default; switch it off per video (the others keep it). On, it shows the current frame over the video and is burned into every report picture of that video; drag it (mouse, pen or finger) and it snaps to
     a corner or the middle of a side. The ▾ next to it (or a tap on the stamp) sets what it shows, size, colours, backdrop,
     font and position. The same label is burned into the report pictures (ZIP, PDF, the
@@ -438,7 +448,10 @@
   are notes); `Shift+,` / `Shift+.` jump to the previous / next one, on into the other clips. A clip the
   browser cannot play is converted as soon as the sequence opens, so it is usually ready by its turn. Each clip keeps its own notes and drawings: the notes panel and the drawings
   switch with the clip on screen, and a note written there belongs to that clip. While annotating, the
-  arrows stay the nudge keys. Opening any other file from the viewer ends the sequence; `Esc` closes.
+  arrows stay the nudge keys. **Export** (notes panel → *Export ▾* → *…, all clips*) takes the review of every
+  clip in the sequence that has notes: one PDF (a section per clip), one ZIP (a folder per clip), or a web
+  page / `.srev` file per clip; the viewer visits the clips to picture them, then returns to where you were.
+  Opening any other file from the viewer ends the sequence; `Esc` closes.
 - **Selecting by touch** — hold a tile for half a second to start touch selection with just that tile;
   then each tap adds or removes a tile (the order you tap is the sequence order) and a double tap opens
   nothing. A bar at the bottom shows how many are selected, *▶▶ Play in sequence* (2+ videos) and ✕;
@@ -550,7 +563,7 @@
     `Ctrl+Alt+←/→/↑/↓` normalize height / width / size / scale; `Ctrl+Alt+Shift+↑/↓` distribute in a
     row / column; `Ctrl+P` arrange optimally to fit the view; `Ctrl+Alt+N/A/O/D/R` arrange by name /
     addition / layer order / path / randomly (press again to reverse); `Ctrl+Alt+S` stack.
-  - **Draw and write notes on a board:** the pencil button at the top left of the board (or
+  - **Draw and write notes on a board:** the pen button in the top bar, next to ◧ (or
     **Shift+A**; Shift+A or Esc leaves again) switches on the same tools as the full-screen viewer: brush,
     pencil, highlighter, eraser, line, arrow, rectangle, ellipse, text, numbered pin, select / transform,
     undo / redo and the styles bar (`B P M E L W R O T N V`, `Ctrl+Z` — press `?` in the mode for the list).

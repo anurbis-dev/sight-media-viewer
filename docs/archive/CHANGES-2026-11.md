@@ -2,6 +2,152 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.63.0 — 2026-11-17 — Drawings and review notes on Canvas boards
+- **What:** the lightbox annotation tools now work on Canvas boards: brush / pencil / highlighter / eraser / line /
+  arrow / rect / ellipse / text / pin / select-transform / undo / styles, plus the notes panel (notes, replies,
+  open / in progress / done, drawings linked to notes). Drawings are free over the whole board in world
+  coordinates (they do not follow items). A pencil button at the top left of the board and **Shift+A** switch
+  the mode; the notes panel starts closed on a board. Two fingers pan / pinch-zoom the board (touch had no way
+  to move the camera before). With the mode off the drawings stay visible.
+- **Where:** `app/static/annotate.js` (board mode: `isBoard()`, host flags `board` / `frameRect`, `abortGesture`,
+  `bounds`, `flush`, `modal` exports, CSS `.light.<state>` → `.an-host.<state>`), `app/static/canvas.js`
+  (`annot` option: mount, `bindAnnot`, keys, pinch, `frameRect` / `frameAll`, toggle button), `app/static/index.html`
+  (`boardAnnot`, Ctrl+A / modal guards), `app/library.py` (`annotations_for_board`, `board_full` uses it),
+  `app/server.py` (`GET /api/annotations?board_id=`), `tests/test_board_annotations.py`, docs.
+- **Notes:** rows are `scope='board'`, `board_id` (no `target_asset_id`); not in `.srev` / exports (FORMAT.md note).
+  Board mode skips everything that needs a picture (screenshots, review state, versions, picture text, note
+  previews, stamp, exports / import; only "Copy notes as text" stays). `modeAllows` shows all drawings on a board
+  (no compose / clean-picture mode), a picked note narrows to its drawings and moves the camera to them. While the
+  mode is on the canvas keys are filtered to F / A / Esc so X / Delete cannot remove items. Plain A is NOT an
+  annotation key on a board (keeps framing); Shift+A toggles. Canvas `persistCurrent` awaits `annot.flush()`
+  because `setAsset`'s own flush is not awaited and the item map is cleared synchronously (existing lightbox
+  quirk, left as is). `bind2d` runs once per board on the same viewport: `attachInput` is guarded by a WeakSet.
+  A loose drawing joins the next note wherever it is on the board (lightbox rule, deliberately kept). Checked with
+  Playwright (draw / reload / pan / zoom / item move / board switch / pinch / lightbox regression), not on a
+  real touch device.
+- Review: fresh-agent review found 1 medium (null surface on board switch) + 5 low (load race, open error path, delete order, Shift+A repeat, Esc/Space leak) — fixed. The first Esc/Space fix
+  skipped the palette / popup / overlay Esc (found on re-review): the guard now sits after them in index.html's keydown,
+  and canvas.js's keydown ignores `e.defaultPrevented` keys (already used by index.html, which runs first). All fixes
+  confirmed by the same reviewer.
+
+## 0.62.1 — 2026-11-17 — Add Folder picker: clean errors, no stale folder, network drives, macOS drives and privacy
+- **What:** "+ Folder" fixes. Adding a folder that is gone (deleted, drive unplugged while the picker was open)
+  now says "Not a folder" instead of "Internal Server Error". A folder that fails to open no longer leaves the
+  picker showing the previous folder's path over an error (where "Add this folder" silently added that previous
+  folder): the listing stays and a "Can't open <path>." line is added; reopening the picker on a folder that went
+  away starts over at home. Fast clicks on a slow drive can no longer let an older listing replace a newer one.
+  Breadcrumbs work for UNC paths (`\\server\share\...`).
+- **Where:** `app/server.py` — `add_source_or_400` (used by `POST /api/sources` and `/api/sources/pick`),
+  `/api/fs/list` (`os.path.abspath` instead of `Path.resolve()`); `app/static/index.html` — `fbCrumbs`,
+  `fbNavigate` (`fbNavToken`), `fbRender(failedPath)`, the `#fbSelect` alert (shows `detail`).
+- **Notes:** `/api/fs/list` no longer resolves, so on Windows a mapped drive stays `Z:\...` while browsing (resolve()
+  can turn it into its UNC path). `Library.add_source` deliberately still resolves: source ids are sha1 of the
+  resolved path, changing that would re-id existing sources — so a source added from `Z:` may still be stored
+  under its UNC path, as before. `add_source_or_400` checks the folder itself instead of catching `OSError` around
+  `add_source`, because the watcher can raise `OSError` after the row is saved (that stays a 500). The mapped-drive
+  case is untested on real Windows. Review (fresh agent): two minor issues (reopening on a vanished folder,
+  over-broad `OSError` catch) — both fixed and confirmed by the same reviewer; the footer path is also cleared while no folder is open.
+- **macOS (user report: "can't set a source, clicking does nothing; can't delete collections"):** not reproduced —
+  the picker, source rows and the collection × all work in WebKit (WebKitGTK + WebDriver, the Safari engine) and
+  Chromium, and the API works. Fixed what is Mac-only: external / network drives under `/Volumes` are listed in the
+  picker (`fs_roots`, read from the `/Volumes` listing only, never touching a drive, so a stalled share can't hang
+  it); a folder macOS privacy protection refuses (Desktop, Documents, Downloads, external drives until Sight is
+  allowed — EPERM) shows a "System Settings → Privacy & Security" hint instead of "No subfolders here"
+  (`fs_list_dir_checked` → `denied` in `/api/fs/list`, `fbDeniedText`), and adding such a folder is refused with
+  that reason instead of becoming a source with 0 files (checked on the resolved path, the one stored). The drive
+  list is fetched on every picker open. The collection-delete report stays open: needs the user's browser /
+  Sight version / console. Review (fresh agent): checked on the link path not the stored one, stalled-share hang in
+  `fs_roots`, double listing — all fixed and confirmed by the same reviewer.
+- **Stale modules after an update:** `/static` (annotate.js, canvas.js, keys.js, compare.js, vendor …) was served
+  without `Cache-Control`, so browsers cached the modules by heuristic while index.html (no-store) was always new:
+  after an update the page could run with the previous version's modules. The user's "broke in 0.62" can't come
+  from 0.62's code (it only touched the frame stamp in annotate.js), so this is the likely cause. `RevalidatedStatic`
+  (server.py) adds `Cache-Control: no-cache`: the cache stays, every load revalidates by ETag (304 on localhost).
+  Review (fresh agent, Starlette 1.10.0, 200 / 304 / HEAD / Range checked): nothing found.
+- **Esc closes the Settings panel** (it covers the whole sidebar by design, user's confirmation): in the main Esc
+  chain after the lightbox and the search, before clearing the selection / closing the narrow drawers; from a
+  settings field it blurs the field first. Through `#settingsHead`'s own click, so the open state is saved the same
+  way. Touch: the header itself stays the way to close it. MANUAL (Settings panel). Only while the panel is on
+  screen (a closed narrow-screen drawer hides it) and not from a text field outside it; Esc from one of its own
+  fields closes it even with a search active (the search is kept). Review (fresh agent): Esc closed the hidden panel
+  on narrow screens and cleared the search from a settings field — both fixed and confirmed by the same reviewer; Esc on a canvas board still clears the
+  board selection and closes the panel in one press (accepted).
+
+## 0.62.0 — 2026-11-17 — Video annotation: the frame stamp is on by default, switched off per video, burned only while on
+- **What:** the frame stamp is on for every video until switched off, and the switch (toolbar icon / `Shift+F`)
+  belongs to that one video: off in video A leaves video B stamped. While a video's stamp is on, its label is burned
+  into that video's report pictures (ZIP, PDF, reviewer page); off = clean pictures. No separate "burn" option (user's
+  decision: the stamp's own button is the switch, set once per video, not per frame). The look (mode, size, colours,
+  backdrop, font, position) stays one shared preference.
+- **Where:** `app/static/annotate.js` — `S.stampVideos`, `stampOn(aid)`, `setStampOn(aid, on)`, `toggleStamp`,
+  `toggleStampPop`, `paintStamp`, `paintBar`, `loadStamp`, the reset handler, `bakeFrame(cv, t, aid)` (early return
+  when that asset's stamp is off; `gatherReport` passes the loop asset's id, so "export all" uses each asset's own
+  state); MANUAL (Frame stamp).
+- **Notes:** stored as `sight.annotate.stamp.videos` → `{ [assetId]: false }` for the switched-off videos only (the
+  key is deleted when switched back on), written at once (no debounce), not review data — FORMAT.md unchanged; the
+  HTML page and the phone consume the burned pictures. The old global `sight.annotate.stamp.on` (0.60.0) is ignored
+  and dropped on the next save; no migration (default on makes it moot). `S.stampVideos` is read once at creation: a
+  change made in another tab or on the phone shows after a reload, and this tab's next write stores its whole map
+  (accepted for a device preference). Opening the ▾ popover on a switched-off video turns it on again. Review (fresh
+  agent, two passes: the "burn follows the toggle" step and the per-video state): nothing of substance; `S.asset`
+  drives the live state, `setAsset` repaints the bar, non-video assets return false.
+
+## 0.61.0 — 2026-11-17 — Voice dictation in the annotation text fields (desktop); STT plan revised
+- **What:** a microphone button in the note composer (it dictates into the last focused composer field: the note
+  or the picture text) and a floating one at the corner of a focused note-edit, reply or picture-text field. Click
+  / tap or `Alt+M` toggles; the button pulses while listening; interim words show in a muted bubble, only final text
+  goes into the field at the caret (undoable with Ctrl+Z); click, Esc or `Alt+M` stop (pending words land), blur or
+  Enter abort. Right-click / long-press the mic: language list (Auto = the browser's language + 14), saved as
+  `sight.dictation.lang`. No API (Firefox), a denied microphone or no network → the title and a toast explain it.
+  Uses the browser's Web Speech API only (Chrome / Edge online via Google, Safari on-device); no backend, no keys.
+  `docs/PLAN-stt.md` is the revised plan; the user's `docs/tmp/stt-implementation-plan.md` is kept untouched.
+- **Where:** new `app/static/dictation.js` (`createDictation`, `PROVIDERS.webspeech`, `insertAtCaret`,
+  `createDictationUI` → `{mic, toggle, stop, destroy}`, `SHORTCUT`); `annotate.js` (import, `S.dict` / `S.dictTa`,
+  the mic + `data-dict` in `buildPanel`, `createDictationUI` in `mount` / `destroy` in `unmount`, a labelled
+  `keyTable` row, `dictateNote`); MANUAL (Dictation); `docs/PLAN-stt.md`.
+- **Notes:** the original plan (Groq whisper-large-v3-turbo as the main engine + Windows SAPI / macOS
+  NSSpeechRecognizer fallbacks, a Python `ISTTProvider` / `STTRouter`, 16 kHz capture) was written for a native
+  app: Sight's UI is a web page, so every engine there would run in the Python server with audio streamed from the
+  page — heavy for no gain, and it missed the free Web Speech API with live interim text. Revised tiers: (1) Web
+  Speech now, (2) optional Groq through a backend proxy that holds the key (any browser, better punctuation, audio
+  leaves the machine), (3) local whisper only on demand. Interim text is never written into the field (a textarea
+  cannot style part of its text, and it would pollute the undo stack). Mic buttons `preventDefault` on mousedown
+  so the field keeps focus (a blur would save and close an in-place edit). The shortcut is also bound in the module's
+  capture listener because the field handlers stop propagation; `Alt+M` instead of Ctrl+Shift+M (Chrome / Edge's
+  profile menu); on macOS Alt+M types "µ" but `e.code` is still KeyM and the character is suppressed. Chrome ends
+  continuous sessions on silence: the module restarts them (cap: 3 restarts within 1 s each; 3 `no-speech` sessions
+  ≈ 25 s → "No speech heard" and stop). Not done: Groq, dictation outside the annotation panel, a real-microphone
+  test (tests use a fake `SpeechRecognition`), touch long-press on a device. Review (fresh agent) found: document /
+  window listeners never removed (two instances after reopening the lightbox — fixed with an AbortController + dead
+  flag), a focused field removed without blur kept the mic listening (fixed: a 300 ms `isConnected` tick, privacy),
+  the reserved shortcut (changed), the language popover ignoring Esc / `registerAutoClose` (fixed), `no-speech`
+  ending the session (now a restart), dead buttons kept (pruned). The same reviewer confirmed all six, nothing new.
+
+## 0.60.0 — 2026-11-16 — Video annotation: configurable frame stamp (live and burned into report pictures)
+- **What:** the video annotation toolbar has a frame-stamp icon (+ a ▾ for its settings; `Shift+F` while
+  annotating): a label with the current frame over the video, not part of the drawings. Drag it (mouse, pen,
+  finger) — it snaps to one of eight spots (corners, side centres). Settings (▾ or a tap on the stamp): Show
+  (frame + time / frame / time), size, text colour, backdrop colour + opacity (0 = none), font (normal / bold /
+  mono), a 3×3 position picker, Reset. Saved per device. The same settings style the label burned into exported
+  report pictures; defaults equal the old look (top-left, white on 60 % black), so nothing changes until touched.
+- **Where:** `app/static/annotate.js` — `STAMP_DEFAULT` / `STAMP_POS`, `loadStamp` / `saveStamp` (`sight.annotate.stamp`),
+  the "frame stamp" section (`stampText`, `stampBox`, `stampXY`, `paintStamp`, `stampDown`, `toggleStamp`,
+  `buildStampPop` / `paintStampPop` / `closeStampPop`), `bakeFrame` rewritten on `stampBox` / `stampXY`, a
+  labelled `keyTable` row, hooks in `buildBar` / `paintBar` / `renderAll` / `tick` / `toggle(false)` / `onDown`,
+  `.an-stamp*` CSS; MANUAL (Frame stamp).
+- **Notes:** device preference, not review data (FORMAT.md unchanged). Size is a % of the picture width (min 11 px),
+  so the live label equals the burned one up to tiny displays. Show modes split `RC.frameLabel` on " / " —
+  review-core, the HTML page and the phone are untouched (they consume the burned pictures). The burn always
+  happened whether or not the live stamp was on (changed in 0.62.0: only while it is on, and on by default); the panel's `f<N>` chip is unchanged. The stamp lives in the turned
+  layer root, so it rotates with a turned view; stamp clicks are stopped so a tap does not play / pause. `toggleStamp`
+  returns false outside annotation mode (the "Video" key group also runs in the plain lightbox). Drag geometry is
+  captured at pointerdown (a zoom mid-drag uses stale values, accepted). Default top-left overlaps the lightbox's
+  floating "i" button. Review (fresh agent): `Shift+F` flipping the saved preference from the plain lightbox (fixed),
+  the popover swallowing every key after a click on its buttons (fixed: only INPUT / SELECT keep keys, buttons blur,
+  Esc closes it), `stampDrag` stuck after a cut-off drag (reset in unmount / toggle / layer creation, `lostpointercapture`),
+  Alt gestures blocked on the stamp (fixed), ▾ touch size / `tabular-nums` (fixed). The same reviewer confirmed the
+  fixes; its last gap (Esc inside a focused slider stopped at the popover) is fixed by letting Escape through.
+
 ## 0.59.2 — 2026-11-16 — Video: Alt-scrub with the select tool; smooth mid-clip scrubbing of long-GOP clips
 - **What:** with the annotate select tool (V) active, Alt+drag on empty space scrubs a video (or turns a picture)
   again. Clips with long GOPs (phone / screen recordings: the user's sample has keyframes only at 0 and 8.3 s) now

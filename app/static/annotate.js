@@ -178,8 +178,11 @@ export function createAnnotator(host){
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
   const panelKey = host.board ? "sight.annotate.panel.board" : "sight.annotate.panel";
+  // The notes panel opens on its own too, for reading (S.readOn): notes, replies, a click on a picture goes there —
+  // no drawing tools, no composer. Drawing (S.on) is the mode that brings the tools (and the panel per S.panelOn).
+  const readKey = host.board ? "sight.annotate.read.board" : "sight.annotate.read";
   const S = {
-    on: false, panelOn: readJSON(panelKey, host.board ? false : true), hidden: false, onion: false, hiddenReplies: new Set(),
+    on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
     tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), undo: [], redo: [], clip: null, clipCut: false,
@@ -660,6 +663,12 @@ export function createAnnotator(host){
   // showing the context (the panel's pending line, which runs on every camera move) must not register
   // a view, or each camera position would become a "View N" with no drawing in it.
   function ctxNow(forNote, make = false){
+    // A board note keeps where the camera was (bv: the board rectangle on screen, world units — the 3D view's
+    // counterpart): its picture shows that rectangle, a click on it flies the camera back. Drawings need none.
+    if (isBoard()){
+      const r = forNote ? host.boardView?.() : null;
+      return r ? { bv: r } : null;
+    }
     if (S.kind === "video"){
       const v = video();
       if (!v) return null;
@@ -729,6 +738,7 @@ export function createAnnotator(host){
   function modeAllows(it){
     if (!it.data.note) return true;
     const m = viewMode();
+    if (!S.on && !isBoard()) return m.pin ? it.data.note === m.pin : true;   // just watching: all, or the picked note's
     // A board shows every drawing all the time (no "clean picture" while a note is made); only a picked note
     // narrows it to that note's drawings.
     if (isBoard()) return m.pin ? it.data.note === m.pin : true;
@@ -752,13 +762,57 @@ export function createAnnotator(host){
     if (S.kind === "model3d") return { vk: S.curVk || null };
     return null;
   }
-  function ghostNow(it){
-    if (!S.onion || S.kind !== "video") return false;
-    if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) return false;
-    if (it.data.note && S.items.get(it.data.note)?.kind !== "note") return false;
-    if (!modeAllows(it)) return false;
-    const c = it.data.ctx, v = video();
-    return !!(c && v && c.t != null && Math.abs(v.currentTime - c.t) <= 1.0);
+  // Onion skin (video; toggled on the eye — right-click / long-press — kept with the settings): between two frames that carry drawings, the last one's drawings fade out and
+  // the next one's fade in as the playhead moves from one to the other (a cross-fade over the gap). Before the first /
+  // after the last annotated frame the drawings fade in / out over ONION_EDGE seconds. Returns id → opacity (0..1)
+  // for the drawings not on screen by their own frame; null when onion skin is off.
+  const ONION_EDGE = 1.0;
+  function onionFade(){
+    const v = video();
+    // (Not in the version compare: no eye there to turn it off — host.showWhileWatching false.)
+    if (!S.onion || S.kind !== "video" || !v || host.showWhileWatching === false) return null;
+    const fd = 1 / (S.fps || 25), t = frameStart(v.currentTime), eps = fd / 2;
+    const spans = [];
+    for (const it of S.items.values()){
+      if (!isDrawing(it)) continue;
+      const c = it.data.ctx;
+      if (!c || c.t == null || c.hold === -1) continue;   // (a drawing held for the whole clip is always on)
+      if (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it))) continue;
+      if (it.data.note && S.items.get(it.data.note)?.kind !== "note") continue;
+      if (!modeAllows(it)) continue;
+      spans.push({ id: it.id, s: c.t, e: c.t + Math.max(c.hold || 0, fd) });
+    }
+    // Groups by start frame, in time order. The group that started last (k) is the "current" one: while one of its
+    // drawings is on its own frame it shows as usual; after its own span it fades out towards group k+1, which fades
+    // in once the whole group k is over (or k fades over ONION_EDGE when it is the last). Before the first group,
+    // that one fades in over ONION_EDGE. Earlier groups are done: a later start ends their ghosts.
+    const groups = [];
+    for (const x of spans.sort((a, b) => a.s - b.s)){
+      const g = groups[groups.length - 1];
+      if (g && Math.abs(x.s - g.s) <= eps){ g.list.push(x); g.e = Math.max(g.e, x.e); }
+      else groups.push({ s: x.s, e: x.e, list: [x] });
+    }
+    const out = new Map();
+    if (!groups.length) return out;
+    const clamp01 = (v) => Math.min(1, Math.max(0, v));
+    let k = -1;
+    for (let i = 0; i < groups.length; i++) if (groups[i].s <= t + eps) k = i;
+    if (k < 0){   // before the first annotated frame
+      const p = clamp01(1 - (groups[0].s - t) / (ONION_EDGE + fd));
+      for (const x of groups[0].list) out.set(x.id, p);
+      return out;
+    }
+    const cur = groups[k], next = groups[k + 1];
+    // How far from an end (seconds after it, counted in frames) to the next group / the edge, 0..1.
+    const prog = (end) => clamp01((t + fd - end) / ((next ? next.s - end : ONION_EDGE) + fd));
+    for (const x of cur.list) if (x.e <= t + eps) out.set(x.id, 1 - prog(x.e));
+    // A drawing of an earlier group held past the current group's start fades out from its own end too (over the
+    // edge time) instead of vanishing when its hold runs out.
+    for (const g of groups.slice(0, k)) for (const x of g.list){
+      if (x.e > cur.s + eps && x.e <= t + eps){ const p = clamp01((t + fd - x.e) / (ONION_EDGE + fd)); if (p < 1) out.set(x.id, 1 - p); }
+    }
+    if (next && cur.e <= t + eps){ const p = prog(cur.e); for (const x of next.list) out.set(x.id, p); }
+    return out;
   }
   function ctxLabel(c){
     if (!c) return "";
@@ -850,8 +904,24 @@ export function createAnnotator(host){
     g.innerHTML = primsOf(it, numOf).map(primSvg).join("");
     g.__z = it.z;
   }
+  // Drawings stay on show (not editable) with annotating off: always on a board; on a picture / video during
+  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D keeps them for the annotating mode.
+  // (Not in the version compare: host.showWhileWatching false — it has no eye of its own.)
+  const shownOff = () => isBoard() || (host.showWhileWatching !== false && !!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd"));
+  // Drawings that can show at all (a deleted / hidden reply's or a deleted note's never do): the eye's subject.
+  const hasDrawings = () => {
+    for (const it of S.items.values()){
+      if (!isDrawing(it) || (it.data.reply && (S.hiddenReplies.has(it.data.reply) || replyGone(it)))) continue;
+      if (it.data.note && S.items.get(it.data.note)?.kind !== "note") continue;
+      return true;
+    }
+    return false;
+  };
+  // A playing video's drawings follow its frame with the mode off: the tick runs only then (a paused one restarts
+  // it on play / seek — bind2d). A still picture or a board follows the view through viewChanged.
+  const followOff = () => !S.on && !isBoard() && shownOff() && !!S.b2?.isVid && !S.hidden && !!S.layer?.els.size && !S.b2.media.paused;
   function renderAll(){
-    const L = S.on || isBoard() ? ensureLayer() : S.layer;
+    const L = S.on || shownOff() ? ensureLayer() : S.layer;
     if (!L) return;
     syncViewBox();
     const list = [...S.items.values()].filter(isDrawing).sort((a, b) => a.z - b.z);
@@ -859,21 +929,26 @@ export function createAnnotator(host){
     for (const [id, g] of L.els) if (!keep.has(id)){ g.remove(); L.els.delete(id); }
     for (const it of list){ renderItem(it); L.doc.appendChild(L.els.get(it.id)); }
     paintVisibility();
-    L.root.hidden = !S.on && !isBoard();  // a board keeps its drawings on show (not editable) while annotation is off
+    L.root.hidden = !S.on && !shownOff();  // shown, not editable, while annotation is off (shownOff)
     paintStamp();
+    paintBadge();
+    if (followOff()) startTick();   // a playing video's drawings follow its frame
   }
   function paintVisibility(){
     const L = S.layer;
     if (!L) return;
     modeCache = null;
     const m = viewMode();
+    // Onion skin is a way of viewing the drawings (the eye's right-click / long-press): drawing or watching.
+    const fade = !S.hidden ? onionFade() : null;
     for (const [id, g] of L.els){
       const it = S.items.get(id);
       if (!it) continue;
       const vis = !S.hidden && visibleNow(it);
-      const ghost = !S.hidden && !vis && ghostNow(it);
+      const op = !vis && fade ? fade.get(id) : undefined;
+      const ghost = op != null && op > 0.02;
       g.style.display = vis || ghost ? "" : "none";
-      g.classList.toggle("ghost", ghost);
+      g.style.opacity = ghost ? String(Math.round(op * 100) / 100) : "";
     }
     // What the view mode hides must not stay selected: Delete / nudge / copy would act on it unseen.
     let unsel = false;
@@ -1514,9 +1589,7 @@ export function createAnnotator(host){
         <button type="button" class="an-tool" data-act="redo" title="Redo (Ctrl+Shift+Z)">${ICON.redo}</button>
         <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete)">${ICON.trash}</button>
         <span class="an-sep"></span>
-        <button type="button" class="an-tool" data-act="onion" data-only="video" title="Onion skin — drawings within ±1 s, faded">${ICON.onion}</button>
         <button type="button" class="an-tool" data-act="stamp" title="Frame stamp on the video (Shift+F) — drag it to a corner or a side">${ICON.stamp}</button><button type="button" class="an-tool an-chev" data-act="stampset" title="Frame stamp settings">▾</button>
-        <button type="button" class="an-tool" data-act="hide" title="Hide / show drawings (Shift+H)">${ICON.eye}</button>
         <button type="button" class="an-tool" data-act="panel" title="Review notes panel (C)">${ICON.panel}</button>
         <button type="button" class="an-tool" data-act="help" title="Keyboard shortcuts (?)">${ICON.help}</button>
       </div>
@@ -1530,8 +1603,6 @@ export function createAnnotator(host){
     bar.querySelector("[data-act=clear]").onclick = () => clearShown();
     bar.querySelector("[data-act=shot]").onclick = () => screenshot(false);
     bar.querySelector("[data-act=region]").onclick = () => screenshot(true);
-    bar.querySelector("[data-act=onion]").onclick = () => { S.onion = !S.onion; paintBar(); paintVisibility(); };
-    bar.querySelector("[data-act=hide]").onclick = () => toggleHidden();
     bar.querySelector("[data-act=stamp]").onclick = () => toggleStamp();
     bar.querySelector("[data-act=stampset]").onclick = () => toggleStampPop();
     buildStampPop(lightEl, bar);
@@ -1545,14 +1616,10 @@ export function createAnnotator(host){
     if (!bar) return;
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
     bar.querySelectorAll("[data-act=shot], [data-act=region]").forEach((b) => { b.hidden = isBoard(); });  // no picture to capture on a board
-    bar.querySelector("[data-act=onion]").classList.toggle("on", S.onion);
-    bar.querySelector("[data-act=onion]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
     if (S.kind !== "video") closeStampPop();
-    const hide = bar.querySelector("[data-act=hide]");
-    hide.classList.toggle("on", S.hidden);
-    hide.innerHTML = S.hidden ? ICON.eyeOff : ICON.eye;
+    paintEye();
     bar.querySelector("[data-act=panel]").classList.toggle("on", S.panelOn);
   }
   function setTool(t){
@@ -1763,6 +1830,13 @@ export function createAnnotator(host){
         <button type="button" data-ex="pkg">Review file (.srev)…</button>
         <button type="button" data-ex="zip" title="A folder per note: its pictures (named by file and frame) and a text file with the note's text and its pictures' texts">Notes as ZIP (pictures + text)…</button>
         <button type="button" data-ex="text">Copy notes as text</button>
+        <div class="an-mseq" hidden>
+          <hr><div class="an-mlbl">Every clip in the sequence with notes</div>
+          <button type="button" data-exall="pdf" title="One PDF: a section per clip">PDF report, all clips…</button>
+          <button type="button" data-exall="zip" title="One ZIP: a folder per clip, then a folder per note">Notes as ZIP, all clips…</button>
+          <button type="button" data-exall="html" title="A web page per clip">Web pages, all clips…</button>
+          <button type="button" data-exall="pkg" title="A review file per clip">Review files (.srev), all clips…</button>
+        </div>
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
       </div>
@@ -1795,7 +1869,12 @@ export function createAnnotator(host){
     who.addEventListener("change", () => { try { host.putSetting("sight.reviewer", who.value.trim()); } catch {} });
     who.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter") || hotkey(e, "Escape")) who.blur(); });
     const menu = el.querySelector(".an-menu"), exBtn = el.querySelector("[data-act=export]");
-    exBtn.onclick = () => { menu.hidden = !menu.hidden; };
+    exBtn.onclick = () => {
+      menu.hidden = !menu.hidden;
+      // A sequence: the same exports for every clip of it that has notes (the host walks the clips).
+      if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard();
+    };
+    menu.querySelectorAll("[data-exall]").forEach((b) => { b.onclick = () => { menu.hidden = true; host.seqExport?.(b.dataset.exall); }; });
     host.registerAutoClose?.(menu, () => { menu.hidden = true; }, exBtn);
     menu.querySelectorAll("[data-ex]").forEach((b) => {
       b.onclick = () => {
@@ -1868,14 +1947,23 @@ export function createAnnotator(host){
     if (!S.panelOn) togglePanel(true);
     requestAnimationFrame(() => { const t = S.dictTa?.isConnected ? S.dictTa : S.ui?.querySelector(".an-input"); if (t) S.dict?.toggle(t); });
   }
+  // The panel of the mode in use: drawing → S.panelOn, just watching → S.readOn.
   function togglePanel(force){
-    S.panelOn = force ?? !S.panelOn;
-    writeJSON(panelKey, S.panelOn);
+    if (S.on){ S.panelOn = force ?? !S.panelOn; writeJSON(panelKey, S.panelOn); }
+    else if (readable()){
+      S.readOn = force ?? !S.readOn; writeJSON(readKey, S.readOn);
+      // Closing the reading panel lets go of the picked note: all the drawings show again.
+      if (!S.readOn && S.pinFocus){ S.pinFocus = null; paintVisibility(); }
+    }
     syncPanel();
   }
+  // (A host without a reading panel — the version compare, host.readPanel false — shows it only while drawing.)
+  const readable = () => host.readPanel !== false;
+  const panelShown = () => !!S.ui && supported() && (S.on ? S.panelOn : readable() && S.readOn);
   function syncPanel(){
-    const show = S.on && S.panelOn && !!S.ui;
-    if (S.ui) S.ui.hidden = !show;
+    const show = panelShown();
+    if (S.ui){ S.ui.hidden = !show; S.ui.classList.toggle("an-read", !S.on); }
+    paintBadge();
     S.light?.classList.toggle("an-panel-on", show);
     paintBar();
     paintBoardPanel();
@@ -1889,7 +1977,7 @@ export function createAnnotator(host){
     const b = isBoard();
     el.classList.toggle("an-board", b);
     el.querySelectorAll("[data-ex]:not([data-ex=text])").forEach((x) => { x.hidden = b; });
-    el.querySelector(".an-menu hr").hidden = b;
+    el.querySelector(".an-menu > hr").hidden = b;
   }
   // Drawings a new note picks up: every drawing not attached to a note yet, on any frame / view and from any
   // time — a note may hold drawings on several frames of a video or views of a 3D model (each keeps its own ctx),
@@ -1916,7 +2004,7 @@ export function createAnnotator(host){
     list.innerHTML = !all.length ? "" : !notes.length ? `<div class="an-hint"><p>No ${S.filter === "done" ? "resolved" : S.filter === "progress" ? "in-progress" : "open"} notes.</p></div>` : notes.map((n) => {
       const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
-      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<img src="/api/review/shots/${sid}" data-src="/api/review/shots/${sid}" data-shot="${sid}"${ct ? ` class="an-hascap" title="${esc(ct)}"` : ""} alt="" loading="lazy">`; }).join("");
+      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<span class="an-shotw${ct ? " an-hascap" : ""}" data-src="/api/review/shots/${sid}" data-shot="${sid}" title="${ct ? esc(ct) : "Screenshot — click to enlarge"}"><img src="/api/review/shots/${sid}" alt="" loading="lazy"></span>`; }).join("");
       const ctx = ctxLabel(noteCtx(n));
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
@@ -2007,6 +2095,7 @@ export function createAnnotator(host){
   }
   function notePreview(n){
     if (S.kind === "model3d") return view3dPreviews(n);
+    if (isBoard()) return boardPreview(n);
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
     const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
     if (S.kind !== "video") return previewBox(n, own, "");
@@ -2017,6 +2106,20 @@ export function createAnnotator(host){
   // squares, each cut to fill (as the phone app shows them), as many to a row as fit at the size
   // set by a right-drag up / down on the list — the library grid's thumbnail zoom (×0.9 per px, up =
   // bigger), kept with the settings ("sight.annotate.thumb").
+  // A board note's picture: the board rectangle it was written at (ctx.bv; an older note: its drawings' bounds)
+  // with its drawings in it, vector, over the board's colour. A click flies the camera there (flyToNote).
+  function boardPreview(n){
+    const own = [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === n.id && !it.data.reply);
+    let r = n.data.ctx?.bv;
+    if (!(r?.w > 0 && r?.h > 0)){
+      if (!own.length) return "";
+      let b = null;
+      for (const it of own){ const x = boundsOf(it); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x.slice(); }
+      const p = Math.max(20, 0.08 * Math.max(b[2] - b[0], b[3] - b[1]));
+      r = { x: b[0] - p, y: b[1] - p, w: b[2] - b[0] + 2 * p, h: b[3] - b[1] + 2 * p };
+    }
+    return `<div class="an-nprev an-bprev" data-bv="${esc(n.id)}" style="aspect-ratio:${r2(r.w)} / ${r2(r.h)}" title="Go to where this note was written"><svg viewBox="${r2(r.x)} ${r2(r.y)} ${r2(r.w)} ${r2(r.h)}" preserveAspectRatio="xMidYMid meet">${RC.svgMarkup(own, numOf)}</svg></div>`;
+  }
   const picGrid = (html) => html ? `<div class="an-pics">${html}</div>` : "";
   const THUMB = [40, 320, 62];  // min, max, default (px): four to a row in the panel
   const clampThumb = (n) => Math.round(Math.min(THUMB[1], Math.max(THUMB[0], Number(n) || THUMB[2])));
@@ -2317,7 +2420,7 @@ export function createAnnotator(host){
     });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
+    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
     if (!t){
       // A click on the empty list drops the picked note (as Esc does). Not when it ends a text selection
       // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
@@ -2389,6 +2492,12 @@ export function createAnnotator(host){
     }
     const card = t.closest(".an-note");
     // Another frame the note was drawn on: the note picked, the clip on that frame.
+    const bp = e.target.closest?.(".an-nprev[data-bv]");
+    if (card && bp){
+      // A board note's picture: the note picked, the camera flies to where it was written.
+      if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id); else flyToNote(card.dataset.id);
+      return;
+    }
     const pv = e.target.closest?.(".an-nprev[data-pt], .an-nprev[data-vk]");
     if (card && pv?.dataset.vk){
       // Another view the note was drawn from: the note picked, the camera on that view.
@@ -2472,7 +2581,13 @@ export function createAnnotator(host){
     if (c?.vk) goView(c.vk, c.v3d, c.explode);
     S.sel = new Set();
     renderSel(); renderProps(); renderPanel(); paintVisibility();
-    if (isBoard() && S.pinFocus === id) frameNote(id);
+    if (isBoard() && S.pinFocus === id) flyToNote(id);
+  }
+  // Board: back to where the note was written (ctx.bv), else to its drawings — gliding, not jumping.
+  function flyToNote(id){
+    const bv = S.items.get(id)?.data.ctx?.bv;
+    if (bv && bv.w > 0 && bv.h > 0) host.frameRect?.(bv.x, bv.y, bv.x + bv.w, bv.y + bv.h, { smooth: true, pad: 0 });
+    else frameNote(id);
   }
   // Board: the camera goes to the picked note's drawings (the host's frameRect moves the board view).
   function frameNote(id){
@@ -2482,7 +2597,7 @@ export function createAnnotator(host){
       const b = boundsOf(it);
       box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b.slice();
     }
-    if (box) host.frameRect?.(box[0], box[1], box[2], box[3]);
+    if (box) host.frameRect?.(box[0], box[1], box[2], box[3], { smooth: true });
   }
   function goView(vk, v3d, ex){
     const v = S.views.get(vk);
@@ -2908,6 +3023,7 @@ export function createAnnotator(host){
     }
     if (sig !== S.lastSig){
       S.lastSig = sig;
+      if (!S.on && S.layer && shownOff()){ syncViewBox(); paintVisibility(); }
       if (S.on){
         syncViewBox();
         paintVisibility();
@@ -2918,6 +3034,7 @@ export function createAnnotator(host){
       }
     }
     if (S.on){ paintPlate(); S.raf = requestAnimationFrame(tick); }
+    else if (followOff()) S.raf = requestAnimationFrame(tick);
   }
   function startTick(){ if (!S.raf) S.raf = requestAnimationFrame(tick); }
 
@@ -3046,7 +3163,7 @@ export function createAnnotator(host){
       S.light?.querySelector(".an-flash")?.classList.remove("go");
       const fl = S.light?.querySelector(".an-flash");
       if (fl){ void fl.offsetWidth; fl.classList.add("go"); }
-      if (!S.panelOn) togglePanel(true);
+      if (S.on && !S.panelOn) togglePanel(true);
       renderPending();
       toast("Screenshot added to the note");
     } catch (e){
@@ -3101,6 +3218,16 @@ export function createAnnotator(host){
   // Every picture also comes as {title, text, file}: which picture it is, its own text, and the file
   // name it gets in the ZIP / when downloaded from the page (RC.picFileName of the title).
   async function gatherReport(forPage, everyNote){
+    S.gathering = true;
+    try { return await gatherReport1(forPage, everyNote); } finally { S.gathering = false; }
+  }
+  // One export at a time: two would seek the same video under each other (and a sequence export switches clips).
+  function exportBusy(){
+    if (!S.gathering && !host.exportBusy?.()) return false;
+    toast("An export is already running", 2500);
+    return true;
+  }
+  async function gatherReport1(forPage, everyNote){
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
@@ -3201,7 +3328,7 @@ export function createAnnotator(host){
     };
   }
   async function exportPdf(){
-    if (!S.asset) return;
+    if (!S.asset || exportBusy()) return;
     await flush();
     toast("Building PDF…", 60000);
     try {
@@ -3214,7 +3341,7 @@ export function createAnnotator(host){
     }
   }
   async function exportHtml(){
-    if (!S.asset) return;
+    if (!S.asset || exportBusy()) return;
     await flush();
     toast("Building the web page…", 60000);
     try {
@@ -3227,7 +3354,7 @@ export function createAnnotator(host){
     }
   }
   async function exportZip(){
-    if (!S.asset) return;
+    if (!S.asset || exportBusy()) return;
     await flush();
     toast("Building the ZIP…", 60000);
     try {
@@ -3298,9 +3425,10 @@ export function createAnnotator(host){
     if (want === S.on) return true;
     S.on = want;
     if (!want){
-      closeHelp(); closeStampPop(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush();
+      closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush();
       // A board keeps its drawings on show with the mode off: no hover circle, no "hidden" left over from the bar.
-      if (isBoard()){ S.hover = null; S.hidden = false; }
+      S.hover = null;   // drawings stay on show (shownOff): no brush circle left over the picture
+      if (isBoard()) S.hidden = false;
     }
     S.light?.classList.toggle("an-on", S.on);
     paintAlt();
@@ -3320,8 +3448,21 @@ export function createAnnotator(host){
     startTick();
     return true;
   }
-  function toggleHidden(){ S.hidden = !S.hidden; paintBar(); paintVisibility(); renderSel(); toast(S.hidden ? "Drawings hidden" : "Drawings shown"); }
+  function toggleHidden(){ S.hidden = !S.hidden; paintBar(); paintBadge(); paintVisibility(); renderSel(); if (followOff()) startTick(); toast(S.hidden ? "Drawings hidden" : "Drawings shown"); }
+  // The notes button (index.html #notesBtn in the lightbox bar, #boardNotesBtn in the top bar for a board — host.notesBtn):
+  // opens / closes the panel of the mode in use; its badge counts the notes.
+  function paintNotesBtn(nb, n){
+    if (!nb) return;
+    nb.hidden = !supported() || host.notesBtnShown?.() === false;
+    nb.classList.toggle("on", panelShown());
+    nb.setAttribute("aria-pressed", panelShown() ? "true" : "false");
+    const nbad = nb.querySelector(".an-badge");
+    if (nbad){ nbad.textContent = n || ""; nbad.hidden = !n; }
+    if (!nb.dataset.wired){ nb.dataset.wired = "1"; nb.addEventListener("click", () => { if (S.asset && supported()) togglePanel(); }); }
+  }
   function paintBadge(){
+    paintEye();
+    if (host.notesBtn) paintNotesBtn(host.notesBtn(), [...S.items.values()].filter((it) => it.kind === "note").length);
     const b = S.light?.querySelector("#annoBtn");
     if (!b) return;
     b.classList.toggle("on", S.on);
@@ -3329,6 +3470,44 @@ export function createAnnotator(host){
     const n = [...S.items.values()].filter((it) => it.kind === "note").length;
     const badge = b.querySelector(".an-badge");
     if (badge){ badge.textContent = n || ""; badge.hidden = !n; }
+    paintNotesBtn(S.light.querySelector("#notesBtn"), n);
+  }
+  // The one eye (hide / show the drawings), in the top bar: index.html #drawEyeBtn in the lightbox bar, #boardEyeBtn for a
+  // board (host.eyeBtn). Shown when there are drawings: while drawing (any file), or while just watching where they show
+  // (shownOff: a picture / video; a board shows its drawings while watching and resets the eye when drawing ends).
+  function paintEye(){
+    const eye = host.eyeBtn ? host.eyeBtn() : S.light?.querySelector("#drawEyeBtn");
+    if (!eye) return;
+    // (While drawing, a hidden state carried over from another file shows even with nothing drawn yet: new strokes
+    // would vanish without a sign.)
+    eye.hidden = !S.asset || !supported() || !(hasDrawings() || (S.on && S.hidden)) || host.notesBtnShown?.() === false || !(S.on || (shownOff() && !isBoard()));
+    const vid = S.kind === "video", onion = vid && S.onion;
+    eye.innerHTML = S.hidden ? ICON.eyeOff : onion ? ICON.onion : ICON.eye;
+    eye.classList.toggle("off", !!S.hidden);
+    eye.classList.toggle("onion", onion);
+    eye.title = (S.hidden ? "Show" : "Hide") + " the drawings (Shift+H)"
+      + (vid ? ` · right-click / long-press: onion skin ${onion ? "off" : "on"} (drawings fade between annotated frames)` : "");
+    eye.setAttribute("aria-pressed", S.hidden ? "true" : "false");
+    if (eye.dataset.wired) return;
+    eye.dataset.wired = "1";
+    let lp = 0, longed = false, lastPT = "mouse";
+    eye.addEventListener("click", (e) => { if (longed){ longed = false; e.preventDefault(); return; } if (S.asset) toggleHidden(); });
+    // A touch / pen long-press is the timer's; Android Chrome and Windows pens also fire contextmenu for it — not twice.
+    eye.addEventListener("contextmenu", (e) => { e.preventDefault(); if (lastPT === "mouse") toggleOnion(); });
+    // (A pen's barrel button comes as button 2: a right-click like the mouse's, its contextmenu toggles, no timer.)
+    eye.addEventListener("pointerdown", (e) => { longed = false; lastPT = e.button === 2 ? "mouse" : e.pointerType || "mouse"; if (lastPT === "mouse") return; lp = setTimeout(() => { longed = true; toggleOnion(); }, 550); });
+    const cancel = () => clearTimeout(lp);
+    eye.addEventListener("pointerup", cancel); eye.addEventListener("pointercancel", cancel); eye.addEventListener("pointerleave", cancel);
+  }
+  // Onion skin: a way of viewing a video's drawings, not a tool — on the eye (right-click / long-press).
+  function toggleOnion(){
+    if (!S.asset || S.kind !== "video") return;
+    S.onion = !S.onion;
+    writeJSON("sight.annotate.onion", S.onion);
+    if (S.onion && S.hidden){ S.hidden = false; paintBar(); }   // asking for the ghosts means showing the drawings
+    paintBadge(); paintVisibility(); renderSel();
+    if (followOff()) startTick();   // a playing video's drawings follow again (the tick stopped while they were hidden)
+    toast(S.onion ? "Onion skin on — drawings fade between annotated frames" : "Onion skin off");
   }
   async function loadFps(){
     const a = S.asset;
@@ -3442,10 +3621,17 @@ export function createAnnotator(host){
       return true;
     }
     if (stampPop && !stampPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeStampPop(); return true; }
+    // An enlarged screenshot closes first (before deselect / pin / leaving the mode would eat the Esc).
+    if (S.shotView && hotkey(e, "Escape")){ e.preventDefault(); closeShotView(); return true; }
     const tag = e.target?.tagName;
     const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable;
     if (!S.on){
       if (typing) return false;
+      // The notes panel opens for reading without the drawing tools (C, or the notes button).
+      if (supported() && readable() && hotkey(e, "KeyC") && !e.repeat){ e.preventDefault(); togglePanel(); return true; }
+      if (S.pinFocus && hotkey(e, "Escape")){ e.preventDefault(); S.pinFocus = null; paintVisibility(); renderPanel(); return true; }
+      // The eye works while just watching too (drawings are shown on playback).
+      if (shownOff() && !isBoard() && hasDrawings() && hotkey(e, "Shift+KeyH")){ e.preventDefault(); if (!e.repeat) toggleHidden(); return true; }
       // Frame stepping works in any video, annotating or not.
       if (S.kind === "video") return runHotkeys(e, keyTable().filter((r) => r[3] === "Video"));
       return false;
@@ -3567,6 +3753,10 @@ export function createAnnotator(host){
     if (view.isVid){
       const v = view.media;
       v.addEventListener("loadedmetadata", () => renderMarks());
+      // Watching with the mode off: playing / seeking moves the frame, the drawings follow (followOff).
+      const wake = () => { if (!S.on && S.b2?.media === v && shownOff()){ S.lastSig = ""; startTick(); } };
+      v.addEventListener("play", wake); v.addEventListener("seeked", wake);
+      v.addEventListener("pause", wake); v.addEventListener("ended", wake);   // the frame it stopped on
       v.addEventListener("durationchange", () => renderMarks());
     }
     renderAll();
@@ -3576,7 +3766,7 @@ export function createAnnotator(host){
   }
   // The viewer's view moved. A board keeps its drawings on show with the mode off, so its layer follows too.
   function viewChanged(){
-    if (!S.layer || !(S.on || S.b2?.board)) return;
+    if (!S.layer || !(S.on || shownOff())) return;
     syncViewBox();
     if (S.on){ renderSel(); if (S.edit) S.edit.place(); }
   }
@@ -3599,6 +3789,13 @@ export function createAnnotator(host){
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
     marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),
     loading: () => !!S.loading, // the open asset's rows are still being fetched (its marks are not known yet)
+    // For the sequence export (index.html seqExportAll): which file is bound, is it ready to be pictured, its report.
+    assetId: () => S.asset?.id || null,
+    busy: () => !!S.gathering,
+    ready: () => !!S.asset && !S.loading && !!(S.b2 || S.b3),
+    fpsKnown: () => S.kind !== "video" || !!S.fpsKnown,
+    report: async (kind) => { await flush(); return gatherReport(kind === "html", kind === "zip"); },
+    toast: (text, ms) => toast(text, ms),
     // Re-read the open file's rows (edited elsewhere); undo / redo would write the old copies back over them.
     reload: () => {
       const a = S.asset;
@@ -3622,7 +3819,6 @@ function injectStyles(){
 .an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .an-layer[hidden] { display: none; }
 .an-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.an-doc g.ghost { opacity: .22; }
 .an-active { touch-action: none; }
 .an-ui .an-selbox { fill: none; stroke: #4c9aff; stroke-width: 1; stroke-dasharray: 3 3; }
 .an-ui .an-selall { fill: none; stroke: #4c9aff; stroke-width: 1; }
@@ -3708,6 +3904,8 @@ function injectStyles(){
 .an-menu[hidden] { display: none; }
 .an-menu button { text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--fg); font-size: 12px; }
 .an-menu button:hover { background: var(--surface-2); }
+.an-mlbl { padding: 4px 10px 2px; font-size: 10.5px; color: var(--muted); }
+.an-mseq[hidden] { display: none; }
 .an-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 2px; }
 .an-rs { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; color: var(--subtle); font-size: 11px; }
 .an-rs .an-seg { flex: 1; display: flex; }
@@ -3736,7 +3934,8 @@ function injectStyles(){
 .an-nprev { position: relative; width: 100%; margin: 6px 0 2px; border-radius: 6px; overflow: hidden; background: #000; }
 .an-nprev.sm { margin-top: 4px; }
 .an-nprev[data-pt] { display: inline-block; width: calc(50% - 3px); margin-right: 6px; vertical-align: top; cursor: pointer; }
-.an-nprev[data-vk] { cursor: pointer; }
+.an-nprev[data-vk], .an-nprev[data-bv] { cursor: pointer; }
+.an-nprev.an-bprev { background: var(--canvas-bg, #1b1c20); background-image: radial-gradient(rgb(255 255 255 / .09) 1px, transparent 1px); background-size: 12px 12px; }
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-nprev .an-fno { position: absolute; left: 3px; top: 3px; z-index: 1; padding: 0 4px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; font: 600 10px/15px system-ui, sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -3789,6 +3988,7 @@ function injectStyles(){
 .an-rt { white-space: pre-wrap; word-break: break-word; line-height: 1.4; user-select: text; }
 .an-redit { margin-top: 6px; min-height: 30px; }
 .an-compose { border-top: 1px solid var(--border); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.an-panel.an-read .an-compose { display: none; }
 .an-pend { display: flex; gap: 4px; flex-wrap: wrap; }
 .an-pend[hidden] { display: none; }
 .an-pshot { position: relative; }
@@ -3809,7 +4009,12 @@ function injectStyles(){
 .an-cap { font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; padding: 3px 7px; border-radius: 5px; background: rgb(255 255 255 / .05); border-left: 2px solid rgb(255 255 255 / .25); cursor: pointer; user-select: text; }
 .an-cap b { font-weight: 600; opacity: .7; margin-right: 6px; font-variant-numeric: tabular-nums; }
 .an-nprev.an-hascap::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 15px; height: 15px; border-radius: 4px; background: rgb(0 0 0 / .65) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M5 7h14M5 12h14M5 17h9'/%3E%3C/svg%3E") center / 11px no-repeat; pointer-events: none; }
-.an-pics > img.an-hascap { outline: 2px solid rgb(255 255 255 / .55); outline-offset: -2px; }
+.an-pics > img.an-hascap, .an-pics > .an-shotw.an-hascap { outline: 2px solid rgb(255 255 255 / .55); outline-offset: -2px; }
+/* A screenshot (a captured picture) among the note's drawing previews: a camera corner badge and a dashed edge. */
+.an-pics > .an-shotw { position: relative; display: block; aspect-ratio: 1 / 1; border-radius: 5px; overflow: hidden; border: 1px dashed rgb(255 255 255 / .35); cursor: zoom-in; }
+.an-shotw img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.an-shotw::before { content: ""; position: absolute; left: 3px; top: 3px; width: 15px; height: 15px; border-radius: 4px; background: rgb(0 0 0 / .65) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'%3E%3Cpath d='M4 8h3l2-3h6l2 3h3v11H4z'/%3E%3Ccircle cx='12' cy='13' r='3.2'/%3E%3C/svg%3E") center / 11px no-repeat; pointer-events: none; }
+.an-shotw.an-hascap::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 15px; height: 15px; border-radius: 4px; background: rgb(0 0 0 / .65) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M5 7h14M5 12h14M5 17h9'/%3E%3C/svg%3E") center / 11px no-repeat; pointer-events: none; }
 .an-shotview img { max-width: 92%; max-height: 92%; border-radius: 6px; box-shadow: 0 20px 60px rgb(0 0 0 / .6); }
 .vtrack .an-marks { position: absolute; inset: 0; pointer-events: none; }
 .an-mk { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #ffd60a; box-shadow: 0 0 0 1px rgb(0 0 0 / .5); pointer-events: auto; cursor: pointer; }

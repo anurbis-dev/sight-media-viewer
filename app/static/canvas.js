@@ -164,17 +164,19 @@ function fullResUrl(a){
   return "";
 }
 
-export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled, onContextMenu, annot }){
+// annButton: the host's toggle for annotating the board (index.html puts it in the top bar, where the lightbox's
+// pen is: one place for every view). Without it the board gets its own button in the corner.
+export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled, onContextMenu, annot, annButton }){
   injectStyles();
   const zoomSettings = getZoomSettings || (() => ({ zoomAxis: "y", zoomSpeed: 1, zoomInvert: false }));
 
   mount.innerHTML = `<div class="canvas-viewport" data-el="viewport"><div class="canvas-world" data-el="world"></div><div class="cframe" data-el="frame" hidden><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div></div><div class="ccrop" data-el="crop" hidden><i data-edge="l"></i><i data-edge="r"></i><i data-edge="t"></i><i data-edge="b"></i><i data-edge="tl"></i><i data-edge="tr"></i><i data-edge="bl"></i><i data-edge="br"></i></div></div>`
-    + (annot ? `<button type="button" class="canvas-annbtn" data-el="annbtn" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>` : "");
+    + (annot && !annButton ? `<button type="button" class="canvas-annbtn" data-el="annbtn" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>` : "");
   const viewportEl = mount.querySelector('[data-el="viewport"]');
   const worldEl = mount.querySelector('[data-el="world"]');
   const frameEl = mount.querySelector('[data-el="frame"]');
   const cropEl = mount.querySelector('[data-el="crop"]');
-  const annBtn = mount.querySelector('[data-el="annbtn"]');
+  const annBtn = annot ? annButton || mount.querySelector('[data-el="annbtn"]') : null;
 
   let isOpen = false;
   let boardId = null;
@@ -603,18 +605,54 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     if (box) frameRect(...box);
   }
   // Fit a world rectangle into the viewport (items, or a note's drawings for the annotator).
-  function frameRect(minX, minY, maxX, maxY){
-    const r = viewportEl.getBoundingClientRect();
-    const pad = 48;
-    // The annotator's notes panel overlays the right edge of the view: fit into the strip left of it.
+  // The annotator's notes panel overlays the right edge of the view: the visible strip is left of it.
+  function stripWidth(r){
     const panel = mount.querySelector(":scope > .an-panel");
-    const width = r.width - (panel && !panel.hidden ? Math.min(panel.offsetWidth, r.width - 120) : 0);
-    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
-    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((width - pad * 2) / bw, (r.height - pad * 2) / bh)));
-    vx = width / 2 - (minX + bw / 2) * zoom;
-    vy = r.height / 2 - (minY + bh / 2) * zoom;
-    worldTransform();
+    return r.width - (panel && !panel.hidden ? Math.min(panel.offsetWidth, r.width - 120) : 0);
   }
+  // opts.pad (screen px around the rectangle, default 48); opts.smooth: fly there (flyTo) instead of a jump.
+  function frameRect(minX, minY, maxX, maxY, opts = {}){
+    const r = viewportEl.getBoundingClientRect();
+    const pad = opts.pad ?? 48;
+    const width = stripWidth(r);
+    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((width - pad * 2) / bw, (r.height - pad * 2) / bh)));
+    const tx = width / 2 - (minX + bw / 2) * z, ty = r.height / 2 - (minY + bh / 2) * z;
+    if (opts.smooth) flyTo(tx, ty, z);
+    else { stopFly(); zoom = z; vx = tx; vy = ty; worldTransform(); }
+  }
+  // The part of the board on screen now (world units, the strip left of the notes panel): a board note keeps it
+  // (annotate.js ctx.bv) to bring the camera back there.
+  function viewRect(){
+    const r = viewportEl.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const rd = (v) => Math.round(v * 10) / 10;
+    return { x: rd(-vx / zoom), y: rd(-vy / zoom), w: rd(stripWidth(r) / zoom), h: rd(r.height / zoom) };
+  }
+  // A camera move with a smooth start and a smooth stop (ease-in-out): the centre glides, the zoom changes by
+  // equal ratios (log scale), so a far zoom-out-and-in reads as one motion. Any wheel / press on the board stops it.
+  let fly = 0;
+  function stopFly(){ if (fly){ cancelAnimationFrame(fly); fly = 0; } }
+  function flyTo(tx, ty, tz){
+    stopFly();
+    const r = viewportEl.getBoundingClientRect(), w = stripWidth(r), h = r.height;
+    // Interpolate the world point at the strip's centre and the zoom, then turn back into vx / vy.
+    const c0 = { x: (w / 2 - vx) / zoom, y: (h / 2 - vy) / zoom }, c1 = { x: (w / 2 - tx) / tz, y: (h / 2 - ty) / tz };
+    const z0 = zoom, ms = Math.min(1100, Math.max(450, 350 + 120 * Math.abs(Math.log2(tz / z0)) + 0.25 * Math.hypot((c1.x - c0.x) * tz, (c1.y - c0.y) * tz) / 4));
+    const t0 = performance.now();
+    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms), k = ease(t);
+      zoom = z0 * Math.pow(tz / z0, k);
+      const cx = c0.x + (c1.x - c0.x) * k, cy = c0.y + (c1.y - c0.y) * k;
+      vx = w / 2 - cx * zoom; vy = h / 2 - cy * zoom;
+      worldTransform();
+      fly = t < 1 ? requestAnimationFrame(step) : 0;
+    };
+    fly = requestAnimationFrame(step);
+  }
+  viewportEl.addEventListener("pointerdown", stopFly, true);
+  viewportEl.addEventListener("wheel", stopFly, { capture: true, passive: true });
 
   // ---- persistence -------------------------------------------------------------------------
   let saveTimer = 0;
@@ -1421,6 +1459,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     }
   }
   async function open(id){
+    stopFly();   // a glide still running would write the old board's camera over this one
     await persistCurrent();
     isOpen = true;
     boardId = id;
@@ -1457,6 +1496,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     syncAnnotUi();
   }
   function close(){
+    stopFly();   // a glide still running would write the old board's camera over this one
     isOpen = false;
     updateFrame();
     if (annot?.isOn()) annot.toggle(false);  // saves what is pending; the mode is not carried out of the board view
@@ -1524,6 +1564,6 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   return {
     open, close, selectAll, assetOf, selectedAssetIds, refreshMissing,
     // For index.html and the annotator's host (see createAnnotator's `board` host): camera hook, mode state.
-    frameRect, syncAnnotUi, annotating: () => !!annot?.isOn(), annotModal: () => !!annot?.modal(),
+    frameRect, viewRect, syncAnnotUi, annotating: () => !!annot?.isOn(), annotModal: () => !!annot?.modal(),
   };
 }

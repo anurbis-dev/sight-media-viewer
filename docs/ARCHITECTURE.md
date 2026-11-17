@@ -309,7 +309,7 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
   exports (those are per asset, FORMAT.md).
   - *Hosting (canvas.js):* `annot.mount(canvasView)` builds the bar, panel and toast inside the view (the view
     is `position: relative; isolation: isolate`; the panel overlays the right edge, `--an-pw`); the toggle
-    button `.canvas-annbtn` (top left) and **Shift+A** (`KEYMAP`) switch the mode. `open(id)` calls
+    button `#boardAnnoBtn` in the top bar (index.html, passed as `annButton`; `.canvas-annbtn` only when a host passes none) and **Shift+A** (`KEYMAP`) switch the mode. `open(id)` calls
     `annot.setAsset({id, kind: "board", name})` at once (before the `/full` fetch, so the previous board's
     drawings never show over the new one) and, once loaded, `annot.bind2d({wrap: viewportEl, media: null,
     isVid: false, board: true, geom: () => ({x0: vx, y0: vy, s: zoom, w, h})})` (w/h = the visible world
@@ -351,6 +351,34 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 ## Annotations / review (lightbox)
 
 (The same editor also runs on Canvas boards, scope `board` — see "Board annotations" under Canvas.)
+
+**Notes panel vs drawing** — two modes: `S.on` (drawing: tools + the panel per `S.panelOn`) and reading
+(`S.readOn`, `sight.annotate.read[.board]`): the panel alone, `.an-read` hides the composer; a click on a note /
+its picture still picks it and goes to its frame / view / board place. `togglePanel` flips the flag of the mode in
+use; the notes button (`#notesBtn` in the lightbox bar, `#boardNotesBtn` in the top bar via `host.notesBtn`) and
+`C` open it in either mode. With the mode off a picked note narrows the drawings to its own (`modeAllows`).
+
+**Board notes' place** — a board note's `ctx.bv` (canvas.js `viewRect()`: the rectangle left of the panel); its
+card picture (`boardPreview`) shows that rectangle with its drawings; a click → `flyToNote` → `frameRect(…,
+{smooth, pad: 0})` → canvas.js `flyTo` (ease-in-out cubic, zoom on a log scale, stopped by any press / wheel).
+Older notes without `bv` fall back to their drawings' bounds.
+
+**Drawings while just watching** — `shownOff()` (annotate.js): a board, or a 2D picture / video, keeps its layer
+on show with the mode off (not editable, `pointer-events: none`); `modeAllows` shows every drawing of the frame
+then (no compose / clean-picture / pin narrowing, except on a board), the tick keeps running while there are
+drawings so a video's follow its frame. `S.hidden` is the one hide flag: the toolbar eye, `#drawEyeBtn` in the
+lightbox bar / `#boardEyeBtn` for a board (`host.eyeBtn`) — the only eye since 0.74 (none in the toolbar), shown
+when there are drawings, while drawing or while watching where they show (`paintEye`) — and Shift+H.
+
+**Onion skin** — `onionFade()`: video, while drawing; the drawings of the last annotated span before the frame fade
+out and the next span's fade in, linearly over the gap (1 s at the clip's ends); applied as inline opacity in
+`paintVisibility` (no `.ghost` class any more).
+
+**Sequence export** — index.html `seqExportAll(kind)`: finds the clips with notes (`/api/annotations`), visits
+each (`seqGo` + `seqWaitClip`: clip on screen, annotator bound and loaded, fps known), takes `annot.report(kind)`
+(= `gatherReport`), then POSTs `/api/review/export/pdf-all` | `zip-all` (`review.build_pdf_all` merges per-clip
+PDFs and numbers the pages through; `build_zip_all` puts each clip under "NN name/") or one `/export/html` per
+clip; `.srev` per clip needs no pictures. Afterwards `seqGo` back to the clip / time it started from.
 
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
@@ -638,12 +666,14 @@ re-read when the player leaves them. `jumpMarker` with no marker left asks `host
 only for those without a picture — never for all (`start_playback_copy` transcodes anything without a copy).
 Touch selection mode (`state.touchSelect`, long-press) — see RECENT 0.66.0.
 
-**Dictation engines** (`dictation.js`): `webspeech` (browser) and `groq` (Whisper, auto language) — chosen by the UI
-setting `sight.dictation.engine` (Settings → Dictation; annotate.js passes `getEngine`). `groq` records one phrase
-per MediaRecorder (an AnalyserNode RMS gate: 0.7 s of quiet after ≥ 0.25 s of voice, or 20 s) and POSTs it to
-`/api/stt/transcribe?lang=xx` (no `lang` = detect). Server: `app/stt.py` `GroqStt` — the key only in
-`<SIGHT_HOME>/stt.json` (0600, never in settings.json / page), stdlib multipart POST to Groq
-`whisper-large-v3-turbo`; errors come back as `{error: no-key|bad-key|rate|offline|failed}` → the mic's toasts.
+**Dictation engines** (`dictation.js`): `webspeech` (browser, default) and `service` (the user's own
+OpenAI-compatible speech-to-text endpoint) — chosen by the UI setting `sight.dictation.engine` (Settings → Dictation;
+annotate.js passes `getEngine`). `service` records one phrase per MediaRecorder (an AnalyserNode RMS gate: 0.7 s of
+quiet after ≥ 0.25 s of voice, or 20 s) and POSTs it to `/api/stt/transcribe?lang=xx` (no `lang` = detect).
+Server: `app/stt.py` `SttService` — `{url, model, key}` only in `<SIGHT_HOME>/stt.json` (0600; the key never goes
+back to the page; a new URL drops the key), set by `PUT /api/stt/config` (JSON only), stdlib multipart POST
+(`file`, `model`, `language`?, Bearer key if any, no redirects); errors → `{error: not-set|bad-key|rate|offline|failed}`
+→ the mic's toasts. Each mic has a language chip (tap = the other of the two recent languages, Alt+Shift+M).
 
 **Annotating in compare** (index.html `cmpAnnot`) — a second `createAnnotator` instance mounted on the compare
 overlay (`host.onOpen` → `mount(C.el)`); compare reports the selected layer's viewer after every rebuild /
