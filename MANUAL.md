@@ -496,6 +496,9 @@
     (everything if nothing is selected), `A` frames everything. Pictures are shown from their small
     library thumbnails so large boards stay fast; zoom in on one and it switches to the original file
     (JPEG, PNG, GIF, WebP, BMP, AVIF, PSD) a moment later, and back to the thumbnail when you zoom out.
+  - **Missing files:** if a file is gone (its folder was removed from Sight, or the file was deleted / moved
+    away) its card turns into a **Missing** placeholder showing the file name and the path it had (hover for
+    the full path). Add the folder again and the pictures come back by themselves, no reload needed.
   - **Select:** click, Shift/Ctrl-click, or drag a box (plain drag replaces the selection, Ctrl-drag
     toggles, Ctrl+Shift-drag adds — same as in the library, and it also works when you start over an
     item). `Ctrl+A` selects all in the pane you last used. `Esc` clears.
@@ -517,6 +520,22 @@
     `Ctrl+Alt+←/→/↑/↓` normalize height / width / size / scale; `Ctrl+Alt+Shift+↑/↓` distribute in a
     row / column; `Ctrl+P` arrange optimally to fit the view; `Ctrl+Alt+N/A/O/D/R` arrange by name /
     addition / layer order / path / randomly (press again to reverse); `Ctrl+Alt+S` stack.
+  - **Draw and write notes on a board:** the pencil button at the top left of the board (or
+    **Shift+A**; Shift+A or Esc leaves again) switches on the same tools as the full-screen viewer: brush,
+    pencil, highlighter, eraser, line, arrow, rectangle, ellipse, text, numbered pin, select / transform,
+    undo / redo and the styles bar (`B P M E L W R O T N V`, `Ctrl+Z` — press `?` in the mode for the list).
+    Drawings are **free on the board** (they do not belong to items and do not move with them), at any
+    zoom. While the mode is on, a drag draws (items and their frame do not react; one finger draws on a
+    touch screen) and the keys go to the tools, so `X` / `Delete` act on the selected drawing, never on
+    items. Panning and zooming still work as usual: wheel, middle-drag, Alt+drag, Ctrl+wheel / right-drag
+    — and **two fingers** pan and pinch-zoom the board (also with the mode off). `F` / `A` frame the board
+    (drawings included). With the mode off the drawings stay visible and the board behaves exactly as
+    before. The panel button in the bar opens the **notes panel** (starts closed on a board): type a note
+    and press Enter — the drawings made since the last note are attached to it; a note has replies, an
+    Open / In progress / Resolved state and a delete button as in the viewer. Clicking a note card shows
+    only its drawings and moves the camera to them (click it again to show everything). A board has no
+    picture, so there are no screenshots, review state, versions or export formats here — only
+    *Copy notes as text*. Deleting a board deletes its drawings and notes.
   - Boards, their items, crops and the camera position are saved automatically.
 - **Excluding folders** — the × next to a subfolder removes it from the library; everything
   under it goes with it, so its subfolders aren't listed while it's excluded.

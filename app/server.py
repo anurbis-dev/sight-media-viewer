@@ -915,9 +915,11 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return {"ok": True}
 
     @app.get("/api/annotations")
-    def annotations_for_asset(asset_id: str = "") -> list[dict]:
+    def annotations_for_asset(asset_id: str = "", board_id: str = "") -> list[dict]:
+        if board_id:
+            return lib.annotations_for_board(board_id)
         if not asset_id:
-            raise HTTPException(400, "asset_id required")
+            raise HTTPException(400, "asset_id or board_id required")
         return lib.annotations_for_asset(asset_id)
 
     @app.post("/api/annotations")

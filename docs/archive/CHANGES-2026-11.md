@@ -2,6 +2,133 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.54.0 — 2026-11-16 — Desktop: Graphite theme (compact, Inter), captions under thumbnails, resizable side panels
+- **What:** new default look *Graphite*, picked from five variants on a mock-up stand: Inter 13 px, 26 px menu rows,
+  30 px controls, sidebar 208 / inspector 260 px, one blue accent, frameless cards with name + one info line
+  under the thumbnail, no serif wordmark. Sidebar section headers sit on a tinted band so they no longer merge
+  with their rows (user feedback). The sidebar's and inspector's inner edges are drag handles (mouse, pen, touch);
+  double-click resets; widths are remembered. Settings gets *Accent* (colour) and *Captions* (under / on the
+  thumbnail); presets *Graphite* (was *Dark*) and *Classic* (the old sizes and colours).
+- **Where:** `app/static/index.html` (`:root` tokens, shell CSS, `.sec`, `.card.capb`, `.panel-handle`, touch
+  media block; `DEFAULT_THEME`, `CLASSIC_LOOK`, `BUILTIN_THEMES`, `migrateTheme`, `applyUi`, `capMetrics`,
+  `layout`, card render, `renderOptions`, `PANEL_W` / `clampPanel` / `resizePanel` / `applyPanelWidths`,
+  `bindSplitDrag` pixel mode `o.move`), `app/static/defaults.json` (theme + tileSize 160),
+  `app/static/vendor/fonts.css` + `vendor/fonts/inter-*.woff2` (Inter variable 5.1.0, OFL, latin + cyrillic),
+  ARCHITECTURE (theme, pane helpers), MANUAL (Look, Panel widths).
+- **Notes:**
+  - `accent` is new and separate from `border` (before, `--accent` was the frame colour). Anything without
+    `accent` (old saved themes, old user presets) falls back to `border` — keep that fallback.
+  - `capMetrics()` is the only source of the caption block height: CSS reads `--cap-n-lh / --cap-j-lh`,
+    `layout()` reserves `L.meta` in grid and masonry. Change one without the other and rows overlap.
+  - Migration: a saved theme holds every key, so new defaults would never show. Once (`themeRev` < 2), keys
+    still equal to the 0.53 defaults (`CLASSIC_LOOK`) are dropped and get the new defaults; customised keys
+    stay (a custom frame colour keeps its frame width / active colour). Written back after boot. Themes
+    saved by builds with other defaults than 0.53 keep those values (treated as customised).
+  - Dragging a panel edge does not rescale the tile (the `#mainBody` observer skips while `panelResizing`);
+    window resizes still do, as before. Drags keep the library area >= 320 px; a window shrunk later can
+    still squeeze it. Narrow screens (< 1024 px) ignore the widths (drawers) and hide the handles.
+  - Touch screens and the narrow-screen drawers keep 40 px controls / 36 px rows whatever the theme says
+    (media block placed after the base rules so it wins the cascade).
+  - Not done: the phone app and the HTML review page keep their own look; mono figures and file-type badges
+    from the mock-up were left out. *Classic* does not bring back the serif headings or the grey active row.
+  - Review (fresh agent, ran the app in Playwright): caption heights verified exact across 22 grid / masonry
+    combinations, init order and presets fine. Found: panel drags rescaled the tile on every move (clamped to
+    the list mode, zoom drifted for good) → tile kept during drags + 320 px main-area minimum; touch targets
+    shrank to 26 / 30 px on phones / drawers → touch media block; migration dropped the frame of a custom frame
+    colour → kept; Classic accent not the old one → fixed; version tag hidden at narrow widths → ellipsis;
+    touch hit strip covered the panel's own buttons → moved outward. Left: an empty info line leaves a small gap.
+    Second pass (same reviewer): all fixes confirmed (tile drift and touch sizes re-run); found the outward touch
+    strip now covered the first card column → strip limited to 12 px outside (the grid padding), 6 px inside. The same reviewer
+    confirmed it by tapping in Playwright, nothing new. Keep the outer reach <= `--space-4` (grid padding).
+
+## 0.53.2 — 2026-11-16 — Grid: thumbnails of a re-added folder get their size (masonry) and show after a restart
+- **What:** in a source folder that had been removed and added again (or whose files changed while Sight was
+  closed), masonry drew every card square and, after a restart, part of the thumbnails stayed placeholders.
+  Both fixed; libraries already affected are repaired once on the first start.
+- **Where:** `app/library.py` — `thumb_path` (trusted files only) / new `_thumb_file`, `prioritize`, `_make_thumb`,
+  `remove_source`, `_migrate_asset`, `psd_composite`; new one-time `_untrust_dimless_thumbs` (marker
+  `thumbs/trust_v1`); `_load_legacy_thumb_cache` removed. ARCHITECTURE (thumbnail trust).
+- **Notes:** root cause: `remove_source` deletes rows but leaves thumbnail files; ids are path hashes, so a re-added
+  folder's new rows (no width/height, `has_thumb=0`) met the old files. `prioritize` / `thumb_path` / the legacy
+  glob adopted them silently — no `thumb` event (the client kept its placeholder until the grid re-read the item;
+  after a restart the background glob had not run yet when the first page was listed) and no size (masonry falls
+  back to square). Now a file the row does not know is an orphan: `_make_thumb` deletes it and renders again (once
+  per asset, on screen), which stores the size and publishes the event. The repair untrusts image / video rows with
+  `has_thumb=1` and no size (only adopted files can be like that); they re-render as they come on screen. The catch-up
+  scan's `has_thumb=0` for a changed file (which left the stale file on disk) is covered by the same rule. Model
+  thumbnails (client-rendered) are never deleted by `_make_thumb`. Very old libraries whose rows predate `has_thumb`
+  re-render their thumbnails on demand (the legacy glob that adopted them is gone). Orphan files of a removed source
+  are still not deleted from disk (deliberately: a delete in the background could race a re-add).
+  Checked with a script (add → remove → add again → restart, and the repair) — old code: no size, no events; new: sized, 4/4 events.
+  Review (fresh agent) found: repair limited to image / video (PSD, PDF, text, font, audio cards are sized by masonry
+  too) → now every kind but `model3d`; `psd_composite`'s fallback marked a thumbnail without a `thumb` event → it now
+  runs `_make_thumb` (under `_inflight`); a `remove_source` during a render could leave the id trusted → `_make_thumb`
+  forgets it when its UPDATE hits no row; unguarded orphan unlink (Windows, file held open) → guarded; boards ask
+  `/api/thumb` without the grid's event and got 202 for orphans → GET serves an untrusted file `no-store` while it
+  re-renders (`thumb_file()`, public). Left: a sizeless video whose re-render now fails loses its old thumbnail (rare).
+  Second pass (same reviewer): fixes 1–3 confirmed; 4+5 together let an orphan held open on Windows (by that very
+  GET) survive a failed render and be trusted with no size → `_make_thumb` trusts a file only with a size when an
+  orphan could not be deleted, and the GET reads the untrusted file whole (`Response`) instead of streaming it open.
+  The same reviewer confirmed both, nothing new found; the script and unit tests pass after them.
+
+## 0.53.1 — 2026-11-16 — Phone: the gallery button is back (two open buttons again)
+- **What:** (phone home) two open buttons again, as before 0.51.0: *Photo or video* (the gallery) and *Open a
+  file…* (Files: 3D models with textures, `.srev`, any media) — big on an empty home, two icons in the bar once
+  there are reviews.
+- **Where:** `mobile/js/app.js` `renderHome` (the pre-0.51.0 code restored from git, comment and subtitle updated),
+  `mobile/index.html` (`.bar .mini .ib`, two-column `.opens`), MANUAL.
+- **Notes:** why two: Android opens its photo picker only for `accept` limited to `image/*` / `video/*`; an input
+  with no `accept` (which 3D and `.srev` need) gets Camera / Camcorder / Files and no gallery — a page cannot add
+  a gallery item to that menu. iOS shows its photo library either way. The 0.51.0 entry's "the OS offers photo
+  library, camera and Files" was true on iOS only. The gallery button takes one file (`multiple` off, as before);
+  `test_pwa`'s `openButtons == 1` counts `label.pick-file` only, still one.
+  Review (fresh agent): no code bugs (restore matches the pre-0.51.0 code, tests' selectors / counts hold); found
+  ARCHITECTURE's "Home open button" still describing the single button — rewritten; the same reviewer confirmed the fix.
+
+## 0.53.0 — 2026-11-15 — 3D: USD in the lightbox + USD animation, splats on the phone, notes' look on the phone; phone UV sets, background, grid cells
+- **What:** (Sight) the lightbox opens `.usd` / `.usda` / `.usdc`, a `.usdz` without usd-core, and plays **USD
+  animation** (moving transforms, skeletons) — an animated `.usdz` is read in the browser instead of the server's
+  still conversion. The floor grid's colours follow the backdrop. (phone) USD animation plays too; **Gaussian
+  splats** open (`.splat` / `.spz` / `.ksplat` / `.sog` / splat `.ply`) with notes on views as in Sight; opening a
+  note shows the **shading and light it was written with** (Sight's `v3d`; the phone's notes carry one Sight
+  restores). The UV view has no note plate: the UV set is named at the top, a swipe sideways shows the mesh's other
+  sets. New Background icon (swatches + colour picker), a smaller grid with round cells and a *Cell* slider, grid
+  colours from the background.
+- **Where:** `model3d-core.js` (`parseUsd`, `usdAsSight` animated layout, `SPLAT_*` / `splatHome`, `gridColors` /
+  `tintGrid` / `niceStep` / `modelGrid`); `index.html` (`loadUsd`, `.usdz` fallback, `makeModelManager().modify`,
+  `fetchBufferWithProgress` error `status`, `cloneModel` root skeleton, shared splat constants, `syncRig` tint);
+  `usdz_convert.py` (`_stage_animated`, `_root_is_crate`, `convert(…, animated_out)`), `library.py` (`.usd*` in
+  MODEL_EXT, `.anim` marker, `usdz_is_animated`, `USDZ_CONVERTER_VERSION` 3), `server.py` (409), `fileinfo.py`
+  (`_usd`); phone `model3d.js` (`isSplat`, `createSplatViewer`, `setBg` / `setGridCell`, `uvPicture` set),
+  `app.js` (`await V.still`, `goView(vk, look)` / `applyNoteLook` / `noteLook`, note `ctx.v3d`, `showUv`, `viewer`
+  title mode, Background / Cell rows, `turnB`), `model.js` (`lookOfV3d`, `v3dOfLook`, `views3d` v3d), `media.js`,
+  `index.html`, `tools/build_pwa.py` (Spark + Pass.js). Tests: `fixtures/make_anim_usd.py` (+ `anim.usda`,
+  `anim_v001.usdz`, `skel.usda`), `fixtures_3d.make_splat` / `make_splat_ply`, lift GLB with two UV sets,
+  `test_usdz_convert.py`, `pwa_3d_formats.cjs`, `pwa_3d_tools.cjs`, `pwa_unit.cjs`. Docs: ARCHITECTURE, FORMAT
+  (phone v3d), MANUAL, PLAN-mobile stage 4 (its "not done" list is done).
+- **Notes:** an animated USD keeps its hierarchy (each mesh split in place, its parts before its children), so mesh
+  order matches the still layout but the explode rig differs from the server conversion's flat one. The server
+  calls a stage animated only for what three's USDLoader makes clips of (SkelAnimation; translate / orient /
+  rotateXYZ / scale; `xformOp:transform*` only in a binary root layer — the loader's text parser gives it none);
+  left: animation in a referenced layer of another format may still disagree. Standalone USD layers find textures
+  by base name via `/api/model-res`; referenced USD files are not loaded. A splat `still()` is async: Spark's own
+  sorting is switched off while it sorts for the still's camera (else an empty picture, cached for good); the
+  desktop's splat view pictures are still synchronous (taken with the live sort order — not changed). Phone stills
+  keep the default look (textured, studio, default background) so cached view pictures do not depend on it; a
+  note's look is shown, not saved (as Sight's `setV3D`); explode stays the view's (findVk matches by it); phone
+  "studio" = Sight's studio environment, Headlight / Flat = Sight's lights without one (Flat reads back as Headlight).
+  The desktop grid did not follow the backdrop before (fixed colours) — it does now. Spark: three copies of a splat
+  file at peak on the phone; off-screen stills blend in linear space (edges a little different from the screen).
+  Reviews (a fresh agent per block; each confirmed its fixes): **USD** — nested meshes out of order in the animated
+  layout, `is_animated` too broad (then too narrow: suffixed transform ops; text layers), a 409 hiding the browser's
+  own error, Windows texture paths, a race in the marker check, two stage opens — all fixed. **Splats** — stills of
+  any other camera came out empty (Spark's async readback) — fixed and tested (a view of one ball only); a closed
+  viewer returned a blank picture; turn button flash. **Note look** — Go to / reply / edit-drawing used the view's
+  look, the look was saved over the device's — fixed; explode left as the view's on purpose. **UV view** — a URL leak
+  after close, a picture remade per swipe, errors outside the try, a failed set remembered — fixed. **Grid /
+  background** — the 200-cell cap left the finest grid smaller than the model, mid greys hid the lines, the colour
+  picker's row rebuilt under an open picker (iOS) — fixed.
+
 ## 0.52.0 — 2026-11-15 — Text plate: resizable, no "…" line under the text
 - **What:** (everywhere: Sight lightbox, phone viewer, HTML reviewer page) the picture text plate no longer adds a
   "…" line under the text while more is below — that line came and went with the scroll and changed the plate's

@@ -14,10 +14,16 @@ the phone next, then the owner's tracker Coreline, ftrack / ShotGrid, clouds las
 1. **Launch focus** — `allow_foreground_handoff()` + the `AttachThreadInput` fallback in
    `_bring_to_front()`: start Sight from a script / shortcut launcher ~10 times and count how often
    the window comes up focused (it was about half before).
-2. **Splash** — still the PowerShell window, but only started when a launch takes over ~1 s
-   (`LazySplash`). Check a cold first start still shows it and a normal start never does. A native
-   in-process window (ctypes) was not attempted: untestable here, and a bad window procedure crashes
-   the whole app.
+2. **Splash** (0.64.1, `app/splash_win.py`, out-of-process ctypes window) — verify on Windows: it
+   shows within ~0.2 s of double-clicking Sight.exe and on a source run (`Sight.bat`), picture crisp and
+   rounded with no black box (layered window), centred on the monitor under the cursor, at 100 % and
+   150-200 % scaling and on a second monitor with another DPI; no taskbar button, never steals focus,
+   clicks pass through; it disappears when the app window shows (not ~3 s later), also on a first run
+   that re-execs into the venv (exactly one splash, no flicker/second one), with `--no-browser` (none),
+   and when the start fails (gone at once, or after 45 s at the latest). No `pythonw`/`Sight.exe`
+   process is left behind (Task Manager). If nothing shows, run
+   `pythonw -I -S app\splash_win.py app\splash.png Local\x 10` from a console with `python` instead of
+   `pythonw` and remove the `except` in `run()` to see the error.
 3. **Build** — `build_exe.bat` with `starlette` and the `--exclude-module` list: the build runs, a
    USDZ still converts, a PDF / PSD thumbnail is made by the worker processes in the frozen exe
    (`freeze_support`), and time the first start after a fresh build (Windows Defender scans every

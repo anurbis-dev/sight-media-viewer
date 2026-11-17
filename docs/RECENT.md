@@ -14,6 +14,89 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.64.2 — 2026-11-17 — macOS: dictation no longer kills Chrome
+- **What:** on a Mac, pressing the dictation mic a second time (after allowing the microphone) made the whole
+  browser quit ("Google Chrome quit unexpectedly", user report on 0.62.1).
+- **Where:** `Sight.py` — new `mac_launch_prefix(browser)` (the Sight window's browser is started as
+  `/usr/bin/open -n -a <Browser>.app --args …` instead of exec'ing the binary), `close_browser(proc, user_data_dir)`
+  (macOS: `pkill -f --user-data-dir=<home>/browser`, since `proc` is the short-lived `open`); `tests/test_mac_launch.py`.
+- **Notes:** root cause (by analysis, not reproduced — no Mac here): a browser exec'd by Sight is its child, and macOS
+  privacy protection (TCC) makes the parent — Sight.app or the Python behind Sight.command — the "responsible" app
+  for the microphone. Neither declares `NSMicrophoneUsageDescription`, so the first real capture gets the browser
+  process killed by the system. Through `open`, launchd starts the browser as its own app, which asks for the
+  microphone under its own name. Rejected: adding `NSMicrophoneUsageDescription` to Sight.app's Info.plist — it covers
+  only the packaged build, not Sight.command (Python / Terminal), and makes Sight, not the browser, the app listed in
+  Privacy settings. `-n` keeps a separate instance next to the user's own Chrome (the separate `--user-data-dir`
+  needs its own process anyway). Verify on a Mac: dictation twice in a row, window position / size restore, quitting
+  Sight when its window is closed, and a failed start closing the window.
+- Review (fresh agent): the `pkill -f` pattern was a raw regex (odd characters, `.../browser` also matching
+  `.../browser2`) and could run before the browser started — now ERE-escaped, anchored at the path's end, run twice
+  1 s apart; confirmed by the same reviewer.
+
+## 0.64.1 — 2026-11-17 — Instant native launch splash (Windows)
+- **What:** the launch splash (the Sight logo) shows at once and closes when the page is ready. It was a PowerShell
+  window started only after 1 s (PowerShell costs ~0.7 s of CPU to start), so it appeared ~1.7 s in or never.
+- **Where:** new `app/splash_win.py` (stdlib ctypes: layered, topmost, click-through, no-taskbar window, GDI+ draws
+  `app/splash.png` into a premultiplied DIB, DPI-aware, centred on the monitor under the cursor); `app/splash.png`
+  (512 px, rendered from `favicon.svg`); `Sight.py` (`Splash`, `--splash` handled at the very top for the frozen exe,
+  started first thing in `main()` before `bootstrap()`); `build_exe.bat` (ships `splash.png`); `tests/test_splash_win.py`.
+  Removed: `app/splash_screen.ps1`, `LazySplash`, `start_splash` (no PowerShell fallback).
+- **Notes:** out of process on purpose: a bad window procedure can only kill the splash, never Sight. Source runs use
+  `pythonw -I -S app/splash_win.py IMAGE EVENT 45`; the frozen build `Sight.exe --splash ...`. The splash waits on a
+  named manual-reset event `Local\SightSplash-<pid>`; the launcher creates and holds the event before starting it. Its
+  name goes into env `SIGHT_SPLASH` so the `bootstrap()` re-exec into the venv reuses the same splash (exactly one);
+  `Splash.forget_env()` pops it right after `bootstrap()` returns and in main()'s finally, so the browser / workers /
+  a nested Sight never inherit it. Close points unchanged (ready ping, `_open()` finally, `main()` finally); 45 s cap
+  (a hard-killed Sight leaves it up to 45 s — accepted). Keep `splash_win.py` stdlib-only and import-light (only `sys`
+  at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
+- Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
+  event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.
+
+## 0.64.0 — 2026-11-17 — Missing files on boards
+- **What:** a board card whose file is gone (source removed, or asset flagged missing) is a clear "Missing"
+  placeholder with the file name and its full path instead of an empty card. Adding the folder again (or a late
+  thumbnail) brings the pictures back without reloading the page. Space on a placeholder says "File is missing".
+- **Where:** `app/library.py` (`board_items.asset_name` / `asset_path` migration + backfill, `add_board_item`,
+  `_migrate_asset`), `app/static/canvas.js` (`fillItemEl`, `forgetAssets`, `refreshMissing`, placeholder CSS,
+  `createBody`), `app/static/index.html` (SSE hook, `assetUnderPointer`, Space), `tests/test_board_missing.py`,
+  `docs/ARCHITECTURE.md`, `MANUAL.md`.
+- **Notes:** `_migrate_asset` previously never touched board items (a moved file left its cards dangling); it now
+  rewrites `asset_id` + snapshot (bumps revision). Snapshot is server-owned: not PATCHable; POST falls back to the
+  body copy only when the asset row is missing. Backfill runs once, only when the columns are added; cards whose
+  asset was already deleted stay without a name ("Unknown file"). `getAsset` caches per page (null = 404 only; other failures are not cached and leave the card alone), `refreshMissing` evicts. Cards in state `ok` are re-checked only on `source` / scan-end events, so a file deleted under a live
+  source shows the placeholder after the next scan, not instantly. Checked with Playwright (remove / re-add source,
+  placeholder text, Space toast) on desktop; touch relies on the text being on the card (no hover needed).
+- Review: fresh-agent review found 2 medium (non-404 errors shown as missing; refresh storm/flicker) + 4 low (migration backfill crash-safety, getAsset race, selectedAssetIds during refresh, uncapped snapshot) — fixed. Re-review found a card left blank after a
+  failed (non-404) first lookup: one retry sweep 5 s later (`retryTimer`, at most every 5 s). All confirmed by the same reviewer.
+
+## 0.63.0 — 2026-11-17 — Drawings and review notes on Canvas boards
+- **What:** the lightbox annotation tools now work on Canvas boards: brush / pencil / highlighter / eraser / line /
+  arrow / rect / ellipse / text / pin / select-transform / undo / styles, plus the notes panel (notes, replies,
+  open / in progress / done, drawings linked to notes). Drawings are free over the whole board in world
+  coordinates (they do not follow items). A pencil button at the top left of the board and **Shift+A** switch
+  the mode; the notes panel starts closed on a board. Two fingers pan / pinch-zoom the board (touch had no way
+  to move the camera before). With the mode off the drawings stay visible.
+- **Where:** `app/static/annotate.js` (board mode: `isBoard()`, host flags `board` / `frameRect`, `abortGesture`,
+  `bounds`, `flush`, `modal` exports, CSS `.light.<state>` → `.an-host.<state>`), `app/static/canvas.js`
+  (`annot` option: mount, `bindAnnot`, keys, pinch, `frameRect` / `frameAll`, toggle button), `app/static/index.html`
+  (`boardAnnot`, Ctrl+A / modal guards), `app/library.py` (`annotations_for_board`, `board_full` uses it),
+  `app/server.py` (`GET /api/annotations?board_id=`), `tests/test_board_annotations.py`, docs.
+- **Notes:** rows are `scope='board'`, `board_id` (no `target_asset_id`); not in `.srev` / exports (FORMAT.md note).
+  Board mode skips everything that needs a picture (screenshots, review state, versions, picture text, note
+  previews, stamp, exports / import; only "Copy notes as text" stays). `modeAllows` shows all drawings on a board
+  (no compose / clean-picture mode), a picked note narrows to its drawings and moves the camera to them. While the
+  mode is on the canvas keys are filtered to F / A / Esc so X / Delete cannot remove items. Plain A is NOT an
+  annotation key on a board (keeps framing); Shift+A toggles. Canvas `persistCurrent` awaits `annot.flush()`
+  because `setAsset`'s own flush is not awaited and the item map is cleared synchronously (existing lightbox
+  quirk, left as is). `bind2d` runs once per board on the same viewport: `attachInput` is guarded by a WeakSet.
+  A loose drawing joins the next note wherever it is on the board (lightbox rule, deliberately kept). Checked with
+  Playwright (draw / reload / pan / zoom / item move / board switch / pinch / lightbox regression), not on a
+  real touch device.
+- Review: fresh-agent review found 1 medium (null surface on board switch) + 5 low (load race, open error path, delete order, Shift+A repeat, Esc/Space leak) — fixed. The first Esc/Space fix
+  skipped the palette / popup / overlay Esc (found on re-review): the guard now sits after them in index.html's keydown,
+  and canvas.js's keydown ignores `e.defaultPrevented` keys (already used by index.html, which runs first). All fixes
+  confirmed by the same reviewer.
+
 ## 0.62.1 — 2026-11-17 — Add Folder picker: clean errors, no stale folder, network drives, macOS drives and privacy
 - **What:** "+ Folder" fixes. Adding a folder that is gone (deleted, drive unplugged while the picker was open)
   now says "Not a folder" instead of "Internal Server Error". A folder that fails to open no longer leaves the
@@ -298,130 +381,3 @@ Add new entries directly below this line.
   `.mark::after` in the coarse-pointer block. Review (fresh agent, ran the endpoint) found: a failed ffmpeg probe
   cached for good (fixed), `request.url.port` wrong behind a proxy (fixed: listen port), interleaved opens
   duplicating rows (fixed: token), 24 px tap target (fixed). The same reviewer confirmed every fix, nothing new.
-
-## 0.54.0 — 2026-11-16 — Desktop: Graphite theme (compact, Inter), captions under thumbnails, resizable side panels
-- **What:** new default look *Graphite*, picked from five variants on a mock-up stand: Inter 13 px, 26 px menu rows,
-  30 px controls, sidebar 208 / inspector 260 px, one blue accent, frameless cards with name + one info line
-  under the thumbnail, no serif wordmark. Sidebar section headers sit on a tinted band so they no longer merge
-  with their rows (user feedback). The sidebar's and inspector's inner edges are drag handles (mouse, pen, touch);
-  double-click resets; widths are remembered. Settings gets *Accent* (colour) and *Captions* (under / on the
-  thumbnail); presets *Graphite* (was *Dark*) and *Classic* (the old sizes and colours).
-- **Where:** `app/static/index.html` (`:root` tokens, shell CSS, `.sec`, `.card.capb`, `.panel-handle`, touch
-  media block; `DEFAULT_THEME`, `CLASSIC_LOOK`, `BUILTIN_THEMES`, `migrateTheme`, `applyUi`, `capMetrics`,
-  `layout`, card render, `renderOptions`, `PANEL_W` / `clampPanel` / `resizePanel` / `applyPanelWidths`,
-  `bindSplitDrag` pixel mode `o.move`), `app/static/defaults.json` (theme + tileSize 160),
-  `app/static/vendor/fonts.css` + `vendor/fonts/inter-*.woff2` (Inter variable 5.1.0, OFL, latin + cyrillic),
-  ARCHITECTURE (theme, pane helpers), MANUAL (Look, Panel widths).
-- **Notes:**
-  - `accent` is new and separate from `border` (before, `--accent` was the frame colour). Anything without
-    `accent` (old saved themes, old user presets) falls back to `border` — keep that fallback.
-  - `capMetrics()` is the only source of the caption block height: CSS reads `--cap-n-lh / --cap-j-lh`,
-    `layout()` reserves `L.meta` in grid and masonry. Change one without the other and rows overlap.
-  - Migration: a saved theme holds every key, so new defaults would never show. Once (`themeRev` < 2), keys
-    still equal to the 0.53 defaults (`CLASSIC_LOOK`) are dropped and get the new defaults; customised keys
-    stay (a custom frame colour keeps its frame width / active colour). Written back after boot. Themes
-    saved by builds with other defaults than 0.53 keep those values (treated as customised).
-  - Dragging a panel edge does not rescale the tile (the `#mainBody` observer skips while `panelResizing`);
-    window resizes still do, as before. Drags keep the library area >= 320 px; a window shrunk later can
-    still squeeze it. Narrow screens (< 1024 px) ignore the widths (drawers) and hide the handles.
-  - Touch screens and the narrow-screen drawers keep 40 px controls / 36 px rows whatever the theme says
-    (media block placed after the base rules so it wins the cascade).
-  - Not done: the phone app and the HTML review page keep their own look; mono figures and file-type badges
-    from the mock-up were left out. *Classic* does not bring back the serif headings or the grey active row.
-  - Review (fresh agent, ran the app in Playwright): caption heights verified exact across 22 grid / masonry
-    combinations, init order and presets fine. Found: panel drags rescaled the tile on every move (clamped to
-    the list mode, zoom drifted for good) → tile kept during drags + 320 px main-area minimum; touch targets
-    shrank to 26 / 30 px on phones / drawers → touch media block; migration dropped the frame of a custom frame
-    colour → kept; Classic accent not the old one → fixed; version tag hidden at narrow widths → ellipsis;
-    touch hit strip covered the panel's own buttons → moved outward. Left: an empty info line leaves a small gap.
-    Second pass (same reviewer): all fixes confirmed (tile drift and touch sizes re-run); found the outward touch
-    strip now covered the first card column → strip limited to 12 px outside (the grid padding), 6 px inside. The same reviewer
-    confirmed it by tapping in Playwright, nothing new. Keep the outer reach <= `--space-4` (grid padding).
-
-## 0.53.2 — 2026-11-16 — Grid: thumbnails of a re-added folder get their size (masonry) and show after a restart
-- **What:** in a source folder that had been removed and added again (or whose files changed while Sight was
-  closed), masonry drew every card square and, after a restart, part of the thumbnails stayed placeholders.
-  Both fixed; libraries already affected are repaired once on the first start.
-- **Where:** `app/library.py` — `thumb_path` (trusted files only) / new `_thumb_file`, `prioritize`, `_make_thumb`,
-  `remove_source`, `_migrate_asset`, `psd_composite`; new one-time `_untrust_dimless_thumbs` (marker
-  `thumbs/trust_v1`); `_load_legacy_thumb_cache` removed. ARCHITECTURE (thumbnail trust).
-- **Notes:** root cause: `remove_source` deletes rows but leaves thumbnail files; ids are path hashes, so a re-added
-  folder's new rows (no width/height, `has_thumb=0`) met the old files. `prioritize` / `thumb_path` / the legacy
-  glob adopted them silently — no `thumb` event (the client kept its placeholder until the grid re-read the item;
-  after a restart the background glob had not run yet when the first page was listed) and no size (masonry falls
-  back to square). Now a file the row does not know is an orphan: `_make_thumb` deletes it and renders again (once
-  per asset, on screen), which stores the size and publishes the event. The repair untrusts image / video rows with
-  `has_thumb=1` and no size (only adopted files can be like that); they re-render as they come on screen. The catch-up
-  scan's `has_thumb=0` for a changed file (which left the stale file on disk) is covered by the same rule. Model
-  thumbnails (client-rendered) are never deleted by `_make_thumb`. Very old libraries whose rows predate `has_thumb`
-  re-render their thumbnails on demand (the legacy glob that adopted them is gone). Orphan files of a removed source
-  are still not deleted from disk (deliberately: a delete in the background could race a re-add).
-  Checked with a script (add → remove → add again → restart, and the repair) — old code: no size, no events; new: sized, 4/4 events.
-  Review (fresh agent) found: repair limited to image / video (PSD, PDF, text, font, audio cards are sized by masonry
-  too) → now every kind but `model3d`; `psd_composite`'s fallback marked a thumbnail without a `thumb` event → it now
-  runs `_make_thumb` (under `_inflight`); a `remove_source` during a render could leave the id trusted → `_make_thumb`
-  forgets it when its UPDATE hits no row; unguarded orphan unlink (Windows, file held open) → guarded; boards ask
-  `/api/thumb` without the grid's event and got 202 for orphans → GET serves an untrusted file `no-store` while it
-  re-renders (`thumb_file()`, public). Left: a sizeless video whose re-render now fails loses its old thumbnail (rare).
-  Second pass (same reviewer): fixes 1–3 confirmed; 4+5 together let an orphan held open on Windows (by that very
-  GET) survive a failed render and be trusted with no size → `_make_thumb` trusts a file only with a size when an
-  orphan could not be deleted, and the GET reads the untrusted file whole (`Response`) instead of streaming it open.
-  The same reviewer confirmed both, nothing new found; the script and unit tests pass after them.
-
-## 0.53.1 — 2026-11-16 — Phone: the gallery button is back (two open buttons again)
-- **What:** (phone home) two open buttons again, as before 0.51.0: *Photo or video* (the gallery) and *Open a
-  file…* (Files: 3D models with textures, `.srev`, any media) — big on an empty home, two icons in the bar once
-  there are reviews.
-- **Where:** `mobile/js/app.js` `renderHome` (the pre-0.51.0 code restored from git, comment and subtitle updated),
-  `mobile/index.html` (`.bar .mini .ib`, two-column `.opens`), MANUAL.
-- **Notes:** why two: Android opens its photo picker only for `accept` limited to `image/*` / `video/*`; an input
-  with no `accept` (which 3D and `.srev` need) gets Camera / Camcorder / Files and no gallery — a page cannot add
-  a gallery item to that menu. iOS shows its photo library either way. The 0.51.0 entry's "the OS offers photo
-  library, camera and Files" was true on iOS only. The gallery button takes one file (`multiple` off, as before);
-  `test_pwa`'s `openButtons == 1` counts `label.pick-file` only, still one.
-  Review (fresh agent): no code bugs (restore matches the pre-0.51.0 code, tests' selectors / counts hold); found
-  ARCHITECTURE's "Home open button" still describing the single button — rewritten; the same reviewer confirmed the fix.
-
-## 0.53.0 — 2026-11-15 — 3D: USD in the lightbox + USD animation, splats on the phone, notes' look on the phone; phone UV sets, background, grid cells
-- **What:** (Sight) the lightbox opens `.usd` / `.usda` / `.usdc`, a `.usdz` without usd-core, and plays **USD
-  animation** (moving transforms, skeletons) — an animated `.usdz` is read in the browser instead of the server's
-  still conversion. The floor grid's colours follow the backdrop. (phone) USD animation plays too; **Gaussian
-  splats** open (`.splat` / `.spz` / `.ksplat` / `.sog` / splat `.ply`) with notes on views as in Sight; opening a
-  note shows the **shading and light it was written with** (Sight's `v3d`; the phone's notes carry one Sight
-  restores). The UV view has no note plate: the UV set is named at the top, a swipe sideways shows the mesh's other
-  sets. New Background icon (swatches + colour picker), a smaller grid with round cells and a *Cell* slider, grid
-  colours from the background.
-- **Where:** `model3d-core.js` (`parseUsd`, `usdAsSight` animated layout, `SPLAT_*` / `splatHome`, `gridColors` /
-  `tintGrid` / `niceStep` / `modelGrid`); `index.html` (`loadUsd`, `.usdz` fallback, `makeModelManager().modify`,
-  `fetchBufferWithProgress` error `status`, `cloneModel` root skeleton, shared splat constants, `syncRig` tint);
-  `usdz_convert.py` (`_stage_animated`, `_root_is_crate`, `convert(…, animated_out)`), `library.py` (`.usd*` in
-  MODEL_EXT, `.anim` marker, `usdz_is_animated`, `USDZ_CONVERTER_VERSION` 3), `server.py` (409), `fileinfo.py`
-  (`_usd`); phone `model3d.js` (`isSplat`, `createSplatViewer`, `setBg` / `setGridCell`, `uvPicture` set),
-  `app.js` (`await V.still`, `goView(vk, look)` / `applyNoteLook` / `noteLook`, note `ctx.v3d`, `showUv`, `viewer`
-  title mode, Background / Cell rows, `turnB`), `model.js` (`lookOfV3d`, `v3dOfLook`, `views3d` v3d), `media.js`,
-  `index.html`, `tools/build_pwa.py` (Spark + Pass.js). Tests: `fixtures/make_anim_usd.py` (+ `anim.usda`,
-  `anim_v001.usdz`, `skel.usda`), `fixtures_3d.make_splat` / `make_splat_ply`, lift GLB with two UV sets,
-  `test_usdz_convert.py`, `pwa_3d_formats.cjs`, `pwa_3d_tools.cjs`, `pwa_unit.cjs`. Docs: ARCHITECTURE, FORMAT
-  (phone v3d), MANUAL, PLAN-mobile stage 4 (its "not done" list is done).
-- **Notes:** an animated USD keeps its hierarchy (each mesh split in place, its parts before its children), so mesh
-  order matches the still layout but the explode rig differs from the server conversion's flat one. The server
-  calls a stage animated only for what three's USDLoader makes clips of (SkelAnimation; translate / orient /
-  rotateXYZ / scale; `xformOp:transform*` only in a binary root layer — the loader's text parser gives it none);
-  left: animation in a referenced layer of another format may still disagree. Standalone USD layers find textures
-  by base name via `/api/model-res`; referenced USD files are not loaded. A splat `still()` is async: Spark's own
-  sorting is switched off while it sorts for the still's camera (else an empty picture, cached for good); the
-  desktop's splat view pictures are still synchronous (taken with the live sort order — not changed). Phone stills
-  keep the default look (textured, studio, default background) so cached view pictures do not depend on it; a
-  note's look is shown, not saved (as Sight's `setV3D`); explode stays the view's (findVk matches by it); phone
-  "studio" = Sight's studio environment, Headlight / Flat = Sight's lights without one (Flat reads back as Headlight).
-  The desktop grid did not follow the backdrop before (fixed colours) — it does now. Spark: three copies of a splat
-  file at peak on the phone; off-screen stills blend in linear space (edges a little different from the screen).
-  Reviews (a fresh agent per block; each confirmed its fixes): **USD** — nested meshes out of order in the animated
-  layout, `is_animated` too broad (then too narrow: suffixed transform ops; text layers), a 409 hiding the browser's
-  own error, Windows texture paths, a race in the marker check, two stage opens — all fixed. **Splats** — stills of
-  any other camera came out empty (Spark's async readback) — fixed and tested (a view of one ball only); a closed
-  viewer returned a blank picture; turn button flash. **Note look** — Go to / reply / edit-drawing used the view's
-  look, the look was saved over the device's — fixed; explode left as the view's on purpose. **UV view** — a URL leak
-  after close, a picture remade per swipe, errors outside the try, a failed set remembered — fixed. **Grid /
-  background** — the 200-cell cap left the finest grid smaller than the model, mid greys hid the lines, the colour
-  picker's row rebuilt under an open picker (iOS) — fixed.

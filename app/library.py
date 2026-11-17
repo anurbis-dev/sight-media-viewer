@@ -1164,6 +1164,17 @@ class Library:
             self.conn.execute("ALTER TABLE board_items ADD COLUMN flip_x INTEGER NOT NULL DEFAULT 0")
         if "flip_y" not in bicols:
             self.conn.execute("ALTER TABLE board_items ADD COLUMN flip_y INTEGER NOT NULL DEFAULT 0")
+        if "asset_name" not in bicols:
+            # Snapshot of the asset's name / path (see add_board_item): the asset row is deleted with its source,
+            # and a board card must still say which file it was. Backfilled once from the live rows.
+            self.conn.execute("ALTER TABLE board_items ADD COLUMN asset_name TEXT")
+            self.conn.execute("ALTER TABLE board_items ADD COLUMN asset_path TEXT")
+        # Idempotent (also repairs a crash between the ALTER and the commit): rows that still lack a snapshot whose asset exists.
+        self.conn.execute(
+            "UPDATE board_items SET asset_name=(SELECT name FROM assets WHERE assets.id=board_items.asset_id), "
+            "asset_path=(SELECT path FROM assets WHERE assets.id=board_items.asset_id) "
+            "WHERE asset_name IS NULL AND asset_id IN (SELECT id FROM assets)"
+        )
         self.conn.commit()
 
     def _load_thumb_cache(self) -> None:
@@ -1561,6 +1572,14 @@ class Library:
                 [(c["collection_id"], new_id) for c in cols],
             )
         self.execute("DELETE FROM collection_assets WHERE asset_id=?", (old_id,))
+        # Board cards follow the file too (and their name / path snapshot with it).
+        new_rows = self.query("SELECT name, path FROM assets WHERE id=?", (new_id,))
+        if new_rows:
+            self.execute(
+                "UPDATE board_items SET asset_id=?, asset_name=?, asset_path=?, updated_at=?, revision=revision+1 "
+                "WHERE asset_id=?",
+                (new_id, new_rows[0]["name"], new_rows[0]["path"], int(time.time() * 1000), old_id),
+            )
         # Lightbox annotations / review notes belong to the file, not to its old path.
         self.execute(
             "UPDATE annotations SET target_asset_id=? WHERE scope='asset' AND target_asset_id=?",
@@ -3251,22 +3270,22 @@ class Library:
         groups = [dict(r) for r in self.query(
             "SELECT * FROM board_groups WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
         )]
-        annotations = [self._annotation_out(r) for r in self.query(
-            "SELECT * FROM annotations WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
-        )]
+        annotations = self.annotations_for_board(bid)
         return {"board": board, "items": items, "groups": groups, "annotations": annotations}
 
     def add_board_item(self, bid: str, body: dict) -> dict:
         iid = asset_id(f"bitem:{time.time_ns()}:{body.get('asset_id', '')}")
         now = int(time.time() * 1000)
         playback = body.get("playback_state")
+        aid = str(body.get("asset_id") or "")
+        arow = self.query("SELECT name, path FROM assets WHERE id=?", (aid,))  # snapshot; the body's copy is only a fallback (duplicate / undo of a card whose file is gone)
         self.execute(
             "INSERT INTO board_items(id, board_id, asset_id, group_id, x, y, w, h, rotation, "
             "z_index, opacity, desaturate, always_on_top, crop_x, crop_y, crop_w, crop_h, "
-            "color_label, locked, playback_state, flip_x, flip_y, created_at, updated_at, revision) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            "color_label, locked, playback_state, flip_x, flip_y, asset_name, asset_path, created_at, updated_at, revision) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
             (
-                iid, bid, str(body.get("asset_id") or ""), body.get("group_id"),
+                iid, bid, aid, body.get("group_id"),
                 float(body.get("x", 0)), float(body.get("y", 0)),
                 float(body.get("w", 240)), float(body.get("h", 240)),
                 float(body.get("rotation", 0)), int(body.get("z_index", 0)),
@@ -3276,6 +3295,8 @@ class Library:
                 body.get("color_label"), 1 if body.get("locked") else 0,
                 json.dumps(playback) if playback is not None else None,
                 1 if body.get("flip_x") else 0, 1 if body.get("flip_y") else 0,
+                arow[0]["name"] if arow else (str(body["asset_name"])[:1000] if body.get("asset_name") else None),
+                arow[0]["path"] if arow else (str(body["asset_path"])[:1000] if body.get("asset_path") else None),
                 now, now,
             ),
         )
@@ -3396,6 +3417,15 @@ class Library:
             "SELECT * FROM annotations WHERE scope='asset' AND target_asset_id=? AND deleted_at IS NULL "
             "ORDER BY z_index",
             (aid,),
+        )
+        return [self._annotation_out(r) for r in rows]
+
+    def annotations_for_board(self, bid: str) -> list[dict]:
+        """Free drawings and review notes of a canvas board (scope='board'), bottom to top."""
+        rows = self.query(
+            "SELECT * FROM annotations WHERE scope='board' AND board_id=? AND deleted_at IS NULL "
+            "ORDER BY z_index",
+            (bid,),
         )
         return [self._annotation_out(r) for r in rows]
 

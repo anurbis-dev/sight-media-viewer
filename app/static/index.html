@@ -1041,6 +1041,20 @@ const annot = createAnnotator({
   // A note added / resolved or the review state changed: the grid pill and the sidebar counts.
   onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
 });
+// The same tools on a Canvas board (annotate.js board mode): a second annotator, mounted in the board view by
+// canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
+// `frameRect` moves the board camera to a picked note's drawings.
+const boardAnnot = createAnnotator({
+  board: true,
+  api: (path, opts) => api(path, opts),
+  putSetting: (k, v) => putSetting(k, v),
+  registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+  toast: (text) => flashV3DToast(text),
+  appVersion: () => state.meta?.version || "",
+  panScroll: (el) => attachPanScroll(el),
+  frameRect: (x0, y0, x1, y1) => canvasCtl?.frameRect(x0, y0, x1, y1),
+  onModeChange: () => canvasCtl?.syncAnnotUi(),
+});
 // Version compare (compare.js) — K in the grid (2+ selected files, or the versions of the one
 // under the cursor / selected) and in the lightbox (versions of the open file).
 const cmp = createCompare({
@@ -2519,6 +2533,7 @@ function ensureCanvasCtl(){
       combineSelection, markSmallSrc, syncPixelation,
       keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && $("aboutOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
       onContextMenu: showCanvasCtx,
+      annot: boardAnnot,
     });
   }
   return canvasCtl;
@@ -2592,9 +2607,11 @@ function renderCanvasBoards(){
     };
     b.querySelector('[data-act="del"]').onclick = async (e) => {
       e.stopPropagation();
+      // Close (and flush) first: a pending drawing create must not insert a live row for the deleted board.
+      const wasOpen = state.canvasBoardId === bd.id;
+      if (wasOpen) await canvasCtl?.close();
       await api("/api/boards/" + bd.id, { method: "DELETE" });
-      if (state.canvasBoardId === bd.id){
-        canvasCtl?.close();
+      if (wasOpen){
         state.canvasBoardId = null;
         setView("library");
       }
@@ -7475,6 +7492,10 @@ function connectEvents(){
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
     if (ev.type === "thumb" && ev.id) applyThumb(ev.id, ev.hasThumb !== false, ev.animated, ev.v, ev.width, ev.height);
+    // A board's placeholder / picture-less cards re-check their files (debounced in canvas.js).
+    if (ev.type === "thumb" && ev.id) canvasCtl?.refreshMissing({ id: ev.id });
+    else if (ev.type === "source") canvasCtl?.refreshMissing({ sweep: "all" });
+    else if (ev.type === "scan" && !ev.scanning) canvasCtl?.refreshMissing({ sweep: "bad" });
     if (ev.type === "batch"){ scheduleRefreshItems(); scheduleMeta(); pull(false); renderStatus(); }
     if (ev.type === "scan" || ev.type === "source"){
       scheduleMeta();
@@ -8186,7 +8207,10 @@ function assetUnderPointer(){
   if (card && grid.contains(card)) return assetById(card.dataset.id);
   // Canvas board items preview the same way (their asset may not be in the current library list).
   const item = hit?.closest(".citem[data-asset-id]");
-  if (item && canvasView.contains(item)) return assetById(item.dataset.assetId) || canvasCtl?.assetOf(item.dataset.assetId) || null;
+  if (item && canvasView.contains(item)){
+    if (item.classList.contains("missing")) return null; // a placeholder card has no file to preview
+    return assetById(item.dataset.assetId) || canvasCtl?.assetOf(item.dataset.assetId) || null;
+  }
   return null;
 }
 function heavyKeyBlocked(e, asset){
@@ -8204,6 +8228,8 @@ document.addEventListener("keydown", (e) => {
   // never a bare e.key/e.code test, so Shift+D / Ctrl+D / Alt+D can't trigger the plain-D command.
   // The annotation help overlay ("?") is modal: it sees every key first and lets nothing else act.
   if (light && annot.helpOpen()){ annot.onKey(e); return; }
+  // The board's annotation help / settings popup is modal the same way (canvas.js hands it the key).
+  if (!light && canvasCtl?.annotModal()) return;
   // A modal (Add Folder, About, Default scan filters) owns the keyboard: the palette must not open behind it.
   const modalOpen = !$("fbOverlay").hidden || !$("aboutOverlay").hidden || !$("dfOverlay").hidden;
   if (hotkey(e, "Ctrl+KeyK") && !modalOpen){ e.preventDefault(); togglePalette(); return; }
@@ -8227,11 +8253,15 @@ document.addEventListener("keydown", (e) => {
     annot.toggle();
     return;
   }
+  // Annotating a board: Esc / Space belong to the annotator (canvas.js runs after this handler); placed after the palette /
+  // popups / overlays so their own Esc still closes them first — they must not
+  // clear the library selection or preview the item under the pointer.
+  if (!light && canvasCtl?.annotating() && canvasPaneActive() && (hotkey(e, "Escape") || hotkey(e, "Space")) && !typing) return;
   if (hotkey(e, "Backspace") && !typing && hoveredSliderReset){ e.preventDefault(); hoveredSliderReset(); return; }
   // "/" may need Shift on some layouts, so it is matched by the character, not through hotkey().
   if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing){ e.preventDefault(); $("q").focus(); return; }
   // Ctrl+A selects items (of whichever pane was last used), not the interface text.
-  if (hotkey(e, "Ctrl+KeyA") && !typing && !light){
+  if (hotkey(e, "Ctrl+KeyA") && !typing && !light && !(canvasPaneActive() && canvasCtl?.annotating())){  // (annotating a board: Ctrl+A selects its drawings, canvas.js)
     e.preventDefault();
     selectAllInActivePane();
     return;
@@ -8271,6 +8301,7 @@ document.addEventListener("keydown", (e) => {
     if (light){ closeLight(); return; }
     // Space previews the thumbnail under the cursor; what is selected doesn't matter.
     const a = assetUnderPointer();
+    if (!a && lastPtr && document.elementFromPoint(lastPtr.x, lastPtr.y)?.closest(".citem.missing")){ flash("File is missing"); return; }
     if (!a || heavyKeyBlocked(e, a)) return;
     toggleLight(a);
     return;

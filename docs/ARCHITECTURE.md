@@ -6,6 +6,7 @@ For "what changed lately" see `RECENT.md`. Update this file only when something 
 
 ```
 Sight.py                 launcher (venv bootstrap, window, port); --dev / SIGHT_DEV=1 = developer mode
+app/splash_win.py        Windows launch splash (out-of-process, stdlib ctypes) + its start/close helpers; app/splash.png = its picture
 app/server.py            HTTP API + UI server; routes are closures inside build_app(lib, settings, dev)
 app/web.py               FastAPI-shaped router on plain Starlette (@app.get on plain functions; see below)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
@@ -218,20 +219,43 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   imports → `server.run(sockets=[sock])`. The browser's first request waits in the socket backlog.
   Keep heavy imports (numpy, psd_tools, pymupdf, usd) out of the startup path: import them inside
   the function that needs them.
+- Windows launch splash (`app/splash_win.py`, `Splash` in Sight.py): started as the very first thing
+  in `main()` (not with `--no-browser`) as a separate process — a source run: `pythonw -I -S
+  app/splash_win.py IMAGE EVENT MAXWAIT`; frozen: `Sight.exe --splash ...`, handled at the top of
+  Sight.py before any other import. It is a layered topmost click-through window with `splash.png`
+  (GDI+ draws into a premultiplied DIB), centred on the monitor under the cursor. Closing = a named
+  manual-reset event (`Local\SightSplash-<pid>`, name in env `SIGHT_SPLASH`): the closer
+  CreateEventW + SetEvent and keeps the handle, so a close that beats the splash's start is still
+  seen. The env var carries the name across `bootstrap()`'s re-exec: the second `main()` starts no
+  second splash and closes the same one. Closed on the page's ready ping (`reveal_when_ready(...,
+  on_ready)`), in `_open()`'s finally and in `main()`'s finally; the splash also exits after 45 s and
+  on any error. It must stay stdlib-only and import-safe on non-Windows. Regenerate `splash.png`
+  (512 px, transparent corners) from `favicon.svg` if the mark changes.
 
 ## Canvas (boards)
 
-**Data** — tables `boards`, `board_groups`, `board_items`, `annotations` (groups/annotations: schema +
-CRUD + routes exist, no UI yet). `board_items` = one placement of one asset: `x y w h rotation z_index
+**Data** — tables `boards`, `board_groups`, `board_items`, `annotations` (groups: schema + CRUD +
+routes exist, no UI yet; board annotations: see "Board annotations" below). `board_items` = one placement of one asset: `x y w h rotation z_index
 opacity desaturate always_on_top crop_x crop_y crop_w crop_h flip_x flip_y color_label locked
 playback_state`. Crop is a normalized rectangle of the *source image* (null = uncropped); flip is
 per item. Boards hold the saved camera (`viewport_x/y/zoom`).
+`board_items` also carries `asset_name` / `asset_path`, a server-side snapshot of the asset row (filled by
+`add_board_item`, backfilled once by the migration, rewritten with `asset_id` by `_migrate_asset` when a file moves;
+not in `_BOARD_ITEM_FIELDS`, so PATCH cannot touch it; POST only uses a body copy when the asset row is gone —
+duplicate / undo of a placeholder). Removing a source deletes its asset rows but not the board items. A card whose
+asset is gone or `status='missing'` is drawn by `fillItemEl` (canvas.js) as a `.citem.missing` placeholder (icon,
+"Missing", name, path; sizes in `cqmin` of the card; `data-state` = `missing` / `nothumb` / `ok`). `assetResolved`
+never holds a gone asset, so Space / Find / Reveal ignore it (Space flashes "File is missing"). `canvasCtl.refreshMissing(all)`
+(debounced 500 ms, called from index.html's SSE handler on `thumb` / `batch` / `scan` / `source`) drops the cached
+`getAsset` answers of cards that are not `ok` — all cards on `source` and on scan end — and repaints them, so
+re-adding a folder (same path = same asset ids) or a late thumbnail fixes the cards without a reload.
 
 **API** — `GET/POST /api/boards`, `PATCH/DELETE /api/boards/{id}`, `POST /api/boards/reorder`,
 `GET /api/boards/{id}/full` (board+items+groups+annotations), `POST /api/boards/{id}/items`,
 `PATCH …/items/{item}`, `POST …/items/batch`, `DELETE …/items/{item}`, `POST …/items/batch-delete`,
 groups (`POST/PATCH/DELETE …/groups[/{gid}]`, `…/ungroup`), annotations (`GET/POST /api/annotations`,
-`PATCH/DELETE /api/annotations/{id}`, `POST /api/annotations/batch`). Field whitelist:
+`PATCH/DELETE /api/annotations/{id}`, `POST /api/annotations/batch`; `GET /api/annotations` takes
+`asset_id` or `board_id` → `Library.annotations_for_board`). Field whitelist:
 `Library._BOARD_ITEM_FIELDS`.
 
 **View (canvas.js)** — DOM + CSS-transform "world" (`translate(vx,vy) scale(zoom)`), items are absolutely
@@ -275,11 +299,58 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
   Alt+X / Alt+V mirror, Ctrl+Z / Ctrl+Shift+Z undo/redo. Align = "gravity" (items stop against each
   other, padding 10) and Normalize separates overlaps, so results never overlap; Stack overlaps on
   purpose.
-- Not built yet (planned): annotations on boards (the lightbox has them, see below), groups UI,
+- **Board annotations (0.63.0)** — drawings and review notes on a board, made by a SECOND instance of
+  annotate.js (`boardAnnot` in index.html, `createAnnotator({board: true, …})`) that canvas.js receives as
+  `annot` and hosts. Rows: `scope='board'`, `board_id` = the board (no `target_asset_id`), `data.pts` etc.
+  exactly as in the lightbox (see "Annotations / review"), so a drawing is in **world units** (the board's
+  own coordinates, same as items), free of any item. `/api/boards/{id}/full` and `GET
+  /api/annotations?board_id=` read them through `Library.annotations_for_board` (scope 'board', not deleted,
+  by z_index); `delete_board` soft-deletes them with the board. Not part of `.srev` / HTML / PDF / ZIP
+  exports (those are per asset, FORMAT.md).
+  - *Hosting (canvas.js):* `annot.mount(canvasView)` builds the bar, panel and toast inside the view (the view
+    is `position: relative; isolation: isolate`; the panel overlays the right edge, `--an-pw`); the toggle
+    button `.canvas-annbtn` (top left) and **Shift+A** (`KEYMAP`) switch the mode. `open(id)` calls
+    `annot.setAsset({id, kind: "board", name})` at once (before the `/full` fetch, so the previous board's
+    drawings never show over the new one) and, once loaded, `annot.bind2d({wrap: viewportEl, media: null,
+    isVid: false, board: true, geom: () => ({x0: vx, y0: vy, s: zoom, w, h})})` (w/h = the visible world
+    size); `worldTransform()` and a ResizeObserver call `annot.viewChanged()` (a board's layer follows the
+    camera with the mode OFF too). `persistCurrent()` awaits `annot.flush()` before the board changes
+    (`setAsset`'s own flush is not awaited and would find the item map already cleared); `close()` switches the
+    mode off. `bind2d` is called for every board on the same viewport: `attachInput` wires it once (`wired`
+    WeakSet) and `setAsset` removes the old `.an-layer` of a board view.
+  - *Input:* annotate's capture-phase pointer listeners on the viewport stop left-button / pen gestures
+    before canvas.js's item / frame / marquee handlers; middle / right / wheel / Alt+drag (drawing tools) fall
+    through to canvas.js (pan / zoom). The canvas keydown handler gives `annot.onKey(e)` the key first; while
+    the mode is on the board's own item commands are filtered to `VIEW_KEYS` (F, A, Esc), so X / Delete / arrows
+    cannot act on items; Shift+A in KEYMAP turns the mode on (the annotator's own table turns it off, and its
+    plain-`A` row is dropped in board mode so A keeps framing). index.html: `annotModal()` makes the board's
+    help popup modal for its global handler; Ctrl+A is left to the annotator while the mode is on. Touch:
+    canvas.js tracks touch pointers on the viewport (capture, registered before annotate's): the second finger
+    calls `annot.abortGesture()` (drops the stroke / shape / move the first finger began, an eraser pass keeps
+    what it erased), finishes any item drag and starts a pan + pinch-zoom (works with the mode off too;
+    `.canvas-viewport` is `touch-action: none`).
+  - *Board mode of annotate.js (`isBoard()` = `S.kind === "board"`, host flag `board`)*: `rowBody` →
+    `scope: "board", board_id`; `load` → `?board_id=`; `modeAllows`: every drawing shows all the time (no
+    "clean picture" compose / cleanPic), a picked note narrows to its drawings and `goNote` calls
+    `host.frameRect` (canvas `frameRect`, fits into the strip left of the open panel); with the mode off the
+    layer stays visible (`renderAll`, `viewChanged`; `toggle(false)` clears `S.hover` / `S.hidden`); "Clear" /
+    "Select all" act on the drawings touching the visible part of the board (`shownDrawings`). The panel key is
+    `sight.annotate.panel.board` (default closed). Skipped / hidden: screenshots (bar, panel, S / Shift+S),
+    review state row, versions and carry-over, picture text field, note previews (`notePreview` / `previewBox`
+    only handle image / psd / video), frame stamp, onion, video / 3D keys, PDF / page / .srev / ZIP export and
+    import (the Export menu keeps *Copy notes as text*). CSS rules that were keyed on `.light.<state>`
+    (`an-panel-on`, `an-alt`, `an-regioning`) are keyed on `.an-host.<state>` now (`mount()` adds `an-host`, and
+    `an-bhost` for a board); the lightbox-only ones (padding, v3d panels) stay on `.light`.
+  - *Gotchas:* a loose drawing (no note) joins the NEXT note whatever its place on the board (lightbox rule:
+    `pendingDrawings`); a board's notes panel is hidden-and-stale until shown (renderPanel skips a hidden panel,
+    as in the lightbox).
+- Not built yet (planned): groups UI,
   frames/connectors, opacity/desaturate UI, export, real multi-user/sync (groundwork only:
   revision/updated_at/deleted_at columns, single mutation path).
 
 ## Annotations / review (lightbox)
+
+(The same editor also runs on Canvas boards, scope `board` — see "Board annotations" under Canvas.)
 
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`

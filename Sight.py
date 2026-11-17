@@ -8,10 +8,19 @@ Close the terminal window to quit.
 
 from __future__ import annotations
 
+import sys
+
+if len(sys.argv) >= 2 and sys.argv[1] == "--splash":
+    # Frozen build: the launch splash is this exe started again (see app/splash_win.py). Handled
+    # before any other import so it is on screen within milliseconds; never falls through to main().
+    from app.splash_win import run as _run_splash
+
+    _run_splash(sys.argv[2:])
+    raise SystemExit(0)
+
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import webbrowser
@@ -262,56 +271,30 @@ def bundle_root() -> Path:
     return ROOT
 
 
-def start_splash(show_after_ms: int = 0) -> subprocess.Popen | None:
-    """Shows a small native "Sight is loading" indicator the instant Sight launches — purely a
-    sign of life while bootstrap/server start happen, not a mask for the real window (that's
-    reveal_when_ready() below: the real fix for the browser's own blank/white first frame is to
-    never let it reach the screen in the first place, not to cover it with something else the same
-    size). Windows only (no equivalent here for macOS yet); returns None on any failure, since a
-    missing splash should never block the app itself from starting."""
-    if sys.platform != "win32":
-        return None
-    script = bundle_root() / "app" / "splash_screen.ps1"
-    if not script.exists():
-        return None
-    try:
-        return subprocess.Popen(
-            [
-                "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-                "-File", str(script), "-MaxWaitSeconds", "45", "-ShowAfterMs", str(show_after_ms),
-            ],
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except OSError:
-        return None
+class Splash:
+    """Handle on the out-of-process launch splash (app/splash_win.py). It is started at the very
+    start of main() — it needs only milliseconds, unlike the PowerShell window it replaced — and
+    close() works from any thread, repeatedly, and across bootstrap()'s re-exec (the close event's
+    name travels in the environment until bootstrap() is past; see forget_env())."""
 
+    def __init__(self) -> None:
+        from app import splash_win
 
-class LazySplash:
-    """Starts the splash only if the launch is still going after `delay` seconds. PowerShell costs
-    ~0.7 s of CPU to start, which every launch used to pay although a launch that brings its window
-    up within ~1.7 s never showed the splash (it waited ShowAfterMs = 1 s after starting). Now a
-    fast launch starts nothing, and a slow one shows the splash at about the same moment as before
-    (delay + PowerShell's own start). close() is safe from any thread, before or after the start."""
+        self._splash_win = splash_win
+        self.event, self._handle = splash_win.launch(bundle_root())
 
-    def __init__(self, delay: float = 1.0) -> None:
-        self._lock = threading.Lock()
-        self._closed = False
-        self.proc: subprocess.Popen | None = None
-        self._timer = threading.Timer(delay, self._start)
-        self._timer.daemon = True
-        self._timer.start()
-
-    def _start(self) -> None:
-        with self._lock:
-            if not self._closed:
-                self.proc = start_splash()
+    def forget_env(self) -> None:
+        """Called once bootstrap() has returned (no re-exec can happen any more): stops the browser
+        and any nested/restarted Sight from inheriting the name and skipping their own splash."""
+        os.environ.pop(self._splash_win.ENV_VAR, None)
 
     def close(self) -> None:
-        with self._lock:
-            self._closed = True
-            self._timer.cancel()
-            if self.proc and self.proc.poll() is None:
-                self.proc.terminate()
+        self._splash_win.signal(self._handle)
+
+    def dispose(self) -> None:
+        """Closes the event handle (after close()); the process is ending."""
+        self._splash_win.release(self._handle)
+        self._handle = None
 
 
 def _process_tree(root: int) -> set[int]:
@@ -483,7 +466,24 @@ def allow_foreground_handoff() -> None:
         pass
 
 
-def close_browser(proc: subprocess.Popen) -> None:
+def mac_launch_prefix(browser: list[str]) -> list[str]:
+    """On macOS a browser exec'd straight from Sight is Sight's child, and macOS privacy protection (TCC)
+    treats Sight as the "responsible" app for it: the first microphone capture (dictation) then kills the
+    whole browser, because Sight.app / the Python that runs Sight declares no NSMicrophoneUsageDescription
+    ("Google Chrome quit unexpectedly", reported on 0.62.1). Launched through `open`, launchd starts the
+    browser as an app of its own, which asks for the microphone under its own name. `-n`: a new instance
+    even while the user's own Chrome runs (Sight's separate --user-data-dir needs its own process anyway);
+    `--args` hands the rest of the command line to it. Other platforms: unchanged."""
+    if sys.platform != "darwin" or len(browser) != 1:
+        return browser
+    exe = browser[0]
+    cut = exe.find(".app/Contents/MacOS/")
+    if cut < 0:
+        return browser
+    return ["/usr/bin/open", "-n", "-a", exe[: cut + 4], "--args"]
+
+
+def close_browser(proc: subprocess.Popen, user_data_dir: str | None = None) -> None:
     """Closes the browser main() opened, when the start failed after the launch. On Windows the
     Popen handle is usually only a launcher that has already exited (see _process_tree()), so the
     processes it started are closed too. The launcher goes first, so it cannot start the browser
@@ -499,6 +499,23 @@ def close_browser(proc: subprocess.Popen) -> None:
             if handle:
                 kernel32.TerminateProcess(handle, 1)
                 kernel32.CloseHandle(handle)
+    elif sys.platform == "darwin" and user_data_dir:
+        # Started through `open` (mac_launch_prefix): proc is `open` itself, long gone; the browser is
+        # found by Sight's own profile directory on its command line.
+        # pkill -f takes an extended regex over the whole command line: escape the path and stop at its end, so
+        # `.../browser` neither breaks on odd characters nor matches `.../browser2`. Twice: `open` returns as soon
+        # as the launch is accepted, the browser may not be running yet at the first try.
+        import re
+
+        # Only the POSIX ERE metacharacters (re.escape also escapes spaces, undefined in ERE).
+        pattern = "--user-data-dir=" + re.sub(r"([.^$*+?()\[\]{}|\\])", r"\\\1", user_data_dir) + "( |$)"
+        for attempt in range(2):
+            if attempt:
+                time.sleep(1.0)
+            try:
+                subprocess.run(["/usr/bin/pkill", "-f", "--", pattern], check=False, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
 
 
 def _wait_for_ping(ready_port: int, timeout: float) -> None:
@@ -541,7 +558,7 @@ def main() -> None:
     # rewrites app/static/defaults.json. A packaged build never honours it.
     dev = (args.dev or os.environ.get("SIGHT_DEV") == "1") and not getattr(sys, "frozen", False)
 
-    splash: LazySplash | None = None
+    splash: Splash | None = None
     # The server once built (its `started` turns True when it serves) and the browser process this
     # launch opened, so a failed start can close a window that would otherwise wait off-screen.
     launched: dict[str, object] = {}
@@ -549,15 +566,22 @@ def main() -> None:
     # launcher thread must not start a browser any more.
     launch_lock = threading.Lock()
     try:
-        bootstrap()
-        # After bootstrap(), not before: a source/dev run without its deps yet re-execs itself into
-        # a private venv (os.execv, which on Windows spawns a whole new process rather than replacing
-        # this one), so main() — and anything started earlier in it — would otherwise run twice. A
-        # packaged build's bootstrap() returns immediately, so this costs it nothing. The splash
-        # closes itself once _open() below is done opening the window — the try/finally here is
-        # only the fallback for "something went wrong before that ever happened".
+        # First thing, before even bootstrap(): the splash is a separate tiny process that appears
+        # within milliseconds. A source/dev run without its deps yet re-execs itself into a private
+        # venv (os.execv, which on Windows spawns a whole new process), so main() runs twice; the
+        # splash's close-event name goes into the environment, so the second main() starts nothing
+        # new and closes the same window. The splash is closed once _open() below is done opening
+        # the window — the try/finally here is only the fallback for "something went wrong first".
         if not args.no_browser and sys.platform == "win32":
-            splash = LazySplash()
+            if str(ROOT) not in sys.path:
+                sys.path.insert(0, str(ROOT))
+            try:
+                splash = Splash()
+            except Exception:
+                splash = None  # a missing splash must never keep the app from starting
+        bootstrap()
+        if splash:
+            splash.forget_env()
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
 
@@ -630,7 +654,7 @@ def main() -> None:
                             if launched.get("failed"):
                                 return
                             proc = subprocess.Popen([
-                                *browser,
+                                *mac_launch_prefix(browser),
                                 f"--user-data-dir={home / 'browser'}",
                                 "--no-first-run",
                                 "--no-default-browser-check",
@@ -720,12 +744,14 @@ def main() -> None:
                 launched["failed"] = True
                 browser_proc = launched.get("browser")
                 if isinstance(browser_proc, subprocess.Popen):
-                    close_browser(browser_proc)
+                    close_browser(browser_proc, str(data_dir() / "browser"))
         # Normally _open()'s own finally has already closed the splash — this only catches
         # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
         # it doesn't sit on screen for its full timeout.
         if splash:
             splash.close()
+            splash.forget_env()
+            splash.dispose()
 
 
 if __name__ == "__main__":

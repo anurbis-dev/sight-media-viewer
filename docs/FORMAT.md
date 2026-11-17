@@ -8,6 +8,10 @@ friends — the reference merge), `app/static/review-core.js` (rendering + the J
 `app/static/annotate.js` (Sight's editor), `mobile/js/model.js` (the phone app: every row it
 writes, the package it builds / merges).
 
+> Rows with `scope='board'` (`board_id`, drawings and notes made on a Canvas board, Sight 0.63+) use the
+> same row shapes but live only in the library database: they have no asset, are never written to a `.srev`
+> / HTML page / PDF, and are not read by import.
+
 ## Rules for changing the format
 
 - `version` is **1**. Adding an optional field is not a version change: every reader ignores
