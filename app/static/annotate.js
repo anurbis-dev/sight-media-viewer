@@ -508,6 +508,10 @@ export function createAnnotator(host){
 
   // ---- context (video time / 3D view) ---------------------------------------------------------
   const video = () => S.b2?.isVid ? S.b2.media : null;
+  // A host with its own clock (the version compare: every clip follows a shared playhead) moves and stops the
+  // video itself; the lightbox lets the annotator drive the element directly.
+  const vidPause = (v) => { if (host.pauseVideo) host.pauseVideo(); else if (!v.paused) v.pause(); };
+  const vidSeek = (v, t) => { if (host.seekVideo) host.seekVideo(t); else v.currentTime = t; };
   const frameDur = () => 1 / (S.fps || 25);
   // The frame on screen at time t is the one that started at or before it. A note / drawing made
   // there is stored at that frame's start + a hair (where stepping lands), so ctxVisible shows it on
@@ -971,7 +975,7 @@ export function createAnnotator(host){
     const pen = e.pointerType === "pen";
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
     if (e.button !== 0 && !penEraser) return; // middle / right: the viewer's pan / zoom
-    if (S.kind === "video"){ const v = video(); if (v && !v.paused) v.pause(); }
+    if (S.kind === "video"){ const v = video(); if (v) vidPause(v); }
     // A playing model stops too: a drawing belongs to the pose it is made at (ctx.anim).
     if (S.b3) S.b3.pauseAnim?.();
     const el = surfaceEl();
@@ -1921,6 +1925,7 @@ export function createAnnotator(host){
         ${picGrid(notePreview(n) + shots)}
         ${captionsHtml(n)}
         ${d.from ? `<div class="an-nmeta">from ${esc(d.from.name || "previous version")}</div>` : ""}
+        ${Array.isArray(d.compare?.ids) && d.compare.ids.length > 1 && host.openCompareSession ? `<div class="an-nmeta"><button type="button" class="an-cmpb" data-cmp="${n.id}" title="Open the comparison this note was written in">⧉ Compare · ${d.compare.ids.length} files</button></div>` : ""}
         ${repliesHtml(n)}
       </div>`;
     }).join("");
@@ -2309,7 +2314,7 @@ export function createAnnotator(host){
     });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
+    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],img[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
     if (!t){
       // A click on the empty list drops the picked note (as Esc does). Not when it ends a text selection
       // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
@@ -2330,6 +2335,7 @@ export function createAnnotator(host){
       paintVisibility(); renderSel(); renderPanel();
       return;
     }
+    if (t.dataset.cmp){ const n = S.items.get(t.dataset.cmp); if (n?.data.compare) host.openCompareSession?.(n.data.compare, n); return; }
     if (t.dataset.reply){ startReply(t.dataset.reply); return; }
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
     if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
@@ -2338,7 +2344,7 @@ export function createAnnotator(host){
       const rp = e.target.closest?.(".an-nprev[data-pt]"), card = t.closest(".an-note");
       if (rp && card){
         if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id);
-        const v = video(); if (v){ v.pause(); v.currentTime = landAt(Number(rp.dataset.pt)); }
+        const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(Number(rp.dataset.pt))); }
       }
       return;
     }
@@ -2348,7 +2354,7 @@ export function createAnnotator(host){
       const id = t.closest(".an-note").dataset.id, p = picOfKey(t.dataset.cap);
       if (S.pinFocus !== id) goNote(id);
       if (p.shot != null){ showShot(`/api/review/shots/${p.shot}`, { note: id, shot: p.shot }); return; }
-      if (p.t != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(p.t); } }
+      if (p.t != null){ const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(p.t)); } }
       else if (p.vk && S.views.has(p.vk) && p.vk !== S.curVk) goView(p.vk);
       return;
     }
@@ -2389,7 +2395,7 @@ export function createAnnotator(host){
     }
     if (card && pv){
       if (S.pinFocus !== card.dataset.id) goNote(card.dataset.id);
-      const v = video(); if (v){ v.pause(); v.currentTime = landAt(Number(pv.dataset.pt)); }
+      const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(Number(pv.dataset.pt))); }
       return;
     }
     if (card) goNote(card.dataset.id);
@@ -2459,7 +2465,7 @@ export function createAnnotator(host){
     if (!n) return;
     S.pinFocus = S.pinFocus === id ? null : id;
     const c = n.data.ctx, t0 = S.kind === "video" ? noteFrames(n)[0] : null;
-    if (t0 != null){ const v = video(); if (v){ v.pause(); v.currentTime = landAt(t0); } }
+    if (t0 != null){ const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(t0)); } }
     if (c?.vk) goView(c.vk, c.v3d, c.explode);
     S.sel = new Set();
     renderSel(); renderProps(); renderPanel(); paintVisibility();
@@ -2616,6 +2622,9 @@ export function createAnnotator(host){
     if (!text && !capText && !S.pending.length && !pendingDrawings().some(fresh)){ toast("Type a note, draw, or take a screenshot first"); return; }
     const ctx = ctxNow(true, true);
     const note = { id: uid(), kind: "note", sub: null, z: 0, data: { text, author: reviewer(), created: Date.now(), status: "open", ctx, shots: S.pending.map((p) => p.id) } };
+    // The host's context for the note (the version compare: the comparison it was written in, FORMAT.md `compare`).
+    const extra = host.noteExtra?.();
+    if (extra) Object.assign(note.data, extra);
     // The picture's own text goes to the picture the note is made on (its frame / view / the image).
     const caps = capText ? RC.withCaption(note.data, picOfCtx(ctx), capText, sameFrame) : null;
     if (caps) note.data.captions = caps;
@@ -2669,7 +2678,7 @@ export function createAnnotator(host){
         if (!S.on) toggle(true);
         // The note first (it goes to its first frame), then this mark's frame: a note has a mark on each.
         if (m.dataset.note && S.pinFocus !== m.dataset.note) goNote(m.dataset.note);
-        if (vid){ vid.pause(); vid.currentTime = landAt(Number(m.dataset.t)); }
+        if (vid){ vidPause(vid); vidSeek(vid, landAt(Number(m.dataset.t))); }
       });
     }
     let html = "";
@@ -2704,14 +2713,14 @@ export function createAnnotator(host){
   function stepFrame(n){
     const v = video();
     if (!v) return false;
-    v.pause();
+    vidPause(v);
     if (!(v.duration > 0) || v.readyState < 1) return true; // no metadata yet: nothing to step (nor to cross)
     const fd = frameDur();
     // From the frame on screen (floor): rounding skipped a frame from its second half.
     const t = (Math.floor(v.currentTime / fd + 1e-6) + n) * fd + fd * 0.01;
     // A sequence of clips (index.html): past either end, the step moves into the neighbouring clip.
     if ((t < 0 || t > (v.duration || 0) - fd * 0.5) && host.seqEdge?.(n, fd)) return true;
-    v.currentTime = clamp(t, 0, v.duration || 0);
+    vidSeek(v, clamp(t, 0, v.duration || 0));
     return true;
   }
   function jumpMarker(dir){
@@ -2721,8 +2730,8 @@ export function createAnnotator(host){
     const t = dir > 0 ? ts.find((x) => x > cur + eps) : [...ts].reverse().find((x) => x < cur - eps);
     // A sequence of clips: the nearest marker in the clips after / before this one.
     if (t == null){ if (!host.seqMarker?.(dir)) toast(dir > 0 ? "No later marker" : "No earlier marker"); else v.pause(); return true; }
-    v.pause();
-    v.currentTime = landAt(t);
+    vidPause(v);
+    vidSeek(v, landAt(t));
     return true;
   }
 
@@ -3035,9 +3044,10 @@ export function createAnnotator(host){
   function seekTo(v, t){
     return new Promise((res) => {
       if (Math.abs(v.currentTime - t) < 1e-4 && v.readyState >= 2){ res(); return; }
-      const done = () => { v.removeEventListener("seeked", done); setTimeout(res, 30); };
+      let ended = false;
+      const done = () => { if (ended) return; ended = true; v.removeEventListener("seeked", done); setTimeout(res, 30); };
       v.addEventListener("seeked", done);
-      v.currentTime = t;
+      vidSeek(v, t); // a host with its own clock (compare) moves it; its element seeks on the next frame
       setTimeout(done, 3000);
     });
   }
@@ -3084,7 +3094,7 @@ export function createAnnotator(host){
     if (S.b3) S.b3.pauseAnim?.();
     S.hidden = false; S.hiddenReplies = new Set();
     // A playing clip runs on after each seek: the frame would land late and miss its drawings.
-    if (keep.playing) v.pause();
+    if (keep.playing) vidPause(v);
     let cover = null, coverSize = null;
     try {
       const pick = (f) => forPage ? () => false : f;
@@ -3154,7 +3164,7 @@ export function createAnnotator(host){
       }
     } finally {
       if (v && keep.t != null) await seekTo(v, keep.t);
-      if (keep.playing) v.play().catch(() => {});
+      if (keep.playing && !host.pauseVideo) v.play().catch(() => {}); // (a host clock stays paused)
       if (S.b3 && keep.cam){ if (keep.v3d) host.setV3D?.(keep.v3d); S.b3.setCam(keep.cam); }
       if (S.b3 && keep.anim) S.b3.setAnimState?.(keep.anim);  // (playing again if it was)
       if (S.b3) S.curVk = keep.vk;
@@ -3572,6 +3582,13 @@ export function createAnnotator(host){
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
     marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),
     loading: () => !!S.loading, // the open asset's rows are still being fetched (its marks are not known yet)
+    // Re-read the open file's rows (edited elsewhere); undo / redo would write the old copies back over them.
+    reload: () => {
+      const a = S.asset;
+      if (!a || !supported()) return;
+      S.undo = []; S.redo = []; paintBar();
+      Promise.resolve(flush()).then(() => { if (S.asset === a) load(a); }); // after its own pending save lands
+    },
     // For the board view (canvas.js): save pending edits, drop a half-drawn gesture, the drawings' bounds, modal state.
     flush: () => flush(), abortGesture, modal: () => !!help || !!stampPop && !stampPop.hidden,
     bounds: () => { let b = null; for (const it of S.items.values()){ if (!isDrawing(it)) continue; const x = boundsOf(it); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x.slice(); } return b; },
@@ -3783,6 +3800,10 @@ function injectStyles(){
 .an-mk.note.done { background: #34c759; }
 .an-mk.note.prog { background: #ff9f0a; }
 .an-mk:hover { transform: scale(1.35); }
+.an-cmpb { border: 1px solid var(--border-strong, #444); background: transparent; color: inherit; border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
+.an-cmpb:hover { border-color: var(--accent); }
+.cmp.an-panel-on { padding-right: 320px; --an-right: 320px; }
+.cmp-annb.on { color: var(--accent); }
 .light-bar .an-btn { position: relative; }
 .light-bar .an-btn.on { color: var(--accent); }
 .an-badge { position: absolute; right: 2px; top: 2px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: #d0342c; color: #fff; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; }

@@ -9,8 +9,11 @@
 // frame sits on the timeline), so clips that start or run differently can be lined up. Playback
 // runs on a wall clock; every video is nudged (playbackRate) or re-seeked to stay on it.
 //
-// createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id) }.
-// open(ids, focusId) / close() / isOpen() / onKey(e) (true when the key was used).
+// createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
+// onView(view) — the selected layer's viewer after every rebuild / selection (view: {asset, wrap, media, isVid,
+// geom, unturn} or null), onPlaced() — pan / zoom / splits moved, onClose(), onAnnotButton() }.
+// open(ids, focusId, session) / close() / isOpen() / onKey(e) (true when the key was used) / session() — the
+// set to store with a note (FORMAT.md `compare`) / pause() / seekLayer(id, t) — the selected clip's local time.
 
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
@@ -50,11 +53,20 @@ export function createCompare(host){
   injectStyles();
   let P = { layout: "swipe", blend: "over", dir: "x", loop: true };
   try { P = { ...P, ...(JSON.parse(localStorage.getItem(PREF_KEY)) || {}) }; } catch {}
-  const savePrefs = () => { try { host.putSetting(PREF_KEY, JSON.stringify(P)); } catch {} };
+  // A comparison opened from a note shows the look it was made with (C.pBase = the preferences before it);
+  // only what is changed here is saved, and the rest goes back when it closes.
+  const prefsToSave = () => {
+    if (!C?.pBase) return { ...P };
+    const out = { ...P };
+    for (const k of ["layout", "blend", "dir"]) if (!C.userSet.has(k)) out[k] = C.pBase[k];
+    return out;
+  };
+  const savePrefs = () => { try { host.putSetting(PREF_KEY, JSON.stringify(prefsToSave())); } catch {} };
   let C = null; // the open session
 
   // ---- open / close ----------------------------------------------------------------------------
-  async function open(ids, focusId){
+  // session (optional): a comparison stored with a note — {ids, ref, sel, layout, blend, dir, starts: {id: frames}}.
+  async function open(ids, focusId, session){
     const assets = [];
     for (const id of ids){
       let a = host.assetById?.(id);
@@ -62,6 +74,7 @@ export function createCompare(host){
       if (comparable(a) && !assets.some((x) => x.id === a.id)) assets.push(a);
     }
     if (assets.length < 1) return false;
+    if (session && assets.length < 2) return false; // a stored comparison with one file left is no comparison
     if (C) close();
     const el = document.createElement("div");
     el.className = "cmp";
@@ -72,7 +85,8 @@ export function createCompare(host){
         <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are (D toggles)">Over</button><button type="button" data-v="difference" title="Difference against the reference ★ — equal pixels go black (D)">Difference</button></div>
         <button type="button" class="cmp-b" data-a="dir" title="Split direction (V)"></button>
         <button type="button" class="cmp-b" data-a="fit" title="Fit (F) · wheel zooms · right / middle drag pans">Fit</button>
-        <span class="cmp-hint">Drag splits · [ ] shift layer · ↑↓ layer · R reference · H hide · Space play · , . frame · Esc</span>
+        <button type="button" class="cmp-b cmp-annb" data-a="annot" title="Annotate the selected layer (A) — notes go to its file and remember this comparison">✎ Annotate</button>
+        <span class="cmp-hint">Drag splits · [ ] shift layer · ↑↓ layer · R reference · H hide · A annotate · Space play · , . frame · Esc</span>
         <button type="button" class="cmp-b" data-a="close" title="Close (Esc)">✕</button>
       </div>
       <div class="cmp-stage"></div>
@@ -96,19 +110,35 @@ export function createCompare(host){
       view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0, drag: null,
       candidates: [], built: "",
     };
+    host.onOpen?.(el); // (the annotator mounts on the overlay before the first rebuild reports a viewer)
     assets.forEach((a) => addLayer(a));
     const focus = C.layers.find((l) => l.a.id === focusId) || C.layers[0];
     C.ref = focus.a.id; C.sel = focus.a.id; C.sound = focus.a.id;
+    if (session){
+      C.pBase = { ...P }; C.userSet = new Set();
+      if (layer(session.ref)) C.ref = session.ref;
+      if (layer(session.sel)) C.sel = C.sound = session.sel;
+      for (const l of C.layers){ const f = Number(session.starts?.[l.id]); if (Number.isFinite(f)) l.start = Math.round(f); }
+      if (LAYOUTS.some(([k]) => k === session.layout)) P = { ...P, layout: session.layout };
+      if (session.blend === "over" || session.blend === "difference") P = { ...P, blend: session.blend };
+      if (session.dir === "x" || session.dir === "y") P = { ...P, dir: session.dir };
+    }
     bindUi();
     build();
     requestAnimationFrame(() => el.classList.add("on"));
     C.raf = requestAnimationFrame(tick);
-    loadFps();
+    C.fpsReady = loadFps();
     loadCandidates(focus.a.id);
+    // The panel opening / closing (annotating) or anything else that resizes the stage re-places the media.
+    C.ro = new ResizeObserver(() => place());
+    C.ro.observe(C.stage);
     return true;
   }
   function close(){
     if (!C) return;
+    host.onClose?.();
+    C.ro?.disconnect();
+    if (C.pBase) P = prefsToSave();
     cancelAnimationFrame(C.raf);
     if (C.onResize) window.removeEventListener("resize", C.onResize);
     for (const l of C.layers) for (const m of l.media) releaseMedia(m);
@@ -262,6 +292,32 @@ export function createCompare(host){
     C.syncNow = true;
     place();
     paintAll();
+    reportView();
+  }
+  // The selected layer's viewer for the annotator: the box it is drawn in (swipe: the whole box — a drawing
+  // anywhere maps into the selected layer's picture), its media element and its geometry (object-fit: contain
+  // inside the element's box, so a layer of another shape is placed as it is shown).
+  function reportView(){
+    if (!host.onView) return;
+    const l = layer(C.sel);
+    let wrap = null, media = null;
+    if (l && l.vis){
+      if (P.layout === "swipe"){
+        wrap = C.stage.querySelector(".cmp-box");
+        media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
+      } else {
+        wrap = [...C.stage.querySelectorAll(".cmp-cell")].find((c) => c.dataset.id === l.id) || null;
+        media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
+      }
+    }
+    if (!wrap || !media){ host.onView(null); return; }
+    const geom = () => {
+      const x = parseFloat(media.style.left) || 0, y = parseFloat(media.style.top) || 0;
+      const w = parseFloat(media.style.width) || 1, h = parseFloat(media.style.height) || 1;
+      const nw = l.nw || w, nh = l.nh || h, s = Math.min(w / nw, h / nh);
+      return { x0: x + (w - nw * s) / 2, y0: y + (h - nh * s) / 2, s, w: nw, h: nh, turn: "" };
+    };
+    host.onView({ asset: l.a, wrap, media, isVid: isVideo(l.a), geom, unturn: (x, y) => [x, y] });
   }
   // Positions every media element (shared zoom / pan, reference size) and the swipe regions.
   function place(){
@@ -276,6 +332,7 @@ export function createCompare(host){
       const x = W / 2 - C.view.cx * w, y = H / 2 - C.view.cy * h;
       for (const m of box.querySelectorAll(".cmp-m")) Object.assign(m.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px" });
     }
+    host.onPlaced?.();
     if (P.layout !== "swipe") return;
     const box = boxes[0];
     if (!box) return;
@@ -470,9 +527,11 @@ export function createCompare(host){
     paintLayers();
   }
   function select(id){
+    const changed = C.sel !== id;
     C.sel = id;
     C.stage.querySelectorAll(".cmp-cell").forEach((c) => c.classList.toggle("sel", c.dataset.id === id));
     paintLayers();
+    if (changed) reportView();
   }
   function selectStep(d){
     const i = C.layers.findIndex((l) => l.id === C.sel);
@@ -489,6 +548,7 @@ export function createCompare(host){
   }
   function setPref(k, v){
     P[k] = v;
+    C?.userSet?.add(k);
     savePrefs();
     if (k === "loop"){ paintTimeline(); return; }
     if (k === "dir"){ paintBar(); place(); return; }
@@ -539,6 +599,7 @@ export function createCompare(host){
       if (g){ setPref(g, b.dataset.v); return; }
       const a = b.dataset.a;
       if (a === "close") close();
+      else if (a === "annot") host.onAnnotButton?.();
       else if (a === "fit") fit();
       else if (a === "dir") setPref("dir", P.dir === "x" ? "y" : "x");
     });
@@ -715,7 +776,42 @@ export function createCompare(host){
     return !hotkey(e, "Ctrl+KeyK");
   }
 
-  return { open, close, isOpen: () => !!C, onKey };
+  // What a note made here remembers (FORMAT.md `compare`): the files, their order, reference, selected layer,
+  // look and each clip's offset.
+  function session(){
+    if (!C) return null;
+    const starts = {};
+    for (const l of C.layers) if (isVideo(l.a) && l.start) starts[l.id] = l.start;
+    return { ids: C.layers.map((l) => l.id), ref: C.ref, sel: C.sel, layout: P.layout, blend: P.blend, dir: P.dir, starts };
+  }
+  // The annotator stops: on the frame the selected clip is showing (its drawing is stored at that element
+  // time), not the clock's snapped / drifted one.
+  function pause(){
+    if (!C || !C.playing) return;
+    C.playing = false;
+    const l = layer(C.sel), m = l && isVideo(l.a) ? l.media.find((x) => x._primary) : null;
+    // (minus the 0.1 frame syncVideos adds back, so a stop late in a frame does not move on to the next one)
+    if (m && m.readyState >= 1 && !m.parentElement?.classList.contains("out")) C.T = l.start / C.fps + Math.max(0, m.currentTime - 0.1 / C.fps);
+    else C.T = snapT(C.T);
+    C.syncNow = true;
+    paintTime();
+  }
+  // The annotator moves the selected clip to its local time t (a note's frame, a frame step): the shared clock
+  // follows, unsnapped (the clip's own frame grid can differ from compare's fps). Not clamped while the clips'
+  // lengths are still unknown (a comparison just opened from a note).
+  function seekLayer(id, t){
+    const l = C && layer(id);
+    if (!l) return;
+    const T = t + (isVideo(l.a) ? l.start / C.fps : 0);
+    const [lo, hi] = range();
+    C.playing = false;
+    C.T = hi > lo ? clamp(T, lo, hi - 1e-3) : T; // (exactly at the end the clip counts as out and dims)
+    C.syncNow = true;
+    paintTime();
+  }
+  function relayout(){ if (C) requestAnimationFrame(() => place()); }
+  return { open, close, isOpen: () => !!C, onKey, session, pause, seekLayer, relayout, selectedId: () => C?.sel || null,
+    ready: () => C?.fpsReady || Promise.resolve() };
 }
 
 let injected = false;

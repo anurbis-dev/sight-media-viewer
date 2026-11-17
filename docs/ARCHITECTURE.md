@@ -634,6 +634,18 @@ re-read when the player leaves them. `jumpMarker` with no marker left asks `host
 only for those without a picture — never for all (`start_playback_copy` transcodes anything without a copy).
 Touch selection mode (`state.touchSelect`, long-press) — see RECENT 0.66.0.
 
+**Annotating in compare** (index.html `cmpAnnot`) — a second `createAnnotator` instance mounted on the compare
+overlay (`host.onOpen` → `mount(C.el)`); compare reports the selected layer's viewer after every rebuild /
+selection (`host.onView({asset, wrap, media, isVid, geom, unturn})`: swipe → the whole `.cmp-box`, tiles → its
+`.cmp-cell`; `geom` is object-fit: contain inside the media element's box) → `setAsset` (only when the file
+changes) + `bind2d`; `onPlaced` → `viewChanged`. The compare runs every clip on one clock, so the annotator
+must not drive the element: annotate.js goes through `vidPause` / `vidSeek`, which use `host.pauseVideo` /
+`host.seekVideo` when present (→ `cmp.pause()` / `cmp.seekLayer(sel, t)`). New notes get `host.noteExtra()`
+= `{compare: cmp.session()}` (FORMAT.md `compare`); a note card with it shows a button when the host has
+`openCompareSession` (the lightbox's annotator — not the compare's own). `compareFromContext` asks
+`latestCompareSession(focus)` before the file's versions. Keys while compare is open: the annotator's (when on)
+→ `A` → compare's. On close, a lightbox underneath is reloaded if anything was annotated (its notes are stale).
+
 **Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
 Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared
 zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is drawn whole at the

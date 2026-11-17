@@ -1057,6 +1057,7 @@ const annot = createAnnotator({
   getV3D: () => ({ ...state.v3d }),
   // A 3D note restores the shading / lights / explode it was written with — live, not saved, so
   // the user's own viewer settings come back with the next change they make themselves.
+  openCompareSession: (sess, note) => openCompareSession(sess, note),
   setV3D: (v) => {
     Object.assign(state.v3d, v);
     paintShadeButtons();
@@ -1090,6 +1091,45 @@ const boardAnnot = createAnnotator({
 });
 // Version compare (compare.js) — K in the grid (2+ selected files, or the versions of the one
 // under the cursor / selected) and in the lightbox (versions of the open file).
+// Annotating in the version compare: a second annotator mounted on the compare overlay, on the selected layer
+// (its file gets the notes). A note made there stores the comparison (FORMAT.md `compare`), so the note can
+// open it again and K on its file brings the same files back (latestCompareSession).
+let cmpAnnotUsed = new Set(); // files annotated in this compare (the lightbox reloads its notes if it shows one)
+let cmpView = null;           // the selected layer's viewer as compare last reported it (null: none visible)
+const cmpAnnot = createAnnotator({
+  api: (path, opts) => api(path, opts),
+  putSetting: (k, v) => putSetting(k, v),
+  registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+  toast: (text) => flash(text),
+  appVersion: () => state.meta?.version || "",
+  panScroll: (el) => attachPanScroll(el),
+  // The compare runs every clip on one clock: the annotator stops / moves that clock, not the element.
+  pauseVideo: () => cmp.pause(),
+  seekVideo: (t) => cmp.seekLayer(cmp.selectedId(), t),
+  noteExtra: () => { const sess = cmp.session(); return sess && sess.ids.length > 1 ? { compare: sess } : null; },
+  onModeChange: (on) => {
+    if (on && cmpAnnotAsset) cmpAnnotUsed.add(cmpAnnotAsset);
+    document.querySelector(".cmp .cmp-annb")?.classList.toggle("on", !!on);
+    cmp.relayout(); // the notes panel takes the right edge
+  },
+  onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
+  // The panel's versions row: open a version in the viewer / compare those versions.
+  openAsset: async (id) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (light) showInLight(a); else toggleLight(a); },
+  openCompare: (ids, focus) => openCompare(ids, focus),
+});
+// The annotator follows the selected layer lazily: a file's notes are fetched once annotating is on.
+function cmpBind(){
+  if (!cmpView) return false;
+  if (cmpAnnotAsset !== cmpView.asset.id){ cmpAnnotAsset = cmpView.asset.id; cmpAnnot.setAsset(cmpView.asset); }
+  cmpAnnot.bind2d(cmpView);
+  if (cmpAnnot.isOn()) cmpAnnotUsed.add(cmpAnnotAsset);
+  return true;
+}
+function cmpToggleAnnot(force){
+  const want = force ?? !cmpAnnot.isOn();
+  if (want && !cmpBind()){ flash("Show the selected layer to annotate it"); return; }
+  cmpAnnot.toggle(want);
+}
 const cmp = createCompare({
   api: (path, opts) => api(path, opts),
   putSetting: (k, v) => putSetting(k, v),
@@ -1097,10 +1137,44 @@ const cmp = createCompare({
   assetById: (id) => assetById(id),
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
   openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
+  onOpen: (el) => { cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); },
+  onView: (view) => {
+    cmpView = view;
+    // The selected layer hidden: annotating stops (a later A / ✎ refuses until a layer is shown again).
+    if (!view){ cmpAnnot.toggle(false); return; }
+    if (cmpAnnot.isOn() || cmpAnnotAsset === view.asset.id) cmpBind();
+  },
+  onPlaced: () => cmpAnnot.viewChanged(),
+  onAnnotButton: () => cmpToggleAnnot(),
+  onClose: () => {
+    cmpAnnot.unmount();
+    cmpAnnotAsset = null; cmpView = null;
+    // The lightbox underneath shows a file annotated here: re-read its notes (the stage stays as it is).
+    if (light && cmpAnnotUsed.has(light.id)) annot.reload();
+  },
 });
-function openCompare(ids, focus){
+let cmpAnnotAsset = null;
+function openCompare(ids, focus, session){
   for (const m of [light?.video, light?.audio]) { try { m?.pause(); } catch {} }
-  return cmp.open(ids, focus);
+  return cmp.open(ids, focus, session);
+}
+// A note written in the compare: open that comparison again, on the note's frame, with annotating on.
+async function openCompareSession(sess, note){
+  if (!(await openCompare(sess.ids, sess.sel, sess))){ flash("The files of this comparison are no longer in the library"); return; }
+  await cmp.ready(); // the clips' offsets are in frames: the frame rate must be known before landing
+  if (!cmp.isOpen()) return;
+  const t = note?.data?.ctx?.t;
+  if (t != null) cmp.seekLayer(cmp.selectedId(), t);
+  cmpToggleAnnot(true);
+}
+// The newest comparison stored with a note on this file (it must still hold 2+ files).
+async function latestCompareSession(id){
+  let rows = [];
+  try { rows = await api(`/api/annotations?asset_id=${encodeURIComponent(id)}`); } catch { return null; }
+  const withSess = (rows || []).filter((r) => r.kind === "note" && Array.isArray(r.data?.compare?.ids) && r.data.compare.ids.length > 1
+    && r.data.compare.ids.includes(id));
+  withSess.sort((a, b) => (b.data.created || 0) - (a.data.created || 0));
+  return withSess[0]?.data.compare || null;
 }
 async function compareFromContext(){
   let ids = null, focus = null;
@@ -1116,6 +1190,9 @@ async function compareFromContext(){
   if (!ids){
     const a = focus && (assetById(focus) || canvasCtl?.assetOf?.(focus) || (light && light.id === focus ? light.asset : null));
     if (!a || !comparable(a)){ flash("Compare: select 2 or more images / videos, or open one that has versions"); return; }
+    // The comparison its notes were written in comes back first (the same files, order, offsets and look).
+    const sess = await latestCompareSession(focus);
+    if (sess && await openCompare(sess.ids, focus, sess)) return;
     let list = [];
     try { list = ((await api(`/api/assets/${focus}/versions`)).items || []).filter(comparable); } catch {}
     if (list.length < 2){ flash(`No other versions of ${a.name} in its folder — select the files to compare and press K`); return; }
@@ -8718,7 +8795,13 @@ document.addEventListener("keydown", (e) => {
   if (!$("fbOverlay").hidden && hotkey(e, "Escape")){ e.preventDefault(); fbClose(); return; }
   if (!$("fbOverlay").hidden) return;
   if (!$("aboutOverlay").hidden){ if (hotkey(e, "Escape")){ e.preventDefault(); aboutClose(); } return; }
-  if (cmp.isOpen()){ if (cmp.onKey(e)) return; }
+  if (cmp.isOpen()){
+    // Annotating in the compare: the annotator's keys first (its help overlay owns the keyboard), A toggles.
+    if (cmpAnnot.helpOpen()){ cmpAnnot.onKey(e); return; }
+    if (cmpAnnot.isOn() && cmpAnnot.onKey(e)) return;
+    if (!typing && !e.repeat && hotkey(e, "KeyA")){ e.preventDefault(); cmpToggleAnnot(); return; }
+    if (cmp.onKey(e)) return;
+  }
   if (hotkey(e, "KeyK") && !typing && !e.repeat){ e.preventDefault(); compareFromContext(); return; }
   // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles
   // the mode; in a 3D view A flies the camera, so there it is Shift+A.

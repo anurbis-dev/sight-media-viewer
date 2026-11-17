@@ -412,6 +412,15 @@
     type it, or `[` / `]` for the selected clip, `Shift` ×10): where its first frame sits on the
     timeline, to line up clips that start or run differently. The coloured bars on the timeline show
     each clip's span; 🔈 picks whose sound plays.
+  - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
+    **selected layer** — notes and drawings go to that file, at its own frame (a video layer's local
+    time). Click a layer chip (or a tile) to annotate another file. A note written here remembers the
+    comparison — the files, their order, reference, layout and offsets: its card in the viewer has
+    *⧉ Compare · N files*, which opens it again on the note's frame, and `K` on that file brings the same
+    files back (the newest such note wins) instead of its versions. While annotating, the drawing tools own the left
+    button / finger and their keys (`[` `]` brush size, `R` `V` `L` tools, `Shift+,` / `.` markers): leave
+    annotating (`A` / Esc) to move splits by touch, shift layers or change the reference by key. The
+    screenshot tool takes the selected layer's picture, not the split / difference view on screen.
   - Wheel zooms around the cursor, right / middle drag pans (left drag in the tile layouts),
     double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order

@@ -2,6 +2,31 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.58.0 — 2026-11-16 — Sidebar: info-panel button, chevrons in the folder tree, counter in the Sources header, type icons, collapsible File block
+- **What:** the top bar's item counter is replaced by an *Info panel* button (right end) that shows / hides the
+  inspector and its drag handle (pressed while open; on narrow screens it toggles the drawer). The folder tree's
+  "+" / "−" became a chevron (right = closed, down = open; Shift+click still expands / collapses all). The total
+  "N files" (and the "scanning · N" shimmer) moved from the bottom of the sidebar into the Sources header, right
+  of the title. *Sidebar icons* now also covers the Types rows (new "file" and "font" icons in the catalogue).
+  The inspector's file block (thumbnail, path, facts) collapses under a "File" header; the state is remembered.
+- **Where:** `index.html` — `applyDetails` / `syncInfoBtn` / `narrowMQ`, `toggleDetails` (narrow-aware),
+  `#infoBtn`; `statusHtml` / `renderStatus` / `renderSources` (`#srcCount`); `renderFolderChildren` /
+  `renderSources` (`.tiny.tree-chev`, `aria-expanded`); `row(…, iconId)`, `KIND_ICON`, `renderTypes`, `ICONS`
+  "file" / "font"; `renderInsp` + a delegated click on `#insp` (`navCollapse.inspFile`); the coarse-pointer CSS
+  block; MANUAL (Info panel, File block), ARCHITECTURE ("Info panel / sidebar" bullet).
+- **Notes:** `state.details` drives the wide panel; the narrow drawer's `.open` is not persisted (a
+  MutationObserver on `#insp` keeps the button in sync with the Esc / select paths). Fixed on the way: on narrow
+  screens the boot code set an inline `display:none` when `details` was false, so the drawer could never open.
+  `#srcCount` is rebuilt by every `renderNav`, so it is painted through `statusHtml()` — keep it that way. The
+  multi-selection count lives in the inspector's header ("N selected"), the top bar no longer shows it (by the
+  user's choice). Touch: the chevron is always visible there (36 px hit area), and the row's hidden buttons use
+  `visibility: hidden` with their space reserved, because a visible chevron made a tap set `:hover`, which revealed
+  the "×" and shifted it under the finger (a test tap removed the whole source). Rows are ~22 px per hidden button
+  wider on touch. Not done: the collapse is not applied to the multi-selection inspector; subfolder rows get no icon.
+  Review (fresh agent): no crash-level bugs; found the touch chevron hidden until hover with a 22 px hit area
+  (fixed, which surfaced the "×" bug above), static aria labels (fixed), a sentence spliced into ARCHITECTURE
+  (fixed). The same reviewer confirmed every fix, nothing new.
+
 ## 0.57.0 — 2026-11-16 — Settings: section title colour / size, compact theme row, gear icon
 - **What:** two theme settings for the sidebar section headers — *Section titles* (colour, in Colors) and
   *Section title size* (Typography, 9–20 px); they style the `.sec` band, the Settings header included. The theme

@@ -101,9 +101,20 @@ data = {
   shots: [shotId],                    // attached pictures (screenshots, uploads)
   replies?: [reply | event],          // the thread, oldest first
   from?: {id, asset, name},           // copied from note `id` on the previous version `asset`
-  captions?: {key: text}              // 0.46+: each picture's own text, see below
+  captions?: {key: text},             // 0.46+: each picture's own text, see below
+  compare?: {                         // 0.68+: written in Sight's version compare — that comparison
+    ids: [assetId],                   //   its files in layer order (2+, this note's file among them)
+    ref, sel,                         //   reference layer and the selected one (= this note's file)
+    layout: "swipe"|"grid"|"row"|"col", blend: "over"|"difference", dir: "x"|"y",
+    starts: {assetId: frames}         //   video layers' first-frame offsets (0 omitted)
+  }
 }
 ```
+
+**Comparison** (`compare`, 0.68+): Sight only. The note button "⧉ Compare" and `K` on the file open
+these files again with this look; ids not in the receiving library are skipped. Older Sights, the HTML
+page and the phone app ignore it and keep it (rows are rewritten with `data` as is); it does not take
+part in merging (the note's content stamp decides, as for every field).
 
 **Picture texts** (`captions`, 0.46+): the note's `text` is the topic; each of the note's own
 pictures may carry a text of its own. Keys (`picKey` in `review-core.js`):
