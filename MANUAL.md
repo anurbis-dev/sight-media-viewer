@@ -12,6 +12,8 @@
 - **Details preview** — the details panel shows only the file's thumbnail plus its info, for every
   type. Playback, waveforms, font/text previews and the 3D viewer are in the lightbox (Space /
   double-click).
+- **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
+  thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held Alt / Shift does on a picture or video (turn, scrub).
 - **File info** — in the lightbox press `I` (or the round *i* button in the top-left corner) for a translucent info
   overlay in the top-left corner, like Blender's viewport info. It shows the file's basics plus what
   only that type has: EXIF/camera data for photos, codecs/frame rate/bit depth for video, sample
@@ -49,11 +51,20 @@
   It stays open while you flip through files and is remembered next time.
 - **PSD layers** — in the lightbox of a PSD press `D` (or the ☰ button bottom-right) for the layer
   list; click a layer to view it alone, "Composite" to return to the full image.
+- **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar
+  and the library grid on the left and the lightbox / video player on the right, with a divider to drag
+  (the width is remembered; the sidebar's Canvas section is hidden there). Double-click a thumbnail to open it, drag pictures from the grid onto the frame
+  as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
+  way you left it. On a board `Tab` shows / hides the library beside it in the same way (◧ now sits at the
+  left of the top bar).
 - **Reading notes** — the speech-bubble button in the lightbox's top bar (its badge counts the notes) or `C`
   opens the notes panel without the drawing tools: read the notes and replies, click a note or its picture to go
   to its frame / view (only its drawings show; Esc shows all again). The same button sits in the top bar for a
   board; there a note's picture is the part of the board you were looking at when you wrote it, and a click on it
   glides the camera back there.
+- **Saving notes** — notes, replies and drawings save on their own. If Sight cannot save them (the app is busy or
+  was closing), a red "unsaved annotation changes — retrying" badge shows at the bottom; the changes are kept and
+  sent as soon as possible, also at the next start. Click / tap the badge to retry now.
 - **Annotations & review** — in the lightbox of an image, PSD, video or 3D model press `A`
   (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
   appears at the top with a second row that always shows the settings of the current tool — or of
@@ -69,16 +80,43 @@
   annotating.
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
-    eraser end erases too) · `L` line · `W` arrow · `R` rectangle · `O` ellipse · `T` text ·
-    `N` numbered pin. `[` / `]` make the brush / width smaller / larger.
-  - Shapes: stroke on/off, width, dash (solid / dashed / dotted), fill on/off, fill colour and
+    eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) · `R` / `O` the shape tool as
+    a rectangle / an ellipse (its *Shape* switch ▭ / ◯ in the styles bar does the same by touch) · `T` text ·
+    `N` number pin: a click puts a numbered circle there, a drag draws a line from where you pressed and puts the
+    circle where you let go (a callout). A small field then asks for the number — type it and Enter (or tap
+    elsewhere); left empty it takes the next free number, Esc drops the new pin. A click on a pin with this tool
+    (or a double-click with another one) changes its number. Pins from before 0.84 keep showing their note's
+    number. The tool's keys stay live once the number is set. `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
+    the brush. The drawing tools and the notes panel are independent: the ✎ button / `Shift+A` shows / hides
+    the tools only, the speech-bubble button / `C` the panel only.
+  - **Reference images** (`Shift+I`, the picture button in the toolbar): put pictures on the frame /
+    picture as references. Drop picture files from outside onto the frame (any tool — annotating turns on
+    by itself), drag pictures from the library beside the player (below), click the frame with the tool to
+    pick files on the computer (they land where you clicked), or use the tool's *From disk…* / *Library* /
+    *Add selected* buttons (*Add selected* takes the pictures selected in the library — the way on a touch
+    screen). On a video a reference image belongs to the frame it was dropped on (and *Hold*, like any
+    drawing). A selected reference image has: *Frame* (border width) and its colour, *Shadow* (strength),
+    *Opacity*; corners scale it without stretching, the knob turns it. *Crop* (or double-click the picture)
+    shows the whole picture dimmed with grips: drag an edge or corner to cut it, drag inside to slide the
+    picture within the cut; Enter / Esc / a press elsewhere finishes, *Reset crop* shows it all again.
+    Reference images travel with the review (web page, `.srev`, PDF / ZIP pictures, the phone app shows
+    them).
+  - Shapes: width, dash (solid / dashed / dotted), fill on/off (off by default, 50 % when on), fill colour and
     opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
     (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the
-    middle handle of a selected line to bend it. Text: font, size, colour, bold / italic / underline,
+    middle handle of a selected line to bend it. The arrow tool's *Stroke* button (wave with arrows; the
+    tool's icon follows it) draws a freehand stroke with arrows along it, each turned to the stroke's normal —
+    *Every* (distance between them), *Length*, *Tip* (head) and three icon buttons that step through their
+    states on each click / tap: direction (away from the stroke / toward it), side (left / right / both,
+    relative to the direction you drew in), guide (draw the stroke itself; its dash). Brush: *Close* (lasso icon)
+    joins the stroke's end to its start like a lasso and fills it — *Fill* none / solid / a pattern (lines in
+    four directions, grid, cross-hatch, dots, dashes) or *Random* (a different pattern each stroke), fill
+    colour, *Fill α*, *Spacing* (pattern density). A selected closed stroke changes them too; erasing a piece
+    out of it opens it. Text: font, size, colour, bold / italic / underline,
     alignment, background box (colour, opacity), outline; double-click a text to edit it again
     (`Ctrl+Enter` or Esc finishes).
-  - While drawing: `Shift` snaps lines, arrows and straight brush strokes to 15° steps (0/45/90…),
-    makes rectangles square and ellipses round. Select tool: click /
+  - While drawing: `Shift` keeps lines, arrows, a pin's line and straight brush strokes horizontal or vertical
+    (also when dragging a line's end), makes rectangles square and ellipses round. Select tool: click /
     Shift+click / drag a box to select, drag to move (Shift locks the axis), Alt+drag duplicates,
     corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
@@ -100,7 +138,10 @@
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `?` (or the ? button in the toolbar) opens a list of every annotation shortcut; Esc / ? / a click outside closes it, and nothing underneath reacts while it is open. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
-    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text to edit, the clock marks it *In progress* (someone took
+    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text (or the pencil on the card) to edit — a card's buttons (pencil, reply, in progress,
+    resolve, delete; a reply's) show while the pointer is over it, and on the picked (tapped) card on a touch
+    screen; `Ctrl+C` with the pointer over a note's, a reply's or a picture's text (in the panel or on the text
+    plate over the picture) copies that text — a real text selection is copied as usual, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it.
     **Picture texts** — the note's text is its topic; each of its pictures (the image, a video frame,
@@ -136,16 +177,25 @@
     the top of the viewer (`Shift+M`) mirrors it; Sight remembers it per file. Only the
     view changes: the file and the drawings on it stay as they are. Mirror and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
+  - **Reset the toolbar** — hold the pen button (the one that turns annotating on) for about a second: every tool's colours, sizes
+    and options, the hold time and the frame stamp's look return to their defaults (a normal click still toggles annotating).
   - **Turn by hand** — Alt+drag on a picture turns it about its centre, to any angle (on a video Alt+drag
     scrubs; Ctrl+Alt+drag turns the video. A clip with few keyframes — many phone and screen
     recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy
     in the background and later drags show it, so every position along the way is drawn. Sight keeps
     the newest 20 scrub copies, 1 GB at most, and makes one again when needed); hold
     Shift to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
+  - **Video bar** — right of the timeline: the *sound* icon (click = mute / unmute; press and drag up / down,
+    or the mouse wheel = volume, with a slider above the icon; right-click or long press = *sound while
+    scrubbing* on / off, shown by a dot on the icon) and the *loop* button (replay at the end; inside a
+    sequence the sequence bar's loop applies). The position field left of the timeline: click and type a
+    frame number (or a time such as 1:05) + Enter to jump, Esc cancels; right-click or long press picks
+    *Frame / Time / Frame + time* and, with a sequence of 2+ clips, *local* or *global* counting.
+    Shift+← / Shift+→ jump to the first / last frame (of the whole sequence while one plays). All kept per device.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
-    first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them
-    and *Compare*. When the previous version still has open notes, *Copy here* brings them over
+    first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them;
+    the compare button in the viewer's top bar (or `K`) compares them. When the previous version still has open notes, *Copy here* brings them over
     with their drawings (scaled if the size changed; the note says where it came from).
   - **Video** — drawings belong to the frame they were made on. A note has a marker on each frame
     its drawings (or a text of one of its pictures) are on — not on the frame where it was typed; a
@@ -154,7 +204,7 @@
     of those frames, numbered in the top-left corner. Click a marker to go there. `,` / `.`
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
-    whole clip; onion skin — right-click or long-press the eye in the top bar (a way of viewing, drawing or not; remembered)
+    whole clip; onion skin — right-click or long-press the eye in the top bar (a way of viewing, drawing or not; remembered; picking a note in the panel goes to its frame but keeps every drawing and ghost on show)
     — cross-fades between annotated frames: as the playhead moves on,
     the last frame's drawings fade out and the next annotated frame's fade in (over the last / first second at
     the clip's ends).
@@ -193,7 +243,8 @@
     gets the review on the same media file, found by path, else by name and size. Importing
     **merges**: the same file twice changes nothing, a file that went to someone and came back adds
     their replies / new notes / resolved states, and what was deleted on one side is deleted on the
-    other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
+    other (unless it was edited there later). A file that holds notes / drawings you deleted here
+    (an older copy of your own review, say) asks *Restore them?* — yes brings them back. *Web page for reviewers (.html)* — one file that opens
     in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
     note, screenshot and reply. The picture on top is the original; each note shows its frame with
     its drawings, and every picture in a card is shown at full width. Under each picture: which
@@ -290,11 +341,15 @@
   highlighter, arrows and lines, shapes, text, eraser, the colour, undo / redo, clear, pinch / pan /
   turn), its buttons floating over the picture; on a video the tools sit above the transport, and when they do
   not fit the screen's width, drag the row sideways to reach the rest. A tap on *Arrows and lines* or *Shapes* takes it and
-  shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
+  shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line, arrows
+  along a stroke — with it, three tap-to-cycle switches: side left / right / both, away / toward the
+  stroke, guide drawn or not; spacing and length follow the size /
   rectangle, rounded, ellipse, filled rectangle, filled ellipse — and at its end the fill colour:
   a second row with the line's own colour (lighter, the default) or one of six; picking a colour
   with an outlined shape in hand takes its filled kind): tap one to draw with it, or just
-  draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
+  draw — the row folds and the tool stays. The brush has such a row too: brush, or lasso (the end
+  joins the start and the inside is filled in the line's colour, half see-through) with its pattern
+  button — a second row of patterns (none, solid, lines, grid, cross-hatch, dots, dashes, random); tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; switched on, the box shows its colours in a second
   row above (tap it again: no box), the font button opens the fonts there (sans, serif, mono,
@@ -424,7 +479,13 @@
   `.srev` goes back to Sight with every view in place. PDF / web page: each view as a picture, "View N".
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
-  file (see *Versions* above). Also the palette and the review panel's *Compare* button.
+  file (see *Versions* above). Also the palette and the compare button in the viewer's top bar.
+  - **Any files from the viewer**: with the library beside the viewer (`Tab`), drag images / videos from the
+    grid onto the picture — they join a comparison with the open file (the compare button shows how many
+    files; it is greyed out while there is nothing to compare). The button or `K` opens it. Moving the viewer
+    to a file outside that set starts a new one. On a touch screen:
+    select the files in the library beside the viewer (long-press a tile) and tap the compare button. A picture
+    dropped while annotating is still added as a reference image instead; a drop no longer turns annotating on.
   - Layouts (`1`–`4`): **Swipe** — all layers stacked in one view and cut by split lines, one
     region per layer; drag anywhere to move the nearest split (Alt+drag pans), `V` switches between
     side-by-side and top / bottom splits. **Tile**, **Row** (horizontal strip), **Column** (vertical
@@ -433,9 +494,12 @@
     difference to the reference layer (★, `R` makes the selected layer the reference) — identical
     pixels turn black, so any change stands out. Works in every layout.
   - Layers bar at the bottom: click selects (`↑` / `↓`), ☆ reference, ◉ show / hide (`H`), drag a
-    chip to reorder, ⤢ opens the file in the viewer, × removes, *+ Add* brings in another version.
+    chip to reorder (touch: hold it, then drag) — the order is the order of the splits and tiles and is kept
+    with a note written in the comparison, ⤢ opens the file in the viewer, × removes, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
-    `Home`, `L` loop). Each clip has a **first-frame offset** (− / + on its chip, click the number to
+    `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
+    the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
+    goes on from where you let go. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (− / + on its chip, click the number to
     type it, or `[` / `]` for the selected clip, `Shift` ×10): where its first frame sits on the
     timeline, to line up clips that start or run differently. The coloured bars on the timeline show
     each clip's span; 🔈 picks whose sound plays.
@@ -592,15 +656,15 @@
     addition / layer order / path / randomly (press again to reverse); `Ctrl+Alt+S` stack.
   - **Draw and write notes on a board:** the pen button in the top bar, next to ◧ (or
     **Shift+A**; Shift+A or Esc leaves again) switches on the same tools as the full-screen viewer: brush,
-    pencil, highlighter, eraser, line, arrow, rectangle, ellipse, text, numbered pin, select / transform,
-    undo / redo and the styles bar (`B P M E L W R O T N V`, `Ctrl+Z` — press `?` in the mode for the list).
+    pencil, highlighter, eraser, arrow, shape (rectangle / ellipse), text, note pin, select / transform,
+    undo / redo and the styles bar (`B P M E W R O T N V`, `Ctrl+Z` — press `?` in the mode for the list).
     Drawings are **free on the board** (they do not belong to items and do not move with them), at any
     zoom. While the mode is on, a drag draws (items and their frame do not react; one finger draws on a
     touch screen) and the keys go to the tools, so `X` / `Delete` act on the selected drawing, never on
     items. Panning and zooming still work as usual: wheel, middle-drag, Alt+drag, Ctrl+wheel / right-drag
     — and **two fingers** pan and pinch-zoom the board (also with the mode off). `F` / `A` frame the board
     (drawings included). With the mode off the drawings stay visible and the board behaves exactly as
-    before. The panel button in the bar opens the **notes panel** (starts closed on a board): type a note
+    before. The notes button in the top bar opens the **notes panel** (starts closed on a board): type a note
     and press Enter — the drawings made since the last note are attached to it; a note has replies, an
     Open / In progress / Resolved state and a delete button as in the viewer. Clicking a note card shows
     only its drawings and moves the camera to them (click it again to show everything). A board has no

@@ -466,6 +466,8 @@ def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_ve
     shots: dict[str, str] = {}
     def row_shots(d: dict) -> list:
         out = list(d.get("shots") or [])
+        if isinstance(d.get("shot"), str):  # a reference image's picture (kind "image", FORMAT.md)
+            out.append(d["shot"])
         for x in d.get("replies") or []:  # pictures attached to replies
             if isinstance(x, dict) and not x.get("deleted"):
                 out += list(x.get("shots") or [])
@@ -581,9 +583,11 @@ def find_review_asset(lib, pkg: dict) -> dict | None:
     return a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
 
 
-def import_package(lib, pkg: dict, asset: dict | None = None) -> dict:
+def import_package(lib, pkg: dict, asset: dict | None = None, restore: bool = False) -> dict:
     """Merges one checked package into the library (synchronous; the server runs it in a thread).
-    -> {ok: True, asset_id, added, updated, deleted, author} | {ok: False, missing, asset}.
+    -> {ok: True, asset_id, added, updated, deleted, author, deleted_here} | {ok: False, missing, asset}.
+    `deleted_here` = rows of the package that stayed deleted because they were deleted here after
+    their last edit; `restore=True` brings those back (Library.import_annotations).
     Raises ValueError("Review file is damaged (…)") when the rows do not merge (rolled back)."""
     meta = pkg["asset"]
     a = asset or find_review_asset(lib, pkg)
@@ -597,23 +601,25 @@ def import_package(lib, pkg: dict, asset: dict | None = None) -> dict:
         if data:
             shot_map[str(sid)] = put_shot(lib.root, str(sid), data)
     deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
+    kept: list[str] = []
     try:
-        stats = lib.import_annotations(a["id"], rows, deleted, shot_map)
+        stats = lib.import_annotations(a["id"], rows, deleted, shot_map, restore, kept)
     # (a value sqlite cannot bind, such as an object for shape_kind, is the file's fault too)
     except (TypeError, ValueError, AttributeError, sqlite3.InterfaceError, sqlite3.ProgrammingError) as e:
         raise ValueError(f"Review file is damaged ({e})") from e
-    return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or ""}
+    return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or "", "deleted_here": len(kept)}
 
 
-def import_review_file(lib, raw: bytes) -> dict:
+def import_review_file(lib, raw: bytes, restore: bool = False) -> dict:
     """POST /api/review/import: a plain package -> import_package's result (raises ValueError for an
     unreadable / damaged file). A bundle -> {ok: True, bundle: True, id, author, results: [one per
     package, in order]}, each result import_package's or {ok: False, error} (damaged) or
     {ok: False, duplicate: n} (matched the same local file as entry n, 0-based); every entry carries
-    `name`. Packages are committed one by one: one failing never undoes or blocks the others."""
+    `name`. Packages are committed one by one: one failing never undoes or blocks the others.
+    `restore` is passed to import_package (bring back rows deleted here)."""
     head, entries = parse_review_file(raw)
     if head is None:
-        return import_package(lib, entries[0])
+        return import_package(lib, entries[0], restore=restore)
     results: list[dict] = []
     seen: dict[str, int] = {}
     for i, e in enumerate(entries):
@@ -628,7 +634,7 @@ def import_review_file(lib, raw: bytes) -> dict:
                 continue
             if a:  # (taken even if this one turns out damaged: a second copy of the clip is still not merged)
                 seen[a["id"]] = i
-            res = import_package(lib, e, a)
+            res = import_package(lib, e, a, restore)
         except Exception as x:  # this clip only: a damaged row, a picture that would not save
             res = {"ok": False, "error": str(x) or x.__class__.__name__}
         results.append({**res, "name": name})
@@ -918,6 +924,8 @@ body.zoomed { overflow: hidden; }
   var MULTI = D.clips.length > 1, BUNDLE = D.bundle || {};
   var R, PKG, KEY, rows, E, M, VEC, noteById, numById, exported, MEDIA_NAME, VIEW_KEY;
   var cur = -1, C = null;
+  // Reference images (kind "image") show their picture from the shown clip's package shots.
+  RC.setImageSource(function(sid){ return ((PKG && PKG.shots) || {})[sid] || ""; });
   function emptyEdits(){ return { replies: {}, notes: [], att: {}, rows: [] }; }
   // A downloaded page (D.copy) keeps its own local state, apart from the page it was made from. A one-clip
   // page keeps the key it always had; a multi-clip page keys each clip by the page's bundle id.
@@ -1155,7 +1163,8 @@ body.zoomed { overflow: hidden; }
     var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
     function plain(){ fetch(src).then(function(r){ return r.blob(); }).then(function(b){ saveBlob(b, name); }).catch(function(){}); }
     var img = new Image();
-    img.onload = function(){
+    img.onload = function(){ RC.imagesReady(list).then(flat, flat); };  // reference images decoded first
+    function flat(){
       var W = img.naturalWidth, H = img.naturalHeight;
       if (!W || !H){ plain(); return; }
       var c = document.createElement("canvas"); c.width = W; c.height = H;
@@ -1168,7 +1177,7 @@ body.zoomed { overflow: hidden; }
         g.restore();
       }
       try { c.toBlob(function(b){ if (b) saveBlob(b, name); else plain(); }, "image/jpeg", 0.92); } catch (_){ plain(); }
-    };
+    }
     img.onerror = plain;
     img.src = src;
   }

@@ -106,11 +106,11 @@ class ImportExportTest(unittest.TestCase):
         self.lib.conn.close()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def route(self, path: str, body: bytes) -> tuple[int, object]:
+    def route(self, path: str, body: bytes, qs: bytes = b"") -> tuple[int, object]:
         app = build_app(self.lib)
         for r in app.routes:
             if getattr(r, "path", "") == path and "POST" in (getattr(r, "methods", None) or ()):
-                scope = {"type": "http", "method": "POST", "path": path, "path_params": {}, "query_string": b"",
+                scope = {"type": "http", "method": "POST", "path": path, "path_params": {}, "query_string": qs,
                          "headers": [(b"content-type", b"application/json")]}
                 sent = False
 
@@ -133,7 +133,7 @@ class ImportExportTest(unittest.TestCase):
         st, res = self.route("/api/review/import", raw(package(self.a, [note("a1" * 8, "hi")])))
         self.assertEqual(st, 200)
         self.assertEqual(res, {"ok": True, "asset_id": self.a["id"], "added": 1, "updated": 0, "deleted": 0, "unchanged": 0,
-                               "author": "Ann"})
+                               "author": "Ann", "deleted_here": 0})
         gone = {**self.a, "id": "9" * 16, "name": "gone.mp4"}
         st, res = self.route("/api/review/import", raw(package(gone, [])))
         self.assertEqual((st, res["ok"], res["missing"]), (404, False, "gone.mp4"))
@@ -143,6 +143,18 @@ class ImportExportTest(unittest.TestCase):
         st, detail = self.route("/api/review/import", raw(bad))
         self.assertEqual(st, 400)
         self.assertIn("damaged", detail)
+
+    def test_restore_rows_deleted_here(self):
+        rid = "c1" * 8
+        st, res = self.route("/api/review/import", raw(package(self.a, [note(rid, "hi")])))
+        self.lib.delete_annotation(rid)
+        file = raw({"format": "sight-review-bundle", "version": 1, "id": "e" * 16,
+                    "packages": [package(self.a, [note(rid, "hi")])]})
+        st, res = self.route("/api/review/import", file)
+        self.assertEqual((res["results"][0]["deleted_here"], res["results"][0]["updated"]), (1, 0))
+        st, res = self.route("/api/review/import", file, b"restore=1")
+        self.assertEqual((res["results"][0]["deleted_here"], res["results"][0]["updated"]), (0, 1))
+        self.assertEqual([r["id"] for r in self.lib.annotations_for_asset(self.a["id"])], [rid])
 
     def test_bundle_with_missing_damaged_and_duplicate(self):
         gone = {**self.a, "id": "9" * 16, "name": "gone.mp4", "size": 99}

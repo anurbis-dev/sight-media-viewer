@@ -160,7 +160,52 @@ var SightReviewDraw = (function(){
     { k: "double", label: "Double arrow", h0: "triangle", h1: "triangle", dash: "solid", ico: '<path d="M9 15 15 9"/><path d="M19 5l-1 6.6-5.6-5.6z" fill="currentColor"/><path d="M5 19l1-6.6 5.6 5.6z" fill="currentColor"/>' },
     { k: "dashed", label: "Dashed arrow", h0: "none", h1: "triangle", dash: "dashed", ico: '<path d="M5 19 14 10" stroke-dasharray="3 3"/><path d="M19 5l-1.4 8.6-7.2-7.2z" fill="currentColor"/>' },
     { k: "line", label: "Line", line: true, h0: "none", h1: "none", dash: "solid", ico: '<path d="M5 19 19 5"/>' },
+    // Arrows along a freehand stroke (FORMAT.md `stroke` arrows); its row adds side / direction /
+    // guide switches (pen.astroke). Spacing and length follow the size: every 10, 6 long.
+    { k: "stroke", label: "Arrows along a stroke", stroke: true, h0: "none", h1: "triangle", dash: "solid", ico: '<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>' },
   ];
+  // Arrows-along-a-stroke switches: tap cycles. [value, title, icon].
+  var ASTROKE_OPTS = [
+    { k: "side", label: "Side", opts: [
+      ["left", "Left of the stroke", '<path d="M3 16h17M17 13l3 3-3 3"/><path d="M8 12V5M14 12V5"/>'],
+      ["right", "Right of the stroke", '<path d="M3 8h17M17 5l3 3-3 3"/><path d="M8 12v7M14 12v7"/>'],
+      ["both", "Both sides", '<path d="M3 12h17M17 9l3 3-3 3"/><path d="M8 9V3M14 9V3M8 15v6M14 15v6"/>']] },
+    { k: "dir", label: "Direction", opts: [
+      ["out", "Away from the stroke", '<path d="M3 20h18"/><path d="M12 16V4M8 8l4-4 4 4"/>'],
+      ["in", "Toward the stroke", '<path d="M3 20h18"/><path d="M12 4v12M8 12l4 4 4-4"/>']] },
+    { k: "guide", label: "Guide", opts: [
+      [true, "Guide: the stroke is drawn", '<path d="M3 15c3-6 6 6 9 0s6-6 9 0"/>'],
+      [false, "Guide: the stroke is not drawn", '<path d="M3 15c3-6 6 6 9 0s6-6 9 0" stroke-dasharray="2 3" stroke-opacity=".5"/>']] },
+  ];
+  var ASTROKE0 = { side: "left", dir: "out", guide: true };
+  // The brush slot: a plain brush, or a lasso (FORMAT.md closed stroke: the outline runs back to
+  // its start and the inside takes a pattern in the line's colour at 0.5; spacing follows the size).
+  var BRUSHES = [
+    { k: "brush", label: "Brush", ico: '<path d="M19.5 3.5a2.1 2.1 0 0 1 3 3L13 16l-3-3z"/><path d="M10 13c-3 0-4.5 2-4.5 4.2 0 1.4-1 2.3-2.5 2.8 5 1.2 9.5-.2 9.5-4.3z"/>' },
+    { k: "lasso", label: "Lasso: closes and fills", close: true, ico: '<path d="M12 4c5 0 9 2.5 9 6s-4 6-9 6-9-2.5-9-6 4-6 9-6z" stroke-dasharray="3 2.2"/><path d="M8 15.5c-1 2-.5 3.5 1.5 4.5"/>' },
+  ];
+  // Lasso fill patterns (review-core's PATTERNS — RC is looked up only on open — plus random: a
+  // real one picked at each stroke).
+  var PATTERNS = ["none", "solid", "diag", "diag2", "horiz", "vert", "grid", "cross", "dots", "dashes"];
+  var LASSO_PATS = PATTERNS.concat(["random"]);
+  var PAT_LABEL = { none: "No fill", solid: "Solid", diag: "Lines ╱", diag2: "Lines ╲", horiz: "Lines ─", vert: "Lines │", grid: "Grid", cross: "Cross-hatch", dots: "Dots", dashes: "Dashes", random: "Random pattern" };
+  var RANDOM_PATS = PATTERNS.filter(function(x){ return x !== "none" && x !== "solid"; });
+  function patIco(id){
+    var box = '<rect x="4" y="4" width="16" height="16" rx="3"/>', g = function(d){ return box + '<path d="' + d + '" stroke-width="1.3"/>'; };
+    switch (id){
+      case "solid": return '<rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor" fill-opacity=".55"/>';
+      case "diag": return g("M4 12 12 4M4 20 20 4M12 20l8-8");
+      case "diag2": return g("M12 4l8 8M4 4l16 16M4 12l8 8");
+      case "horiz": return g("M4 8.5h16M4 12h16M4 15.5h16");
+      case "vert": return g("M8.5 4v16M12 4v16M15.5 4v16");
+      case "grid": return g("M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16");
+      case "cross": return g("M4 12 12 4M4 20 20 4M12 20l8-8M12 4l8 8M4 4l16 16M4 12l8 8");
+      case "dots": return box + '<g fill="currentColor" stroke="none"><circle cx="8.5" cy="8.5" r="1.3"/><circle cx="15.5" cy="8.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="8.5" cy="15.5" r="1.3"/><circle cx="15.5" cy="15.5" r="1.3"/></g>';
+      case "dashes": return g("M6 9h4M14 9h4M8 15h4M16 15h2");
+      case "random": return box + '<text x="12" y="16.5" font-size="12" fill="currentColor" stroke="none" text-anchor="middle" font-family="system-ui, sans-serif">?</text>';
+      default: return box;
+    }
+  }
   var SHAPES = [
     { k: "rect", label: "Rectangle", tool: "rect", ico: '<rect x="4" y="6" width="16" height="12"/>' },
     { k: "round", label: "Rounded rectangle", tool: "rect", round: true, ico: '<rect x="4" y="6" width="16" height="12" rx="4"/>' },
@@ -199,13 +244,16 @@ var SightReviewDraw = (function(){
   var OPAC0 = { brush: 1, marker: 0.4, arrow: 1, rect: 1, ellipse: 1, text: 1 };
   var OPAC = clone(OPAC0);
   // pen.fill: a filled shape's fill colour, null = the line's own (lighter).
-  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, fill: null, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
+  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, brush: 0, lasso: "diag", astroke: clone(ASTROKE0), fill: null, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
     if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
     if (ps && COLORS.indexOf(ps.color) >= 0) pen.color = ps.color;
     if (ps && ARROWS[ps.arrow]) pen.arrow = ps.arrow;
     if (ps && SHAPES[ps.shape]) pen.shape = ps.shape;
+    if (ps && BRUSHES[ps.brush]) pen.brush = ps.brush;
+    if (ps && LASSO_PATS.indexOf(ps.lasso) >= 0) pen.lasso = ps.lasso;
+    if (ps && ps.astroke) ASTROKE_OPTS.forEach(function(x){ if (x.opts.some(function(v){ return v[0] === ps.astroke[x.k]; })) pen.astroke[x.k] = ps.astroke[x.k]; });
     if (ps && typeof ps.fill === "string" && /^#[0-9a-f]{6}$/i.test(ps.fill)) pen.fill = ps.fill;
     if (ps && (ps.tool === "rect" || ps.tool === "ellipse") && SHAPES[pen.shape].tool !== ps.tool) pen.shape = ps.tool === "rect" ? 0 : 2;
     if (ps && ps.sizes) Object.keys(SIZE0).forEach(function(k){ var v = Number(ps.sizes[k]); if (v >= SIZE_RANGE[k][0] && v <= SIZE_RANGE[k][1]) SIZE[k] = v; });
@@ -216,7 +264,7 @@ var SightReviewDraw = (function(){
       if (ok) pen.text[k] = v;
     });
   } catch (e) {}
-  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, fill: pen.fill, text: pen.text })); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, brush: pen.brush, lasso: pen.lasso, astroke: pen.astroke, fill: pen.fill, text: pen.text })); } catch (e) {} }
   // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
   // pinch (g: {z, r, d, a}); a quarter turn snaps within 6°.
   function pinch(g, a, b, zmin, zmax){
@@ -366,13 +414,13 @@ var SightReviewDraw = (function(){
       f.style.bottom = (r.bottom - b.top + 6) + "px";
       fly = { el: f, slot: slot };
     }
-    function slotIco(s){ return s === "arrows" ? ARROWS[pen.arrow].ico : s === "shapes" ? SHAPES[pen.shape].ico : TOOLS.find(function(t){ return t[0] === s; })[2]; }
+    function slotIco(s){ return s === "arrows" ? ARROWS[pen.arrow].ico : s === "shapes" ? SHAPES[pen.shape].ico : s === "brush" ? BRUSHES[pen.brush].ico : TOOLS.find(function(t){ return t[0] === s; })[2]; }
     function slotTool(s){ return s === "arrows" ? "arrow" : s === "shapes" ? SHAPES[pen.shape].tool : s; }
     // A tap on a plain tool takes it (on the one in hand: puts it down — then one finger scrubs the
     // video, onScrub, or pans); on a slot with variants: takes it and shows them (again with them
     // shown: puts it down).
     SLOTS.forEach(function(s){
-      var grp = s === "arrows" ? ARROWS : s === "shapes" ? SHAPES : null;
+      var grp = s === "arrows" ? ARROWS : s === "shapes" ? SHAPES : s === "brush" ? BRUSHES : null;
       var title = s === "arrows" ? "Arrows and lines" : s === "shapes" ? "Shapes" : TOOLS.find(function(t){ return t[0] === s; })[1];
       var b = tbtn(title, ico(slotIco(s)), function(){
         if (b.dataset.held){ delete b.dataset.held; return; }
@@ -402,17 +450,20 @@ var SightReviewDraw = (function(){
         var inSel = groupSel(s).length > 0;
         if (fly && fly.slot === s && (on || inSel)){ closeFly(); if (on) setTool(null); return; }
         if (!on && !inSel) setTool(slotTool(s));
-        var pick = inSel ? variantIdx(s, groupSel(s)[0]) : s === "arrows" ? pen.arrow : pen.shape;
+        var pick = inSel ? variantIdx(s, groupSel(s)[0]) : s === "arrows" ? pen.arrow : s === "brush" ? pen.brush : pen.shape;
         openFly(s, b, grp.map(function(v, i){
           var vb = tbtn(v.label, ico(v.ico), function(){
-            if (s === "arrows") pen.arrow = i; else pen.shape = i;
+            if (s === "arrows") pen.arrow = i; else if (s === "brush") pen.brush = i; else pen.shape = i;
             savePen(); closeFly();
-            if (restyleSel(s, function(n){ applyVariant(s, n, i); return true; })) return;
+            // Arrows along a stroke are not a restyle of a selected arrow / line: the tool is taken.
+            if (!v.stroke && restyleSel(s, function(n){ applyVariant(s, n, i); return true; })) return;
             setTool(slotTool(s));
+            if (v.stroke || v.close) b.onclick();  // the row again, with this variant's switches
           });
           vb.classList.toggle("on", i === pick);
           return vb;
-        }).concat(s === "shapes" ? [fillButton()] : []));
+        }).concat(s === "shapes" ? [fillButton()] : s === "arrows" && !inSel && ARROWS[pen.arrow].stroke ? astrokeButtons()
+          : s === "brush" && BRUSHES[pen.brush].close ? [patternButton()] : []));
       });
       b.dataset.t = s; trow.appendChild(b);
       if (s === "text") b.addEventListener("mousedown", keepField);
@@ -432,6 +483,38 @@ var SightReviewDraw = (function(){
       });
       ["pointerup", "pointercancel", "pointerleave"].forEach(function(ev){ b.addEventListener(ev, function(){ clearTimeout(ht); }); });
     });
+    // The Arrows row's switches for arrows along a stroke: each tap takes the next value.
+    function astrokeButtons(){
+      return ASTROKE_OPTS.map(function(x){
+        var bt = tbtn("", "", function(){
+          var i = x.opts.findIndex(function(v){ return v[0] === pen.astroke[x.k]; });
+          pen.astroke[x.k] = x.opts[(Math.max(0, i) + 1) % x.opts.length][0];
+          savePen(); show();
+        });
+        function show(){
+          var cur = x.opts.find(function(v){ return v[0] === pen.astroke[x.k]; }) || x.opts[0];
+          bt.innerHTML = ico(cur[2]); bt.title = cur[1]; bt.setAttribute("aria-label", x.label + ": " + cur[1]);
+        }
+        bt.dataset.cyc = x.k; show();
+        return bt;
+      });
+    }
+    // The lasso's pattern: a second row of them (and random).
+    function patternButton(){
+      var pb = tbtn("Fill pattern: " + PAT_LABEL[pen.lasso], ico(patIco(pen.lasso)), function(){
+        if (sub && sub.k === "pattern"){ closeSub(); return; }
+        subRow("pattern", pb, LASSO_PATS.map(function(id){
+          var q = tbtn(PAT_LABEL[id], ico(patIco(id)), function(){
+            pen.lasso = id; savePen(); closeSub();
+            pb.innerHTML = ico(patIco(id)); pb.title = "Fill pattern: " + PAT_LABEL[id]; pb.setAttribute("aria-label", pb.title);
+          });
+          q.classList.toggle("on", id === pen.lasso);
+          return q;
+        }));
+      });
+      pb.dataset.pat = "1";
+      return pb;
+    }
     function setTool(t){
       closeFly();  // a tool from elsewhere (a key, a hold): the row would show a stale pick
       stopAdj(); if (edit) commitText();
@@ -644,7 +727,7 @@ var SightReviewDraw = (function(){
     // The selected items an Arrows (arrows, lines) / Shapes (rectangles, ellipses) slot styles, with
     // the transform tool only; none = the slot picks its tool as before.
     function groupSel(s){
-      if (pen.tool !== "select") return [];
+      if (pen.tool !== "select" || (s !== "arrows" && s !== "shapes")) return [];
       var kinds = s === "arrows" ? ["arrow", "line"] : ["rect", "ellipse"];
       return sel.filter(function(it){ return it.kind === "shape" && kinds.indexOf(RC.typeOf(it)) >= 0; });
     }
@@ -667,7 +750,7 @@ var SightReviewDraw = (function(){
     // The index in slot s's list (ARROWS / SHAPES) that an item matches; -1 when none does.
     function variantIdx(s, it){
       var d = it.data, t = RC.typeOf(it);
-      if (s === "arrows") return ARROWS.findIndex(function(v){ return t === "line" ? !!v.line : !v.line && v.h0 === d.head0 && v.h1 === d.head1 && v.dash === d.dash; });
+      if (s === "arrows") return ARROWS.findIndex(function(v){ return !v.stroke && (t === "line" ? !!v.line : !v.line && v.h0 === d.head0 && v.h1 === d.head1 && v.dash === d.dash); });
       // A rounded rectangle that is filled matches the filled one (no variant is both).
       var rounded = t === "rect" && d.radius > 0 && !d.fillOn;
       return SHAPES.findIndex(function(v){ return v.tool === t && !!v.fill === !!d.fillOn && !!v.round === rounded; });
@@ -849,9 +932,13 @@ var SightReviewDraw = (function(){
       paint();
     }
     var WKEY = { stroke: "size", text: "size", shape: "width" };
+    // The thickness key of an item: arrows along a stroke keep theirs in width.
+    function wkey(it){ return RC.typeOf(it) === "arrows" ? "width" : WKEY[it.kind]; }
+    // Lengths that follow the thickness (as RC.transformItem scales them).
+    var WFOLLOW = ["gap", "step", "len"];
     function showSelSize(){
       if (!sel.length) return;
-      var it = sel[0], d = it.data, w = d[WKEY[it.kind]] || 0;
+      var it = sel[0], d = it.data, w = d[wkey(it)] || 0;
       showSize(null, { d: w / kNow(), color: d.color || "#fff", op: d.opacity != null ? d.opacity : 1,
         label: (Math.round(w / kNow() * 10) / 10) + " px · " + Math.round((d.opacity != null ? d.opacity : 1) * 100) + " %" });
     }
@@ -871,8 +958,12 @@ var SightReviewDraw = (function(){
       }
       var k = kNow(), f = Math.pow(16, -dy / Math.max(1, r.height)), dOp = dx / Math.max(1, r.width * 0.8);
       sel.forEach(function(it, i){
-        var b = adj.base[i], d = it.data, key = WKEY[it.kind];
-        if (adj.axis === "y" && key && typeof b[key] === "number") d[key] = RC.clamp(b[key] * f, 0.5 * k, vb[2] * 0.5);
+        var b = adj.base[i], d = it.data, key = wkey(it);
+        if (adj.axis === "y" && key && typeof b[key] === "number"){
+          d[key] = RC.clamp(b[key] * f, 0.5 * k, vb[2] * 0.5);
+          var g = d[key] / b[key];
+          if (b[key] > 0) WFOLLOW.forEach(function(x){ if (typeof b[x] === "number") d[x] = b[x] * g; });
+        }
         if (adj.axis === "x") d.opacity = Math.round(RC.clamp((b.opacity != null ? b.opacity : 1) + dOp, 0.05, 1) * 100) / 100;
       });
       adj.changed = true;
@@ -1119,7 +1210,17 @@ var SightReviewDraw = (function(){
       if (t === "brush" || t === "marker"){
         var pr = isPen ? RC.clamp(e.pressure || 0.5, 0, 1) : 0.5;
         d = { color: c, size: RC.r2(SIZE[t] * k), opacity: OPAC[t], pressure: true, pen: isPen, pts: [RC.r2(p[0]), RC.r2(p[1]), RC.r2(pr)] };
+        if (t === "brush" && BRUSHES[pen.brush].close){
+          var pat = pen.lasso === "random" ? RANDOM_PATS[Math.floor(Math.random() * RANDOM_PATS.length)] : pen.lasso;
+          d.close = true; d.pattern = pat; d.fill = c; d.fillOpacity = 0.5; d.gap = RC.r2(Math.max(5, SIZE.brush * 1.7) * k);
+        }
         cur = { kind: "stroke", shape_kind: t, z: ++zc, data: d };
+      } else if (t === "arrow" && ARROWS[pen.arrow].stroke){
+        stroke.t = "astroke";
+        var sa = SIZE.arrow;
+        d = { color: c, width: RC.r2(sa * k), opacity: OPAC.arrow, dash: "solid", head1: "triangle", headSize: 1, step: RC.r2(Math.max(12, sa * 10) * k), len: RC.r2(Math.max(8, sa * 6) * k),
+          dir: pen.astroke.dir, side: pen.astroke.side, guide: pen.astroke.guide, pts: [RC.r2(p[0]), RC.r2(p[1]), 0.5] };
+        cur = { kind: "stroke", shape_kind: "arrows", z: ++zc, data: d };
       } else if (t === "arrow"){
         var av = ARROWS[pen.arrow];
         d = { color: c, width: RC.r2(SIZE.arrow * k), opacity: OPAC.arrow, dash: av.dash, head0: av.h0, head1: av.h1, body: "straight", headSize: 1, pts: [p[0], p[1], p[0], p[1]] };
@@ -1153,7 +1254,7 @@ var SightReviewDraw = (function(){
       }
       if (!cur) return;
       var d = cur.data;
-      if (S0.t === "brush" || S0.t === "marker"){
+      if (S0.t === "brush" || S0.t === "marker" || S0.t === "astroke"){
         var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
         if (!evs.length) evs = [e];
         evs.forEach(function(ce){
@@ -1192,9 +1293,14 @@ var SightReviewDraw = (function(){
       }
       if (!it){ paint(); return; }
       var d = it.data, t = S0.t, k = S0.k;
-      if (t === "brush" || t === "marker"){
+      if (t === "brush" || t === "marker" || t === "astroke"){
         var n = d.pts.length;
         if (S0.last && RC.hyp(S0.last[0] - d.pts[n - 3], S0.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(RC.r2(S0.last[0]), RC.r2(S0.last[1]), RC.r2(S0.last[2]));
+        if (t === "astroke"){
+          var len = 0;
+          for (var j = 3; j < d.pts.length; j += 3) len += RC.hyp(d.pts[j] - d.pts[j - 3], d.pts[j + 1] - d.pts[j - 2]);
+          if (len / k < 3){ paint(); return; }
+        }
       } else if (t === "arrow"){
         if (RC.hyp(d.pts[2] - d.pts[0], d.pts[3] - d.pts[1]) / k < 3){ paint(); return; }
         d.pts = d.pts.map(RC.r2);
@@ -1212,7 +1318,7 @@ var SightReviewDraw = (function(){
     function roundItem(it){
       var d = it.data;
       if (Array.isArray(d.pts)) d.pts = d.pts.map(RC.r2);
-      ["x", "y", "w", "h", "size", "width", "rot", "bend", "radius", "outline"].forEach(function(key){ if (typeof d[key] === "number") d[key] = RC.r2(d[key]); });
+      ["x", "y", "w", "h", "size", "width", "rot", "bend", "radius", "outline", "gap", "step", "len"].forEach(function(key){ if (typeof d[key] === "number") d[key] = RC.r2(d[key]); });
     }
     function abort(){
       if (stroke && stroke.t === "eraser") items = stroke.before;

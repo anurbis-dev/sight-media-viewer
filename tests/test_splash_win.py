@@ -29,7 +29,7 @@ class SplashLaunchTest(unittest.TestCase):
             ["C:/S/Sight.exe", "--splash", str(img), "Local\\E", "45"],
         )
         cmd = splash_win.splash_command(False, "/x/python", script, img, "Local\\E", 45)
-        self.assertEqual(cmd[0], "/x/python")  # no pythonw next to it
+        self.assertEqual(cmd[0], str(Path("/x/python")))  # no pythonw next to it (the OS spelling of the path)
         self.assertEqual(cmd[1:3], ["-I", "-S"])
         self.assertEqual(cmd[3:], [str(script), str(img), "Local\\E", "45"])
         (self.root / "pythonw.exe").write_text("")

@@ -7,7 +7,11 @@
 // mix-blend-mode: difference over the reference layer (★), so identical pixels go black.
 // Video: one timeline for all layers. Each layer has a start offset in frames (where its first
 // frame sits on the timeline), so clips that start or run differently can be lined up. Playback
-// runs on a wall clock; every video is nudged (playbackRate) or re-seeked to stay on it.
+// runs on one clock that waits for the slowest clip: a clip still seeking / buffering holds the clock
+// (every clip pauses on its frame) until all can play, then they start together; small drift is
+// nudged with playbackRate. One decoder per clip: the reference's copies under Difference tiles are
+// canvases painted from its video. The server keeps a RAM window around each clip's playhead
+// (/api/video/focus items — the budget split between the clips).
 //
 // createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
 // onView(view) — the selected layer's viewer after every rebuild / selection (view: {asset, wrap, media, isVid,
@@ -180,10 +184,15 @@ export function createCompare(host){
     const n = visible().length;
     C.splits = Array.from({ length: Math.max(0, n - 1) }, (_, i) => (i + 1) / n);
   }
-  function mkMedia(l, primary){
+  function mkMedia(l, primary, mirror){
     const a = l.a;
     let m;
-    if (isVideo(a)){
+    if (mirror){
+      // A copy of a clip that already has a <video> on the stage: painted from it every frame (paintMirrors), so
+      // the clip is decoded once and the copy can never drift from it.
+      m = document.createElement("canvas");
+      m.width = m.height = 0;
+    } else if (isVideo(a)){
       m = document.createElement("video");
       m.preload = "auto";
       m.playsInline = true;
@@ -192,7 +201,9 @@ export function createCompare(host){
       m.src = mediaSrc(a);
       m.addEventListener("loadedmetadata", () => {
         if (!C) return;
+        C.focusDirty = true;
         if (primary){ l.nw = m.videoWidth || l.nw; l.nh = m.videoHeight || l.nh; if (Number.isFinite(m.duration)) l.dur = m.duration; }
+        else if (Number.isFinite(m.duration) && !l.media.some((x) => x._primary)) l.dur = m.duration; // (a hidden ★'s copy)
         place(); paintTimeline();
       });
       // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
@@ -262,6 +273,9 @@ export function createCompare(host){
       });
     } else {
       const n = vis.length;
+      // The reference's copies under the other cells: a canvas painted from its video when the reference has a
+      // cell of its own (or one copy already decodes it), so it is decoded once.
+      const refCopy = () => mkMedia(ref, false, isVideo(ref.a) && (vis.includes(ref) || ref.media.some((m) => m.tagName === "VIDEO")));
       let cols = n, rows = 1;
       if (P.layout === "col"){ cols = 1; rows = n; }
       else if (P.layout === "grid"){ cols = Math.ceil(Math.sqrt(n)); rows = Math.ceil(n / cols); }
@@ -274,7 +288,7 @@ export function createCompare(host){
         if (diff && l !== ref){
           const b = document.createElement("div");
           b.className = "cmp-ly base";
-          b.appendChild(mkMedia(ref, false));
+          b.appendChild(refCopy());
           cell.appendChild(b);
         }
         const w = document.createElement("div");
@@ -371,6 +385,7 @@ export function createCompare(host){
     C.T = clamp(t, lo, Math.max(lo, hi - 1 / C.fps));
     if (!keepPlaying){ C.playing = false; C.T = snapT(C.T); }
     C.syncNow = true;
+    C.focusDirty = true;
     paintTime();
   }
   function step(n){ setT(snapT(C.T) + n / C.fps); }
@@ -381,13 +396,16 @@ export function createCompare(host){
     C.playing = !C.playing;
     C.last = performance.now();
     if (!C.playing) C.T = snapT(C.T);
+    C.wait = false;
     C.syncNow = true;
+    C.focusDirty = true;
     paintTime();
   }
   function tick(now){
     if (!C) return;
     C.raf = requestAnimationFrame(tick);
-    if (C.playing){
+    // The clock stands while a clip is still seeking / buffering (C.wait) or the playhead is being dragged.
+    if (C.playing && !C.wait && !C.scrub){
       const dt = Math.min(0.25, (now - C.last) / 1000);
       C.T += dt;
       const [lo, hi] = range();
@@ -399,37 +417,129 @@ export function createCompare(host){
       paintTime(true);
     }
     C.last = now;
-    syncVideos();
+    syncVideos(now);
+    paintMirrors();
+    pushFocus(now);
   }
-  // Keeps every video element on the shared clock: while playing, small drift is corrected with
-  // playbackRate and big drift (a stall, a seek) with a seek; while paused each shows exactly the
-  // frame for the playhead.
-  function syncVideos(){
+  // Keeps every video element on the shared clock. Playing: a clip that is seeking, buffering or more than
+  // 0.3 s off holds the clock — the others pause on their frame — and a far-off one is seeked to the clock,
+  // which does not move meanwhile, so the seek lands where the others wait. (Seeking towards a clock that
+  // ran on was the desync: a 4K / long-GOP clip took longer to seek than the 0.25 s it was allowed to lag,
+  // landed behind again and was seeked again, forever.) When every clip can play they start together;
+  // small drift is corrected with playbackRate. Paused or scrubbing: each shows exactly the playhead's frame.
+  function canGo(m, l, local){
+    if (m.readyState >= 3) return true; // HAVE_FUTURE_DATA
+    if (m.readyState < 2 || !m.paused) return false;
+    const t = m.currentTime, need = Math.min(0.4, Math.max(0, (l.dur || Infinity) - local - 0.05));
+    const b = m.buffered;
+    for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 1e-3 && b.end(i) >= t + need) return true;
+    return false;
+  }
+  function syncVideos(now){
     const force = C.syncNow;
     C.syncNow = false;
+    const run = C.playing && !C.scrub;
+    let waiting = false;
     for (const l of C.layers){
       if (!isVideo(l.a)) continue;
       const local = C.T - l.start / C.fps;
       const inside = local >= -1e-4 && (!l.dur || local < l.dur);
       for (const m of l.media){
         m.parentElement?.classList.toggle("out", !inside);
+        if (m.tagName !== "VIDEO") continue;
         if (!inside){ if (!m.paused) m.pause(); continue; }
-        if (m.readyState < 1) continue;
-        if (C.playing){
-          // A seek still in flight: correcting again would restart it every frame and a slow
-          // clip would never get to play. Wait for it to land.
-          if (m.seeking) continue;
-          const d = m.currentTime - local;
-          if (Math.abs(d) > 0.25 || force){ if (Math.abs(d) > 1 / C.fps || force) m.currentTime = local; m.playbackRate = 1; }
-          else m.playbackRate = clamp(1 - d * 2, 0.85, 1.15);
-          if (m.paused && !m.seeking) m.play().catch(() => {});
-        } else {
+        // (no metadata yet — still loading, converting for playback or broken: nothing to wait for; it joins
+        // with a seek once it can)
+        if (m.readyState < 1 || m.error) continue;
+        if (!run){
+          m._low = 0;
           if (!m.paused) m.pause();
           const want = local + 0.1 / C.fps;
           if ((force || Math.abs(m.currentTime - want) > 0.45 / C.fps) && !m.seeking) m.currentTime = want;
+          continue;
         }
+        // A seek in flight: wait for it to land, never restart it — unless it has hung for 8 s (an overloaded
+        // decoder can drop one): asked again. (Sooner would restart honest slow seeks: 4K, long GOP.)
+        if (m.seeking){
+          waiting = true;
+          m._low = 0; // (the held-without-data timer starts when the seek has landed)
+          m._stuck = m._stuck || now;
+          if (now - m._stuck > 8000){ m._stuck = now; m.currentTime = local; }
+          continue;
+        }
+        m._stuck = 0;
+        const d = m.currentTime - local;
+        if (force || Math.abs(d) > 0.3){
+          if (Math.abs(d) > 0.5 / C.fps){ m.currentTime = local; m._low = 0; waiting = true; }
+          m.playbackRate = 1;
+          if (waiting) continue;
+        }
+        // At its own end (a clip running a little ahead, or one a hair shorter than its listed length): it stays
+        // on its last frame — play() would restart it from 0 — and holds nobody.
+        if (m.ended || (Number.isFinite(m.duration) && m.currentTime >= m.duration - 1e-3)){ m._low = 0; continue; }
+        // Not enough data to go on: held, unless it is a momentary dip while playing (< 150 ms). A paused clip is
+        // ready with its frame decoded and 0.4 s buffered ahead (or up to its end): a paused element need not
+        // report "future data" (Chromium can stay at HAVE_CURRENT_DATA until it plays).
+        if (!canGo(m, l, local)){
+          m._low = m._low || now;
+          if (!m.paused){ if (now - m._low > 150) waiting = true; }
+          else {
+            waiting = true;
+            // Held on a frame that does not fill up (a paused element may stop loading / decoding): a seek to
+            // the clock restarts its pipeline.
+            if (now - m._low > 1500){ m._low = now; m.currentTime = local; }
+          }
+          continue;
+        }
+        m._low = 0;
+        if (C.wait){ if (!m.paused) m.pause(); continue; } // ready: waits for the others
+        m.playbackRate = clamp(1 - d * 2, 0.85, 1.15);
+        if (m.paused) m.play().catch(() => {});
       }
     }
+    const was = !!C.wait;
+    if (!run) C.wait = false;
+    else if (waiting && !was){
+      C.wait = true;
+      for (const l of C.layers) for (const m of l.media) if (m.tagName === "VIDEO" && !m.paused) m.pause();
+    } else if (!waiting && was){
+      C.wait = false; // every clip can play: they start together on the next frame
+      C.last = now;
+    }
+    if (was !== !!C.wait) paintTime();
+  }
+  // The copies (canvases) take their clip's current picture.
+  function paintMirrors(){
+    for (const l of C.layers){
+      if (!isVideo(l.a)) continue;
+      let src = null;
+      for (const m of l.media){
+        if (m.tagName !== "CANVAS") continue;
+        src = src || l.media.find((x) => x.tagName === "VIDEO" && x.readyState >= 2 && x.videoWidth);
+        if (!src || src.seeking) continue; // (mid-seek, currentTime already reads the target over the old frame)
+        const k = `${src.currentTime}|${src.videoWidth}x${src.videoHeight}`;
+        if (m._k === k) continue;
+        m._k = k;
+        const s = Math.min(1, 4096 / src.videoWidth); // (full size: Difference against a softened copy would show edges)
+        const w = Math.max(1, Math.round(src.videoWidth * s)), h = Math.max(1, Math.round(src.videoHeight * s));
+        if (m.width !== w || m.height !== h){ m.width = w; m.height = h; }
+        try { m.getContext("2d").drawImage(src, 0, 0, w, h); } catch {}
+      }
+    }
+  }
+  // Tell the server where every clip's playhead is, so its RAM window (split between the clips) follows them:
+  // about once a second while playing, soon after a jump.
+  function pushFocus(now){
+    const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO")); // (a hidden ★ can decode under tiles)
+    if (!v.length) return;
+    const due = C.focusDirty ? 150 : C.playing ? 1000 : Infinity;
+    if (now - (C.focusAt || 0) < due) return;
+    C.focusAt = now;
+    C.focusDirty = false;
+    const body = { items: v.map((l) => ({ id: l.id, t: clamp(C.T - l.start / C.fps, 0, l.dur), duration: l.dur })) };
+    const mb = host.cacheMb?.();
+    if (mb) body.mb = mb;
+    fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => {});
   }
 
   // ---- painting --------------------------------------------------------------------------------
@@ -479,7 +589,7 @@ export function createCompare(host){
     const head = C.el.querySelector(".cmp-head");
     if (head) head.style.left = ((C.T - lo) / span * 100) + "%";
     const t = C.el.querySelector(".cmp-time");
-    if (t) t.textContent = `${fmtT(C.T, C.fps)}  ·  f ${Math.round(C.T * C.fps)}`;
+    if (t) t.textContent = `${fmtT(C.T, C.fps)}  ·  f ${Math.round(C.T * C.fps)}${C.wait ? "  ·  loading" : ""}`;
     if (fast) return;
     C.el.querySelector(".cmp-play").textContent = C.playing ? "❚❚" : "▶";
   }
@@ -613,16 +723,30 @@ export function createCompare(host){
       else if (a === "loop") setPref("loop", !P.loop);
     });
     const track = el.querySelector(".cmp-track");
+    // Scrubbing (mouse, finger or pen): every clip shows the playhead's frame while it moves; playback that was
+    // running goes on from where it is let go, all clips together (the clock holds until each has landed there).
     track.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || C.scrub) return;
       track.setPointerCapture(e.pointerId);
+      C.scrub = { pid: e.pointerId };
       const scrub = (ev) => {
+        if (!C || ev.pointerId !== C.scrub?.pid) return;
         const r = track.getBoundingClientRect(), [lo, hi] = range();
-        setT(lo + clamp((ev.clientX - r.left) / r.width, 0, 1) * (hi - lo));
+        setT(lo + clamp((ev.clientX - r.left) / r.width, 0, 1) * (hi - lo), true);
+        C.T = snapT(C.T);
+      };
+      const end = (ev) => {
+        if (!C || ev.pointerId !== C.scrub?.pid) return;
+        C.scrub = null;
+        track.onpointermove = track.onpointerup = track.onpointercancel = track.onlostpointercapture = null;
+        C.wait = false;
+        C.last = performance.now();
+        C.syncNow = true;
+        paintTime();
       };
       scrub(e);
       track.onpointermove = scrub;
-      track.onpointerup = () => { track.onpointermove = track.onpointerup = null; };
+      track.onpointerup = track.onpointercancel = track.onlostpointercapture = end;
     });
     const layers = el.querySelector(".cmp-layers");
     layers.addEventListener("click", (e) => {
@@ -664,6 +788,61 @@ export function createCompare(host){
       }
       moveLayer(id, before);
     });
+    // Touch / pen: hold a chip (400 ms), then drag it to its new place — the same reorder as the mouse's drag and
+    // drop (which stays the browser's: chips are draggable only under a mouse).
+    let hold = null, heldAt = -1e9;
+    const dropAt = (x, y, id) => {
+      const over = document.elementFromPoint(x, y)?.closest(".cmp-chip");
+      if (!over || over.dataset.id === id) return { over: null, before: undefined };
+      const r = over.getBoundingClientRect(), after = x > r.left + r.width / 2;
+      const i = C.layers.findIndex((l) => l.id === over.dataset.id);
+      let before = after ? C.layers[i + 1]?.id || null : over.dataset.id;
+      if (before === id) before = C.layers[i + 2]?.id || null;
+      return { over, after, before };
+    };
+    const clearMarks = () => layers.querySelectorAll(".cmp-chip.dnd-b, .cmp-chip.dnd-a, .cmp-chip.lift").forEach((c) => c.classList.remove("dnd-b", "dnd-a", "lift"));
+    layers.addEventListener("pointerdown", (e) => {
+      const chip = e.target.closest(".cmp-chip");
+      if (!chip) return;
+      chip.draggable = e.pointerType === "mouse";
+      if (e.pointerType === "mouse" || hold) return;
+      const h = { id: chip.dataset.id, pid: e.pointerId, x: e.clientX, y: e.clientY, on: false, chip };
+      h.timer = setTimeout(() => {
+        if (hold !== h || !C) return;
+        h.on = true;
+        try { layers.setPointerCapture(h.pid); } catch {}
+        chip.classList.add("lift");
+        navigator.vibrate?.(15);
+      }, 400);
+      hold = h;
+    });
+    layers.addEventListener("pointermove", (e) => {
+      const h = hold;
+      if (!h || e.pointerId !== h.pid) return;
+      if (!h.on){ if (Math.hypot(e.clientX - h.x, e.clientY - h.y) > 10){ clearTimeout(h.timer); hold = null; } return; }
+      e.preventDefault();
+      layers.querySelectorAll(".cmp-chip.dnd-b, .cmp-chip.dnd-a").forEach((c) => c.classList.remove("dnd-b", "dnd-a"));
+      const d = dropAt(e.clientX, e.clientY, h.id);
+      d.over?.classList.add(d.after ? "dnd-a" : "dnd-b");
+    });
+    const endHold = (e) => {
+      const h = hold;
+      if (!h || e.pointerId !== h.pid) return;
+      clearTimeout(h.timer);
+      hold = null;
+      if (!h.on) return;
+      heldAt = performance.now();
+      clearMarks();
+      // (the click that follows the release must not also select / toggle what is under the finger)
+      const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+      layers.addEventListener("click", eat, { capture: true, once: true });
+      setTimeout(() => layers.removeEventListener("click", eat, { capture: true }), 400);
+      if (e.type === "pointerup"){ const d = dropAt(e.clientX, e.clientY, h.id); if (d.before !== undefined) moveLayer(h.id, d.before); }
+    };
+    layers.addEventListener("pointerup", endHold);
+    layers.addEventListener("pointercancel", endHold);
+    // (a long press is ours — Windows touch sends its press-and-hold menu after the release)
+    layers.addEventListener("contextmenu", (e) => { if (hold || performance.now() - heldAt < 800) e.preventDefault(); });
     const menu = el.querySelector(".cmp-menu");
     menu.addEventListener("click", (e) => {
       const b = e.target.closest("button[data-id]");
@@ -808,7 +987,9 @@ export function createCompare(host){
     // (minus the 0.1 frame syncVideos adds back, so a stop late in a frame does not move on to the next one)
     if (m && m.readyState >= 1 && !m.parentElement?.classList.contains("out")) C.T = l.start / C.fps + Math.max(0, m.currentTime - 0.1 / C.fps);
     else C.T = snapT(C.T);
+    C.wait = false;
     C.syncNow = true;
+    C.focusDirty = true;
     paintTime();
   }
   // The annotator moves the selected clip to its local time t (a note's frame, a frame step): the shared clock
@@ -822,6 +1003,7 @@ export function createCompare(host){
     C.playing = false;
     C.T = hi > lo ? clamp(T, lo, hi - 1e-3) : T; // (exactly at the end the clip counts as out and dims)
     C.syncNow = true;
+    C.focusDirty = true;
     paintTime();
   }
   function relayout(){ if (C) requestAnimationFrame(() => place()); }
@@ -859,7 +1041,8 @@ export function createCompare(host){
         if (ly.style.mixBlendMode === "difference") cx.globalCompositeOperation = "difference";
         if (ly.classList.contains("out")) cx.globalAlpha = 0.12;
         const x = parseFloat(m.style.left) || 0, y = parseFloat(m.style.top) || 0, w = parseFloat(m.style.width) || 0, h = parseFloat(m.style.height) || 0;
-        const nw = m.videoWidth || m.naturalWidth || w, nh = m.videoHeight || m.naturalHeight || h;
+        const cvs = m.tagName === "CANVAS"; // (a clip's copy under a Difference tile, see paintMirrors)
+        const nw = m.videoWidth || m.naturalWidth || (cvs ? m.width : w), nh = m.videoHeight || m.naturalHeight || (cvs ? m.height : h);
         if (nw && nh && w && h){
           const s = Math.min(w / nw, h / nh);
           try { cx.drawImage(m, (B.x + x + (w - nw * s) / 2) * dpr, (B.y + y + (h - nh * s) / 2) * dpr, nw * s * dpr, nh * s * dpr); } catch {}
@@ -935,7 +1118,7 @@ function injectStyles(){
 .cmp-tl { display: flex; align-items: center; gap: 6px; }
 .cmp-tl[hidden] { display: none; }
 .cmp-time { min-width: 150px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; }
-.cmp-track { flex: 1; position: relative; height: 26px; border-radius: 6px; background: var(--surface-2); cursor: pointer; overflow: hidden; }
+.cmp-track { flex: 1; position: relative; height: 26px; border-radius: 6px; background: var(--surface-2); cursor: pointer; overflow: hidden; touch-action: none; }
 .cmp-spans i { position: absolute; height: 4px; border-radius: 2px; opacity: .85; }
 .cmp-spans i:nth-child(1) { top: 3px; } .cmp-spans i:nth-child(2) { top: 8px; } .cmp-spans i:nth-child(3) { top: 13px; } .cmp-spans i:nth-child(4) { top: 18px; }
 .cmp-spans i:nth-child(n+5) { top: 21px; height: 2px; }
@@ -943,6 +1126,10 @@ function injectStyles(){
 .cmp-layers { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .cmp-chip { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 6px 0 9px; border-radius: 8px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; max-width: 420px; }
 .cmp-chip.sel { border-color: var(--accent); }
+.cmp-chip { touch-action: none; -webkit-touch-callout: none; user-select: none; }
+.cmp-chip.lift { opacity: .7; transform: scale(1.04); box-shadow: 0 6px 18px rgb(0 0 0 / .5); }
+.cmp-chip.dnd-b { box-shadow: inset 3px 0 0 var(--accent); }
+.cmp-chip.dnd-a { box-shadow: inset -3px 0 0 var(--accent); }
 .cmp-chip.off { opacity: .5; }
 .cmp-nm { min-width: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 2px; }
 .cmp-chip button { height: 22px; min-width: 20px; padding: 0 3px; border-radius: 5px; color: var(--muted); font-size: 12px; }

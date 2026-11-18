@@ -352,6 +352,38 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 
 (The same editor also runs on Canvas boards, scope `board` — see "Board annotations" under Canvas.)
 
+**Saving (the write queue, `OB` in annotate.js).** No annotator writes rows with fetch() itself: `serverCreate` /
+`stage` (the 300 ms debounced updates) / `serverDelete` put a full copy of the row into one module-level queue shared
+by every annotator (lightbox, board, compare) — one entry per row id, the newest wins (`put {body, create}` / `del`,
+`key` = asset / board id). The queue drains single-flight (creates and deletes one by one as POST upsert / DELETE,
+plain updates in `/api/annotations/batch`, after two batch failures one by one as PATCH, which never revives a
+deleted row), retries with backoff, aborts a request after 20 s, and shows a fixed badge (`.an-outbox`, click =
+retry) while it fails. It is stored in localStorage per window (`sight-annot-outbox:v2:<id>` = {ts, entries},
+refreshed every 5 s, ts 0 on pagehide); a start adopts the keys of windows that stopped refreshing. pagehide
+settles every annotator (open editors commit) and sends the queue with keepalive (60 KB budget). `load()` lays the
+queued and the lately landed (30 s, `OB.recent`) writes over the GET's rows (`obOverlay`). Invariants: leave an
+asset only through `settle()` (blur an open panel field, `finishEdit`, `stage`) while `S.asset` is still the old
+one; never write rows outside the queue (ordering per row id depends on it); `flush()` = stage + wait for the queue.
+
+**Reference images** (kind `image`, FORMAT.md) — a drawing whose picture is a shot (`/api/review/shots`, stored by
+`storeRef`: decoded in the browser, ≤ 2048 px, PNG when the source may have alpha else JPEG). Added by `addRefs`
+(annotate.js) from a drop on the surface (`onRefDrop`: OS files, or `application/x-sight-ids` from the grid via
+`host.pictureSources` → index.html `pictureSource`), a click with the tool (`pickRefs`), or *Add selected*
+(`host.selectedPictures`). Not on boards (`host.refImages: false`; a board places pictures as items). Scaling is always
+uniform (review-core `transformItem` / `xfDrag` treat it like text). Crop mode (`S.crop`, `cropItem()` gates it to the
+one selected editable visible image): `cropFrame(d)` = the whole source picture in doc units (origin + rotated axes +
+units per picture), `applyCrop` sets the window and a box that keeps the picture where the frame had it; grips move
+an edge, "pan" slides the window; the overlay (`cropSvg`) is in the `.an-ui` layer. Canvas exports await
+`RC.imagesReady` (composeView, gatherReport1); `RC.setImageSource` is set by each client (annotate.js module
+init, the HTML page, the phone's `refShots` which makes object URLs ahead since the core asks synchronously).
+
+**Library beside the lightbox** (index.html, `state.lightSplit` / `lightSplitRatio` in `sight.layout`, Tab and
+`#libBtn`) — reuses the board split: `applyViewDom()` shows the grid at its ratio, `#splitHandle`, and behind the
+lightbox either the board (still open) or the empty `#lightSlot`; `placeLightSplit()` sets the fixed lightbox's
+`left` to the divider's right edge (ResizeObserver on the grid); `body.light-split` hides the inspector. Only while a
+lightbox is open (`lightSplitOn`); closing it restores the layout. The divider's double-click (stacked) is ignored
+there. Tab also toggles the board split (`toggleCanvasSplit`); `#splitBtn` sits at the left of the top bar.
+
 **Notes panel vs drawing** — two modes: `S.on` (drawing: tools + the panel per `S.panelOn`) and reading
 (`S.readOn`, `sight.annotate.read[.board]`): the panel alone, `.an-read` hides the composer; a click on a note /
 its picture still picks it and goes to its frame / view / board place. `togglePanel` flips the flag of the mode in
@@ -717,8 +749,10 @@ zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is dr
 bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
 to visible layer i — with `mix-blend-mode: difference` in Difference mode; tile layouts put a copy
 of the reference under each cell for the same effect. Video: `C.T` is a wall-clock timeline;
-layer local time = T − start/fps; `syncVideos()` nudges playbackRate for drift < 0.25 s and seeks
-beyond, pauses clips outside their span (dimmed). Keys go through `cmp.onKey` first while it is
+layer local time = T − start/fps; `syncVideos()` holds the clock
+(`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
+never seek towards a running clock. Clips outside their span pause (dimmed). Reference copies under Difference tiles are
+canvases painted from its one `<video>`. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
 
@@ -819,7 +853,7 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   has `.seqb` ‹ › (`seqGo(±1)`, also Page Up / Down, no wrap); the switch is `openReview(k, …, {replace: true})`
   — `history.replaceState` and the previous review's `pushed` carried over, so Back leaves the sequence.
   Swiping the header's `.ttl` sideways (> 50 px) = `seqGo` too (`bindTitleSwipe`).
-- **Sequence bar** (0.79, `seqLoad` … `seqStop`): `.sqb` in the player's transport, under the timeline, when the
+- **Sequence bar** (0.88, `seqLoad` … `seqStop`): `.sqb` in the player's transport, under the timeline, when the
   review's group has 2+ videos (`seqInfo.items` = the group's visible video reviews: name, stored duration,
   other clips' marks read from their rows; rebuilt by `seqLoad` at each `buildStage`). `seqGeom()` = durations
   (the open clip's `durOf()`; unknown = mean of the known), offsets, total. Every clip is still its own review:

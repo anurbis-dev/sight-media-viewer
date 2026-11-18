@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import queue
 import re
@@ -17,7 +18,7 @@ from pathlib import Path
 from .web import App, FileResponse, HTTPException, JSONResponse, Request, Response, StaticFiles, StreamingResponse
 
 from .fileinfo import NO_WINDOW
-from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
+from .library import Bus, Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
 from .stt import SttError, SttService
@@ -417,6 +418,10 @@ def serve_video(request: Request, path: str, cache) -> StreamingResponse | Respo
 def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = False) -> App:
     app = App()
     app.state.last_heartbeat = time.time()
+    # When the page said it was closing (pagehide, ?bye=1) and no heartbeat came since; None otherwise.
+    # Read only by the macOS Dock reopen (Sight.py / app/macapp.py), never by the quit watchdog, so a
+    # reload (bye, then the new page's heartbeat) changes nothing.
+    app.state.window_bye = None
     settings = settings or SettingsStore(lib.root)
 
     @app.get("/")
@@ -675,6 +680,24 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if body.get("release"):
             lib.video_cache.release()
             return {"ok": True, "mb": lib.video_cache.budget_mb}
+        if isinstance(body.get("items"), list):
+            # The version compare: one window per clip, the budget split between them (SlidingVideoCache).
+            focus = []
+            for it in body["items"][:32]:
+                a = lib.get_asset(str(it.get("id") or "")) if isinstance(it, dict) else None
+                if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+                    continue
+                try:
+                    t, duration = float(it.get("t") or 0), float(it.get("duration") or 0)
+                except (TypeError, ValueError):
+                    t, duration = 0.0, 0.0
+                if not (math.isfinite(t) and math.isfinite(duration)):
+                    t, duration = 0.0, 0.0
+                play = lib.playback_path(a)
+                size = os.path.getsize(play)
+                focus.append((play, max(0, min(size, int(size * (t / duration)) if duration > 0 else 0))))
+            lib.video_cache.focus_many(focus)
+            return {"ok": True, "files": len(focus), "mb": lib.video_cache.budget_mb, "bytes": lib.video_cache.snapshot()["bytes"]}
         aid = str(body.get("id") or "")
         if not aid:
             return {"ok": True, "mb": lib.video_cache.budget_mb}
@@ -1161,9 +1184,11 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     async def import_review(request: Request) -> dict:
         # A plain package: {ok, asset_id, added, updated, deleted, author}; 404 when its media is not
         # in the library, 400 for a damaged file. A bundle: always 200, per clip in `results`.
+        # ?restore=1: also bring back rows deleted here (`deleted_here` in the first answer).
         raw = await request.body()
+        restore = request.query_params.get("restore") == "1"
         try:
-            res = await asyncio.to_thread(review.import_review_file, lib, raw)
+            res = await asyncio.to_thread(review.import_review_file, lib, raw, restore)
         except ValueError as e:
             raise HTTPException(400, str(e))
         if not res.get("ok"):
@@ -1174,15 +1199,28 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     def events():
         q = lib.bus.subscribe()
 
-        def gen():
+        # Async, polling the thread queue: a blocking q.get() in a sync generator kept one worker
+        # thread of the shared pool busy per open window for good, so a few windows could starve
+        # every other (sync) request of threads.
+        async def gen():
             try:
+                if lib.bus.closed:  # opened after Bus.close (an EventSource reconnecting during Quit)
+                    return
                 yield f"data: {json.dumps({'type': 'hello'})}\n\n"
+                idle = 0.0
                 while True:
                     try:
-                        ev = q.get(timeout=15)
+                        ev = q.get_nowait()
                     except queue.Empty:
-                        yield ":\n\n"
+                        await asyncio.sleep(0.1)
+                        idle += 0.1
+                        if idle >= 15:
+                            idle = 0.0
+                            yield ":\n\n"
                         continue
+                    if ev is Bus.CLOSE:  # server shutting down (Bus.close): end the stream
+                        return
+                    idle = 0.0
                     yield f"data: {json.dumps(ev)}\n\n"
             finally:
                 lib.bus.unsubscribe(q)
@@ -1393,8 +1431,12 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return {"ok": True, "name": "Sight"}
 
     @app.post("/api/heartbeat")
-    def heartbeat() -> dict:
-        app.state.last_heartbeat = time.time()
+    def heartbeat(request: Request) -> dict:
+        if request.query_params.get("bye") == "1":
+            app.state.window_bye = time.time()
+        else:
+            app.state.last_heartbeat = time.time()
+            app.state.window_bye = None
         return {"ok": True}
 
     @app.get("/api/version")

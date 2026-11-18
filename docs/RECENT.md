@@ -14,7 +14,7 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
-## 0.79.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
+## 0.88.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
 - **What:** owner: the drawing tools sat under the video transport, and on a narrow phone some icons went off the
   edge. Now the tools row is the bottom bar's top row (over the host's footer / transport), in one line; when it
   does not fit it scrolls sideways by a drag (finger, pen or mouse), centred while it fits. The colour button
@@ -30,7 +30,7 @@ Add new entries directly below this line.
   click after a touch drag → cleared on the next task. The test now asserts the full scroll. Confirmed by the
   same reviewer.
 
-## 0.79.0 — 2026-11-18 — Phone: the sequence bar under the timeline, title swipe between clips
+## 0.88.0 — 2026-11-18 — Phone: the sequence bar under the timeline, title swipe between clips
 - **What:** owner: like Sight, a group's videos should play and scrub across the cuts, not one by one. A review
   whose group has 2+ videos now has a bar under the clip's own timeline with every video as a segment (name, current one
   highlighted, note / drawing ticks, playhead across all); tap / drag it to move through the whole sequence,
@@ -64,308 +64,292 @@ Add new entries directly below this line.
   the drag carries on at once (≈ 3–4 frames of held picture at a cut). Found and fixed there: the big Play
   button flashed over the picture at each cut → not added on a clip reached through the sequence (`seqPend`).
 
-## 0.78.0 — 2026-11-18 — Phone: review a group as a sequence, clip by clip
-- **What:** owner: reviewing a sequence on the phone meant going back to the list after every clip. Now a tap on
-  a group's picture opens its sequence on the clip last seen there (else the first); the review header of any
-  grouped review has ‹ / › around the title and "group · 2 / 5" in the subtitle; Page Up / Page Down on a
-  keyboard. Back leaves the sequence in one step. Works for pictures and 3D models too.
-- **Where:** mobile/js/app.js (`seqOf`, `openSequence`, `seqRemember`, `seqGo`; `openReview(…, opts.replace)`;
-  `renderReview` header, `paintReview` subtitle `els.seq`; group header `thumb`; keydown table),
-  mobile/index.html (`.seqb:disabled`), tests/pwa_e2e.cjs `bundle` + test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE.
-- **Notes:** the sequence = the review's UI group (`g.keys` order), not `meta.groups`. No wrap at the ends. No
-  swipe on the player for clip switching (it competes with scrub / pinch / drawing) — buttons serve touch. A
-  clip switch flushes edits (openReview) like Back does; an unsent composer draft is dropped as on Back.
-- Review (fresh agent): `pushed` was read from a review still loading (Back out of step after quick ›) → the
-  history entry is settled before any await, an overtaken unshown review hands its entry over, `openingKey` is
-  the base for quick taps; Back during a loading › was undone → `++openSeq` in leaveReview / route; PageDown
-  during an export swapped clips → no switch while `.busy`; hidden reviews were in the sequence → `seqKeys`;
-  a deleted clip was a dead end → dropped from the group and skipped. Nits: `openingKey` cleared on a thrown
-  open (wrapper `openReview` → `openReviewNow`), header refreshed after a drop (`paintSeq`, player untouched).
-  Confirmed by the same reviewer.
+## 0.87.4 — 2026-11-18 — New row ids no longer collide on Windows
+- **What:** two board cards (or boards, groups, collections, annotations) created in quick succession could get
+  the same id on Windows and the second one failed with a UNIQUE constraint error (e.g. duplicating a card twice
+  fast). Ids now include a random part. The intermittent `test_board_missing` failure was this bug.
+- **Where:** library.py — the five `asset_id(f"<kind>:{time.time_ns()}:…")` generators (collections, boards,
+  board items, board groups, annotations) now add `secrets.token_hex(8)`; tests/test_splash_win.py expects the OS
+  spelling of the interpreter path (`str(Path("/x/python"))`) — the test, not the code, was wrong.
+- **Notes:** Windows `time.time_ns()` has coarse resolution, so a timestamp is not a unique seed. These ids were
+  never reproducible; the deterministic import remaps (`anno-import:…`) and path-hash asset ids are unchanged,
+  and undo / merge pass the existing id. Full suite passes (87 tests).
+- Review (fresh agent): no findings.
 
-## 0.77.0 — 2026-11-18 — The phone app opens and answers a sequence's `.srev` bundle (multi-clip plan, stage 3)
-- **What:** opening a bundle on the phone merges every clip into its own review (one summary toast: damaged
-  clips / non-media named, the rest land; "same file as clip N" for a duplicate) and puts them in one home
-  group named by the bundle's title; a review with no media on the phone is greyed ("Media not on this
-  device — notes readable") until its file is picked. The group's menu has *Review file for Sight (.srev)*:
-  one bundle of the clips changed since the last send, with the received bundle id (nothing changed → asks
-  to send all). Works for user-made groups too (their own id). A one-clip bundle behaves like a package.
-- **Where:** mobile/js/model.js (`parseReviewFile`, `buildBundle`, `checkPackage`), mobile/js/app.js
-  (`importReviewFile` split into `reviewKeyFor` / `mergeInto` / `importBundle` / `bundleGroup`;
-  `dirty(user)`, `packageOf`, `isChanged`, `markSent`, `exportBundle`, `offerFile(…, onSent)`, `nomedia`
-  row), mobile/index.html (`.row.nomedia`), tests/pwa_unit.cjs, tests/pwa_e2e.cjs `bundle`,
-  tests/test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE, FORMAT, PLAN-multiclip, PLAN-mobile.
-- **Notes:** no IndexedDB version bump: new meta fields `groups`, `changed`, `nomedia`. `changed` = time of the
-  last user edit; merges never set it (`dirty(false)`); a send clears it only if it is unchanged since the
-  package was built. Missing `changed` (made on the phone / before 0.77) counts as changed — extra clips are
-  harmless under the merge rules. The UI group holds a review at most once; a reply takes the group's keys plus
-  every review whose `meta.groups` has the bundle id. "Merge a review file…" with a bundle imports it as a
-  bundle (not into the open review). Merge code untouched (merge parity).
-- Review (fresh agent): a review opened mid-import could read its rows before the merge and drop it on the next
-  save → busy overlay over the import loop; a lone clip of a later bundle did not join the bundle's existing
-  group → `bundleGroup` for any clip count; bundle `version` parsing now matches Python's `int(v or 0)`. All
-  confirmed by the same reviewer. Left as is: back / forward during the import can still open a review
-  mid-merge (deliberate action, tiny window); `version: []` / `"1_0"` parity quirks.
+## 0.87.3 — 2026-11-18 — Sources: nested folders, clean removal, stale-view reset, connection pool
+- **What:** user report "removing a source misbehaves" (two sources, ЛАЙТИНГ and Desktop: ЛАЙТИНГ → Desktop →
+  × Desktop → ЛАЙТИНГ shows no previews; the source stays in the menu). Cause: ЛАЙТИНГ lies inside Desktop — not
+  the Cyrillic name. Sources may now nest: a file belongs to the innermost source, the outer source shows it too,
+  and removing either keeps the files the other still holds. Removing a source while it scanned / was watched left
+  rows in All forever; no longer, and startup deletes old leftovers. Removal drops collection membership, asks for
+  confirmation (× has no undo on touch), reports a failed DELETE, and resets a filter / cards / selection that
+  pointed into it (also from another window). A hidden window gives up its event stream after 10 s (the browser
+  allows 6 connections per host across windows) and catches up when shown. Paths compare regardless of Unicode
+  form (macOS decomposed "Й").
+- **Where:** library.py — `add_source`, `remove_source`, `_reassign`, `_source_scope`, `_nested*`, `_owner`,
+  `scan_source` (`_src_gen`, `_scans_running`, nested roots skipped, locked flush), `_touch_one` / `on_moved`,
+  `resume_watchers` (ownership fix-up + orphan cleanup), `sources()` (`own`), `normpath` (NFC), `disk_spelling`;
+  server.py `/api/events` now an async generator (polls the queue; still ends on `Bus.CLOSE`); index.html remove
+  confirm, `syncSourcesView`, `connectEvents` with visibilitychange; tests/test_sources.py (14 tests).
+- **Notes:** invariant: a file row's `source_id` is the innermost source holding it — use `_source_scope` for "in
+  source X", never a bare `source_id=`. Asset ids are path hashes (one row per file), which is why the inner scan's
+  INSERT OR IGNORE used to leave rows on the outer source. Scan / watcher inserts are `INSERT … WHERE
+  EXISTS(source)`; the flush checks the per-source generation under `self.lock`; a cancelled scan does not mark
+  unreached files missing. Removal keeps thumbnail files on disk, board cards and annotations. Startup deletes
+  orphan rows (the owner's library had 3 from a removed "Documents" source — found reading a copy of the DB).
+  The old sync events generator held one worker thread per open window. Windows Cyrillic paths were fine
+  everywhere checked. Not done: one shared stream for several visible windows; `_reassign` → `hidden()` reads
+  `.obj` files under the DB lock; a vanished inner root is not re-checked. `test_board_missing` (intermittent
+  UNIQUE id) and `test_splash_win` (path separator) fail on master already.
+- Review (fresh agent, run by the implementing agent, three rounds): two medium nested-source edge cases (a
+  running outer scan, the outer watcher applying its own rules) and a `flush()` race (check outside the lock) —
+  fixed and confirmed; nothing new in round 3.
 
-## 0.76.0 — 2026-11-17 — One web page for a sequence's review (multi-clip plan, stage 2)
-- **What:** Sequence → Export → *Web page, all clips* writes **one** page (was one per clip). It has a clip strip on
-  top (name, notes, open notes; a dot = changed here), ‹ / › buttons, `←` / `→` (not in text fields, the full-screen
-  picture, the drawing canvas or a sheet). The bottom bar counts every clip; *Download reply* = one `.srev` bundle of
-  the changed clips with the page's bundle id; *Discard* asks this clip / all clips (Esc / Cancel / backdrop close);
-  the clip's details (tap the title) have *Download this clip's reply* — a plain package for Sight < 0.75. Switching
-  clips resets the search / state filter. A sequence with one clip with notes gets the ordinary one-clip page.
-- **Where:** review.py (`build_html` → `_page`, new `build_html_all`; page script: `useClip`, `switchClip`, `CL`,
-  `slotKey`, `changesOf` / `editsOf`, `clipCounts`, `paintStrip`, `replyPackage(c)`, `download` / `downloadClip`,
-  `discard`, `header()` clears first, `closeEmpty(target, noRender)`; `plate_js` exposes `hotkey` / `runHotkeys`),
-  server.py (`/api/review/export/html-all`, returns `clips`, `missing`), index.html (`seqExportAll` html → one post),
-  tests/page_multi_e2e.cjs + test_review_page.py `MultiClipPage`, MANUAL, ARCHITECTURE, PLAN-multiclip.
-- **Notes:** data block is now `{clips: [{report, package, edits?}], bundle?, copy?}` (a one-clip page too; `bundle`
-  only with 2+ clips). One-clip page invariants kept: storage key `sight-review:<asset id>:<exported_at>[:copy]`,
-  reply = plain package (`page_e2e.cjs` passes unchanged). Multi-clip key `sight-review:<bundle id>:<asset id>[:copy]`.
-  All clips' edits live in memory (`CL[i].E`, the shown one is `E`; `editsOf(c)` reads the right one) and each save
-  writes the shown clip's slot. The page's clips = clips with notes (client scan, as before); a tombstone-only clip
-  is not on the page (deletes travel in the `.srev` bundle). A composer with a picture still loading counts as not
-  empty and cannot send (`dr.pending`). Stage 3 (phone) not started.
-- Review (fresh agent): no correctness bugs; low items fixed — a picture still loading was lost on a clip switch
-  (field closed as empty), search / filter carried over to the next clip, discard sheet had no keyboard close,
-  missing clips dropped silently from html-all, the strip scrolled on every save. Re-review: names of missing clips
-  came out as "clip" and Send could be pressed mid-load → fixed; then Send could stay disabled after a re-render
-  mid-load → fixed (`render()` when the field was replaced); all confirmed by the same reviewer.
+## 0.87.2 — 2026-11-18 — macOS: Dock icon back; Sight.app answers the Dock (real Cocoa loop)
+- **What:** macOS: Sight.app keeps its Dock icon again and answers it. Clicking the icon brings the Sight window to
+  the front, restores it if minimized, and opens it again if it was closed. Cmd+Tab to Sight focuses the window.
+  Dock "Quit", Cmd+Q and the logout / shutdown quit stop the server cleanly and close the window. **Supersedes
+  0.84.2's agent-app approach** (LSUIElement, no Dock icon), which the owner found inconvenient.
+- **Where:** new app/macapp.py (`run`, `browser_pid_from_ps`, `find_browser_pid`); Sight.py `main()` mac branch
+  (`_serve`, `_window_alive`, `_relaunch`, `_request_stop`, `_close_window`, `_on_server_exit`, `hb_lock`) and
+  `_main_cleanup()` (`mac_agent_note()` removed); server.py (`/api/heartbeat?bye=1` → `app.state.window_bye`,
+  `/api/events` ends on `Bus.CLOSE`); library.py `Bus.close()` / `CLOSE`; index.html `startHeartbeat` pagehide
+  beacon; build_app_macos.sh (pyobjc-framework-Cocoa install + bundle check, LSUIElement removed,
+  `NSAppleEventsUsageDescription`, `NSAppSleepDisabled` kept); tests/test_mac_launch.py.
+- **Notes:** packaged macOS builds (not `--no-browser`) run NSApplication on the main thread and uvicorn on a
+  background thread; without pyobjc it falls back to the old path and logs a line. AppKit exits the process
+  itself, so main()'s `finally` never runs there: exit work lives in `_main_cleanup()` — never put cleanup only in
+  `finally`. "Is there a window" = fresh heartbeat and no `bye` (Chromium on macOS keeps running windowless); the
+  quit watchdog ignores `bye`, so F5 is safe. Dock reopen sends a "reopen" Apple Event only to Sight's own browser
+  process (found by its `--user-data-dir` in `ps`), never the user's Chrome; may show a one-time Automation
+  prompt; the ad-hoc re-sign resets that grant each build. Quit: `Bus.close()` ends every `/api/events` stream
+  so uvicorn's 3 s graceful shutdown completes and `lib.close()` runs; a 10 s force quit (`threading.Timer` +
+  `callAfter` — `callLater` does not fire while AppKit waits on the terminate reply) runs the same cleanup.
+  Windows / Linux / dev unchanged (only a lock around the watchdog check). Known minor gaps: a second Dock click
+  while a relaunched window is still loading can open a blank tab; with two Sight windows, closing one marks the
+  app closed for up to 3 s. Not tested on a Mac.
+- Review (fresh agent): 6 findings (quit hang at logout, force quit skipping cleanup, blank Chrome window on
+  reopen after close, duplicate tabs without a Chromium browser, Automation consent text, watchdog / reopen race),
+  fixed; second pass: 5 confirmed, 2 follow-ups (reopen still blank within 10 s of closing, Quit ending on the
+  force timer without `lib.close()`) fixed; the same reviewer confirmed both, nothing new beyond the two gaps above.
 
-## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
-- **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
-  instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle
-  (drop, Export menu, palette) merges every clip in the library and shows one summary ("2 clips updated · 1 not in
-  your library: x · 1 damaged · y: same file as clip 1"); the others still land. Exactly one clip updated → it
-  opens as for a plain package; otherwise nothing new opens, open affected clips reload (undo cleared) and the
-  sequence's off-screen timeline marks are re-read. Also: the import toast without a lightbox (dropped on the grid)
-  now shows (page `flash`, plain text) — before it went to `#v3dToast`, which exists only in the lightbox.
-- **Where:** review.py (`parse_review_file`, `build_bundle`, `find_review_asset`, `import_package`,
-  `import_review_file`), server.py (`/api/review/import` → `import_review_file`; new `/api/review/export/package-all`
-  with `asset_ids`), annotate.js (`importedBundle`, toast passes `ms`), index.html (`seqExportAll` "pkg",
-  `seqReviewChanged`, `htmlToText`, main host `toast`), tests/test_review_bundle.py, tests/test_pwa.py
-  (`sight_import` calls the shared function), FORMAT.md, MANUAL, ARCHITECTURE, PLAN-multiclip.
-- **Notes:** packages inside are unchanged and merge by the same code (merge parity untouched). A plain package's
-  import response is exactly as before (404 missing / 400 damaged); a bundle is always 200 with `results` per
-  package, each committed on its own. Damaged-file 400s now also cover sqlite binding errors and a non-numeric
-  `version` (were 500). Two packages matching one local file: the first claims it even if it turns out damaged;
-  the later is reported as duplicate (no second try). Older Sight (< 0.75) rejects a bundle as "Not a Sight review
-  file" — the stage-2 page's one-clip reply must stay a plain package. Stage 2 (multi-clip page) and 3 (phone) not
-  started.
-- Review (fresh agent): damaged inner package lost its name in the report; a duplicate after a damaged first copy
-  was imported again; `package-all` iterated a string `asset_ids` per char / 500 on a number; a bundle opened a clip
-  even when nothing changed; MANUAL said the `.srev` export visits clips; fixed. Re-review: fixes confirmed except a
-  `continue` that skipped reloading the first changed clip when several changed (stale rows + undo over the merge);
-  removed, confirmed by the same reviewer.
+## 0.87.1 — 2026-11-18 — Notes no longer lost when switching clips; durable annotation write queue
+- **What:** user report (macOS desktop): comments written on a sequence's clips were gone after switching clips.
+  Root cause: `setAsset()` / `unmount()` called the async `flush()` and then cleared `S.items` synchronously; after
+  flush's first `await` the dirty rows were gone, so a debounced (300 ms) update — e.g. a reply / note edit
+  committed by the blur when clicking towards the next clip — was silently dropped (reproduced; old code kept
+  "original"). Failed writes were only `console.warn`ed. Now every row write goes through one durable queue: kept in
+  localStorage until the server has it, retried, a red "unsaved annotation changes — retrying" badge (click / tap =
+  retry) while it fails, sent with keepalive on close and at the next start.
+- **Where:** annotate.js: module-level `OB` (`obPut` / `obDel` / `obDrain` / `obFlush` / `obOverlay` / `obForget` /
+  `obAdopt` / `obBeacon` / `obPaint`), `serverCreate` / `stage` / `flush` / `serverDelete` / `settle`, `load()`
+  overlay, `obForget` before the import / reload loads, CSS `.an-outbox`. ARCHITECTURE ("Saving"), MANUAL.
+- **Notes:** invariants are in ARCHITECTURE ("Saving (the write queue)"): never write rows outside the queue; leave an
+  asset only via `settle()` while `S.asset` is the old one. Landed writes stay 30 s in `OB.recent` and are laid over
+  a GET row only if that row is older than the request (`updated_at < sentAt`, same-machine clock — a LAN client
+  with clock skew would weaken this; comparing against the server-returned `updated_at` would be the fix). Storage
+  key per window; adoption skips entries older than this window's landed write (`at` vs `landedAt`). Not done:
+  queued rows carry no library identity (another SIGHT_HOME on the same port would get them as orphan rows); the
+  HTML review page's localStorage quota problem (separate track). The browser logins reset the user also reported
+  cannot come from Sight (own `--user-data-dir`, no access to the main profile) — not investigated further.
+- Review (fresh agent, run by the implementing agent): round 1 — 10 findings (load/GET race, close dropping debounced
+  edits and open editors, keepalive sending one request, no timeout, one bad row blocking the queue, silent refusals,
+  windows overwriting each other's stored queue, stale storage after a failed setItem, unvalidated restore, live
+  references in queued bodies). Round 2 — the recent-overlay hid server-side changes (import) → `sentAt` check +
+  `obForget`. Round 3 — refused create showing as a phantom; periodic adoption overwriting a newer write → `at` /
+  `landedAt`, frozen-window self-drop (`obHandedOff` before any write / send; handed rows' next write is an upsert).
+  All fixed; the same reviewer confirmed every fix (5 rounds). Known limitation it accepted: after a frozen window's
+  queue is adopted by another window, the two windows' writes of the same row may land in either order.
 
-## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
-- **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
-  drawing out and the next annotated frame's in. Now, while drawing on a video with onion on, between two frames
-  that carry drawings the earlier ones fade out and the later ones fade in as the playhead moves (linear over the
-  gap; over 1 s before the first / after the last). And the toolbar's eye is gone: the top bar's eye (lightbox
-  `#drawEyeBtn`, new `#boardEyeBtn` next to the board's pen) works while drawing too. Owner, next: onion skin is a
-  way of viewing, not a tool — its toolbar button is gone; right-click / long-press on the eye toggles it (video;
-  click still hides / shows), it works while just watching too and is kept with the settings
-  (`sight.annotate.onion`); the eye shows the onion icon while it is on.
-- **Where:** annotate.js (`onionFade` replaces `ghostNow`, `paintVisibility` inline opacity, `.an-doc g.ghost` CSS
-  removed; `paintEye` used by `paintBar` / `paintBadge`; toolbar `data-act=hide` removed), index.html
-  (`#boardEyeBtn`, host `eyeBtn`, activePane, `applyViewDom`), MANUAL, ARCHITECTURE.
-- **Notes:** a span = the drawing's frame + its hold (a held drawing fades from the end of its hold); a drawing
-  held for the whole clip (`hold: -1`) is not part of it. Spans group by their end / start within half a frame.
-  The rules that decide what may show (hidden replies, deleted notes, the compose / pick narrowing) apply to the
-  ghosts too. A board's eye shows only while drawing there (the board resets the eye when drawing ends).
-  Verified with Playwright: opacities at 0.4 … 3.8 s over drawings at 1.6 / 2.0 / 2.6 s match the formula; no
-  toolbar eye; the top-bar eye while drawing hides everything.
-- Review (fresh agent): the first cross-fade only counted spans that had ended, so at every annotated frame in the
-  middle the previous drawings popped back and the next jumped (and held drawings sat at half opacity); a fade cut
-  off when an overlapping hold ended; a hidden state carried over from another file gave no sign while drawing (new
-  strokes vanished); fixed (groups by start frame: the group that started last fades out from each drawing's own
-  end, the next fades in once it is over; the eye shows while drawing when hidden). Accepted: the version compare
-  has no eye (Shift+H still works there; onion is off there). Re-review: fixes confirmed; new: a touch long-press
-  on Android / a pen on Windows toggling onion twice (their contextmenu), drawings frozen after onion unhid them
-  on a playing video, an earlier group's long hold ending with no fade; fixed; the same reviewer confirmed all three. Then: a pen's barrel
-  button (pointerdown `button` 2) counts as a right-click and toggles onion too (confirmed by the same reviewer).
+## 0.87.0 — 2026-11-18 — Compare: synced video on one clock, toolbar button, drop-to-compare, layer reorder
+- **What:** compare clips play on one clock that waits for the slowest clip ("· loading" while held); scrubbing
+  (mouse / finger) moves every clip; the video RAM cache is split between the clips around their playheads. The
+  compare button moved from the notes panel to the viewer's top bar (greyed out with nothing to compare, badge =
+  dropped files). Files dragged from the library beside the viewer (Tab) join a comparison with the open file;
+  a drop no longer turns annotating on (only while annotating does a picture become a reference). Touch: select
+  files in the library beside the viewer and tap the button. Layer chips reorder by mouse drag or touch hold+drag;
+  the order is the split / tile order and is kept in a note's comparison (`session().ids`).
+- **Where:** compare.js (`syncVideos` / `canGo`, `paintMirrors`, `pushFocus`, `mkMedia` / `refCopy`, `C.scrub`,
+  touch reorder in `bindUi`, `captureView`); library.py `SlidingVideoCache` (`_Window`, `focus_many`); server.py
+  `/api/video/focus` `items`; index.html (`#cmpBtn`, `lightCompareIds`, `addToCompareStack`, `paintCmpBtn`,
+  `compareFromContext`, focus handling); annotate.js (`onRefDrop` → `host.dropForCompare`, `host.onVersions`,
+  versions-row Compare removed); MANUAL, ARCHITECTURE.
+- **Notes:** root cause of the desync: the clock ran on while a clip seeked; a 4K / long-GOP seek took longer than
+  the 0.25 s tolerance, so the clip was re-seeked forever (6 × 4K60: up to 7.9 s apart → < 0.3 s). Invariant: never
+  seek towards a running clock. Paused-clip "ready" = frame + 0.4 s buffered (Chromium keeps paused elements at
+  HAVE_CURRENT_DATA). Hung seek > 8 s re-issued; a clip at its end is never play()ed. The lightbox `focus()` is one
+  cache window; closing compare re-focuses it. `light.cmpStack` survives moving between its own files. Not done:
+  6-connections-per-host with 6+ clips on slow storage; reorder not written back to the drop stack; the button
+  ignores note-stored comparisons on files without versions. `tests.test_board_missing` fails on master already
+  (UNIQUE board_items.id) — unrelated.
+- Review (fresh agent, run by the implementing agent): 8 findings (end-of-clip play() restart, re-seek timer
+  counting the seek, lightbox focus wiping compare's windows, hidden reference without a window, stack edge cases,
+  mirrors painting mid-seek, stuck scrub, Windows press-and-hold menu). All fixed; same reviewer confirmed.
 
-## 0.73.0 (docs) — 2026-11-17 — Plan: one review page / `.srev` bundle for several clips
-- **What:** `docs/PLAN-multiclip.md` (linked from PLAN.md and CLAUDE.md): a bundle envelope (`format:
-  "sight-review-bundle"`, `.srev` too) around unchanged single-asset packages; stage 1 format + Sight import /
-  export, stage 2 the multi-clip page (the page script refactor is the main work), stage 3 the phone app. Owner
-  decided: `.srev`, clips without notes left out (clips with tombstones still count), no boards. No code yet.
-- Review (fresh agent, three rounds against the code): wrong assumptions (page script reusable per clip, storage
-  key, "unchanged clips" savings, the phone's change tracking / `dirty()`, `exportSrev` per clip) and gaps (Sight
-  import UI and response, damaged inner packages, shared import function, html-all / package-all, one-clip page
-  replying with a plain package, duplicate asset match, bundle id ownership); all written into the plan; the last
-  round found it ready to implement.
+## 0.86.0 — 2026-11-18 — Number pins with a leader line; note icons on hover; Ctrl+C copies hovered note text; Shift = H/V
+- **What:** owner's asks.
+  - The note pin tool is now a *number pin*: a click puts a numbered circle, a drag draws a line from the press
+    point with the circle where it is let go. A small field then takes the number (Enter / tap elsewhere; empty =
+    the next free number; Esc drops a new pin). A click with the tool on a pin, or a double-click with another
+    tool, edits its number. The tool no longer focuses the note composer, which had swallowed every hotkey.
+  - Shift while drawing (straight stroke, line / arrow, pin line, dragging a line's end) keeps the line horizontal
+    or vertical instead of snapping to 15° (rotation still uses 15° steps).
+  - A note card's action icons show on hover only; on touch, on the picked card.
+  - Ctrl+C with the pointer over a note's / reply's / picture's text (the panel or the text plate) copies that
+    text, with a "Copied" toast.
+- **Where:** review-core.js: `primsOf` pin (`label`, leader `ax, ay`), `pinLeader` / `pinLineW`, `boundsOf`,
+  `hitTest`, `transformItem`, `snapHV` (exported; used by `xfDrag` line ends). annotate.js: pin branch in
+  `onDown` / `onMove` / `onUp` / `abortGesture`, `editPin` / `finishPinEdit` / `nextPinNumber` (`S.pinEdit`,
+  `.an-pinedit`), `copyHoveredText` (onKey, composer / caption fields), `snapAngle = RC.snapHV`, CSS
+  `.an-nh .an-ib`. FORMAT.md pin; MANUAL.
+- **Notes:** `label` is a string set when the pin is created (the next free number among this media's pins; older
+  pins count with their note number). Pins without `label` / `ax, ay` render as before (the note's number, no
+  line); older clients show new pins that way too. The leader is drawn only when its start lies outside the circle.
+  The phone / HTML drawing canvas (review-draw.js) has no pin tool; it draws, moves and hit-tests pins through
+  review-core, so leaders follow there too. The hovered-text copy steps aside for a real text selection, also
+  inside a focused field. On touch there is no Shift, so no H/V constraint there.
+- Review (fresh agent, run by the implementing agent): 6 findings — Ctrl+C dead while the composer kept focus; a
+  press while the number field was open only confirmed it (every other quick click placed a pin, a double-click
+  on a pin flashed the field); the circle showed a different number than the field until confirmed; a short drag
+  ending inside a pin stacked a duplicate; a stale comment — all fixed; compare-mode copy not applicable. The same
+  reviewer confirmed all fixes, nothing new.
 
-## 0.73.0 — 2026-11-17 — Notes panel apart from the drawing tools; board notes remember their place
-- **What:** owner: open the notes panel just to read and click pictures; drawing is what brings the tools; the
-  panel must work on boards too, and a board note must remember where it was written (like a 3D view) and glide
-  the camera there (smooth start and stop) when its picture is clicked. A notes button (speech bubble + note
-  count) sits in the lightbox bar and, for a board, in the top bar; `C` does the same with the mode off. The
-  pen no longer carries the count.
-- **Where:** annotate.js (`readKey` / `S.readOn`, `togglePanel`, `panelShown`, `syncPanel` `.an-read`,
-  `paintNotesBtn`, `onKey` off-mode C / Esc-unpin, `modeAllows` pin while watching, board `ctxNow` → `bv`,
-  `flyToNote`, `boardPreview`, `.an-bprev` click), canvas.js (`stripWidth`, `frameRect(…, opts)`, `viewRect`,
-  `flyTo` / `stopFly`), index.html (`#notesBtn`, `#boardNotesBtn`, host `notesBtn` / `notesBtnShown` /
-  `boardView`, activePane for the top-bar board buttons), FORMAT.md (board ctx `bv`), MANUAL, ARCHITECTURE.
-- **Notes:** the reading panel has no composer (adding a note is part of the drawing mode); card actions (reply,
-  resolve, delete) stay. Two flags so the panel does not pop up on every file: reading is off by default,
-  drawing keeps its own (`sight.annotate.panel`). `bv` is stored for new board notes only; older ones fly to their
-  drawings' bounds. The fly takes 450–1100 ms by distance / zoom ratio, any press or wheel on the board stops it.
-  Also: `toggle(false)` closes an enlarged screenshot; the top-bar board pen makes the board the key pane.
-- Review (fresh agent): `modeAllows` reading the view mode before declaring it (threw whenever the mode was off and
-  a drawing belonged to a note — drawings, leaving the mode and picking a note broke), C in the compare toggling the
-  lightbox's reading panel behind it, the compare picking up the lightbox's reading flag (`host.readPanel: false`
-  now), a glide still running when another board opens / the board closes (`stopFly` in open / close); fixed.
-  Also: closing the reading panel unpins the note; a screenshot landing after the mode was left no longer opens the
-  reading panel. Re-review: the same reviewer confirmed every fix. Earlier review of 0.72.0's board pen / screenshots / Esc: board keys going to the
-  library after a click on the top-bar pen in split view, a screenshot left open when the mode is switched off by
-  the pen; fixed, confirmed by the same reviewer.
+## 0.85.0 — 2026-11-18 — Lightbox video bar: sound, scrub audio, loop, typed frame jump, Shift+arrows
+- **What:** the lightbox video bar gets a sound icon (click = mute, press-and-drag up or the wheel = volume with a
+  pop-up slider, right-click or long press = sound while scrubbing, shown by an accent dot), a loop button, and a
+  clickable position field (type a frame / time + Enter to jump, Esc cancels; right-click or long press = display
+  Frame / Time / Frame+time and Local / Global counting — Global only in a sequence of 2+ clips).
+  Shift+← / Shift+→ jump to the first / last frame (of the whole sequence when one plays).
+- **Where:** index.html (CSS `.vib` / `.vpop` / `.vtime-in` / `.vctx`; vbar markup; block before `bindVBar`:
+  `vgesture`, `vApplySnd`, `vApplyLoop`, `vposPaint`, `vposJump`, `vposEdit`, `vposMenu`, `vClips` / `vPos`,
+  `vClipFps` / `vFpsMap`, `bindVBarUi`, `lightEdgeJump`; `paintVBar`, `attachViewer`, `seekVideo` /
+  `scrubBlip`, `endScrub` / `endBlip`, `seqAdopt` unmute, `closeLight`, keydown Shift+Arrow); annotate.js
+  (`fps()` accessor, `followOff` ignores `_blip`); MANUAL.
+- **Notes:** prefs in localStorage `sight.vsnd`, `sight.vpos`, `sight.vloop` (type-checked on read; the phone app
+  has its own keys). The mobile code has no volume popup — only its gesture logic and icons are reused. The loop
+  button hides in a sequence (its bar has its own loop; `el.loop` stays off there because `ended` drives
+  `seqAdvance`). Scrub audio = a 90 ms play blip per seek; `el._blip` keeps blips out of `_seqPlayedAt` / the
+  annotator's follow tick, and the scrub end re-seeks to the pointer time (the blip ran past it). Frames are 0-based,
+  floor-based (as annotate's `stepFrame`); fps comes from the annotator when known, else from
+  `/api/assets/{id}/info` (cached per id); "≈" until known. Global frames sum each clip's own
+  round(duration × fps). In frame modes a bare number (also decimal) is a frame; `12s`, `1:05` are times; `f120`
+  a frame. The position input closes on any outside pointerdown. Not done: the sound icon does not grey out for
+  clips without audio (mobile does).
+- Review (fresh agent): 8 findings — blips left the paused frame ~90 ms past the release, the loop button never
+  hid (`.vib` display overrode `[hidden]`), a TypeError closing the lightbox with the field open, the field staying
+  focused after a track click (swallowing keys), global frames using one clip's fps, fps unknown outside annotate,
+  inconsistent decimal parsing, the sequence-cut unmute timer overriding a user's mute. All fixed; the same
+  reviewer confirmed them and noted two leftovers (board-opened video got no fps, Shift+→ used the current clip's
+  fps for the last clip), fixed.
 
-## 0.72.0 — 2026-11-17 — Drawings shown while just watching (eye to hide); review export of a whole sequence
-- **What:** (1) owner: drawings must show during ordinary playback, without the annotating mode, with an eye to
-  switch them off "as in the mobile app". A picture's / video's drawings now stay on show with annotating off
-  (a video's on their frames as it plays); an eye button next to the pen in the lightbox bar (and Shift+H)
-  hides / shows them — the same flag as the toolbar's eye. 3D keeps drawings for the annotating mode.
-  (2) Export ▾ in a sequence has "…, all clips": the review of every clip with notes — one PDF (a section per
-  clip, pages numbered through), one ZIP (a folder per clip), a web page / .srev per clip.
-- **Where:** annotate.js (`shownOff`, `hasDrawings`, `renderAll` / `tick` / `viewChanged` / `onKey` / `modeAllows`
-  / `paintBadge` / `toggle(false)` clears the hover circle; menu `.an-mseq` + API `assetId / ready / fpsKnown /
-  report / toast`), index.html (`#drawEyeBtn`; `seqExportAll`, `seqWaitClip`, `reviewerName`; host `seqClips`,
-  `seqExport`), review.py (`build_pdf(number=)`, `_number_pages`, `build_pdf_all`, `_zip_report`, `build_zip_all`),
-  server.py `/api/review/export/pdf-all|zip-all`, tests/test_review_all.py, MANUAL, ARCHITECTURE.
-- **Notes:** with the mode off every drawing of the frame shows (no clean picture after "Add", no compose
-  hiding) — that narrowing is an editing aid. The sequence export visits the clips on screen (pictures need
-  the clip decoded) and returns to the clip / time it started from (paused or playing as before); a clip that
-  does not load in 45 s is skipped and named in the toast. HTML / .srev stay one per file (FORMAT.md is per
-  asset). Verified with Playwright: drawings / eye / Shift+H / leaving the frame with the mode off; all four
-  exports over a two-clip sequence (PDF pictures carry the drawings, ZIP folders per clip, back on clip 2).
-- **Also in 0.72.0** (owner): the board's annotate pen moved from the board's top-left corner to the top bar
-  (`#boardAnnoBtn`, next to ◧ — where the lightbox has its pen; canvas.js takes it as `annButton`, its own corner
-  button stays only for a host that passes none). A note's attached screenshots are marked apart from its
-  drawing previews (`.an-shotw`: camera corner badge, dashed edge; clicks go by `[data-shot]` on the wrapper).
-  Esc closes an enlarged screenshot first (annotate.js `onKey`) — before, it was eaten by deselect / pin / leaving
-  the mode, so it took several presses.
-- Review (fresh agents), watching block: boards and still pictures ticking every frame forever, onion ghosts while
-  watching, the compare showing drawings with no way to hide them (and Shift+H hiding the lightbox's behind it),
-  Shift+H with no drawings / on key repeat, the eye counting drawings that never show; fixed (the tick runs only
-  for a playing video — `followOff`, woken by play / seek; the compare passes `showWhileWatching: false`).
-  Export block: a clip switched during its capture mixing clips, playback not resumed, a single export running
-  alongside, a stray separator on the board menu, the failure toast lost with the lightbox; fixed (`S.gathering`
-  + `host.exportBusy` one-at-a-time, the report checked against the clip on screen, `flash()` fallback).
-  Re-review (same agents): export fixes confirmed; watching fixes confirmed, plus a missing pause / ended wake
-  (the frame a video stops on could keep the previous frame's drawings) — added.
+## 0.84.2 — 2026-11-18 — macOS: restoring a minimized window no longer shows "not responding"
+- **What:** macOS: restoring a minimized Sight window no longer makes macOS report "Sight not responding", and a
+  window left minimized for long no longer comes back to a dead page. Sight.app is now an agent with no Dock
+  icon: the window lives under the browser's own icon.
+- **Where:** build_app_macos.sh (sets `LSUIElement` and `NSAppSleepDisabled` in Info.plist with PlistBuddy, then
+  re-signs ad hoc); Sight.py (`_open()` passes the anti-throttling Chromium flags on every platform; new
+  `mac_agent_note()` logs whether the bundle is an agent; the watchdog logs why it quits).
+- **Notes:** root cause (read from code, ~75% sure, not run on a Mac): Sight.app's main thread is uvicorn and never
+  runs a Cocoa event loop, so as a regular Dock app it could not answer the reopen Apple Event sent by a click on
+  its Dock icon. Do not give Sight.app a Dock icon / tray again without a real NSApplication loop on the main
+  thread (pyobjc) and uvicorn moved to a thread. Second cause: on macOS / Linux Chromium throttled a minimized
+  window's 3 s heartbeat to once a minute, so the 10 s watchdog quit the server; the flags were Windows-only
+  (Windows command line unchanged). Editing Info.plist after PyInstaller needs the ad-hoc re-sign. Gap: an agent
+  app still cannot answer the logout / shutdown quit event (true before too). Needs a check on a Mac build:
+  minimize 1 min and 6+ min, restore, log has no "no heartbeat … quitting".
+- Review (fresh agent run by the fixing agent): no correctness bugs; Windows command line confirmed unchanged.
 
-## 0.71.0 — 2026-11-17 — Dictation: built-in browser engine + one-tap language chip; Groq replaced by "my service"
-- **What:** owner: no Groq, keep the app small, use what the system has, picking the language by hand is fine;
-  allow any speech-to-text service the user likes. (1) Next to every mic there is a language chip (RU / EN…): a
-  tap flips between the two languages used last, Alt+Shift+M does the same from a dictation field, right-click /
-  long-press lists all. Switching mid-dictation lets the words heard land, then listens again in the new language.
-  (2) Settings → Dictation: *Browser (built in)* (default) or *My service (OpenAI-compatible)* with Address, Model,
-  API key (optional) — any `POST …/audio/transcriptions` endpoint: a local whisper server, OpenAI, Groq…
-- **Where:** `app/stt.py` (`SttService` replaces `GroqStt`: config `{url, model, key}` in `<SIGHT_HOME>/stt.json`),
-  server.py `/api/stt/config` (replaces `/api/stt/key`; JSON content-type required), `dictation.js` (provider
-  `service` replaces `groq`; `SWITCH`, `recent()` / `remember()` / `cycle()` / `pickLang()`, chips map, `restart` /
-  `stopping` flags), index.html (`bindDictationSettings`, `.stt-row`), tests/test_stt.py, MANUAL, ARCHITECTURE.
-- **Notes:** an old `stt.json` with `groq_key` is simply ignored (not configured), and an engine setting `"groq"`
-  reads as the browser. Status returns url / model / hasKey, never the key. Changing the address drops a stored
-  key unless a new one comes with it (nothing can redirect the user's key to another host); no redirects followed.
-  No key → no Authorization header; no model → `whisper-1`. Auto language without a key is impossible with Web
-  Speech; local Whisper inside Sight was offered and declined (too heavy) — a local whisper server plugs in as
-  "my service". Recent pair: `localStorage["sight.dictation.recent"]` (defaults: browser language + English, or
-  + Russian on an English browser); compared via `fullCode` so a bare "ru" browser code equals "ru-RU". Verified
-  with Playwright: chip / hotkey / restart on a fake recogniser; Settings → save → a real phrase from Chromium's
-  fake mic through the dev server to a fake OpenAI-compatible server (Bearer key, text back).
-- Review (fresh agent), chip block: restart after a user stop, Enter / blur not cancelling the restart, a same-base
-  pair (en-US/en-GB) not flipping, wrong seeding of regional browser codes, floating chip not re-placed, chip tap
-  vs popover close; fixed. Re-review: bare browser code ("ru") needing two taps — fixed; the same reviewer confirmed every fix.
-  Service block review: URLs the browser's `new URL()` rejects (spaces, bad port) saved as configured, the system
-  proxy applied to a local server (key in clear text to it), the key silently dropped on an address change, the
-  old Groq key left on disk, the upload cap relying on Content-Length only; fixed (local hosts bypass the proxy,
-  cloud hosts keep it; body read with a running 20 MB cap). Re-review: a key saved with no address could not be
-  removed, a one-time race deleting a fresh config with the Groq file; fixed; the same reviewer confirmed all.
+## 0.84.1 — 2026-11-18 — 3D: notes panel shows the drawings right away
+- **What:** opening the notes panel on a 3D model now shows its annotation drawings at once (before, only after
+  clicking a note — and in fact not even then). With annotation mode off they show, not editable, and follow the
+  camera: a drawing shows only while the camera is on its view. The eye button / Shift+H toggle them in 3D too.
+- **Where:** annotate.js — `shownOff()` includes `model3d` when `S.b3` is bound; `followOff()` keeps the tick
+  running for 3D while drawings exist and are not hidden.
+- **Notes:** root cause: `shownOff()` covered images, video, PSD and boards but not 3D, so outside annotate mode
+  3D never created / unhid its drawing layer. The compare overlay is unaffected (`showWhileWatching: false`).
+  The 3D tick runs every frame while drawings exist and annotation is off (cheap signature check; repaints only
+  on camera / hidden-mesh / explode / view change); it ends when `S.b3` goes null or drawings are hidden.
+- Review (fresh agent): no findings (rAF teardown, null `S.b3` mid-tick, compare, Shift+H vs 3D H keys,
+  pointer-events on the layer all checked).
 
-## 0.70.0 — 2026-11-17 — Dictation with automatic language detection (Whisper via Groq)
-- **What:** Settings → Dictation: engine *Browser* (as before) or *Whisper (Groq)* plus a Groq API key. With
-  Whisper the mic's language "Auto" really detects the language (owner's request; the browser's recogniser
-  cannot — its "auto" is the browser's language). Words arrive phrase by phrase (after each pause), not live.
-- **Where:** new `app/stt.py` (`GroqStt`), `app/server.py` `/api/stt/status|key|transcribe`, `dictation.js`
-  provider `groq` + `getEngine` in `createDictationUI`, annotate.js (passes `getEngine`), index.html
-  `bindDictationSettings` + Settings markup, `tests/test_stt.py`. PLAN-stt.md (tier 2 done), ARCHITECTURE, MANUAL.
-- **Notes:** the key lives only in `<SIGHT_HOME>/stt.json` (0600), never in settings.json / the page / logs;
-  `/api/stt/status` says only whether one is set. Stdlib `urllib` multipart, model `whisper-large-v3-turbo`, no
-  `language` field = detect. Phrases: one MediaRecorder per phrase (each upload a complete file), cut by 0.7 s of
-  quiet after ≥ 0.25 s of voice (AnalyserNode RMS), or at 20 s. Not testable from the dev container (Groq is not
-  reachable here): verified up to the POST and the "unreachable" toast with Chromium's fake microphone. Phrases are
-  delivered in order (numbered), the next recorder starts before the old stops (no word lost at a 20 s cut), the
-  session ends only when every recorder and upload is done, a missing key is reported before recording, leaving
-  the composer still appends the phrases in flight (editors that save on blur drop them, Enter drops them).
-  `/api/stt/transcribe` takes `audio/*` only (another site's "simple" POST cannot spend the quota) and checks the
-  size first; urllib never follows a redirect (it would re-send the key).
-- Review (fresh agent): mic left on when stopped during the permission prompt, phrases out of order, last phrase
-  lost on blur / just after a cut, suspended AudioContext dropping everything, a word lost at the 20 s cut, no-key
-  reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
-  briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
-  — fixed; confirmed by the same reviewer.
+## 0.84.0 — 2026-11-18 — F fits / finds, long-press resets the annotation bar, modifier cursors
+- **What:** F fits the open picture / video to the frame in the lightbox (like double-click, but always fit); over
+  the thumbnail grid F scrolls to the selected files. Long-press (700 ms, mouse or touch) on the annotate button
+  resets the whole annotation toolbar to defaults (toast). The cursor on a picture / video shows what the held
+  modifier does (Alt turns a picture / scrubs a video, Ctrl+Alt turns a video, Shift = fine scrub) and during
+  pan / zoom / turn drags. The screenshot / area-screenshot buttons are gone from the annotation toolbar
+  (S / Shift+S and the composer's buttons stay).
+- **Where:** index.html (`light.fit` / `toFit` in `attachViewer`, F in the keydown handler, grid F in a
+  window-level capture keydown listener, `bindAnnoReset(btn, annots)`, body classes `k-alt` / `k-ctrl` / `k-shift`
+  + `.view` cursor CSS, drag cursors in `attachViewer`, `.vid` class); annotate.js (`resetPrefs(quiet)`, removed
+  shot / region buttons, help footer); MANUAL.
+- **Notes:** 3D models and canvas boards keep their own F. The grid F listener is capture-phase on `window` so the
+  board's F (canvas.js, on document) does not also frame the board in the split view; it swallows repeats too.
+  `resetPrefs` covers styles, stamp look, hold and tool for all three annotators (lightbox, board, compare —
+  otherwise a stale one saves its old styles back over the reset); not the per-video stamp on/off, drawings,
+  notes. The long-press swallows its release click in the capture phase, `fired` is cleared 60 ms after release.
+  Modifier classes re-sync on pointermove and clear on blur. An annotator tool's inline cursor wins over the CSS.
+- Review (fresh agent): 3 findings — compare annotator not reset (overwrote the reset), a stale long-press flag
+  swallowing the next keyboard activation, F framing the board as well as scrolling the grid in split view. Fixed;
+  the same reviewer confirmed them and noted held-F repeats still reaching the board (fixed: repeats swallowed).
 
-## 0.69.1 — 2026-11-17 — Sequence: no black frame across a cut, picture scrub runs through clips
-- **What:** scrubbing back (or forward) across a cut no longer flashes black; dragging on the picture scrubs the
-  whole sequence and runs on into the neighbouring clips instead of stopping at the clip's ends.
-- **Where:** index.html `seqHold` / `seqKeepStill` / `seqDropHold` / `seqReleaseHold`, `seqDragTo`, `seqNow`,
-  `seqScrubBegin`, the attachViewer scrub hand-over (`sd.handed`), `bindSeqBar` (uses `seqDragTo`), `.seq-hold` CSS.
-- **Notes:** a clip opened from scratch shows nothing until decoded, so the frame on screen is held as a canvas
-  (the visible scrub copy, else the player, else — mid-seek, when nothing can be drawn — the last presented frame
-  of that same element) placed with the player's box and turn / mirror / zoom transform inside a box clipped like
-  the frame; it goes when the new clip presents its frame (rVFC, 250 ms fallback; 1.5 s cap). The picture scrub is
-  handed to window listeners once it starts (each cut replaces the stage and the element holding the pointer);
-  a release outside the window ends it on the next move without a button.
-- Review (fresh agent): hold skipped mid-seek, wrong source while the scrub copy shows, geometry for turned /
-  masked views, stuck drag after a release outside, a swallowed tap after a cancelled hand-over, rVFC not firing,
-  timer of chained holds, `seqNow` before a landing; re-review: the mid-seek still placed with another clip's
-  geometry — all fixed; confirmed by the same reviewer.
+## 0.83.1 — 2026-11-18 — Reference shadows follow the picture's alpha
+- **What:** a reference image with transparency (PNG / WebP) now casts a drop shadow of its alpha shape instead
+  of its rectangle — in Sight, the HTML page, the phone app and canvas exports (screenshots / PDF).
+- **Where:** review-core.js — `primsOf` image branch (a shadow-only image prim `p.shadow = {dx, dy, blur, a}`
+  before the picture), `primSvg` (black `feColorMatrix` + `feGaussianBlur`, `filterUnits="userSpaceOnUse"`
+  with an explicit region, unique `rcshN` ids), `primCanvas`.
+- **Notes:** canvas path avoids `ctx.filter` (no Safari): it uses `shadowBlur` with the image drawn off-canvas in
+  device space (`setTransform` shift by D past the image's device bbox, `shadowOffsetX += D`), skips the shadow
+  when its box misses the canvas, and falls back to an offset rect without `getTransform`. Canvas shadows ignore
+  the transform, so offset / blur are converted with `getTransform()`. Bordered refs keep the old stacked-box
+  shadow (opaque frame). An unloaded picture has no shadow. Needs an on-device iOS check (very large shadow
+  offsets).
+- Review (fresh agent): 4 findings — a ghost copy of the picture when it sat off the right edge in canvas exports,
+  flipped (negative size) refs getting a 1 px shadow, no fallback without `getTransform`, a filter region
+  rebuilt on the unclipped image every drag frame. All fixed; the same reviewer confirmed the fixes, nothing new.
 
-## 0.69.0 — 2026-11-17 — Compare annotating: splits by Alt / finger, screenshot of the whole comparison
-- **What:** while annotating in the compare's Swipe, `Alt`+drag moves the nearest split (as Alt scrubs a video in
-  the viewer) and a finger / stylus landing within 24 px of a split moves it — no stroke for that press, no need to
-  leave annotating. The annotator's screenshot (`S`, area `Shift+S`) is now the comparison as shown — every visible
-  layer in its split region or tile, Difference, dimmed clips, split lines and names — with the drawings on top
-  (owner: "that is the point of commenting a comparison"); it was the selected layer alone.
-- **Where:** compare.js `wantsPress`, `onDown` (`altPan`; drags keep their `pid`), `captureView`, `C.viewWrap`;
-  annotate.js `onDown` → `host.passThrough`, `composeView` → `host.captureView` (drawings clipped to the surface),
-  `capture()` area offset; index.html `cmpAnnot` hooks, compare `annotating`.
-- **Notes:** `passThrough` is asked after the edit / pen-eraser handling and not while an area is being picked or
-  with Alt on the select tool (its duplicate-drag). Outside annotating Alt+left still pans in Swipe. A video layer
-  caught mid-seek (`readyState` < 2) is drawn as nothing (black) in the screenshot — left as is (rare). Note
-  previews / report pictures still show the annotated layer's own frame (the screenshot is what shows the comparison).
-- Review (fresh agent): a resting palm's split drag following the pen (no pointer id on the drag), Alt duplicate-
-  drag lost with the select tool, area capture / text edit / pen eraser presses taken near a split, drawings not
-  clipped to their tile, label size; fixed (black hole for a seeking video left).
+## 0.83.0 — 2026-11-18 — Importing a review file offers to restore notes / drawings deleted here
+- **What:** owner's report "the review file does not restore notes and drawings". Not a bug in the merge: rule 5
+  (FORMAT.md) keeps a row deleted here when the delete is later than the file's copy. Now the import counts
+  such rows and asks *Restore them?*; yes merges the same file again with restore on and they come back.
+- **Where:** library.py `import_annotations(restore=, kept_deleted=)`; review.py `import_package` /
+  `import_review_file` (`restore`, result key `deleted_here`, per clip in a bundle); server.py
+  `/api/review/import?restore=1`; annotate.js `importFile` (two POSTs, counts of both passes summed for the toast);
+  tests (test_merge_parity `test_restore_deleted_here`, test_review_bundle `test_restore_rows_deleted_here`);
+  FORMAT.md rule 5, MANUAL.
+- **Notes:** Sight only — the JS `mergeRows` has no restore (default path unchanged, parity holds; stats keys
+  unchanged, the ids go to the `kept_deleted` out-list). A restored row is stamped as edited now (note
+  `data.edited_at`, drawing `updated_at`) so the file's / a later package's old tombstones do not delete it
+  again and other copies revive it on merge. A restore *undeletes*: when the local copy was edited after
+  the file was made (then deleted), the local copy comes back, not the file's older one. The question is the
+  native `confirm()` (works on touch too) and says "deleted in this library" (a reviewer's tombstone counts too).
+- Review (fresh agent): 3 findings — a failed restore pass hidden by the success toast (now reported after the
+  normal reload), a bundle clip merged in pass 1 shown as damaged when pass 2 failed (keeps its pass-1 result),
+  restore overwriting a newer local copy with the file's older one (fixed as above, test added); prompt wording
+  changed. The same reviewer confirmed all fixes, nothing new.
 
-## 0.68.0 — 2026-11-17 — Annotating in the version compare; notes remember the comparison
-- **What:** compare (K) has *✎ Annotate* / `A`: the notes panel and drawing tools on the **selected layer**
-  (owner's choice) — notes / drawings go to that file at its own frame. A note made there stores the
-  comparison (files, order, reference, selected layer, layout, blend, split direction, clip offsets); its card in
-  the viewer gets *⧉ Compare · N files* (opens it again on the note's frame, annotating on) and `K` on that file
-  opens the newest stored comparison instead of the file's versions.
-- **Where:** compare.js — `host.onOpen / onView / onPlaced / onClose / onAnnotButton`, `reportView`, `session()`,
-  `pause()`, `seekLayer()`, `ready()`, session look (`C.pBase` / `C.userSet` / `prefsToSave`), ResizeObserver;
-  annotate.js — `vidPause` / `vidSeek` (host clock), `host.noteExtra`, note card button (`data-cmp`,
-  `host.openCompareSession`), API `reload()`; index.html — `cmpAnnot` (second annotator), `cmpBind` /
-  `cmpToggleAnnot`, `openCompareSession`, `latestCompareSession`, `compareFromContext`, compare key routing.
-  FORMAT.md — note `compare` (0.68+, Sight only, ignored and kept by other readers). MANUAL, ARCHITECTURE.
-- **Notes:** the "session" is stored in the note (owner's choice) — no server table. The compare runs every clip
-  on one clock, so the annotator never drives its element there: pause / seek go through the host (`cmp.pause`
-  stops on the frame the selected clip shows; `seekLayer` is not snapped to compare's fps, which can differ from
-  the clip's). Binding is lazy (a file's notes are fetched once annotating is on). A session opened from a note
-  shows its look without overwriting the saved preferences (only what is changed there is saved). Known /
-  deliberately left: while annotating the tools own left drag / touch and keys `[ ] R V L Shift+, .` (leave
-  annotating to move splits by touch or use those compare keys); the screenshot tool captures the selected layer,
-  not the composite; with the playhead before the selected clip's start a new note takes the clip's frame 0;
-  the notes panel open / closed setting is shared with the viewer's.
-- Review (fresh agent): 12 findings — report export fighting the shared clock, annotating a hidden layer, two fps
-  grids, landing before the fps was known, pause moving the frame after the stroke's ctx, session look leaking
-  into saved prefs, one-file sessions, heavy lightbox reload, missing host hooks (versions row, review badges),
-  no re-place on panel toggle, key / touch conflicts, wasted fetches; fixed or documented as above. Re-review
-  rounds: pause landing a frame late / dimming at a clip's first frame, a step past the end dimming the clip, a
-  flash after closing during the fps wait, `reload()` keeping undo and racing its own save — fixed; confirmed by
-  the same reviewer.
+## 0.82.0 — 2026-11-18 — Phone / HTML page drawing: arrows along a stroke and lasso brush
+- **What:** owner's ask. The shared drawing canvas (review-draw.js: the HTML page, the phone app) can now make
+  0.81's new drawings. *Arrows and lines* row: a sixth kind, *Arrows along a stroke*; with it in hand the row
+  ends with three tap-to-cycle icon switches (side left / right / both, away / toward, guide on / off). The brush
+  slot became a two-kind slot (brush / lasso); the lasso's row ends with a pattern button opening a second row
+  (none, solid, 8 patterns, random).
+- **Where:** review-draw.js — `ARROWS` + `stroke` entry, `ASTROKE_OPTS` / `ASTROKE0`, `BRUSHES`, `PATTERNS` /
+  `LASSO_PATS` / `RANDOM_PATS` / `patIco`, `astrokeButtons`, `patternButton`, pen keys `brush` / `lasso` /
+  `astroke` (saved with the pen), `begin` (lasso keys on the brush; `stroke.t = "astroke"` makes a
+  `stroke / arrows` item), `extend` / `finish` treat "astroke" like a brush stroke (dropped under 3 px),
+  `roundItem` rounds gap / step / len. MANUAL.
+- **Notes:** no new controls for spacing / length / density / fill colour / fill opacity on the phone (the bar
+  stays small): arrows `step` = 10 × size, `len` = 6 × size (min 12 / 8 px); lasso `gap` = 1.7 × brush size (min
+  5 px), fill = line colour at 0.5 — Sight's panel edits them afterwards. `PATTERNS` is a copy of review-core's
+  (RC is looked up only on open, after this script's top level runs). The cycle switches set the pen only — they
+  do not restyle selected arrows strokes; picking the stroke kind with arrows / lines selected takes the tool
+  instead of converting them. Picking the stroke / lasso kind reopens the row so its switches show. Supersedes
+  0.81's "Not done" about review-draw.js. Hold-to-resize on a selection: an arrows stroke resizes its `width`
+  (`wkey`), and `gap` / `step` / `len` follow the thickness by the same factor (as RC.transformItem).
+- Review (fresh agent): 2 findings — the brush slot (now a group) fell into `groupSel`'s shapes branch, so with
+  the transform tool and a shape selected, tapping Brush / Lasso turned the shape into a rectangle instead of
+  taking the brush (`groupSel` now returns [] for slots other than arrows / shapes); hold-to-resize did nothing
+  on a selected arrows stroke (no `size`) — fixed as above.
+  The same reviewer confirmed both fixes; its one edge note (a hand-made 0 thickness → Infinity) is guarded.

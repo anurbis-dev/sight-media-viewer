@@ -245,7 +245,7 @@ class RoundTrip(unittest.TestCase):
 
 
     def test_seq_bar(self) -> None:
-        """Phone sequences (0.79): a group's videos end to end over the timeline; a tap / drag on the bar, play
+        """Phone sequences (0.88): a group's videos end to end under the timeline; a tap / drag on the bar, play
         past a clip's end and a scrub on the picture go on into the next clip; a swipe on the title switches."""
         if not (self.video and has_playwright()):
             self.skipTest("needs ffmpeg, node and Playwright")

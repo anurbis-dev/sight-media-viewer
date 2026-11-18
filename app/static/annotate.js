@@ -40,12 +40,11 @@ const ICON = {
   pencil: ico(`<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 6.5l3 3"/>`),
   marker: ico(`<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>`),
   eraser: ico(`<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>`),
-  line: ico(`<path d="M5 19 19 5"/>`),
   arrow: ico(`<path d="M5 19 19 5"/><path d="M10 5h9v9"/>`),
   rect: ico(`<rect x="4" y="6" width="16" height="12" rx="2"/>`),
   ellipse: ico(`<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>`),
   text: ico(`<path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>`),
-  pin: ico(`<path d="M12 21s-6.5-5.6-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><path d="M11 8h1.5v5"/>`),
+  pin: ico(`<circle cx="14" cy="10" r="6.5"/><path d="M13 7.5h1.5v5"/><path d="M9.4 14.6 4 20"/>`),
   undo: ico(`<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>`),
   redo: ico(`<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>`),
   shot: ico(`<path d="M14.5 5h-5L8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>`),
@@ -63,6 +62,7 @@ const ICON = {
   trash: ico(`<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>`),
   reply: ico(`<path d="M10 8 5 12.5l5 4.5"/><path d="M5 12.5h9a5 5 0 0 1 5 5V19"/>`),
   view: ico(`<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/>`),
+  image: ico(`<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="m21 16-5-5-9 9"/>`),
 };
 
 // [id, combo, label, icon]
@@ -73,12 +73,11 @@ const TOOLS = [
   ["marker", "KeyM", "Highlighter", ICON.marker],
   ["eraser", "KeyE", "Eraser — or hold Ctrl with any tool", ICON.eraser],
   null,
-  ["line", "KeyL", "Line — Shift snaps to 15°", ICON.line],
-  ["arrow", "KeyW", "Arrow — Shift snaps to 15°", ICON.arrow],
-  ["rect", "KeyR", "Rectangle — Shift square", ICON.rect],
-  ["ellipse", "KeyO", "Ellipse — Shift circle", ICON.ellipse],
+  ["arrow", "KeyW", "Arrow — a line with Start / End heads set to none · Shift keeps it horizontal / vertical", ICON.arrow],
+  ["rect", "KeyR", "Shape — rectangle or ellipse (O) · Shift square / circle", ICON.rect],
   ["text", "KeyT", "Text", ICON.text],
-  ["pin", "KeyN", "Numbered pin", ICON.pin],
+  ["pin", "KeyN", "Number pin — click for a numbered circle, drag for a line to it; type the number, Enter", ICON.pin],
+  ["image", "Shift+KeyI", "Reference image — click to pick pictures, drop them on the frame, or drag them from the library (Tab)", ICON.image],
 ];
 // The frame stamp (a device preference, not review data): where / how the frame label sits over the video and on
 // report pictures. `size` is a percentage of the picture's width; the defaults are the look the label always had.
@@ -94,22 +93,27 @@ const HOLDS = [[0, "1 frame"], [0.5, "0.5 s"], [1, "1 s"], [2, "2 s"], [-1, "Who
 // Sizes in tool styles are screen pixels at the moment of drawing (what you see is what you get);
 // they are converted to doc units when an object is created.
 const DEFAULT_STYLES = {
-  brush: { color: "#ff3b30", size: 8, opacity: 1, pressure: true, smooth: 0.5 },
+  brush: { color: "#ff3b30", size: 8, opacity: 1, pressure: true, smooth: 0.5, close: false, pattern: "diag", fill: "#ff3b30", fillOpacity: 0.5, gap: 10 },
   pencil: { color: "#ff3b30", size: 2.5, opacity: 1, pressure: true, smooth: 0.15 },
   marker: { color: "#ffd60a", size: 26, opacity: 0.4, smooth: 0.5 },
   eraser: { size: 26, mode: "object" },
   line: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "none", body: "straight", headSize: 1 },
-  arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1 },
-  rect: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.2, radius: 0, opacity: 1 },
-  ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.2, opacity: 1 },
+  arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, mode: "line", step: 40, len: 24, dir: "out", side: "left", guide: true },
+  rect: { shape: "rect", color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, radius: 0, opacity: 1 },
+  ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, opacity: 1 },
   text: { font: "sans", size: 28, color: "#ffffff", bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1 },
   pin: { color: "#ff3b30", size: 30 },
+  image: { border: 0, borderColor: "#ffffff", shadow: 0, opacity: 1 },
 };
 // Keys whose value is a length (converted between screen px and doc units).
-const LEN_KEYS = new Set(["size", "width", "radius", "outline"]);
+const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border", "gap", "step", "len"]);
+// Fill patterns of a closed brush stroke (review-core PATTERNS); "random" (the tool only) picks one per stroke.
+const PATTERN_OPTS = [["none", "None"], ["solid", "Solid"], ["diag", "╱ Lines"], ["diag2", "╲ Lines"], ["horiz", "─ Lines"], ["vert", "│ Lines"], ["grid", "┼ Grid"], ["cross", "╳ Cross-hatch"], ["dots", "• Dots"], ["dashes", "┄ Dashes"]];
+const RANDOM_PATTERNS = PATTERN_OPTS.map(([id]) => id).filter((id) => id !== "none" && id !== "solid");
 
 // Props bar descriptors per object type.
 //   t: color | num | toggle | select | seg   create: only while drawing (hidden for a selection)
+//   edit: only for a selection   when(get): shown while true (get(key) reads the tool's / selection's value)
 const P = {
   color: { k: "color", t: "color", label: "Colour" },
   size: { k: "size", t: "num", label: "Size", min: 0.5, max: 400, exp: true, unit: "px" },
@@ -122,7 +126,7 @@ const P = {
   head1: { k: "head1", t: "select", label: "End", options: HEADS },
   body: { k: "body", t: "select", label: "Shape", options: BODIES },
   headSize: { k: "headSize", t: "num", label: "Head", min: 0.3, max: 4, exp: true, unit: "×" },
-  strokeOn: { k: "strokeOn", t: "toggle", label: "Stroke" },
+  shape: { k: "shape", t: "seg", label: "Shape", options: [["rect", "▭"], ["ellipse", "◯"]], create: true },
   fillOn: { k: "fillOn", t: "toggle", label: "Fill" },
   fill: { k: "fill", t: "color", label: "Fill colour" },
   fillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true },
@@ -141,22 +145,82 @@ const P = {
   psize: { k: "size", t: "num", label: "Size", min: 10, max: 200, exp: true, unit: "px" },
   esize: { k: "size", t: "num", label: "Size", min: 2, max: 400, exp: true, unit: "px" },
   emode: { k: "mode", t: "seg", label: "Erase", options: [["object", "Object"], ["partial", "Partial"]] },
+  border: { k: "border", t: "num", label: "Frame", min: 0, max: 200, exp: false, unit: "px" },
+  borderColor: { k: "borderColor", t: "color", label: "Frame colour" },
+  shadow: { k: "shadow", t: "num", label: "Shadow", min: 0, max: 1, pct: true },
+  // Brush: close like a lasso and fill (solid or a pattern).
+  close: { k: "close", t: "toggle", label: "Close", title: "Close the stroke like a lasso and fill it", ico: ico(`<path d="M12 4c4.7 0 8 2.4 8 5.6s-3.3 5.6-8 5.6-8-2.4-8-5.6S7.3 4 12 4z"/><path d="M6.5 13.5C5 15.5 5.5 18.5 9 20"/>`) },
+  pattern: { k: "pattern", t: "select", label: "Fill", options: [...PATTERN_OPTS, ["random", "Random"]], create: true, when: (g) => g("close") },
+  ipattern: { k: "pattern", t: "select", label: "Fill", options: PATTERN_OPTS, edit: true, when: (g) => g("close") },
+  bfill: { k: "fill", t: "color", label: "Fill colour", when: (g) => g("close") && g("pattern") !== "none" },
+  bfillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true, when: (g) => g("close") && g("pattern") !== "none" },
+  gap: { k: "gap", t: "num", label: "Spacing", title: "Pattern density: the distance between lines / dots", min: 2, max: 200, exp: true, unit: "px", when: (g) => g("close") && !["none", "solid"].includes(g("pattern")) },
+  // Arrow tool: one arrow (Line) or arrows along a freehand stroke (Stroke), turned to its normal.
+  // A plain on / off button (fixed: always the Stroke icon, lit while on).
+  amode: { k: "mode", t: "cycle", label: "Stroke", fixed: true, create: true, options: [
+    ["line", "One arrow", ICON.arrow],
+    ["stroke", "Arrows along a stroke", ico(`<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>`)]] },
+  ahead: { k: "head1", t: "select", label: "Tip", options: HEADS },
+  step: { k: "step", t: "num", label: "Every", title: "Distance between the arrows along the stroke", min: 4, max: 1000, exp: true, unit: "px" },
+  alen: { k: "len", t: "num", label: "Length", title: "Length of each arrow", min: 2, max: 600, exp: true, unit: "px" },
+  adir: { k: "dir", t: "cycle", label: "Direction", options: [
+    ["out", "Away from the stroke", ico(`<path d="M3 20h18"/><path d="M12 16V4M8 8l4-4 4 4"/>`)],
+    ["in", "Toward the stroke", ico(`<path d="M3 20h18"/><path d="M12 4v12M8 12l4 4 4-4"/>`)]] },
+  // Sides are relative to the direction the stroke was drawn in (the icons draw it left → right).
+  aside: { k: "side", t: "cycle", label: "Side", options: [
+    ["left", "Left of the stroke", ico(`<path d="M3 16h17M17 13l3 3-3 3"/><path d="M8 12V5M14 12V5"/>`)],
+    ["right", "Right of the stroke", ico(`<path d="M3 8h17M17 5l3 3-3 3"/><path d="M8 12v7M14 12v7"/>`)],
+    ["both", "Both sides", ico(`<path d="M3 12h17M17 9l3 3-3 3"/><path d="M8 9V3M14 9V3M8 15v6M14 15v6"/>`)]] },
+  guide: { k: "guide", t: "toggle", label: "Guide", title: "Guide — draw the stroke itself under the arrows", ico: ico(`<path d="M3 15c3-6 6 6 9 0s6-6 9 0"/>`) },
 };
+const lineMode = (g) => g("mode") !== "stroke", strokeMode = (g) => g("mode") === "stroke";
+const ARROWS_PROPS = [P.color, P.width, P.opacity, P.ahead, P.headSize, P.step, P.alen, P.adir, P.aside, P.guide, { ...P.dash, when: (g) => g("guide") !== false }];
 const PROPS = {
-  brush: [P.color, P.size, P.opacity, P.pressure, P.smooth],
+  brush: [P.color, P.size, P.opacity, P.pressure, P.smooth, P.close, P.pattern, P.ipattern, P.bfill, P.bfillOpacity, P.gap],
   pencil: [P.color, P.size, P.opacity, P.pressure, P.smooth],
   marker: [P.color, P.size, P.opacity, P.smooth],
   eraser: [P.esize, P.emode],
   line: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
-  arrow: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
-  rect: [P.strokeOn, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.radius, P.opacity],
-  ellipse: [P.strokeOn, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.opacity],
+  // The arrow tool in Stroke mode shows the arrows' props; a selected arrow is always a line arrow.
+  arrow: [P.amode, ...[P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize].map((p) => ({ ...p, when: lineMode })),
+    ...ARROWS_PROPS.map((p) => ({ ...p, when: p.when ? (g) => strokeMode(g) && p.when(g) : strokeMode }))],
+  arrows: ARROWS_PROPS,
+  // The shape tool (id "rect") draws either; a selected shape keeps its kind. No stroke switch: the outline is
+  // always drawn (shapes made with it off keep it off).
+  rect: [P.shape, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.radius, P.opacity],
+  ellipse: [P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.opacity],
   text: [P.font, P.tsize, P.color, P.bold, P.italic, P.underline, P.align, P.bgOn, P.bg, P.bgOpacity, P.outline, P.outlineColor, P.opacity],
   pin: [P.color, P.psize],
+  image: [P.border, P.borderColor, P.shadow, P.opacity],
   select: [],
 };
 
 const isDrawing = (it) => it.kind !== "note";
+// Reference images (kind "image") show Sight's stored shots.
+RC.setImageSource((id) => (/^[0-9a-f]{16}$/.test(String(id)) ? `/api/review/shots/${id}` : ""));
+// Pictures a reference image is made from: anything the browser decodes. Kept at most REF_MAX px on the long side.
+const REF_MAX = 2048;
+const REF_RE = /\.(jpe?g|png|gif|webp|bmp|avif|svg)$/i;
+const refAlpha = (typeOrName) => /png|gif|webp|svg|avif/i.test(String(typeOrName || ""));
+// A reference image's crop frame: the whole source picture in doc units — origin O (its top-left), axes u / v
+// (the drawing's rotation) and the doc units per picture width / height (sx, sy). Cropping moves the box, never
+// the picture, so every crop gesture works from the frame taken when it started.
+function cropFrame(d){
+  const c = RC.imgCrop(d), sx = d.w / c[2], sy = d.h / c[3];
+  const a = (d.rot || 0) * Math.PI / 180, u = [Math.cos(a), Math.sin(a)], v = [-Math.sin(a), Math.cos(a)];
+  const tlx = d.x + d.w / 2 - u[0] * d.w / 2 - v[0] * d.h / 2, tly = d.y + d.h / 2 - u[1] * d.w / 2 - v[1] * d.h / 2;
+  return { O: [tlx - u[0] * c[0] * sx - v[0] * c[1] * sy, tly - u[1] * c[0] * sx - v[1] * c[1] * sy], u, v, sx, sy };
+}
+const toImg = (F, x, y) => { const dx = x - F.O[0], dy = y - F.O[1]; return [(dx * F.u[0] + dy * F.u[1]) / F.sx, (dx * F.v[0] + dy * F.v[1]) / F.sy]; };
+const fromImg = (F, nx, ny) => [F.O[0] + F.u[0] * nx * F.sx + F.v[0] * ny * F.sy, F.O[1] + F.u[1] * nx * F.sx + F.v[1] * ny * F.sy];
+// Sets the crop window c (0…1 of the picture) and the box that shows it, the picture staying where frame F has it.
+function applyCrop(d, F, c){
+  d.w = c[2] * F.sx; d.h = c[3] * F.sy;
+  const tl = fromImg(F, c[0], c[1]);
+  const cx = tl[0] + F.u[0] * d.w / 2 + F.v[0] * d.h / 2, cy = tl[1] + F.u[1] * d.w / 2 + F.v[1] * d.h / 2;
+  d.x = cx - d.w / 2; d.y = cy - d.h / 2;
+  d.crop = c[0] <= 1e-4 && c[1] <= 1e-4 && c[2] >= 1 - 1e-4 && c[3] >= 1 - 1e-4 ? null : c.map((v) => Math.round(v * 1e5) / 1e5);
+}
 // Elements that already carry this module's pointer listeners (a board view keeps one viewport for ever).
 const wired = new WeakSet();
 
@@ -172,23 +236,294 @@ function fmtDate(ms){
   catch { return ""; }
 }
 
+// ---- durable write queue (shared by every annotator) ----------------------------------------------
+// Every row write goes through this one queue, never straight to fetch(): one entry per row id (the
+// newest wins: {op: "put", body, create} or {op: "del"}, `key` = the asset / board it belongs to), kept
+// in localStorage until the server has it, retried with backoff while it fails, sent with keepalive when
+// the page goes away. Writes are therefore never tied to the annotator's current asset: switching clips
+// mid-save, a failed request or a closed window used to drop notes and replies (0.87.1).
+// Storage: one key per window (`OB_PREFIX + window id` = {ts, entries}), refreshed while it holds entries;
+// a start adopts the keys of windows that stopped refreshing theirs (closed / crashed). The prefix is
+// outside "sight.*" on purpose: hydrateSettings() drops sight.* keys the server lacks.
+const OB_PREFIX = "sight-annot-outbox:v2:";
+// OB_STALE: background tabs run timers about once a minute, so a live window may refresh its key late.
+const OB_STALE = 180000, OB_TIMEOUT = 20000, OB_RECENT = 30000;
+const OB = {
+  map: new Map(), busy: false, gone: false, timer: 0, fails: 0, batchFails: 0, waiters: [], badge: null, note: "", noteTimer: 0,
+  key: OB_PREFIX + Math.random().toString(16).slice(2) + Date.now().toString(16),
+  // Writes that landed lately (id -> {e, at, sentAt}): a load() whose GET raced them still shows them (obOverlay).
+  recent: new Map(),
+  inflight: new Set(), // row ids with a request on the way (obBeacon leaves them alone)
+  // When the newest write of each row that landed from this window was made (entry.at): an adopted entry made
+  // before it is older than what the server has and is skipped (obAdopt).
+  landedAt: new Map(),
+  handed: new Set(), // rows whose queued writes went to another window: the next write here is an upsert
+  stored: false, // the last obSave() wrote this window's key (so a missing key means another window adopted it)
+  // Every annotator's "commit what is open and queue it" (settle), for the page going away.
+  settlers: new Set(),
+};
+const OB_ID = /^[0-9a-f]{16}$/;
+function obValid(id, e){
+  return typeof id === "string" && OB_ID.test(id) && e && typeof e === "object"
+    && (e.op === "del" || (e.op === "put" && e.body && typeof e.body === "object" && e.body.id === id));
+}
+function obSave(){
+  try {
+    // ts 0 once the page is going away: the next start (a reload, the next launch) adopts it straight away.
+    if (OB.map.size) localStorage.setItem(OB.key, JSON.stringify({ ts: OB.gone ? 0 : Date.now(), entries: [...OB.map] }));
+    else localStorage.removeItem(OB.key);
+    OB.stored = OB.map.size > 0;
+  } catch {
+    // A stale copy would replay old rows over newer ones at the next start: better none at all.
+    OB.stored = false;
+    try { localStorage.removeItem(OB.key); } catch {}
+  }
+}
+// Entries of windows that are gone (their key not refreshed for OB_STALE), plus the v1 single key.
+function obAdopt(){
+  try {
+    const now = Date.now(), keys = [];
+    for (let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (k && (k === "sight-annot-outbox:v1" || (k.startsWith(OB_PREFIX) && k !== OB.key))) keys.push(k);
+    }
+    for (const k of keys){
+      let v = null;
+      try { v = JSON.parse(localStorage.getItem(k)); } catch {}
+      const entries = Array.isArray(v) ? v : v && Array.isArray(v.entries) ? v.entries : null;
+      if (v && !Array.isArray(v) && now - (Number(v.ts) || 0) < OB_STALE) continue; // a live window's queue
+      if (entries) for (const item of entries){
+        if (!Array.isArray(item)) continue;
+        const [id, e] = item;
+        // Not over a newer write of this window (queued, or landed after the adopted one was made).
+        if (obValid(id, e) && !OB.map.has(id) && (Number(e.at) || 0) > (OB.landedAt.get(id) ?? -1)) OB.map.set(id, e);
+      }
+      localStorage.removeItem(k);
+    }
+  } catch {}
+  obSave();
+}
+// Frozen too long (App Nap, a suspended tab, bfcache) and another window adopted this queue: that window sends
+// it, this one drops its copy. Checked before anything here writes or sends (`ignoreGone`: from pageshow).
+function obHandedOff(ignoreGone){
+  let gone = false;
+  try { gone = OB.stored && (ignoreGone || !OB.gone) && localStorage.getItem(OB.key) === null; } catch {}
+  if (!gone) return false;
+  for (const id of OB.map.keys()) OB.handed.add(id);
+  OB.map.clear(); OB.stored = false; obPaint();
+  return true;
+}
+function obPut(body, create){
+  obHandedOff();
+  const prev = OB.map.get(body.id);
+  // A row whose create (or revive after a delete) has not landed yet still needs the POST (an upsert).
+  const mustCreate = !!create || prev?.op === "del" || (prev?.op === "put" && prev.create) || OB.handed.delete(body.id);
+  // A copy: the row as it is now, whatever happens to the live item afterwards.
+  OB.map.set(body.id, { op: "put", body: structuredClone(body), create: mustCreate, key: body.target_asset_id || body.board_id || null, at: Date.now() });
+  obSave();
+  obKick(0);
+}
+function obDel(id, key){
+  obHandedOff();
+  OB.map.set(id, { op: "del", key: key || null, at: Date.now() });
+  obSave();
+  obKick(0);
+}
+function obKick(ms){
+  if (OB.busy) return; // the running pass re-reads the map before it ends
+  clearTimeout(OB.timer);
+  OB.timer = setTimeout(obDrain, ms);
+}
+// Rows of `key` with the writes laid over them that the server may not show yet: queued ones, and ones that
+// landed lately while the GET may have read the database before them. A landed write counts only where the row
+// the GET returned is older than the request (updated_at < sentAt; same machine, same clock) — or, for a create,
+// missing — so a change made on the server since (an import, another window, the phone) is never hidden.
+function obOverlay(rows, key){
+  const out = new Map(rows.map((r) => [r.id, r]));
+  const now = Date.now();
+  const lay = (id, e) => {
+    if (e.op === "del") out.delete(id);
+    else out.set(id, { ...(out.get(id) || {}), id, kind: e.body.kind, shape_kind: e.body.shape_kind, z_index: e.body.z_index, data: structuredClone(e.body.data) });
+  };
+  for (const [id, r] of OB.recent){
+    if (now - r.at > OB_RECENT){ OB.recent.delete(id); continue; }
+    if (r.e.key !== key || OB.map.has(id)) continue;
+    const row = out.get(id), older = row && (Number(row.updated_at) || 0) < r.sentAt;
+    if (r.e.op === "del" ? older : (older || (!row && r.e.create))) lay(id, r.e);
+  }
+  for (const [id, e] of OB.map) if (e.key === key) lay(id, e);
+  return [...out.values()];
+}
+// The rows of `key` are about to be read after a server-side change (an import, a reload): no landed write may
+// stand in for them.
+function obForget(key){ for (const [id, r] of OB.recent) if (r.e.key === key) OB.recent.delete(id); }
+// 4xx (except 408 / 429) = the server refuses this row for good: retrying cannot help, keep the rest moving.
+class ObRefused extends Error {}
+async function obFetch(path, opts){
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), OB_TIMEOUT); // a hung request must not stall the queue for good
+  try {
+    const r = await fetch(path, { ...opts, signal: ctl.signal });
+    if (r.ok) return;
+    const msg = `${opts.method} ${path}: ${r.status}`;
+    if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw new ObRefused(msg);
+    throw new Error(msg);
+  } finally { clearTimeout(t); }
+}
+const JSON_HDR = { "content-type": "application/json" };
+const obReq = (id, e) => e.op === "del" ? [`/api/annotations/${encodeURIComponent(id)}`, { method: "DELETE" }]
+  : e.create ? ["/api/annotations", { method: "POST", headers: JSON_HDR, body: JSON.stringify(e.body) }]
+  : [`/api/annotations/${encodeURIComponent(id)}`, { method: "PATCH", headers: JSON_HDR, body: JSON.stringify(obFields(e.body)) }];
+function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind }; }
+// Removes `e` once sent, unless a newer write for the row came in meanwhile (that one is sent next).
+// `refused`: the server did not take it; it must not show (OB.recent) nor count as landed.
+function obDone(id, e, sentAt, refused){
+  if (OB.map.get(id) !== e) return;
+  OB.map.delete(id);
+  if (!refused){
+    OB.recent.set(id, { e, at: Date.now(), sentAt: sentAt || 0 });
+    OB.landedAt.set(id, Number(e.at) || Date.now());
+  }
+  obSave();
+}
+async function obDrain(){
+  if (OB.busy) return;
+  obHandedOff();
+  OB.busy = true;
+  clearTimeout(OB.timer);
+  let failed = false;
+  try {
+    // Each pass sends what the map holds; rows that failed wait for the next timer, the others keep going.
+    for (let pass = 0; OB.map.size && pass < 50; pass++){
+      const batch = [...OB.map], failedNow = new Set();
+      let down = false; // no answer at all (network error / timeout): the other rows would only wait too
+      const one = async (id, e) => {
+        if (down){ failedNow.add(id); return; }
+        const sentAt = Date.now();
+        OB.inflight.add(id);
+        try { const [p, o] = obReq(id, e); await obFetch(p, o); obDone(id, e, sentAt); }
+        catch (err){
+          if (err instanceof ObRefused){ console.warn("annotation write refused", err); obDone(id, e, 0, true); obRefusedNote(); }
+          else { failedNow.add(id); down = !/^\w+ \S+: \d+$/.test(err.message || ""); console.warn("annotation save failed, will retry", err); }
+        }
+        finally { OB.inflight.delete(id); }
+      };
+      // Creates and deletes one by one; plain updates in one batch, or one by one (PATCH: a row gone on the
+      // server is skipped, never revived) once the batch failed twice or was refused.
+      const updates = batch.filter(([, e]) => e.op === "put" && !e.create && !e.single);
+      for (const [id, e] of batch) if (e.op === "del" || e.create || e.single) await one(id, e);
+      if (updates.length && down) for (const [id] of updates) failedNow.add(id);
+      else if (updates.length){
+        const sentAt = Date.now();
+        for (const [id] of updates) OB.inflight.add(id);
+        try {
+          await obFetch("/api/annotations/batch", { method: "POST", headers: JSON_HDR, body: JSON.stringify({ items: updates.map(([id, e]) => ({ id, ...obFields(e.body) })) }) });
+          for (const [id, e] of updates) obDone(id, e, sentAt);
+          OB.batchFails = 0;
+        } catch (err){
+          console.warn("annotation batch failed", err);
+          if (err instanceof ObRefused || ++OB.batchFails >= 2) for (const [id, e] of updates) if (OB.map.get(id) === e) e.single = true;
+          if (!(err instanceof ObRefused)) for (const [id] of updates) failedNow.add(id);
+        } finally { for (const [id] of updates) OB.inflight.delete(id); }
+      }
+      if (failedNow.size){ failed = true; break; }
+    }
+  } finally {
+    OB.busy = false;
+    obSave();
+  }
+  OB.fails = failed ? OB.fails + 1 : 0;
+  obPaint();
+  if (OB.map.size) OB.timer = setTimeout(obDrain, failed ? Math.min(30000, 1000 * 2 ** Math.min(OB.fails - 1, 5)) : 0);
+  // A waiter is done once the entries it waited for are gone (sent, or replaced by newer ones), or on a failure.
+  OB.waiters = OB.waiters.filter((w) => {
+    const left = w.of.some(([id, e]) => OB.map.get(id) === e);
+    if (left && !failed) return true;
+    w.res(!left);
+    return false;
+  });
+}
+// Resolves once every write queued so far has landed (true), or an attempt failed (false; retries go on).
+function obFlush(){
+  if (!OB.map.size) return Promise.resolve(true);
+  const p = new Promise((res) => OB.waiters.push({ of: [...OB.map], res }));
+  if (!OB.busy) obDrain();
+  return p;
+}
+// The page is going away: every request at once (the page may not live to see one answer), keepalive, within
+// its 64 KB budget. Whatever does not fit or fails stays stored for the next start.
+function obBeacon(){
+  let budget = 60000;
+  for (const [id, e] of OB.map){
+    if (OB.inflight.has(id)) continue; // an older request for the row is on the way: never race it (stays stored)
+    const [p, o] = obReq(id, e.op === "put" && !e.create && !e.single ? { ...e, single: true } : e);
+    const size = (o.body || "").length + 200;
+    if (size > budget) continue;
+    budget -= size;
+    const sentAt = Date.now();
+    OB.inflight.add(id);
+    fetch(p, { ...o, keepalive: true }).then((r) => { if (r.ok) obDone(id, e, sentAt); }).catch(() => {})
+      .finally(() => OB.inflight.delete(id));
+  }
+}
+function obRefusedNote(){
+  OB.note = "⚠ The server refused an annotation change (see the log)";
+  clearTimeout(OB.noteTimer);
+  OB.noteTimer = setTimeout(() => { OB.note = ""; obPaint(); }, 8000);
+}
+// A failing or refused save is shown until it goes through: a fixed badge (tap / click = retry now), on every screen.
+function obPaint(){
+  const show = (OB.fails && OB.map.size) || OB.note;
+  if (!show && !OB.badge) return;
+  if (!OB.badge){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "an-outbox";
+    b.title = "Sight could not save these annotation changes yet. They are kept and retried; click to retry now.";
+    b.addEventListener("click", () => { OB.note = ""; OB.fails = 0; obPaint(); obKick(0); });
+    document.body.appendChild(b);
+    OB.badge = b;
+  }
+  const n = OB.map.size;
+  OB.badge.hidden = !show;
+  OB.badge.textContent = OB.fails && n ? `⚠ ${n} unsaved annotation change${n === 1 ? "" : "s"} — retrying` : OB.note;
+}
+if (typeof window !== "undefined"){
+  // Going away for good: open editors commit too. Only hidden (minimized, another app): queue what is
+  // committed, leave a field being typed in alone.
+  const away = (full) => { for (const s of OB.settlers){ try { (full ? s.settle : s.stage)(); } catch (e){ console.warn(e); } } };
+  window.addEventListener("pagehide", () => { away(true); OB.gone = true; obSave(); if (OB.map.size) obBeacon(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden){ away(false); obSave(); if (OB.map.size) obKick(0); } });
+  window.addEventListener("pageshow", (e) => { if (!e.persisted) return; obHandedOff(true); OB.gone = false; obSave(); if (OB.map.size) obKick(0); });
+  // Keeps this window's stored queue marked as alive, so another window's start does not adopt it.
+  setInterval(() => {
+    if (!OB.map.size || obHandedOff()) return;
+    obSave();
+  }, 5000);
+  // Writes left over from a closed window or the last session (the server was gone): send them now.
+  obAdopt();
+  if (OB.map.size) setTimeout(obDrain, 1500);
+  // A window that crashed while this one ran: its queue turns stale later and is picked up here.
+  setInterval(() => { const n = OB.map.size; obAdopt(); if (OB.map.size > n) obKick(0); }, 60000);
+}
+
 // =================================================================================================
 
 export function createAnnotator(host){
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
   const panelKey = host.board ? "sight.annotate.panel.board" : "sight.annotate.panel";
-  // The notes panel opens on its own too, for reading (S.readOn): notes, replies, a click on a picture goes there —
-  // no drawing tools, no composer. Drawing (S.on) is the mode that brings the tools (and the panel per S.panelOn).
+  // The notes panel (S.readOn): notes, replies, a click on a picture goes there; the composer shows while drawing.
+  // One switch whether drawing or not (togglePanel); S.panelOn serves only a host without a reading panel.
   const readKey = host.board ? "sight.annotate.read.board" : "sight.annotate.read";
   const S = {
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
     tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
-    sel: new Set(), undo: [], redo: [], clip: null, clipCut: false,
+    sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
-    fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
+    fps: 25, raf: 0, lastSig: "", dirty: new Set(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
     plate: null, shotView: null, adopt: new Set(), dict: null, dictTa: null,
   };
@@ -201,6 +536,13 @@ export function createAnnotator(host){
     const saved = readJSON("sight.annotate.styles", {}) || {};
     const out = {};
     for (const [k, v] of Object.entries(DEFAULT_STYLES)) out[k] = { ...v, ...(saved[k] || {}) };
+    // The stroke switch is gone: a tool saved with it off would draw invisible outlines. The old fill default
+    // (20 %) gives way to the new one.
+    const mig = !readJSON("sight.annotate.fill50", false);  // once: a 20 % chosen later stays
+    for (const t of ["rect", "ellipse"]){ out[t].strokeOn = true; if (mig && out[t].fillOpacity === 0.2) out[t].fillOpacity = 0.5; }
+    // The migrated styles are saved with the marker (the other annotators — board, compare — read them back).
+    if (mig){ writeJSON("sight.annotate.styles", out); writeJSON("sight.annotate.fill50", true); }
+    if (out.rect.shape !== "ellipse") out.rect.shape = "rect";
     return out;
   }
   function loadStamp(){
@@ -250,45 +592,52 @@ export function createAnnotator(host){
       w: isDrawing(it) ? r2(b[2] - b[0]) : null, h: isDrawing(it) ? r2(b[3] - b[1]) : null,
     };
   }
+  // Writes go into the shared queue (OB above) as full rows built NOW, from the asset they belong to, so
+  // nothing that happens afterwards (another clip opened, the items cleared) can change or drop them.
   function serverCreate(it){
+    S.dirty.delete(it.id);
     S.saved.add(it.id);
-    const p = host.api("/api/annotations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(rowBody(it)) })
-      .catch((e) => { S.saved.delete(it.id); console.warn(e); toast("Could not save the annotation"); })
-      .finally(() => { if (S.creating.get(it.id) === p) S.creating.delete(it.id); });
-    S.creating.set(it.id, p);
-    return p;
+    obPut(rowBody(it), true);
   }
   function serverUpdate(id){ S.dirty.add(id); clearTimeout(S.saveTimer); S.saveTimer = setTimeout(flush, 300); }
-  async function flush(){
+  // Synchronous: the debounced updates go into the queue with this asset's rows.
+  function stage(){
     clearTimeout(S.saveTimer);
-    if (!S.dirty.size || !S.asset) return;
-    const ids = [...S.dirty];
-    S.dirty.clear();
-    await Promise.all(ids.map((id) => S.creating.get(id)).filter(Boolean));
-    const items = [];
-    for (const id of ids){
+    if (S.asset) for (const id of S.dirty){
       const it = S.items.get(id);
       if (!it) continue;
-      if (!S.saved.has(id)){ serverCreate(it); continue; }
-      const b = rowBody(it);
-      items.push({ id, data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind });
+      obPut(rowBody(it), !S.saved.has(id));
+      S.saved.add(id);
     }
-    if (items.length) await host.api("/api/annotations/batch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) }).catch((e) => console.warn(e));
+    S.dirty.clear();
   }
+  // Resolves once the queue has reached the server (or the attempt failed; the queue keeps retrying).
+  function flush(){ stage(); return obFlush(); }
   function serverDelete(id){
     S.dirty.delete(id);
     if (!S.saved.has(id)) return;
     S.saved.delete(id);
-    Promise.resolve(S.creating.get(id)).then(() => host.api(`/api/annotations/${id}`, { method: "DELETE" })).catch((e) => console.warn(e));
+    obDel(id, S.asset?.id);
   }
+  // Before the annotator leaves this asset: an editor still open (a note / reply / caption field in the panel,
+  // text on the picture, a pin number) commits into THIS asset's rows, then they go into the queue.
+  function settle(){
+    const ae = document.activeElement;
+    if (ae && S.ui?.contains(ae) && ae.matches?.("textarea, input")) ae.blur();
+    finishEdit();
+    stage();
+  }
+  OB.settlers.add({ settle, stage });
 
   async function load(a){
     const token = {};
     S.loading = token;
     let rows = [];
-    try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); } catch (e){ console.warn(e); }
+    try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); }
+    catch (e){ console.warn(e); if (S.asset?.id === a.id) toast("Could not load the notes of this file"); }
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
+    rows = obOverlay(rows, a.id);  // writes still queued for this file count (re-opened before they landed)
     S.items.clear(); S.saved.clear();
     // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
     const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
@@ -318,6 +667,7 @@ export function createAnnotator(host){
     try { list = (await host.api(`/api/assets/${a.id}/versions`)).items || []; } catch {}
     if (S.asset?.id !== a.id) return;
     S.versions = list;
+    host.onVersions?.(a.id, list); // (the lightbox's compare button: enabled with 2+ versions)
     const i = list.findIndex((x) => x.id === a.id);
     const prev = i > 0 ? list[i - 1] : null;
     if (prev){
@@ -345,11 +695,9 @@ export function createAnnotator(host){
     el.hidden = false;
     el.innerHTML = `<div class="an-vrow"><span>Version <b>${i + 1}</b> of ${list.length}</span>
         <button type="button" class="an-ib sm" data-ver="-1" title="Previous version"${i ? "" : " disabled"}>‹</button>
-        <button type="button" class="an-ib sm" data-ver="1" title="Next version"${i < list.length - 1 ? "" : " disabled"}>›</button>
-        <button type="button" class="an-ib" data-act="compare" title="Compare versions (K)">Compare</button></div>
+        <button type="button" class="an-ib sm" data-ver="1" title="Next version"${i < list.length - 1 ? "" : " disabled"}>›</button></div>
       ${cand.length ? `<div class="an-vrow carry"><span><b>${esc(S.prevOpen.asset.name)}</b> has ${cand.length} open note${cand.length > 1 ? "s" : ""}</span><button type="button" class="an-ib" data-act="carry" title="Copy them (with their drawings) onto this version">Copy here</button></div>` : ""}`;
     el.querySelectorAll("[data-ver]").forEach((b) => { b.onclick = () => { const t = list[i + Number(b.dataset.ver)]; if (t) host.openAsset?.(t.id); }; });
-    el.querySelector("[data-act=compare]").onclick = () => host.openCompare?.(list.map((x) => x.id), S.asset.id);
     const cb = el.querySelector("[data-act=carry]");
     if (cb) cb.onclick = () => carryOver();
   }
@@ -729,9 +1077,13 @@ export function createAnnotator(host){
     const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(cin && (document.activeElement === cin || cin.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
       || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && ((it.data.created || 0) >= S.composeSince || S.adopt.has(it.id)));
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
-    modeCache = { compose, pin: note(S.pinFocus) };
+    // With onion skin on, a picked note does not narrow what shows (its frame is sought, every drawing keeps its
+    // ghost): picking notes in the panel must not break the onion view.
+    const pin = note(S.pinFocus);
+    // (While a new note is in the making the pick still narrows: the picked note's drawings must show then.)
+    modeCache = { compose, pin: onionOn() && !compose ? null : pin };
     // S.cleanPic (set by addNote) lasts until the next compose or pick.
-    if (compose || modeCache.pin) S.cleanPic = false;
+    if (compose || pin) S.cleanPic = false;
     queueMicrotask(() => { modeCache = null; });
     return modeCache;
   }
@@ -767,10 +1119,11 @@ export function createAnnotator(host){
   // after the last annotated frame the drawings fade in / out over ONION_EDGE seconds. Returns id → opacity (0..1)
   // for the drawings not on screen by their own frame; null when onion skin is off.
   const ONION_EDGE = 1.0;
+  // (Not in the version compare: no eye there to turn it off — host.showWhileWatching false.)
+  const onionOn = () => S.onion && S.kind === "video" && !!video() && host.showWhileWatching !== false;
   function onionFade(){
     const v = video();
-    // (Not in the version compare: no eye there to turn it off — host.showWhileWatching false.)
-    if (!S.onion || S.kind !== "video" || !v || host.showWhileWatching === false) return null;
+    if (!onionOn()) return null;
     const fd = 1 / (S.fps || 25), t = frameStart(v.currentTime), eps = fd / 2;
     const spans = [];
     for (const it of S.items.values()){
@@ -844,7 +1197,9 @@ export function createAnnotator(host){
     return notes;
   }
   function numOf(it){
-    if (!it.data.note) return "";
+    // Not attached yet: the number its note will get (a new note always lands at the end).
+    // (addNote takes every loose drawing, old ones too, so each loose pin is the next note's.)
+    if (!it.data.note) return it.data.reply ? "" : notesSorted().length + 1;
     const i = notesSorted().findIndex((n) => n.id === it.data.note);
     return i >= 0 ? i + 1 : "";
   }
@@ -905,9 +1260,9 @@ export function createAnnotator(host){
     g.__z = it.z;
   }
   // Drawings stay on show (not editable) with annotating off: always on a board; on a picture / video during
-  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D keeps them for the annotating mode.
+  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D too (the camera moves them: followOff ticks).
   // (Not in the version compare: host.showWhileWatching false — it has no eye of its own.)
-  const shownOff = () => isBoard() || (host.showWhileWatching !== false && !!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd"));
+  const shownOff = () => isBoard() || (host.showWhileWatching !== false && ((!!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd")) || (!!S.b3 && S.kind === "model3d")));
   // Drawings that can show at all (a deleted / hidden reply's or a deleted note's never do): the eye's subject.
   const hasDrawings = () => {
     for (const it of S.items.values()){
@@ -919,7 +1274,7 @@ export function createAnnotator(host){
   };
   // A playing video's drawings follow its frame with the mode off: the tick runs only then (a paused one restarts
   // it on play / seek — bind2d). A still picture or a board follows the view through viewChanged.
-  const followOff = () => !S.on && !isBoard() && shownOff() && !!S.b2?.isVid && !S.hidden && !!S.layer?.els.size && !S.b2.media.paused;
+  const followOff = () => !S.on && !isBoard() && shownOff() && !S.hidden && !!S.layer?.els.size && (!!S.b3 || (!!S.b2?.isVid && !S.b2.media.paused && !S.b2.media._blip));   // _blip: index.html's scrub-audio run, no playback
   function renderAll(){
     const L = S.on || shownOff() ? ensureLayer() : S.layer;
     if (!L) return;
@@ -980,6 +1335,7 @@ export function createAnnotator(host){
   const editSel = () => selVisible().filter(editable);
   // Handles in screen px: [id, x, y] (review-core xfHandles, mapped from doc units).
   function handles(){
+    if (cropItem()) return [];  // a reference image being cropped has the crop grips instead (cropHandles)
     return RC.xfHandles(editSel(), k(), S.drag?.xf).map(([id, x, y]) => [id, ...toScreen(x, y)]);
   }
   function renderSel(){
@@ -987,7 +1343,8 @@ export function createAnnotator(host){
     if (!L) return;
     syncViewBox();
     // Handles and the box are for the editable selection; a baked drawing (selected for Delete) gets a dashed outline.
-    let html = RC.xfSvg(editSel(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
+    const ci = cropItem();
+    let html = ci ? cropSvg(ci) : RC.xfSvg(editSel(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
     for (const it of selVisible()){
       if (!baked(it)) continue;
       const b = boundsOf(it), a = toScreen(b[0], b[1]), c = toScreen(b[2], b[3]);
@@ -1038,6 +1395,185 @@ export function createAnnotator(host){
     return st;
   }
 
+  // ---- reference images: adding, cropping ------------------------------------------------------
+  // The reference image being cropped (S.crop: its id) — only while it is the one selected, visible and editable.
+  function cropItem(){
+    const it = S.crop ? S.items.get(S.crop) : null;
+    return it && typeOf(it) === "image" && S.sel.size === 1 && S.sel.has(it.id) && visibleNow(it) && editable(it) ? it : null;
+  }
+  function startCrop(){
+    const sel = editSel();
+    if (sel.length !== 1 || typeOf(sel[0]) !== "image") return false;
+    if (S.tool !== "select") setTool("select");
+    S.crop = sel[0].id;
+    toast("Crop: drag an edge or corner · drag inside to move the picture · Enter or Esc when done", 2600);
+    renderSel(); renderProps();
+    if (S.hover) updateCursor(...S.hover);
+    return true;
+  }
+  function endCrop(){
+    if (!S.crop) return false;
+    S.crop = null;
+    renderSel(); renderProps();
+    if (S.hover) updateCursor(...S.hover);
+    return true;
+  }
+  // [handle, sx, sy] of the crop window's corners and edges, in screen px.
+  function cropHandles(it){
+    const F = cropFrame(it.data), c = RC.imgCrop(it.data), l = c[0], t = c[1], r = c[0] + c[2], b = c[1] + c[3], mx = (l + r) / 2, my = (t + b) / 2;
+    return [["nw", l, t], ["n", mx, t], ["ne", r, t], ["e", r, my], ["se", r, b], ["s", mx, b], ["sw", l, b], ["w", l, my]]
+      .map(([h, nx, ny]) => [h, ...toScreen(...fromImg(F, nx, ny))]);
+  }
+  // What a press at (sx, sy) screen / (x, y) doc does to the image being cropped: a grip, "pan" (inside), or null.
+  function cropAt(it, sx, sy, x, y){
+    const fing = S.lastPtr === "touch" ? 18 : 10;
+    const h = cropHandles(it).find(([, hx, hy]) => hyp(sx - hx, sy - hy) <= fing);
+    if (h) return h[0];
+    const [nx, ny] = toImg(cropFrame(it.data), x, y), c = RC.imgCrop(it.data);
+    return nx >= c[0] && nx <= c[0] + c[2] && ny >= c[1] && ny <= c[1] + c[3] ? "pan" : null;
+  }
+  // The crop overlay: the whole picture dimmed, the kept part at full strength, its outline and grips.
+  function cropSvg(it){
+    const d = it.data, F = cropFrame(d), c = RC.imgCrop(d), u = RC.imageUrl(d.shot);
+    const P = (nx, ny) => toScreen(...fromImg(F, nx, ny));
+    const p0 = P(0, 0), p1 = P(1, 0), p2 = P(0, 1);
+    const m = `matrix(${[p1[0] - p0[0], p1[1] - p0[1], p2[0] - p0[0], p2[1] - p0[1], p0[0], p0[1]].map((v) => Math.round(v * 1000) / 1000).join(" ")})`;
+    const vb = c.map((v) => Math.round(v * 1e5) / 1e5).join(" ");
+    let h = "";
+    if (u){
+      h += `<g transform="${m}" opacity="0.38"><image href="${esc(u)}" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></g>`;
+      h += `<g transform="${m}"><svg x="${c[0]}" y="${c[1]}" width="${c[2]}" height="${c[3]}" viewBox="${vb}" preserveAspectRatio="none" overflow="hidden"><image href="${esc(u)}" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g>`;
+    }
+    const poly = (pts, extra) => `<polygon points="${pts.map((q) => r2(q[0]) + "," + r2(q[1])).join(" ")}" fill="none" stroke="#4c9aff" ${extra}/>`;
+    h += poly([P(0, 0), P(1, 0), P(1, 1), P(0, 1)], 'stroke-width="1" stroke-dasharray="4 3"');
+    h += poly([P(c[0], c[1]), P(c[0] + c[2], c[1]), P(c[0] + c[2], c[1] + c[3]), P(c[0], c[1] + c[3])], 'stroke-width="1.5"');
+    const z = S.lastPtr === "touch" ? 1.6 : 1;
+    for (const [, x, y] of cropHandles(it)) h += `<rect x="${r2(x - 5 * z)}" y="${r2(y - 5 * z)}" width="${r2(10 * z)}" height="${r2(10 * z)}" fill="#fff" stroke="#4c9aff" stroke-width="1.5"/>`;
+    return h;
+  }
+  // A crop gesture: a grip moves that edge of the window (the picture stays put), "pan" slides the picture
+  // inside the window (the box stays put). Both from the frame / window the gesture started with.
+  function cropDrag(D, x, y){
+    const it = S.items.get(D.id);
+    if (!it) return;
+    const [nx, ny] = toImg(D.F, x, y), c = D.c0;
+    if (!D.moved && hyp((nx - D.n0[0]) * D.F.sx, (ny - D.n0[1]) * D.F.sy) / k() < 2) return;  // a click is not a crop
+    D.moved = true;
+    if (D.crop === "pan"){
+      const l = clamp(c[0] - (nx - D.n0[0]), 0, 1 - c[2]), t = clamp(c[1] - (ny - D.n0[1]), 0, 1 - c[3]);
+      it.data.crop = [l, t, c[2], c[3]].map((v) => Math.round(v * 1e5) / 1e5);
+      if (!(l > 1e-4 || t > 1e-4 || c[2] < 1 - 1e-4 || c[3] < 1 - 1e-4)) it.data.crop = null;
+    } else {
+      const h = D.crop, mx = 12 * k() / D.F.sx, my = 12 * k() / D.F.sy;
+      let l = c[0], t = c[1], r = c[0] + c[2], b = c[1] + c[3];
+      if (h.includes("w")) l = clamp(nx, 0, r - mx);
+      if (h.includes("e")) r = clamp(nx, l + mx, 1);
+      if (h.includes("n")) t = clamp(ny, 0, b - my);
+      if (h.includes("s")) b = clamp(ny, t + my, 1);
+      applyCrop(it.data, D.F, [l, t, r - l, b - t]);
+    }
+    renderItem(it);
+    renderSel();
+  }
+  function resetCrop(){
+    const it = editSel().find((x) => typeOf(x) === "image" && x.data.crop);
+    if (!it) return;
+    commit([it.id], () => { const d = it.data; applyCrop(d, cropFrame(d), [0, 0, 1, 1]); });
+  }
+  // One picture (a File / Blob, or a URL of the library's own file) scaled to REF_MAX and stored as a shot.
+  async function storeRef(src, alpha){
+    const url = typeof src === "string" ? src : URL.createObjectURL(src);
+    try {
+      const im = new Image();
+      im.decoding = "async";
+      im.src = url;
+      await im.decode();
+      let nw = im.naturalWidth || im.width, nh = im.naturalHeight || im.height;
+      if (!nw || !nh){ nw = 1024; nh = 1024; }  // an SVG with only a viewBox has no size of its own
+      const sc = Math.min(1, REF_MAX / Math.max(nw, nh));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(nw * sc)); cv.height = Math.max(1, Math.round(nh * sc));
+      cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+      const type = alpha ? "image/png" : "image/jpeg";
+      const blob = await new Promise((res) => cv.toBlob(res, type, 0.9));
+      if (!blob) throw new Error("encode failed");
+      const r = await host.api("/api/review/shots", { method: "POST", headers: { "content-type": type }, body: blob });
+      return { id: r.id, w: cv.width, h: cv.height };
+    } finally {
+      if (typeof src !== "string") URL.revokeObjectURL(url);
+    }
+  }
+  const refsAllowed = () => supported() && !isBoard() && host.refImages !== false;
+  // Adds pictures to the frame / view on screen as reference images, centred on `at` (doc units; null = the
+  // middle of the view), each one fitted into a third of the view. srcs: [{src: File | URL, alpha}].
+  async function addRefs(srcs, at){
+    if (!srcs.length || !refsAllowed() || !surfaceEl()) return;
+    if (!S.on && !toggle(true)) return;
+    finishEdit();
+    if (S.kind === "video"){ const v = video(); if (v) vidPause(v); }  // they belong to the frame they were dropped on
+    if (S.b3) S.b3.pauseAnim?.();
+    const aid = S.asset?.id, ctx = ctxNow(false, true);  // the frame / view they were dropped on, whatever happens meanwhile
+    toast(srcs.length > 1 ? `Adding ${srcs.length} pictures…` : "Adding the picture…", 8000);
+    const made = [];
+    for (const x of srcs){ try { made.push(await storeRef(x.src, x.alpha)); } catch (e){ console.warn(e); } }
+    if (S.asset?.id !== aid || !surfaceEl() || !S.on) return;   // another file / the mode left meanwhile
+    if (!made.length){ toast("Could not read the picture"); return; }
+    const g = geom(), vw = g.w / g.s, vh = g.h / g.s;
+    let [cx, cy] = at || [(g.w / 2 - g.ox) / g.s, (g.h / 2 - g.oy) / g.s];
+    const st = styleDoc("image"), its = [];
+    for (const m of made){
+      const f = Math.min(vw * 0.34 / m.w, vh * 0.34 / m.h), w = m.w * f, h = m.h * f;
+      its.push(newItem("image", null, { shot: m.id, x: cx - w / 2, y: cy - h / 2, w, h, rot: 0, crop: null, iw: m.w, ih: m.h, border: st.border, borderColor: st.borderColor, shadow: st.shadow, opacity: st.opacity }));
+      cx += 24 * k(); cy += 24 * k();
+    }
+    for (const it of its) it.data.ctx = ctx && typeof ctx === "object" ? structuredClone(ctx) : ctx;
+    if (S.pinFocus){ S.pinFocus = null; renderPanel(); }
+    commit(its.map((it) => it.id), () => { for (const it of its) S.items.set(it.id, it); });
+    setTool("select");
+    S.sel = new Set(its.map((it) => it.id));
+    renderSel(); renderProps();
+    toast(made.length < srcs.length ? `Added ${made.length} of ${srcs.length} — the rest could not be read` : made.length > 1 ? `${made.length} pictures added` : "Picture added", 1600);
+  }
+  function pickRefs(at){
+    if (!refsAllowed()) return;
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
+    inp.onchange = () => { const fs = [...(inp.files || [])]; if (fs.length) addRefs(fs.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) })), at); };
+    inp.click();
+  }
+  // The pictures selected in the library (the grid beside the lightbox: Tab) — the touch way to bring them in.
+  function addSelectedRefs(){
+    const list = host.selectedPictures?.() || [];
+    if (!list.length){ toast(host.toggleLibrary ? "Select pictures in the library first (Tab shows it)" : "Nothing selected"); return; }
+    addRefs(list, null);
+  }
+  // A drag over the surface that may carry pictures: files from outside, or library files (the grid's drag).
+  function refDrag(e){
+    const t = e.dataTransfer?.types;
+    return !!t && refsAllowed() && !!surfaceEl() && ([...t].includes("Files") || [...t].includes("application/x-sight-ids"));
+  }
+  // A drop becomes reference images only while annotating. Otherwise library files go to the host's comparison
+  // stack (host.dropForCompare: the lightbox compares the open file with them) and nothing turns annotating on.
+  function onRefDrop(e){
+    if (!refDrag(e)) return;
+    const files = [...(e.dataTransfer.files || [])].filter((f) => /^image\//.test(f.type) || REF_RE.test(f.name));
+    let ids = [];
+    if (!files.length){
+      try { ids = JSON.parse(e.dataTransfer.getData("application/x-sight-ids") || "[]"); } catch {}
+      if (!Array.isArray(ids)) ids = [];
+    }
+    if (!S.on){
+      if (ids.length && host.dropForCompare){ e.preventDefault(); e.stopPropagation(); host.dropForCompare(ids); return; }
+      if (files.length){ e.preventDefault(); e.stopPropagation(); toast("Turn annotating on (A) to drop reference pictures"); }
+      return;
+    }
+    const srcs = files.length ? files.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) })) : ids.length ? host.pictureSources?.(ids) || [] : [];
+    if (!srcs.length) return;  // a review file (.srev) and the like: the page's own drop handler takes it
+    e.preventDefault();
+    e.stopPropagation();
+    addRefs(srcs, toDoc(e));
+  }
+
   let suppressClick = false;
   function onDown(e){
     if (!S.on || !surfaceEl()) return;  // (a board switch nulls the surface while the listeners stay wired)
@@ -1046,7 +1582,17 @@ export function createAnnotator(host){
     if (!e.altKey && e.target.closest?.(".an-stamp")) return;  // the frame stamp has its own drag
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
+    if (S.pinEdit){
+      // A press on the pin being numbered (a double-click) leaves the field open; elsewhere it sets the number,
+      // and with the pin tool goes on to place the next pin.
+      if (e.button !== 0) return;
+      const [qx, qy] = toDoc(e);
+      if (hitAt(qx, qy)?.id === S.pinEdit.it.id){ release(e); S.pinEdit.inp.focus(); return; }
+      finishPinEdit();
+      if (S.tool !== "pin"){ release(e); return; }
+    }
     const pen = e.pointerType === "pen";
+    S.lastPtr = e.pointerType;
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
     // The host's own control under the press (compare: a split under the finger, Alt+drag) — not while an area is
     // being picked, with the pen's eraser end, or Alt with the select tool (its duplicate-drag).
@@ -1070,6 +1616,17 @@ export function createAnnotator(host){
       return;
     }
     if (tool === "select"){
+      const ci = cropItem();
+      if (ci){
+        const ch = cropAt(ci, sx, sy, x, y);
+        if (ch){
+          grab(e);
+          const [nx, ny] = toImg(cropFrame(ci.data), x, y);
+          S.drag = { crop: ch, id: ci.id, F: cropFrame(ci.data), c0: RC.imgCrop(ci.data).slice(), n0: [nx, ny], ids: [ci.id], src: new Map([[ci.id, snap(ci)]]), moved: false };
+          return;
+        }
+        endCrop();  // a press elsewhere ends cropping and then does what it always does
+      }
       const h = S.sel.size ? handleAt(sx, sy) : null;
       if (h){ grab(e); startHandleDrag(h, x, y, e); return; }
       const hit = hitAt(x, y);
@@ -1107,10 +1664,20 @@ export function createAnnotator(host){
     }
     // Drawing starts a new note: a note picked in the panel lets go (the media shows the new one).
     if (S.pinFocus){ S.pinFocus = null; renderPanel(); }
+    if (tool === "arrow" && S.styles.arrow.mode === "stroke"){
+      // Arrows along a freehand stroke: drawn like a brush stroke, the arrows follow it (review-core arrowsPrims).
+      const st = styleDoc(tool);
+      const it = newItem("stroke", "arrows", { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head1: st.head1, headSize: st.headSize, step: st.step, len: st.len, dir: st.dir, side: st.side, guide: st.guide !== false, pts: [r2(x), r2(y), 0.5] });
+      S.items.set(it.id, it);
+      S.drag = { stroke: it, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k() };
+      renderAll();
+      return;
+    }
     if (STROKE_TOOLS.has(tool)){
       const st = styleDoc(tool);
       const p = pen ? clamp(e.pressure || 0.5, 0, 1) : 0.5;
-      const it = newItem("stroke", tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, pts: [r2(x), r2(y), r2(p)] });
+      const fillKeys = tool === "brush" ? { close: !!st.close, pattern: st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern, fill: st.fill, fillOpacity: st.fillOpacity, gap: st.gap } : {};
+      const it = newItem("stroke", tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, ...fillKeys, pts: [r2(x), r2(y), r2(p)] });
       S.items.set(it.id, it);
       S.drag = { stroke: it, sm: [x, y], smooth: st.smooth ?? 0, start: [x, y], minStep: 0.75 * k() };
       renderAll();
@@ -1124,9 +1691,9 @@ export function createAnnotator(host){
       renderAll();
       return;
     }
-    if (tool === "rect" || tool === "ellipse"){
+    if (tool === "rect"){
       const st = styleDoc(tool);
-      const it = newItem("shape", tool, { color: st.color, strokeOn: st.strokeOn, width: st.width, dash: st.dash, fillOn: st.fillOn, fill: st.fill, fillOpacity: st.fillOpacity, radius: st.radius || 0, opacity: st.opacity, x, y, w: 0, h: 0, rot: 0 });
+      const it = newItem("shape", st.shape === "ellipse" ? "ellipse" : "rect", { color: st.color, strokeOn: st.strokeOn, width: st.width, dash: st.dash, fillOn: st.fillOn, fill: st.fill, fillOpacity: st.fillOpacity, radius: st.shape === "ellipse" ? 0 : st.radius || 0, opacity: st.opacity, x, y, w: 0, h: 0, rot: 0 });
       S.items.set(it.id, it);
       S.drag = { shape: it, x, y };
       renderAll();
@@ -1141,12 +1708,20 @@ export function createAnnotator(host){
       editText(it, true);
       return;
     }
-    if (tool === "pin"){
-      const st = styleDoc("pin");
-      const it = newItem("pin", null, { color: st.color, size: st.size, x, y });
-      commit([it.id], () => S.items.set(it.id, it));
+    if (tool === "image"){
       release(e);
-      focusComposer();
+      pickRefs([x, y]);
+      return;
+    }
+    if (tool === "pin"){
+      // A click: a circle here; a drag: a leader line from here, the circle where it is let go. The number is
+      // typed after (editPin). A click on a pin (no drag) edits its number instead.
+      const hit = hitAt(x, y);
+      const st = styleDoc("pin");
+      const it = newItem("pin", null, { color: st.color, size: st.size, x, y, label: nextPinNumber() });
+      S.items.set(it.id, it);
+      S.drag = { pin: it, x, y, sx, sy, hit: hit && typeOf(hit) === "pin" && editable(hit) ? hit : null, moved: false };
+      renderAll();
       return;
     }
   }
@@ -1178,9 +1753,9 @@ export function createAnnotator(host){
       const it = D.stroke, d = it.data;
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
       if (e.shiftKey){
-        // Shift: straight stroke from where it started, snapped to 15°.
+        // Shift: straight stroke from where it started, horizontal or vertical.
         const [ex, ey] = snapAngle(D.start[0], D.start[1], x, y);
-        const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, d.size / 3)));
+        const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, (d.size || d.width * 2) / 3)));
         d.pts = [];
         for (let i = 0; i <= n; i++) d.pts.push(r2(D.start[0] + (ex - D.start[0]) * i / n), r2(D.start[1] + (ey - D.start[1]) * i / n), 1);
         D.straight = true;
@@ -1214,6 +1789,15 @@ export function createAnnotator(host){
       renderItem(it);
       return;
     }
+    if (D.pin){
+      const d = D.pin.data;
+      if (!D.moved && hyp(sx - D.sx, sy - D.sy) < 6) return;
+      D.moved = true;
+      const [ex, ey] = e.shiftKey ? snapAngle(D.x, D.y, x, y) : [x, y];
+      d.ax = D.x; d.ay = D.y; d.x = ex; d.y = ey;
+      renderItem(D.pin);
+      return;
+    }
     if (D.eraser){ eraseAt(x, y); renderSel(); return; }
     if (D.marquee){
       D.marquee[2] = sx; D.marquee[3] = sy;
@@ -1238,6 +1822,7 @@ export function createAnnotator(host){
       renderSel();
       return;
     }
+    if (D.crop){ cropDrag(D, x, y); return; }
     if (D.handle){ dragHandle(D, x, y, e); return; }
   }
   const toDocS = (sx, sy) => { const g = geom(); return [(sx - g.ox) / g.s, (sy - g.oy) / g.s]; };
@@ -1255,6 +1840,13 @@ export function createAnnotator(host){
         if (hyp(D.last[0] - d.pts[n - 3], D.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(r2(D.last[0]), r2(D.last[1]), r2(D.last[2]));
       }
       S.items.delete(it.id);
+      if (typeOf(it) === "arrows"){
+        // An arrows stroke needs some length (a click would leave a dot with no arrows).
+        let len = 0;
+        const d = it.data;
+        for (let i = 3; i < d.pts.length; i += 3) len += hyp(d.pts[i] - d.pts[i - 3], d.pts[i + 1] - d.pts[i - 2]);
+        if (len / k() < 3){ renderAll(); return; }
+      }
       commit([it.id], () => S.items.set(it.id, it));
       return;
     }
@@ -1265,6 +1857,15 @@ export function createAnnotator(host){
       if (tiny){ renderAll(); return; }
       if (t === "rect" || t === "ellipse"){ if (d.w < 0){ d.x += d.w; d.w = -d.w; } if (d.h < 0){ d.y += d.h; d.h = -d.h; } }
       commit([it.id], () => S.items.set(it.id, it));
+      return;
+    }
+    if (D.pin){
+      const it = D.pin, d = it.data;
+      const click = !D.moved || hyp(d.x - D.x, d.y - D.y) <= d.size / 2;  // no line: a circle where it was pressed
+      if (click){ delete d.ax; delete d.ay; d.x = D.x; d.y = D.y; }
+      if (click && D.hit){ S.items.delete(it.id); renderAll(); editPin(D.hit, false); return; }
+      renderItem(it);
+      editPin(it, true);
       return;
     }
     if (D.eraser){
@@ -1279,7 +1880,7 @@ export function createAnnotator(host){
       return;
     }
     if (D.marquee){ renderSel(); renderProps(); return; }
-    if (D.move || D.handle){
+    if (D.move || D.handle || D.crop){
       if (!D.moved){
         if (D.move && D.plain && S.sel.size > 1){ S.sel = new Set([D.hit]); renderProps(); }
         renderSel();
@@ -1301,13 +1902,14 @@ export function createAnnotator(host){
     if (!D) return;
     if (D.eraser){ onUp({ pointerId: -1 }); return; }
     S.drag = null;
-    if (D.stroke || D.shape) S.items.delete((D.stroke || D.shape).id);
+    if (D.stroke || D.shape || D.pin) S.items.delete((D.stroke || D.shape || D.pin).id);
     else if (D.src) for (const [id, src] of D.src) if (src) S.items.set(id, structuredClone(src));
     renderAll();
     renderSel(); renderProps();
   }
 
-  const snapAngle = RC.snap15;
+  // Shift while drawing (straight stroke, line / arrow, pin leader): horizontal or vertical only.
+  const snapAngle = RC.snapHV;
 
 
   function eraseAt(x, y){
@@ -1317,14 +1919,20 @@ export function createAnnotator(host){
       const t = typeOf(it);
       // A baked drawing is removed whole (a deletion) but never cut into pieces (an edit).
       if (D.partial && STROKE_TOOLS.has(t) && !baked(it)){
-        if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
         const pts = it.data.pts, keep = [];
-        let cur = [];
+        let cur = [], cut = false;
         for (let i = 0; i < pts.length; i += 3){
-          if (hyp(pts[i] - x, pts[i + 1] - y) <= rad + it.data.size * 0.25){ if (cur.length) keep.push(cur); cur = []; }
+          if (hyp(pts[i] - x, pts[i + 1] - y) <= rad + (it.data.size || it.data.width || 0) * 0.25){ if (cur.length) keep.push(cur); cur = []; cut = true; }
           else cur.push(pts[i], pts[i + 1], pts[i + 2]);
         }
-        if (cur.length) keep.push(cur);
+        if (!cut) continue;  // (within reach as a whole — the arrows, the fill — but no point of the stroke was hit)
+        // A cut lasso is open (its pieces lose the fill); its first and last runs met at the seam — one piece.
+        if (it.data.close){
+          if (keep.length && cur.length && keep[0][0] === pts[0] && keep[0][1] === pts[1]) keep[0] = cur.concat(keep[0]);
+          else if (cur.length) keep.push(cur);
+        } else if (cur.length) keep.push(cur);
+        if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
+        if (it.data.close) it.data.close = false;
         if (!keep.length){ S.items.delete(it.id); S.layer?.els.get(it.id)?.remove(); S.layer?.els.delete(it.id); continue; }
         it.data.pts = keep[0];
         renderItem(it);
@@ -1364,7 +1972,10 @@ export function createAnnotator(host){
     let c = "crosshair";
     if (altCam()) c = "";
     else if (S.region) c = "crosshair";
-    else if (S.tool === "select"){
+    else if (S.tool === "select" && cropItem()){
+      const [x, y] = toDocS(sx, sy), ch = cropAt(cropItem(), sx, sy, x, y);
+      c = ch === "pan" ? "grab" : ch ? RC.XF_CURSOR[ch] : "default";
+    } else if (S.tool === "select"){
       const h = S.sel.size ? handleAt(sx, sy) : null;
       if (h) c = RC.XF_CURSOR[h];
       else {
@@ -1373,6 +1984,7 @@ export function createAnnotator(host){
       }
     } else if (STROKE_TOOLS.has(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
+    else if (S.tool === "image") c = "copy";
     el.style.cursor = c;
   }
   // The tool a press would use now: Ctrl held turns any drawing tool into the eraser.
@@ -1448,6 +2060,7 @@ export function createAnnotator(host){
     renderProps();
   }
   function finishEdit(){
+    finishPinEdit();
     const E = S.edit;
     if (!E) return;
     S.edit = null;
@@ -1468,6 +2081,76 @@ export function createAnnotator(host){
       commit([it.id], () => S.items.set(it.id, after));
     }
     S.sel = new Set([it.id]);
+    afterChange();
+  }
+  // ---- pin number ------------------------------------------------------------------------------
+  // The smallest number no pin of this media shows yet (older pins show their note's number).
+  function nextPinNumber(skip){
+    const used = new Set();
+    for (const it of S.items.values()) if (typeOf(it) === "pin" && it.id !== skip) used.add(String(it.data.label || numOf(it) || ""));
+    let n = 1;
+    while (used.has(String(n))) n++;
+    return String(n);
+  }
+  // A small field over the pin: type its number, Enter (or a tap elsewhere) sets it — empty = the next free
+  // number; Esc drops a new pin / keeps an old one's number. Keys typed there never reach the tool shortcuts,
+  // and the focus leaves it once it is done (so the hotkeys work again with the pin tool still in hand).
+  function editPin(it, isNew){
+    finishEdit();
+    const el = surfaceEl();
+    if (!el){ if (isNew) S.items.delete(it.id); return; }
+    const inp = document.createElement("input");
+    inp.className = "an-pinedit";
+    inp.type = "text";
+    inp.inputMode = "numeric";
+    inp.maxLength = 4;
+    inp.spellcheck = false;
+    inp.autocomplete = "off";
+    inp.value = isNew ? "" : it.data.label || "";
+    inp.placeholder = isNew ? String(it.data.label || nextPinNumber(it.id)) : String(it.data.label || numOf(it) || "");
+    inp.setAttribute("aria-label", "Pin number");
+    (S.b2 && S.layer ? S.layer.root : el).appendChild(inp);
+    inp.style.pointerEvents = "auto";
+    S.pinEdit = { it, inp, isNew, before: isNew ? null : snap(it) };
+    const place = () => {
+      const d = it.data, g = geom(), [cx, cy] = toScreen(d.x, d.y), w = Math.max(44, d.size * g.s * 1.4), h = Math.max(30, d.size * g.s);
+      Object.assign(inp.style, { left: (cx - w / 2) + "px", top: (cy - h / 2) + "px", width: w + "px", height: h + "px", fontSize: Math.max(14, d.size * g.s * 0.5) + "px" });
+    };
+    S.pinEdit.place = place;
+    place();
+    inp.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (hotkey(e, "Enter")){ e.preventDefault(); finishPinEdit(); }
+      else if (hotkey(e, "Escape")){ e.preventDefault(); finishPinEdit(true); }
+    });
+    inp.addEventListener("blur", () => setTimeout(() => { if (S.pinEdit?.inp === inp && document.activeElement !== inp) finishPinEdit(); }, 0));
+    inp.addEventListener("pointerdown", (e) => e.stopPropagation());
+    inp.focus();
+    inp.select();
+    requestAnimationFrame(() => { if (S.pinEdit?.inp === inp && document.activeElement !== inp) inp.focus(); });
+  }
+  function finishPinEdit(cancel){
+    const E = S.pinEdit;
+    if (!E) return;
+    S.pinEdit = null;
+    E.inp.remove();
+    const it = E.it;
+    if (cancel){
+      if (E.isNew) S.items.delete(it.id);
+      renderAll();
+      return;
+    }
+    // Empty: a new pin takes the next free number; an old one keeps what it shows.
+    const label = E.inp.value.trim() || (E.isNew ? E.inp.placeholder || nextPinNumber(it.id) : E.before.data.label || "");
+    if (E.isNew){
+      it.data.label = label;
+      S.items.delete(it.id);
+      commit([it.id], () => S.items.set(it.id, it));
+    } else if (label !== (E.before.data.label || "")){
+      const after = structuredClone(E.before);
+      after.data.label = label;
+      commit([it.id], () => S.items.set(it.id, after));
+    }
     afterChange();
   }
   function hexA(hex, a){
@@ -1582,9 +2265,6 @@ export function createAnnotator(host){
       <div class="an-bar">
         ${TOOLS.map((t) => t ? `<button type="button" class="an-tool" data-tool="${t[0]}" title="${esc(t[2])} (${t[1].replace("Key", "")})">${t[3]}</button>` : `<span class="an-sep"></span>`).join("")}
         <span class="an-sep"></span>
-        <button type="button" class="an-tool" data-act="shot" title="Screenshot to the note (S)">${ICON.shot}</button>
-        <button type="button" class="an-tool" data-act="region" title="Screenshot of an area (Shift+S)">${ICON.region}</button>
-        <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="undo" title="Undo (Ctrl+Z)">${ICON.undo}</button>
         <button type="button" class="an-tool" data-act="redo" title="Redo (Ctrl+Shift+Z)">${ICON.redo}</button>
         <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete)">${ICON.trash}</button>
@@ -1601,8 +2281,6 @@ export function createAnnotator(host){
     bar.querySelector("[data-act=undo]").onclick = () => undo();
     bar.querySelector("[data-act=redo]").onclick = () => redo();
     bar.querySelector("[data-act=clear]").onclick = () => clearShown();
-    bar.querySelector("[data-act=shot]").onclick = () => screenshot(false);
-    bar.querySelector("[data-act=region]").onclick = () => screenshot(true);
     bar.querySelector("[data-act=stamp]").onclick = () => toggleStamp();
     bar.querySelector("[data-act=stampset]").onclick = () => toggleStampPop();
     buildStampPop(lightEl, bar);
@@ -1615,16 +2293,43 @@ export function createAnnotator(host){
     const bar = S.bar;
     if (!bar) return;
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
-    bar.querySelectorAll("[data-act=shot], [data-act=region]").forEach((b) => { b.hidden = isBoard(); });  // no picture to capture on a board
+    const sb = bar.querySelector("[data-tool=rect]"), sk = S.styles.rect.shape === "ellipse" ? "ellipse" : "rect";
+    if (sb.dataset.shape !== sk){ sb.dataset.shape = sk; sb.innerHTML = ICON[sk]; }
+    // The arrow tool's icon follows its Line / Stroke mode.
+    const ab = bar.querySelector("[data-tool=arrow]"), am = S.styles.arrow.mode === "stroke" ? "stroke" : "line";
+    if (ab && ab.dataset.mode !== am){ ab.dataset.mode = am; ab.innerHTML = P.amode.options.find(([id]) => id === am)[2]; }
+    bar.querySelector("[data-tool=image]").hidden = isBoard() || host.refImages === false;  // a board places pictures itself
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
     if (S.kind !== "video") closeStampPop();
     paintEye();
-    bar.querySelector("[data-act=panel]").classList.toggle("on", S.panelOn);
+    const pb = bar.querySelector("[data-act=panel]");
+    pb.hidden = readable();  // the lightbox / board have their own notes button
+    pb.classList.toggle("on", S.panelOn);
+  }
+  // The shape tool's kind: R / O, the bar's Shape switch. (Old names still arrive: "ellipse".)
+  function setShape(kind){ S.styles.rect.shape = kind; saveStyles(); setTool("rect"); }
+  // Long-press on the annotate button: every toolbar preference back to its default (tool, per-tool colours / sizes /
+  // options, the hold time, the frame stamp's look). The drawings, notes and the per-video stamp on / off stay.
+  function resetPrefs(quiet){
+    S.styles = structuredClone(DEFAULT_STYLES);
+    S.stamp = { ...STAMP_DEFAULT };
+    S.hold = 0;
+    clearTimeout(styleTimer); clearTimeout(stampTimer);
+    writeJSON("sight.annotate.styles", S.styles); writeJSON("sight.annotate.stamp", S.stamp); writeJSON("sight.annotate.hold", S.hold);
+    if (S.bar){
+      if (S.on) setTool("brush"); else S.tool = "brush";
+      paintBar(); renderProps();
+      try { paintStamp(true); paintStampPop(); } catch {}
+    } else S.tool = "brush";
+    if (!quiet) toast("Annotation toolbar reset to defaults");
   }
   function setTool(t){
-    if (!PROPS[t]) return;
+    if (t === "ellipse"){ setShape("ellipse"); return; }
+    if (t === "line") t = "arrow";
+    if (!PROPS[t] || (t === "image" && !refsAllowed())) return;  // (Shift+I on a board: no such tool there)
     finishEdit();
+    S.crop = null;
     S.tool = t;
     if (t !== "select" && S.sel.size){ S.sel.clear(); renderSel(); }
     paintAlt();
@@ -1657,9 +2362,13 @@ export function createAnnotator(host){
   function renderProps(){
     const el = S.bar?.querySelector(".an-props");
     if (!el || numDrag?.isConnected) return;
+    if (S.crop && !cropItem()) S.crop = null;  // cropping ends with the image's selection
     const tg = propsTarget();
     let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
     if (tg.items) list = list.filter((p) => !p.create);
+    else list = list.filter((p) => !p.edit);
+    list = list.filter((p) => !p.when || p.when((key) => propValue(tg, { k: key })));
+    if (!tg.items && tg.type === "rect" && S.styles.rect.shape === "ellipse") list = list.filter((p) => p.k !== "radius");
     let html = "";
     if (tg.items) html += `<span class="an-pl">${tg.items.length > 1 ? tg.items.length + " selected" : (tg.type || "")}</span>`;
     for (const p of list){
@@ -1670,7 +2379,12 @@ export function createAnnotator(host){
       } else if (p.t === "num"){
         html += `<span class="an-num" data-k="${p.k}" data-p="${list.indexOf(p)}" title="Drag, scroll or click to type"><b>${esc(p.label)}</b><em>${fmtNum(p, v)}</em></span>`;
       } else if (p.t === "toggle"){
-        html += `<button type="button" class="an-tg${p.cls ? " " + p.cls : ""}${v ? " on" : ""}" data-k="${p.k}" title="${esc(p.title || p.label)}">${esc(p.label)}</button>`;
+        html += `<button type="button" class="an-tg${p.cls ? " " + p.cls : ""}${v ? " on" : ""}" data-k="${p.k}" title="${esc(p.title || p.label)}">${p.ico || esc(p.label)}</button>`;
+      } else if (p.t === "cycle"){
+        // One button for a few choices: it shows the current one's icon, a click / tap moves to the next.
+        const i = Math.max(0, p.options.findIndex(([id]) => id === v)), nx = p.options[(i + 1) % p.options.length];
+        if (p.fixed) html += `<button type="button" class="an-tg${i ? " on" : ""}" data-k="${p.k}" data-cyc title="${esc(p.options[1][1])} (${i ? "on" : "off"})">${p.options[1][2]}</button>`;
+        else html += `<button type="button" class="an-tg" data-k="${p.k}" data-cyc title="${esc(p.label)}: ${esc(p.options[i][1])} — click for ${esc(nx[1].toLowerCase())}">${p.options[i][2]}</button>`;
       } else if (p.t === "select"){
         html += `<label class="an-psel" title="${esc(p.label)}"><span>${esc(p.label)}</span><select data-k="${p.k}">${p.options.map(([id, n]) => `<option value="${id}"${id === v ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
       } else if (p.t === "seg"){
@@ -1683,6 +2397,15 @@ export function createAnnotator(host){
     if (tg.items && tg.items.some((it) => editable(it) && S.kind === "video" && it.data.ctx?.t != null)){
       const h = tg.items.find((it) => editable(it) && it.data.ctx?.t != null).data.ctx?.hold ?? 0;
       html += `<label class="an-psel" title="How long the selection stays on screen"><span>Hold</span><select data-shold>${HOLDS.map(([v, n]) => `<option value="${v}"${v === h ? " selected" : ""}>${n}</option>`).join("")}</select></label>`;
+    }
+    // Reference images: where pictures come from (the tool), crop (one selected picture).
+    if (!tg.items && S.tool === "image" && refsAllowed()){
+      html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="refdisk" title="Pick pictures on this computer — or click the frame where they should go">From disk…</button>`;
+      if (host.toggleLibrary) html += `<button type="button" class="an-tg" data-cmd="reflib" title="Show the library beside the player and drag pictures from it onto the frame (Tab)">Library</button><button type="button" class="an-tg" data-cmd="refsel" title="Add the pictures selected in the library">Add selected</button>`;
+    }
+    if (tg.items && tg.type === "image" && tg.items.length === 1 && editable(tg.items[0])){
+      html += `<span class="an-sep"></span><button type="button" class="an-tg${cropItem() ? " on" : ""}" data-cmd="crop" title="Crop — drag the edges, drag inside to move the picture (double-click the picture; Enter / Esc to finish)">Crop</button>`;
+      if (tg.items[0].data.crop) html += `<button type="button" class="an-tg" data-cmd="uncrop" title="Show the whole picture again">Reset crop</button>`;
     }
     if (tg.items){
       html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="front" title="Bring to front (Ctrl+])">Front</button><button type="button" class="an-tg" data-cmd="back" title="Send to back (Ctrl+[)">Back</button><button type="button" class="an-tg" data-cmd="del" title="Delete (Del)">${ICON.trash}</button>`;
@@ -1703,13 +2426,22 @@ export function createAnnotator(host){
     if (!tg.items){
       S.styles[tg.type][p.k] = v;
       saveStyles();
+      if (p.k === "shape" || (tg.type === "arrow" && p.k === "mode")) paintBar();  // the tool's icon follows its kind / mode
       return;
     }
     const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
     const dv = LEN_KEYS.has(p.k) && typeof v === "number" ? v * k() : v;
     if (S.edit){ S.edit.it.data[p.k] = dv; S.edit.place(); if (p.t !== "color") S.edit.ta.focus(); return; }
     if (!ids.length) return;
-    commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[typeOf(it)]?.some((q) => q.k === p.k)) it.data[p.k] = dv; } }, merge ? "prop:" + p.k : null);
+    commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[typeOf(it)]?.some((q) => q.k === p.k)){ it.data[p.k] = dv; if (p.k === "close" && dv) fillDefaults(it.data); } } }, merge ? "prop:" + p.k : null);
+  }
+  // A brush closed after it was drawn (or one from before 0.81) takes the brush tool's fill settings.
+  function fillDefaults(d){
+    const st = styleDoc("brush");
+    if (!RC.PATTERNS.includes(d.pattern)) d.pattern = st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern;
+    if (!d.fill) d.fill = st.fill;
+    if (d.fillOpacity == null) d.fillOpacity = st.fillOpacity;
+    if (!(d.gap > 0)) d.gap = st.gap;
   }
   function bindProps(el, tg, list){
     el.querySelectorAll("input[type=color][data-k]").forEach((inp) => {
@@ -1719,7 +2451,15 @@ export function createAnnotator(host){
     el.querySelectorAll("[data-sw]").forEach((sw) => {
       sw.onclick = () => { setProp(P.color, sw.dataset.sw, false); renderProps(); };
     });
-    el.querySelectorAll("button[data-k]:not([data-v])").forEach((b) => {
+    el.querySelectorAll("button[data-cyc]").forEach((b) => {
+      const p = list.find((q) => q.k === b.dataset.k);
+      b.onclick = () => {
+        const i = Math.max(0, p.options.findIndex(([id]) => id === propValue(propsTarget(), p)));
+        setProp(p, p.options[(i + 1) % p.options.length][0], false);
+        renderProps();
+      };
+    });
+    el.querySelectorAll("button[data-k]:not([data-v]):not([data-cyc])").forEach((b) => {
       const p = list.find((q) => q.k === b.dataset.k);
       b.onclick = () => { setProp(p, !propValue(propsTarget(), p), false); renderProps(); };
     });
@@ -1740,6 +2480,11 @@ export function createAnnotator(host){
     el.querySelector("[data-cmd=front]")?.addEventListener("click", () => reorder(1));
     el.querySelector("[data-cmd=back]")?.addEventListener("click", () => reorder(-1));
     el.querySelector("[data-cmd=del]")?.addEventListener("click", () => deleteSelection());
+    el.querySelector("[data-cmd=refdisk]")?.addEventListener("click", () => pickRefs(null));
+    el.querySelector("[data-cmd=reflib]")?.addEventListener("click", () => host.toggleLibrary?.());
+    el.querySelector("[data-cmd=refsel]")?.addEventListener("click", () => addSelectedRefs());
+    el.querySelector("[data-cmd=crop]")?.addEventListener("click", () => { if (!endCrop()) startCrop(); });
+    el.querySelector("[data-cmd=uncrop]")?.addEventListener("click", () => { resetCrop(); renderProps(); });
     el.querySelectorAll(".an-num").forEach((n) => bindNum(n, list[Number(n.dataset.p)]));
   }
   // Compact number control: drag sideways, scroll, or click to type.
@@ -1789,7 +2534,7 @@ export function createAnnotator(host){
       el.addEventListener("lostpointercapture", up);  // whatever ends the capture ends the drag (numDrag never sticks)
     });
     el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(get(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const dflt = (DEFAULT_STYLES[propsTarget().type] || {})[p.k]; if (dflt != null) set(dflt, false); });
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const t = propsTarget().type, dflt = (DEFAULT_STYLES[t === "arrows" ? "arrow" : t] || {})[p.k]; if (dflt != null) set(dflt, false); });
   }
   function typeNum(el, p, v, done){
     const em = el.querySelector("em");
@@ -1900,6 +2645,7 @@ export function createAnnotator(host){
     const inp = el.querySelector(".an-input");
     inp.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      if (hotkey(e, "Ctrl+KeyC") && inp.selectionStart === inp.selectionEnd && copyHoveredText()){ e.preventDefault(); return; }  // nothing selected here: the hovered text
       if (hotkey(e, "Enter")){ e.preventDefault(); addNote(); }
       else if (hotkey(e, "Escape")){ e.preventDefault(); inp.blur(); }
     });
@@ -1912,6 +2658,7 @@ export function createAnnotator(host){
     const cin = el.querySelector(".an-cin");
     cin.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      if (hotkey(e, "Ctrl+KeyC") && cin.selectionStart === cin.selectionEnd && copyHoveredText()){ e.preventDefault(); return; }  // nothing selected here: the hovered text
       if (hotkey(e, "Enter")){ e.preventDefault(); addNote(); }
       else if (hotkey(e, "Escape")){ e.preventDefault(); cin.blur(); }
     });
@@ -1940,26 +2687,26 @@ export function createAnnotator(host){
     return el;
   }
   function focusComposer(){
-    if (!S.panelOn) togglePanel(true);
+    if (!panelShown()) togglePanel(true);
     requestAnimationFrame(() => S.ui?.querySelector(".an-input")?.focus());
   }
   function dictateNote(){
-    if (!S.panelOn) togglePanel(true);
+    if (!panelShown()) togglePanel(true);
     requestAnimationFrame(() => { const t = S.dictTa?.isConnected ? S.dictTa : S.ui?.querySelector(".an-input"); if (t) S.dict?.toggle(t); });
   }
-  // The panel of the mode in use: drawing → S.panelOn, just watching → S.readOn.
+  // The notes panel is one switch (S.readOn: the notes button, C), whether drawing or not — the drawing mode
+  // neither opens nor closes it. A host without a reading panel (the version compare, host.readPanel false) shows
+  // it only while drawing, per S.panelOn (the toolbar's panel button, shown there only).
   function togglePanel(force){
-    if (S.on){ S.panelOn = force ?? !S.panelOn; writeJSON(panelKey, S.panelOn); }
-    else if (readable()){
+    if (readable()){
       S.readOn = force ?? !S.readOn; writeJSON(readKey, S.readOn);
-      // Closing the reading panel lets go of the picked note: all the drawings show again.
-      if (!S.readOn && S.pinFocus){ S.pinFocus = null; paintVisibility(); }
-    }
+      // Closing the panel while just watching lets go of the picked note: all the drawings show again.
+      if (!S.readOn && !S.on && S.pinFocus){ S.pinFocus = null; paintVisibility(); }
+    } else if (S.on){ S.panelOn = force ?? !S.panelOn; writeJSON(panelKey, S.panelOn); }
     syncPanel();
   }
-  // (A host without a reading panel — the version compare, host.readPanel false — shows it only while drawing.)
   const readable = () => host.readPanel !== false;
-  const panelShown = () => !!S.ui && supported() && (S.on ? S.panelOn : readable() && S.readOn);
+  const panelShown = () => !!S.ui && supported() && (readable() ? S.readOn : S.on && S.panelOn);
   function syncPanel(){
     const show = panelShown();
     if (S.ui){ S.ui.hidden = !show; S.ui.classList.toggle("an-read", !S.on); }
@@ -2008,6 +2755,7 @@ export function createAnnotator(host){
       const ctx = ctxLabel(noteCtx(n));
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
+          <button type="button" class="an-ib sm an-nedb" data-edit="${n.id}" title="Edit the text (or double-click it)">${ICON.pencil}</button>
           <button type="button" class="an-ib sm" data-reply="${n.id}" title="Reply">${ICON.reply}</button>
           <button type="button" class="an-ib sm${prog ? " on" : ""}" data-prog="${n.id}" title="${prog ? "Not in progress" : "In progress — someone is working on it"}">${ICON.prog}</button>
           <button type="button" class="an-ib sm${done ? " on" : ""}" data-done="${n.id}" title="${done ? "Reopen" : "Resolve"}">${ICON.check}</button>
@@ -2420,7 +3168,7 @@ export function createAnnotator(host){
     });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
+    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-edit],[data-rdel],[data-rdraw],[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
     if (!t){
       // A click on the empty list drops the picked note (as Esc does). Not when it ends a text selection
       // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
@@ -2443,6 +3191,7 @@ export function createAnnotator(host){
     }
     if (t.dataset.cmp){ const n = S.items.get(t.dataset.cmp); if (n?.data.compare) host.openCompareSession?.(n.data.compare, n); return; }
     if (t.dataset.reply){ startReply(t.dataset.reply); return; }
+    if (t.dataset.edit){ editNote(t.dataset.edit); return; }
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
     if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
     if (t.classList.contains("an-rep")){
@@ -2510,7 +3259,8 @@ export function createAnnotator(host){
       const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(Number(pv.dataset.pt))); }
       return;
     }
-    if (card) goNote(card.dataset.id);
+    // The second click of a double-click (which edits the text) keeps the note picked.
+    if (card && !(e.detail > 1 && S.pinFocus === card.dataset.id)) goNote(card.dataset.id);
   }
   function onListDblClick(e){
     const cp = e.target.closest?.(".an-cap");
@@ -2518,9 +3268,16 @@ export function createAnnotator(host){
     const rt = e.target.closest?.(".an-rt");
     if (rt){ editReply(rt.closest(".an-note").dataset.id, rt.closest(".an-rep").dataset.rid, rt); return; }
     const nt = e.target.closest?.(".an-nt");
-    if (!nt) return;
-    const id = nt.closest(".an-note").dataset.id, it = S.items.get(id);
+    if (nt) editNote(nt.closest(".an-note").dataset.id);
+  }
+  // A note's text edited in place (double-click on it, or the card's pencil): Enter saves, Esc cancels. The card
+  // is looked up afresh — a click before it may have rebuilt the list, leaving the clicked node detached.
+  function editNote(id){
+    const it = S.items.get(id);
     if (!it) return;
+    if (S.pinFocus !== id) goNote(id);
+    const nt = S.ui?.querySelector(`.an-note[data-id="${id}"] .an-nt`);
+    if (!nt) return;
     const ta = document.createElement("textarea");
     ta.className = "an-input an-nedit";
     ta.value = it.data.text || "";
@@ -3030,6 +3787,7 @@ export function createAnnotator(host){
         paintStamp();
         renderSel();
         if (S.edit) S.edit.place();
+        if (S.pinEdit) S.pinEdit.place();
         if (S.ui && !S.ui.hidden) renderPending();
       }
     }
@@ -3042,6 +3800,7 @@ export function createAnnotator(host){
   const drawItems = (cx, items) => RC.drawCanvas(cx, items, numOf);
   // What is on screen right now (picture + visible drawings), at device resolution.
   async function composeView(){
+    await RC.imagesReady(visibleDrawings());  // reference images decoded before they are drawn
     const g = geom();
     if (!g) return null;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -3163,7 +3922,7 @@ export function createAnnotator(host){
       S.light?.querySelector(".an-flash")?.classList.remove("go");
       const fl = S.light?.querySelector(".an-flash");
       if (fl){ void fl.offsetWidth; fl.classList.add("go"); }
-      if (S.on && !S.panelOn) togglePanel(true);
+      if (S.on && !panelShown()) togglePanel(true);
       renderPending();
       toast("Screenshot added to the note");
     } catch (e){
@@ -3228,6 +3987,7 @@ export function createAnnotator(host){
     return true;
   }
   async function gatherReport1(forPage, everyNote){
+    await RC.imagesReady([...S.items.values()].filter(isDrawing));  // composeNative draws reference images synchronously
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
@@ -3396,24 +4156,47 @@ export function createAnnotator(host){
   async function importFile(file){
     let r;
     await flush();
-    try {
-      const res = await fetch("/api/review/import", { method: "POST", body: await file.arrayBuffer() });
-      r = await res.json().catch(() => ({}));
-      if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return; }
-      if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return; }
-    } catch (e){
-      console.warn(e);
-      toast("Import failed", 3000);
-      return;
+    const body = await file.arrayBuffer();
+    const post = async (restore) => {
+      try {
+        const res = await fetch("/api/review/import" + (restore ? "?restore=1" : ""), { method: "POST", body });
+        const r = await res.json().catch(() => ({}));
+        if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return null; }
+        if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return null; }
+        return r;
+      } catch (e){
+        console.warn(e);
+        toast("Import failed", 3000);
+        return null;
+      }
+    };
+    if (!(r = await post(false))) return;
+    let restoreFailed = false;  // pass 1 is committed either way: report it, then say the restore failed
+    // Rows of the file that were deleted here after their last edit stay deleted by the merge rules
+    // (FORMAT.md rule 5); the user may be importing the file precisely to get them back — ask.
+    const gone = r.bundle ? (r.results || []).reduce((s, x) => s + ((x.ok && x.deleted_here) | 0), 0) : r.deleted_here | 0;
+    if (gone && confirm(`This review file holds ${gone} note${gone === 1 ? "" : "s"} / drawing${gone === 1 ? "" : "s"} deleted in this library.\n\nRestore ${gone === 1 ? "it" : "them"}?`)){
+      const again = await post(true);
+      if (!again) restoreFailed = true;
+      else {
+        // The second pass only revives rows (everything else merged already): report both passes as one.
+        // A clip whose second pass failed keeps its first result (that merge is committed).
+        const sum = (a, b) => ({ ...b, added: (a.added | 0) + (b.added | 0), updated: (a.updated | 0) + (b.updated | 0), deleted: (a.deleted | 0) + (b.deleted | 0) });
+        if (r.bundle){
+          const first = r.results || [];
+          r = { ...again, results: first.map((x, i) => { const y = again.results?.[i]; return x.ok ? (y?.ok ? sum(x, y) : x) : (y || x); }) };
+        } else r = sum(r, again);
+      }
     }
-    if (r.bundle){ await importedBundle(r); return; }
+    const failMsg = "The review merged, but restoring the deleted notes / drawings failed";
+    if (r.bundle){ await importedBundle(r); if (restoreFailed) toast(failMsg, 5000); return; }
     const parts = [["new", r.added], ["updated", r.updated], ["deleted", r.deleted]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
-    toast(parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 3500);
+    toast(restoreFailed ? failMsg : parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", restoreFailed ? 5000 : 3500);
     await host.openAsset?.(r.asset_id);
     if (S.asset?.id === r.asset_id){
       // The rows changed underneath the undo history; it would restore pre-merge states.
       S.undo = []; S.redo = [];
-      await load(S.asset); toggle(true); togglePanel(true);
+      obForget(S.asset.id); await load(S.asset); toggle(true); togglePanel(true);
     }
     host.onReviewChanged?.(r.asset_id);
   }
@@ -3438,12 +4221,12 @@ export function createAnnotator(host){
     if (changed.length === 1){
       const aid = changed[0].asset_id;
       await host.openAsset?.(aid);
-      if (S.asset?.id === aid){ S.undo = []; S.redo = []; await load(S.asset); toggle(true); togglePanel(true); }
+      if (S.asset?.id === aid){ S.undo = []; S.redo = []; obForget(S.asset.id); await load(S.asset); toggle(true); togglePanel(true); }
       host.onReviewChanged?.(aid);
       return;
     }
     for (const x of ok){
-      if (S.asset?.id === x.asset_id){ S.undo = []; S.redo = []; await load(S.asset); }
+      if (S.asset?.id === x.asset_id){ S.undo = []; S.redo = []; obForget(S.asset.id); await load(S.asset); }
       host.onReviewChanged?.(x.asset_id);
     }
   }
@@ -3455,8 +4238,9 @@ export function createAnnotator(host){
     if (want && !supported()){ toast("Annotations work on images, video and 3D models"); return false; }
     if (want === S.on) return true;
     S.on = want;
+    if (want){ S.tool = "brush"; S.crop = null; }  // the drawing mode always starts with the brush
     if (!want){
-      closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush();
+      closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.crop = null; S.drag = null; S.pinFocus = null; flush();
       // A board keeps its drawings on show with the mode off: no hover circle, no "hidden" left over from the bar.
       S.hover = null;   // drawings stay on show (shownOff): no brush circle left over the picture
       if (isBoard()) S.hidden = false;
@@ -3559,7 +4343,7 @@ export function createAnnotator(host){
     const G = { tool: "Drawing tools", edit: "Editing", notes: "Notes and panels", nav: "Moving the selection", video: "Video", d3: "3D models", gen: "General" };
     const rows = [
       ["Shift+Slash", () => toggleHelp(), "Show / hide this list", G.gen],
-      ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }, "Deselect / clear pin focus, then leave annotation mode", G.gen],
+      ["Escape", () => { if (endCrop()) return; if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }, "Deselect / clear pin focus, then leave annotation mode", G.gen],
       ["KeyA", () => toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen], ["Shift+KeyA", (e) => e.repeat || toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen],
       ["Ctrl+KeyZ", () => undo(), "Undo", G.edit], ["Ctrl+Shift+KeyZ", () => redo(), "Redo", G.edit], ["Ctrl+KeyY", () => redo(), "Redo", G.edit],
       ["Delete", () => deleteSelection(), "Delete the selection", G.edit], ["Backspace", () => deleteSelection(), "Delete the selection", G.edit], ["KeyX", () => deleteSelection(), "Delete the selection", G.edit],
@@ -3568,10 +4352,11 @@ export function createAnnotator(host){
       ["Ctrl+KeyA", () => selectAll(), "Select all drawings on screen", G.edit],
       ["Ctrl+BracketRight", () => reorder(1), "Bring forward", G.edit], ["Ctrl+BracketLeft", () => reorder(-1), "Send backward", G.edit],
       ["BracketLeft", () => resizeTool(1 / 1.2), "Smaller brush / stroke / text", G.tool], ["BracketRight", () => resizeTool(1.2), "Larger brush / stroke / text", G.tool],
-      ...TOOLS.filter(Boolean).map(([id, combo, label]) => [combo, () => setTool(id), label, G.tool]),
+      ...TOOLS.filter(Boolean).map(([id, combo, label]) => [combo, () => (id === "rect" ? setShape("rect") : setTool(id)), id === "rect" ? "Rectangle" : label, G.tool]),
+      ["KeyO", () => setShape("ellipse"), "Ellipse", G.tool],
       ["KeyS", () => { screenshot(false); }, "Screenshot of the view into the note", G.notes], ["Shift+KeyS", () => { screenshot(true); }, "Screenshot of an area", G.notes],
       ["KeyC", () => togglePanel(), "Show / hide the notes panel", G.notes], ["Shift+KeyH", () => toggleHidden(), "Hide / show the drawings", G.notes],
-      ["Enter", () => focusComposer(), "Write a note (Enter adds it, Shift+Enter is a new line)", G.notes],
+      ["Enter", () => { if (!endCrop()) focusComposer(); }, "Write a note (Enter adds it, Shift+Enter is a new line); finish cropping", G.notes],
       ["Alt+KeyM", () => dictateNote(), "Dictate into the note / reply / picture text (again: stop; right-click the mic: language)", G.notes],
       ["ArrowLeft", () => nudge(-1, 0), "Nudge the selection 1 px", G.nav], ["ArrowRight", () => nudge(1, 0), "Nudge the selection 1 px", G.nav], ["ArrowUp", () => nudge(0, -1), "Nudge the selection 1 px", G.nav], ["ArrowDown", () => nudge(0, 1), "Nudge the selection 1 px", G.nav],
       ["Shift+ArrowLeft", () => nudge(-10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowRight", () => nudge(10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowUp", () => nudge(0, -10), "Nudge the selection 10 px", G.nav], ["Shift+ArrowDown", () => nudge(0, 10), "Nudge the selection 10 px", G.nav],
@@ -3602,7 +4387,7 @@ export function createAnnotator(host){
     }
     // Mouse / touch things that are not hotkeys (static: they live in the pointer code, not in the table).
     const extra = {
-      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Line / arrow snap to 15°, rectangle square, ellipse circle"]],
+      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Straight stroke, line / arrow, pin line: horizontal or vertical only; rectangle square, ellipse circle"]],
       "General": [[["Alt + drag"], isBoard() ? "Pan the board while a drawing tool is active (middle-drag and the wheel pan too, right-drag / Ctrl+wheel zoom)" : "Hand the drag to the viewer (pan / zoom, orbit in 3D) while a drawing tool is active"]],
       ...(S.kind !== "model3d" ? {} : { "3D models": [[["Shift+A"], "Enter / leave annotation mode (A flies the camera in a 3D view)"], [["Alt+1–9"], "Save the camera view (1–9 recall it)"]] }),
     };
@@ -3621,7 +4406,7 @@ export function createAnnotator(host){
     el.innerHTML = `<div class="an-hcard" role="dialog" aria-label="Annotation shortcuts">
       <div class="an-hh"><b>Annotation shortcuts</b><button type="button" class="an-ib" data-act="hclose" title="Close (Esc)">${ICON.close}</button></div>
       <div class="an-hbody">${helpGroups().map((g) => `<section><h4>${esc(g.group)}</h4>${g.rows.map(([keys, label]) => `<div class="an-hrow"><span class="an-hk">${keys.map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span><span>${esc(label)}</span></div>`).join("")}</section>`).join("")}</div>
-      <p class="an-hfoot">On a touch screen every tool, undo, screenshot and the notes panel have a button in the toolbar.</p></div>`;
+      <p class="an-hfoot">On a touch screen every tool, undo and the notes panel have a button in the toolbar (screenshots: the buttons by the note field).</p></div>`;
     // A full-screen backdrop: nothing underneath sees the pointer, wheel or touch while this is open.
     for (const t of ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "dblclick", "contextmenu", "touchstart", "touchend", "wheel", "touchmove"]){
       el.addEventListener(t, (ev) => {
@@ -3656,6 +4441,10 @@ export function createAnnotator(host){
     if (S.shotView && hotkey(e, "Escape")){ e.preventDefault(); closeShotView(); return true; }
     const tag = e.target?.tagName;
     const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable;
+    // Ctrl+C with the pointer over a note's / reply's / picture's text (the panel or the text plate): copies that text.
+    // (Also from a focused field with nothing selected in it, e.g. the note composer kept focused.)
+    const fieldSel = typing && typeof e.target.selectionStart === "number" && e.target.selectionStart !== e.target.selectionEnd;
+    if (!fieldSel && !e.target?.isContentEditable && hotkey(e, "Ctrl+KeyC") && copyHoveredText()){ e.preventDefault(); return true; }
     if (!S.on){
       if (typing) return false;
       // The notes panel opens for reading without the drawing tools (C, or the notes button).
@@ -3670,6 +4459,24 @@ export function createAnnotator(host){
     if (typing) return false;
     if (S.region && hotkey(e, "Escape")){ e.preventDefault(); cancelRegion(); return true; }
     return runHotkeys(e, keyTable());
+  }
+  // The text under the pointer in the notes panel / the text plate (a note's text, a reply, a picture's text), copied
+  // to the clipboard. Not when there is a real text selection (the browser copies that) or nothing is hovered.
+  function copyHoveredText(){
+    const sel = window.getSelection?.();
+    if (sel && !sel.isCollapsed && String(sel).trim()) return false;
+    const el = S.light?.querySelector(".an-nt:hover, .an-rt:hover, .an-cap:hover, .scp-theme:hover, .scp-text:hover");
+    if (!el) return false;
+    let text;
+    if (el.classList.contains("an-nt")){
+      const n = S.items.get(el.closest(".an-note")?.dataset.id);
+      text = n?.kind === "note" ? n.data.text : "";
+    } else if (el.classList.contains("an-cap")) text = el.querySelector("span")?.textContent;
+    else text = el.textContent;
+    if (!text || !String(text).trim()) return false;
+    navigator.clipboard?.writeText(String(text)).then(() => toast("Copied"), () => toast("Clipboard not available"))
+      ?? toast("Clipboard not available");
+    return true;
   }
   function resizeTool(f){
     const tg = propsTarget();
@@ -3706,8 +4513,8 @@ export function createAnnotator(host){
     S.plate?.destroy(); S.plate = null;
     S.dict?.destroy(); S.dict = S.dictTa = null;
     closeShotView();
-    flush();
-    finishEdit();
+    settle();
+    obFlush();
     cancelAnimationFrame(S.raf);
     S.raf = 0;
     S.on = false; S.stampDrag = false;
@@ -3724,8 +4531,8 @@ export function createAnnotator(host){
     // The plates first (an open edit saves into the old asset's notes), then the flush.
     S.plate?.destroy(); S.plate = null;
     closeShotView();
-    flush();
-    finishEdit();
+    settle();
+    obFlush();
     cancelRegion();
     S.asset = a;
     S.kind = a.ext === ".psd" ? "psd" : a.kind;
@@ -3733,7 +4540,7 @@ export function createAnnotator(host){
     if (S.b2?.board) S.layer?.root.remove();
     S.b2 = S.b3 = null;
     S.layer = null;
-    S.items.clear(); S.saved.clear(); S.sel.clear();
+    S.items.clear(); S.saved.clear(); S.sel.clear(); S.crop = null;
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear(); S.adopt.clear();
@@ -3762,6 +4569,9 @@ export function createAnnotator(host){
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onUp);
     el.addEventListener("pointerleave", () => { S.hover = null; if (S.on && !S.drag) renderSel(); });
+    // Pictures dropped on the frame become reference images (files from outside, or files dragged from the library).
+    el.addEventListener("dragover", (e) => { if (!refDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+    el.addEventListener("drop", onRefDrop);
     // A drawing gesture must not also count as the viewer's click (video play/pause) or
     // double-click (frame / 100%).
     el.addEventListener("click", (e) => { if (suppressClick){ suppressClick = false; e.stopImmediatePropagation(); } }, true);
@@ -3770,6 +4580,16 @@ export function createAnnotator(host){
       const [x, y] = toDoc(e);
       const hit = hitAt(x, y);
       if (hit && typeOf(hit) === "text" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editText(hit); return; }
+      // A pin: double-click edits its number (with the pin tool a single click does).
+      if (S.tool !== "pin" && !S.pinEdit && hit && typeOf(hit) === "pin" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editPin(hit, false); return; }
+      // A reference image: double-click crops it (again, or on the empty frame: done).
+      if (S.tool === "select" && hit && typeOf(hit) === "image" && editable(hit)){
+        e.stopImmediatePropagation(); e.preventDefault();
+        if (cropItem()?.id === hit.id){ endCrop(); return; }
+        S.sel = new Set([hit.id]);
+        startCrop();
+        return;
+      }
       if (S.tool !== "select"){ e.stopImmediatePropagation(); e.preventDefault(); }
     }, true);
   }
@@ -3799,7 +4619,7 @@ export function createAnnotator(host){
   function viewChanged(){
     if (!S.layer || !(S.on || shownOff())) return;
     syncViewBox();
-    if (S.on){ renderSel(); if (S.edit) S.edit.place(); }
+    if (S.on){ renderSel(); if (S.edit) S.edit.place(); if (S.pinEdit) S.pinEdit.place(); }
   }
   // 3D: host element, camera get/set, synchronous capture of the rendered frame.
   function bind3d(r){
@@ -3815,7 +4635,7 @@ export function createAnnotator(host){
 
   return {
     mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, importFile, explodeChanged,
-    isOn: () => S.on,
+    isOn: () => S.on, resetPrefs,
     supports: () => supported(),
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
     marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),
@@ -3825,6 +4645,7 @@ export function createAnnotator(host){
     busy: () => !!S.gathering,
     ready: () => !!S.asset && !S.loading && !!(S.b2 || S.b3),
     fpsKnown: () => S.kind !== "video" || !!S.fpsKnown,
+    fps: () => S.fps,   // the open video's frame rate (25 until fpsKnown), for the lightbox's position field
     report: async (kind) => { await flush(); return gatherReport(kind === "html", kind === "zip"); },
     toast: (text, ms) => toast(text, ms),
     // Re-read the open file's rows (edited elsewhere); undo / redo would write the old copies back over them.
@@ -3832,7 +4653,7 @@ export function createAnnotator(host){
       const a = S.asset;
       if (!a || !supported()) return;
       S.undo = []; S.redo = []; paintBar();
-      Promise.resolve(flush()).then(() => { if (S.asset === a) load(a); }); // after its own pending save lands
+      Promise.resolve(flush()).then(() => { if (S.asset === a){ obForget(a.id); load(a); } }); // after its own pending save lands
     },
     // For the board view (canvas.js): save pending edits, drop a half-drawn gesture, the drawings' bounds, modal state.
     flush: () => flush(), abortGesture, modal: () => !!help || !!stampPop && !stampPop.hidden,
@@ -3847,9 +4668,13 @@ function injectStyles(){
   stylesInjected = true;
   const st = document.createElement("style");
   st.textContent = `
+.an-outbox { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 100000; max-width: calc(100vw - 32px);
+  padding: 10px 16px; border-radius: 10px; border: 1px solid #c0392b; background: #2a1414; color: #ffd9d4; font: 13px/1.3 system-ui, sans-serif;
+  cursor: pointer; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+.an-outbox[hidden] { display: none; }
 .an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .an-layer[hidden] { display: none; }
-.an-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.an-layer > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .an-active { touch-action: none; }
 .an-ui .an-selbox { fill: none; stroke: #4c9aff; stroke-width: 1; stroke-dasharray: 3 3; }
 .an-ui .an-selall { fill: none; stroke: #4c9aff; stroke-width: 1; }
@@ -3862,6 +4687,8 @@ function injectStyles(){
 .an-ui .an-regionshade { fill: rgb(0 0 0 / .45); fill-rule: evenodd; }
 .an-ui .an-region { fill: none; stroke: #fff; stroke-width: 1; stroke-dasharray: 4 3; }
 .an-ui .an-regionlbl { fill: #fff; font: 11px system-ui, sans-serif; paint-order: stroke; stroke: rgb(0 0 0 / .7); stroke-width: 3; }
+.an-pinedit { position: absolute; z-index: 6; margin: 0; padding: 0 4px; box-sizing: border-box; border: 1px solid #4c9aff; border-radius: 8px; outline: none; background: rgb(20 20 24 / .9); color: #fff; font-weight: 700; text-align: center; font-family: system-ui, sans-serif; }
+.an-pinedit::placeholder { color: rgb(255 255 255 / .55); }
 .an-textedit { position: absolute; z-index: 6; margin: 0; padding: 0; border: 1px dashed #4c9aff; outline: none; resize: none; overflow: hidden; white-space: pre; min-width: 24px; box-sizing: content-box; }
 .an-top { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: 13; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; max-width: calc(100% - 140px); }
 .an-top[hidden] { display: none; }
@@ -3889,6 +4716,7 @@ function injectStyles(){
 .an-numedit { width: 44px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 0 3px; outline: none; }
 .an-tg { height: 24px; min-width: 24px; padding: 0 7px; border-radius: 6px; color: var(--muted); background: var(--surface-2); font-size: 11px; display: inline-grid; place-items: center; }
 .an-tg svg { width: 14px; height: 14px; }
+.an-tg[data-cyc] svg, .an-tg[data-k] svg { width: 16px; height: 16px; }
 .an-tg:hover { color: var(--fg); }
 .an-tg.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .an-tg.b { font-weight: 700; } .an-tg.i { font-style: italic; font-family: Georgia, serif; } .an-tg.u { text-decoration: underline; }
@@ -3985,6 +4813,10 @@ function injectStyles(){
 .an-note { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; }
 .an-note:hover { border-color: var(--border-strong); }
 .an-note.on { border-color: var(--accent); }
+/* A note's action icons show on hover only; on a touch screen (no hover) on the picked (tapped) note. */
+.an-nh .an-ib { visibility: hidden; }
+.an-note:hover .an-nh .an-ib, .an-note.on .an-nh .an-ib, .an-nh .an-ib:focus-visible { visibility: visible; }
+@media (hover: none) { .an-note:hover:not(.on) .an-nh .an-ib { visibility: hidden; } }
 .an-note.done { opacity: .6; }
 .an-note.done .an-nt { text-decoration: line-through; text-decoration-color: rgb(255 255 255 / .35); }
 .an-nh { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
@@ -4008,7 +4840,7 @@ function injectStyles(){
 .an-rh { display: flex; align-items: center; gap: 4px; color: var(--subtle); font-size: 10px; }
 .an-rh span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-rh .an-ib { visibility: hidden; height: 16px; min-width: 16px; }
-.an-rep:hover .an-rh .an-ib { visibility: visible; }
+.an-rep:hover .an-rh .an-ib, .an-note.on .an-rh .an-ib, .an-rh .an-ib:focus-visible { visibility: visible; }
 .an-rdraw { flex: none; display: inline-flex; align-items: center; gap: 2px; height: 16px; padding: 0 5px 0 3px; border: 0; border-radius: 8px; background: none; color: var(--subtle); font: inherit; font-size: 10px; cursor: pointer; }
 .an-rdraw svg { width: 12px; height: 12px; }
 .an-rdraw:hover { color: var(--fg); background: rgb(127 127 127 / .18); }

@@ -254,6 +254,22 @@ function getFrame(t, rv = R){
 function getPicture(rv = R){
   return cachedFrame(rv, "img", rv.file ? async () => { const im = await decode(rv.file); const s = await scaled(im, 1600); if (im.close) im.close(); return s; } : null);
 }
+// Reference images (kind "image", made in Sight) show their picture from the review's stored shots. The core
+// asks synchronously, so the pictures' object URLs are made ahead (refShots) and the stage repainted.
+RC.setImageSource((id) => (R && R.shotUrls.get(id)) || "");
+// Each id is asked for once per review (rv.refAsked, misses too): a shot missing from the package must not
+// start another lookup and repaint on every paint. Returns a promise that settles once they are known.
+function refShots(rv){
+  rv.refAsked = rv.refAsked || new Set();
+  const need = [...new Set((rv.rows || []).filter((r) => r && r.kind === "image" && !r.deleted_at && r.data && typeof r.data.shot === "string").map((r) => r.data.shot))]
+    .filter((id) => !rv.refAsked.has(id) && !rv.shotUrls.has(id));
+  if (!need.length) return rv.refWait || Promise.resolve();
+  need.forEach((id) => rv.refAsked.add(id));
+  rv.refWait = Promise.all(need.map((id) => shotUrl(id).catch(() => null))).then((urls) => {
+    if (R === rv && urls.some(Boolean)){ paintOverlay(); if (els && els.notes) renderNotes(); }  // stage and note pictures
+  });
+  return rv.refWait;
+}
 async function shotUrl(id){
   if (R.shotUrls.has(id)) return R.shotUrls.get(id);
   const s = await DB.get("shots", id).catch(() => null);
@@ -1829,6 +1845,7 @@ function paintOverlay(){
     if (vk !== R.curVk){ R.curVk = vk; paintCurrent(); if (els.where) els.where(); }
   }
   els.svg.setAttribute("viewBox", (is3d() ? vbOf(R.v3d ? R.v3d.aspect() : 1) : [0, 0, docW() || 1, docH() || 1]).join(" "));
+  refShots(R);
   els.svg.innerHTML = RC.svgMarkup(stageDrawings(), numOf);
 }
 // The view's turn (0 / 90 / 180 / 270°) and mirror, kept with the review (R.meta.view): the stage,
@@ -4392,6 +4409,7 @@ async function exportReport(type){
   const b = busy(type === "pdf" ? "Making the PDF…" : "Making the web page…");
   try {
     const a = Object.assign({}, R.meta.asset);
+    await refShots(R);  // reference images' pictures known before they are burned into the report
     const payload = await gatherReport({ asset: a, rows: R.rows, fps: R.fps, author: who, appLabel: APP_LABEL, src: reportSrc(), progress: (i, n) => b.set(`Frames ${i + 1} / ${n}…`) });
     if (a.kind === "video" && payload.notes.some((n) => !n.frame) && !R.grab) toast("Some frames are not on this device: pick the video again to include them", 5000);
     if (a.kind === "model3d" && payload.notes.some((n) => !n.frame) && !R.v3d) toast("Some views are not on this device: pick the model again to include them", 5000);
