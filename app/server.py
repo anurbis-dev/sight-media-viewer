@@ -18,7 +18,7 @@ from pathlib import Path
 from .web import App, FileResponse, HTTPException, JSONResponse, Request, Response, StaticFiles, StreamingResponse
 
 from .fileinfo import NO_WINDOW
-from .library import Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
+from .library import Bus, Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
 from .stt import SttError, SttService
@@ -418,6 +418,10 @@ def serve_video(request: Request, path: str, cache) -> StreamingResponse | Respo
 def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = False) -> App:
     app = App()
     app.state.last_heartbeat = time.time()
+    # When the page said it was closing (pagehide, ?bye=1) and no heartbeat came since; None otherwise.
+    # Read only by the macOS Dock reopen (Sight.py / app/macapp.py), never by the quit watchdog, so a
+    # reload (bye, then the new page's heartbeat) changes nothing.
+    app.state.window_bye = None
     settings = settings or SettingsStore(lib.root)
 
     @app.get("/")
@@ -1197,6 +1201,8 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
 
         def gen():
             try:
+                if lib.bus.closed:  # opened after Bus.close (an EventSource reconnecting during Quit)
+                    return
                 yield f"data: {json.dumps({'type': 'hello'})}\n\n"
                 while True:
                     try:
@@ -1204,6 +1210,8 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
                     except queue.Empty:
                         yield ":\n\n"
                         continue
+                    if ev is Bus.CLOSE:  # server shutting down (Bus.close): end the stream
+                        return
                     yield f"data: {json.dumps(ev)}\n\n"
             finally:
                 lib.bus.unsubscribe(q)
@@ -1414,8 +1422,12 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return {"ok": True, "name": "Sight"}
 
     @app.post("/api/heartbeat")
-    def heartbeat() -> dict:
-        app.state.last_heartbeat = time.time()
+    def heartbeat(request: Request) -> dict:
+        if request.query_params.get("bye") == "1":
+            app.state.window_bye = time.time()
+        else:
+            app.state.last_heartbeat = time.time()
+            app.state.window_bye = None
         return {"ok": True}
 
     @app.get("/api/version")

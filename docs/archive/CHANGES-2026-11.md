@@ -2,6 +2,30 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.77.0 — 2026-11-18 — The phone app opens and answers a sequence's `.srev` bundle (multi-clip plan, stage 3)
+- **What:** opening a bundle on the phone merges every clip into its own review (one summary toast: damaged
+  clips / non-media named, the rest land; "same file as clip N" for a duplicate) and puts them in one home
+  group named by the bundle's title; a review with no media on the phone is greyed ("Media not on this
+  device — notes readable") until its file is picked. The group's menu has *Review file for Sight (.srev)*:
+  one bundle of the clips changed since the last send, with the received bundle id (nothing changed → asks
+  to send all). Works for user-made groups too (their own id). A one-clip bundle behaves like a package.
+- **Where:** mobile/js/model.js (`parseReviewFile`, `buildBundle`, `checkPackage`), mobile/js/app.js
+  (`importReviewFile` split into `reviewKeyFor` / `mergeInto` / `importBundle` / `bundleGroup`;
+  `dirty(user)`, `packageOf`, `isChanged`, `markSent`, `exportBundle`, `offerFile(…, onSent)`, `nomedia`
+  row), mobile/index.html (`.row.nomedia`), tests/pwa_unit.cjs, tests/pwa_e2e.cjs `bundle`,
+  tests/test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE, FORMAT, PLAN-multiclip, PLAN-mobile.
+- **Notes:** no IndexedDB version bump: new meta fields `groups`, `changed`, `nomedia`. `changed` = time of the
+  last user edit; merges never set it (`dirty(false)`); a send clears it only if it is unchanged since the
+  package was built. Missing `changed` (made on the phone / before 0.77) counts as changed — extra clips are
+  harmless under the merge rules. The UI group holds a review at most once; a reply takes the group's keys plus
+  every review whose `meta.groups` has the bundle id. "Merge a review file…" with a bundle imports it as a
+  bundle (not into the open review). Merge code untouched (merge parity).
+- Review (fresh agent): a review opened mid-import could read its rows before the merge and drop it on the next
+  save → busy overlay over the import loop; a lone clip of a later bundle did not join the bundle's existing
+  group → `bundleGroup` for any clip count; bundle `version` parsing now matches Python's `int(v or 0)`. All
+  confirmed by the same reviewer. Left as is: back / forward during the import can still open a review
+  mid-merge (deliberate action, tiny window); `version: []` / `"1_0"` parity quirks.
+
 ## 0.76.0 — 2026-11-17 — One web page for a sequence's review (multi-clip plan, stage 2)
 - **What:** Sequence → Export → *Web page, all clips* writes **one** page (was one per clip). It has a clip strip on
   top (name, notes, open notes; a dot = changed here), ‹ / › buttons, `←` / `→` (not in text fields, the full-screen

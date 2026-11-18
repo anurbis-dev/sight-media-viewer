@@ -1493,6 +1493,11 @@ function startHeartbeat(){
   // After sleep/resume or un-minimizing, report in at once instead of waiting for the next tick.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
   for (const ev of ["focus", "pageshow", "online"]) window.addEventListener(ev, ping);
+  // Closing (not a page kept in the back/forward cache): tells the macOS Dock reopen the window is
+  // gone. A reload's new page pings at once, which cancels it; the quit watchdog ignores it.
+  window.addEventListener("pagehide", (e) => {
+    if (!e.persisted) try { navigator.sendBeacon("/api/heartbeat?bye=1"); } catch {}
+  });
 }
 function fmtDate(ts){
   if (!ts) return "";

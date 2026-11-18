@@ -440,9 +440,19 @@ def _read_blend_thumb(path: Path) -> tuple[int, int, bytes] | None:
 class Bus:
     """Fan-out of small JSON events to SSE subscribers."""
 
+    # Delivered by close(): an /api/events stream ends on it (compared by identity).
+    CLOSE: dict = {"type": "close"}
+
     def __init__(self) -> None:
         self._subs: list[queue.Queue[dict]] = []
         self._lock = threading.Lock()
+        self.closed = False
+
+    def close(self) -> None:
+        """Ends every open event stream (and any opened later), so a server shutdown does not wait
+        for them. Used by the macOS Quit (Sight.py); a stream otherwise only ends with its tab."""
+        self.closed = True
+        self.publish(self.CLOSE)
 
     def subscribe(self) -> queue.Queue[dict]:
         q: queue.Queue[dict] = queue.Queue(maxsize=512)

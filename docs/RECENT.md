@@ -14,6 +14,34 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.87.2 — 2026-11-18 — macOS: Dock icon back; Sight.app answers the Dock (real Cocoa loop)
+- **What:** macOS: Sight.app keeps its Dock icon again and answers it. Clicking the icon brings the Sight window to
+  the front, restores it if minimized, and opens it again if it was closed. Cmd+Tab to Sight focuses the window.
+  Dock "Quit", Cmd+Q and the logout / shutdown quit stop the server cleanly and close the window. **Supersedes
+  0.84.2's agent-app approach** (LSUIElement, no Dock icon), which the owner found inconvenient.
+- **Where:** new app/macapp.py (`run`, `browser_pid_from_ps`, `find_browser_pid`); Sight.py `main()` mac branch
+  (`_serve`, `_window_alive`, `_relaunch`, `_request_stop`, `_close_window`, `_on_server_exit`, `hb_lock`) and
+  `_main_cleanup()` (`mac_agent_note()` removed); server.py (`/api/heartbeat?bye=1` → `app.state.window_bye`,
+  `/api/events` ends on `Bus.CLOSE`); library.py `Bus.close()` / `CLOSE`; index.html `startHeartbeat` pagehide
+  beacon; build_app_macos.sh (pyobjc-framework-Cocoa install + bundle check, LSUIElement removed,
+  `NSAppleEventsUsageDescription`, `NSAppSleepDisabled` kept); tests/test_mac_launch.py.
+- **Notes:** packaged macOS builds (not `--no-browser`) run NSApplication on the main thread and uvicorn on a
+  background thread; without pyobjc it falls back to the old path and logs a line. AppKit exits the process
+  itself, so main()'s `finally` never runs there: exit work lives in `_main_cleanup()` — never put cleanup only in
+  `finally`. "Is there a window" = fresh heartbeat and no `bye` (Chromium on macOS keeps running windowless); the
+  quit watchdog ignores `bye`, so F5 is safe. Dock reopen sends a "reopen" Apple Event only to Sight's own browser
+  process (found by its `--user-data-dir` in `ps`), never the user's Chrome; may show a one-time Automation
+  prompt; the ad-hoc re-sign resets that grant each build. Quit: `Bus.close()` ends every `/api/events` stream
+  so uvicorn's 3 s graceful shutdown completes and `lib.close()` runs; a 10 s force quit (`threading.Timer` +
+  `callAfter` — `callLater` does not fire while AppKit waits on the terminate reply) runs the same cleanup.
+  Windows / Linux / dev unchanged (only a lock around the watchdog check). Known minor gaps: a second Dock click
+  while a relaunched window is still loading can open a blank tab; with two Sight windows, closing one marks the
+  app closed for up to 3 s. Not tested on a Mac.
+- Review (fresh agent): 6 findings (quit hang at logout, force quit skipping cleanup, blank Chrome window on
+  reopen after close, duplicate tabs without a Chromium browser, Automation consent text, watchdog / reopen race),
+  fixed; second pass: 5 confirmed, 2 follow-ups (reopen still blank within 10 s of closing, Quit ending on the
+  force timer without `lib.close()`) fixed; the same reviewer confirmed both, nothing new beyond the two gaps above.
+
 ## 0.87.1 — 2026-11-18 — Notes no longer lost when switching clips; durable annotation write queue
 - **What:** user report (macOS desktop): comments written on a sequence's clips were gone after switching clips.
   Root cause: `setAsset()` / `unmount()` called the async `flush()` and then cleared `S.items` synchronously; after
@@ -345,27 +373,3 @@ Add new entries directly below this line.
   a deleted clip was a dead end → dropped from the group and skipped. Nits: `openingKey` cleared on a thrown
   open (wrapper `openReview` → `openReviewNow`), header refreshed after a drop (`paintSeq`, player untouched).
   Confirmed by the same reviewer.
-
-## 0.77.0 — 2026-11-18 — The phone app opens and answers a sequence's `.srev` bundle (multi-clip plan, stage 3)
-- **What:** opening a bundle on the phone merges every clip into its own review (one summary toast: damaged
-  clips / non-media named, the rest land; "same file as clip N" for a duplicate) and puts them in one home
-  group named by the bundle's title; a review with no media on the phone is greyed ("Media not on this
-  device — notes readable") until its file is picked. The group's menu has *Review file for Sight (.srev)*:
-  one bundle of the clips changed since the last send, with the received bundle id (nothing changed → asks
-  to send all). Works for user-made groups too (their own id). A one-clip bundle behaves like a package.
-- **Where:** mobile/js/model.js (`parseReviewFile`, `buildBundle`, `checkPackage`), mobile/js/app.js
-  (`importReviewFile` split into `reviewKeyFor` / `mergeInto` / `importBundle` / `bundleGroup`;
-  `dirty(user)`, `packageOf`, `isChanged`, `markSent`, `exportBundle`, `offerFile(…, onSent)`, `nomedia`
-  row), mobile/index.html (`.row.nomedia`), tests/pwa_unit.cjs, tests/pwa_e2e.cjs `bundle`,
-  tests/test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE, FORMAT, PLAN-multiclip, PLAN-mobile.
-- **Notes:** no IndexedDB version bump: new meta fields `groups`, `changed`, `nomedia`. `changed` = time of the
-  last user edit; merges never set it (`dirty(false)`); a send clears it only if it is unchanged since the
-  package was built. Missing `changed` (made on the phone / before 0.77) counts as changed — extra clips are
-  harmless under the merge rules. The UI group holds a review at most once; a reply takes the group's keys plus
-  every review whose `meta.groups` has the bundle id. "Merge a review file…" with a bundle imports it as a
-  bundle (not into the open review). Merge code untouched (merge parity).
-- Review (fresh agent): a review opened mid-import could read its rows before the merge and drop it on the next
-  save → busy overlay over the import loop; a lone clip of a later bundle did not join the bundle's existing
-  group → `bundleGroup` for any clip count; bundle `version` parsing now matches Python's `int(v or 0)`. All
-  confirmed by the same reviewer. Left as is: back / forward during the import can still open a review
-  mid-merge (deliberate action, tiny window); `version: []` / `"1_0"` parity quirks.

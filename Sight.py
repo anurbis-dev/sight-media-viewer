@@ -483,27 +483,6 @@ def mac_launch_prefix(browser: list[str]) -> list[str]:
     return ["/usr/bin/open", "-n", "-a", exe[: cut + 4], "--args"]
 
 
-def mac_agent_note() -> None:
-    """Logs whether the running Sight.app is an agent (LSUIElement, set by build_app_macos.sh). Sight.app
-    never runs a Cocoa event loop (its main thread is uvicorn), so as a regular Dock app it cannot answer
-    the Apple Events macOS sends it — a click on its Dock icon to bring a minimized window back — and
-    macOS flags it "not responding". The window is the browser's own app; Sight.app must stay out of
-    the Dock. A build without the key is named in the log, so a report can be traced to it."""
-    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
-        return
-    try:
-        import plistlib
-
-        plist = Path(sys.executable).resolve().parent.parent / "Info.plist"
-        with open(plist, "rb") as f:
-            info = plistlib.load(f)
-        agent = bool(info.get("LSUIElement")) or bool(info.get("LSBackgroundOnly"))
-        log("macOS: Sight.app runs as an agent (no Dock icon)" if agent
-            else "macOS: Sight.app is not an agent (LSUIElement missing) - its Dock icon will show 'not responding'")
-    except Exception as exc:  # diagnostics only, never in the way of the start
-        log(f"macOS: Info.plist not read ({exc})")
-
-
 def close_browser(proc: subprocess.Popen, user_data_dir: str | None = None) -> None:
     """Closes the browser main() opened, when the start failed after the launch. On Windows the
     Popen handle is usually only a launcher that has already exited (see _process_tree()), so the
@@ -586,6 +565,10 @@ def main() -> None:
     # Guards the browser launch against main()'s exit: once main() has given up ("failed"), the
     # launcher thread must not start a browser any more.
     launch_lock = threading.Lock()
+
+    def _cleanup() -> None:
+        _main_cleanup(launched, launch_lock, splash)
+
     try:
         # First thing, before even bootstrap(): the splash is a separate tiny process that appears
         # within milliseconds. A source/dev run without its deps yet re-execs itself into a private
@@ -618,7 +601,6 @@ def main() -> None:
         log(f"opening {url}")
         frozen = getattr(sys, "frozen", False)
         log("closing the Sight tab will quit" if frozen else "close this window to quit")
-        mac_agent_note()
 
         def _wait_serving(timeout: float = 20.0) -> None:
             deadline = time.time() + timeout
@@ -680,15 +662,17 @@ def main() -> None:
                         with launch_lock:
                             if launched.get("failed"):
                                 return
-                            proc = subprocess.Popen([
+                            cmd = [
                                 *mac_launch_prefix(browser),
                                 f"--user-data-dir={home / 'browser'}",
                                 "--no-first-run",
                                 "--no-default-browser-check",
                                 *launch_extra,
                                 f"--app={url}{query}",
-                            ])
+                            ]
+                            proc = subprocess.Popen(cmd)
                             launched["browser"] = proc
+                            launched["cmd"] = cmd  # macOS Dock reopen opens a closed window again
                         if sys.platform == "win32" and ready_port:
                             reveal_when_ready(proc, ready_port, maximized, on_ready=_close_splash)
                         return
@@ -744,6 +728,8 @@ def main() -> None:
             # hibernate): every thread was frozen, so the stale heartbeat says nothing about the tab.
             # Without this the watchdog woke first after resume and quit under a perfectly live window.
             RESUME_GAP = 5.0
+            # The quit decision vs. the macOS Dock reopening a closed window (_relaunch below).
+            hb_lock = threading.Lock()
 
             def _watch_tab() -> None:
                 last_tick = time.time()
@@ -753,34 +739,107 @@ def main() -> None:
                     if now - last_tick > RESUME_GAP:
                         app.state.last_heartbeat = now + (STARTUP_GRACE - HEARTBEAT_TIMEOUT)
                     last_tick = now
-                    if now - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
-                        # Logged so a "window came back dead" report can be told apart from a crash.
-                        log(f"no heartbeat from the window for {now - app.state.last_heartbeat:.0f} s - quitting")
-                        server.should_exit = True
-                        return
+                    with hb_lock:
+                        if time.time() - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
+                            # Logged so a "window came back dead" report can be told apart from a crash.
+                            log(f"no heartbeat from the window for {now - app.state.last_heartbeat:.0f} s - quitting")
+                            server.should_exit = True
+                            return
 
             threading.Thread(target=_watch_tab, daemon=True).start()
 
-        try:
-            server.run(sockets=[sock])
-        finally:
-            lib.close()
-    finally:
-        # A browser window opened for a server that never started would wait off-screen for good,
-        # so close it, and stop the launcher thread from opening one after this point.
-        if not getattr(launched.get("server"), "started", False):
-            with launch_lock:
-                launched["failed"] = True
+        def _serve() -> None:
+            try:
+                server.run(sockets=[sock])
+            finally:
+                lib.close()
+
+        if frozen and sys.platform == "darwin" and not args.no_browser:
+            # Packaged macOS: Cocoa owns the main thread so Sight.app answers the Dock (see app/macapp.py).
+            from app import macapp
+
+            # Quit must not wait for the page's endless /api/events stream (logout would hang).
+            config.timeout_graceful_shutdown = 3
+
+            def _window_alive() -> bool:
+                # A live Sight window pings every 3 s, minimized too (anti-throttling flags); during
+                # the start-up grace last_heartbeat lies in the future. A browser process alone says
+                # nothing: Chromium on macOS keeps running after its last window closed.
+                # The page also reports its own close (?bye=1), so a Dock click right after closing
+                # does not reopen the windowless browser into a blank window.
+                if getattr(app.state, "window_bye", None) is not None:
+                    return False
+                return time.time() - app.state.last_heartbeat <= HEARTBEAT_TIMEOUT
+
+            def _relaunch() -> None:
+                with hb_lock:
+                    if server.should_exit:
+                        return
+                    # A fresh window needs time to load before its first heartbeat.
+                    app.state.window_bye = None
+                    app.state.last_heartbeat = max(app.state.last_heartbeat,
+                                                   time.time() + (STARTUP_GRACE - HEARTBEAT_TIMEOUT))
+                # `open -n` with Sight's profile: a still-running windowless browser of that profile
+                # takes the command over (Chromium's profile lock) and opens the --app window.
+                cmd = launched.get("cmd")
+                try:
+                    if cmd:
+                        launched["browser"] = subprocess.Popen(cmd)
+                    else:
+                        webbrowser.open(url)
+                except OSError as exc:
+                    log(f"macOS: could not open the window again: {exc}")
+
+            def _close_window() -> None:
                 browser_proc = launched.get("browser")
-                if isinstance(browser_proc, subprocess.Popen):
-                    close_browser(browser_proc, str(data_dir() / "browser"))
-        # Normally _open()'s own finally has already closed the splash — this only catches
-        # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
-        # it doesn't sit on screen for its full timeout.
-        if splash:
-            splash.close()
-            splash.forget_env()
-            splash.dispose()
+                if isinstance(browser_proc, subprocess.Popen) and not launched.get("window_closed"):
+                    launched["window_closed"] = True
+                    close_browser(browser_proc, str(home / "browser"))
+
+            def _request_stop() -> None:
+                # Quit from the Dock / Cmd+Q / logout: the window goes too, first, so its open
+                # connections end; close_browser may sleep, so not on the main thread.
+                server.should_exit = True
+                lib.bus.close()  # end the page's /api/events stream, or shutdown waits for it
+                threading.Thread(target=_close_window, daemon=True).start()
+
+            def _on_server_exit(exc: BaseException | None, quit_requested: bool) -> None:
+                # AppKit exits the process after this, skipping main()'s finally: do its work here.
+                if quit_requested:
+                    _close_window()
+                _cleanup()
+                if exc is not None and not isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    fatal(f"Sight failed to start:\n{exc}")
+
+            if macapp.run(_serve, user_data_dir=str(home / "browser"), window_alive=_window_alive, relaunch=_relaunch,
+                          request_stop=_request_stop, on_server_exit=_on_server_exit, log=log):
+                return
+        _serve()
+    finally:
+        _cleanup()
+
+
+def _main_cleanup(launched: dict, launch_lock: threading.Lock, splash: "Splash | None") -> None:
+    """main()'s exit work, run once: from its `finally`, or on macOS from the Cocoa loop just before
+    AppKit exits the process (see app/macapp.py)."""
+    if launched.get("cleaned"):
+        return
+    launched["cleaned"] = True
+    # A browser window opened for a server that never started would wait off-screen for good,
+    # so close it, and stop the launcher thread from opening one after this point.
+    if not getattr(launched.get("server"), "started", False):
+        with launch_lock:
+            launched["failed"] = True
+            browser_proc = launched.get("browser")
+            if isinstance(browser_proc, subprocess.Popen):
+                close_browser(browser_proc, str(data_dir() / "browser"))
+    # Normally _open()'s own finally has already closed the splash — this only catches
+    # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
+    # it doesn't sit on screen for its full timeout.
+    if splash:
+        splash.close()
+        splash.forget_env()
+        splash.dispose()
 
 
 if __name__ == "__main__":
