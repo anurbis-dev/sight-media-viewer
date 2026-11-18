@@ -14,6 +14,41 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.75.0 — 2026-11-18 — Reference images on the frame (crop, frame, shadow); library beside the lightbox / player (Tab)
+- **What:** owner: reference pictures in the annotating mode of the lightbox and the video player, a toolbar icon,
+  settings crop / frame (width, colour) / shadow (strength); pictures dropped onto the frame from outside or picked;
+  picking = the board's way (sidebar + thumbnail grid left of the player, a vertical divider) as a mode of its own
+  on Tab and a button at the left of the top bar, like the board's. New drawing kind `image` (tool `Shift+I`):
+  drop OS files / drag grid files onto the frame (any tool, the mode turns on), click the frame with the tool
+  (file picker, placed there), props-bar *From disk… / Library / Add selected* (touch). Selected: Frame, Frame
+  colour, Shadow, Opacity, *Crop* (or double-click; Enter / Esc / a press elsewhere ends) and *Reset crop*.
+  Tab / ◧ (`#libBtn`, lightbox bar's left end) = library beside the lightbox; Tab on a board toggles its split,
+  and the board's ◧ moved to the left of the top bar.
+- **Where:** review-core.js (`setImageSource / imageUrl / imageEl / imagesReady / imgCrop`, image prims in
+  `primsOf` / `primSvg` / `primCanvas`, bounds / hit / transform / `validItem`, JS merge remaps `data.shot`),
+  annotate.js (TOOLS / DEFAULT_STYLES / P / PROPS `image`, `cropFrame` / `applyCrop`, `addRefs` / `storeRef` /
+  `pickRefs` / `onRefDrop` / crop mode, `S.crop`), index.html (light split: `applyViewDom`, `placeLightSplit`,
+  `toggleLightSplit`, Tab; annotator host `toggleLibrary / pictureSources / selectedPictures`, `pictureSource`;
+  board annotator `refImages: false`), review.py (`build_package` ships the shot; HTML page image source,
+  `savePic` waits for decoding), library.py (`import_annotations` remaps `data.shot`), mobile (`refShots`,
+  `shotIds`, `burn` waits), FORMAT.md, ARCHITECTURE, MANUAL.
+- **Notes:** the shadow is six stacked translucent rounded boxes (no SVG filter: filter ids would clash between the
+  many SVGs on a page and the canvas has no portable blur) — the same in SVG and canvas, PDF included. A picture
+  is stored once per add (a duplicate / copy shares its shot). The crop is in source-picture units, so the picture
+  is never stretched; the box is the visible part. Library files: the file when the browser decodes it, PSD's
+  composite, else the thumbnail. Not done: pasting a picture from the system clipboard; reference images on boards;
+  editing them in the HTML page / phone app (they show there, read-only geometry). Verified with Playwright on an
+  isolated SIGHT_HOME: Tab split (lightbox left at the divider, grid shown, back on close), OS-file drop, grid
+  drop, Add selected on a video (ctx = the frame), crop by the east grip ([0,0,0.607,1], box narrowed), screenshot.
+- Review (fresh agent): the phone repainting forever when a reference image's shot is missing from the package
+  (and leaking object URLs), pictures landing on another frame when the video was scrubbed during the upload, Shift+I
+  picking a hidden tool on a board, a click inside the crop window making an empty undo step, phone reports / note
+  cards burning grey placeholders before the pictures were known, Tab toggling the split behind the stamp popup /
+  dialogs, the grid's touch selection bar under the lightbox, a decoded-picture cache never cleared on a new source,
+  SVGs with only a viewBox failing; fixed (`rv.refAsked` / `refWait`, ctx taken before the uploads, `setTool` gate,
+  2 px threshold, `await refShots` before the report, Tab gate, `--light-l`, cache cleared in `setImageSource`,
+  1024 px fallback). Accepted: no LRU on the cache. Re-review: the same reviewer confirmed all nine fixes.
+
 ## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
 - **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
   drawing out and the next annotated frame's in. Now, while drawing on a video with onion on, between two frames
@@ -339,20 +374,3 @@ Add new entries directly below this line.
   at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
 - Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
   event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.
-
-## 0.64.0 — 2026-11-17 — Missing files on boards
-- **What:** a board card whose file is gone (source removed, or asset flagged missing) is a clear "Missing"
-  placeholder with the file name and its full path instead of an empty card. Adding the folder again (or a late
-  thumbnail) brings the pictures back without reloading the page. Space on a placeholder says "File is missing".
-- **Where:** `app/library.py` (`board_items.asset_name` / `asset_path` migration + backfill, `add_board_item`,
-  `_migrate_asset`), `app/static/canvas.js` (`fillItemEl`, `forgetAssets`, `refreshMissing`, placeholder CSS,
-  `createBody`), `app/static/index.html` (SSE hook, `assetUnderPointer`, Space), `tests/test_board_missing.py`,
-  `docs/ARCHITECTURE.md`, `MANUAL.md`.
-- **Notes:** `_migrate_asset` previously never touched board items (a moved file left its cards dangling); it now
-  rewrites `asset_id` + snapshot (bumps revision). Snapshot is server-owned: not PATCHable; POST falls back to the
-  body copy only when the asset row is missing. Backfill runs once, only when the columns are added; cards whose
-  asset was already deleted stay without a name ("Unknown file"). `getAsset` caches per page (null = 404 only; other failures are not cached and leave the card alone), `refreshMissing` evicts. Cards in state `ok` are re-checked only on `source` / scan-end events, so a file deleted under a live
-  source shows the placeholder after the next scan, not instantly. Checked with Playwright (remove / re-add source,
-  placeholder text, Space toast) on desktop; touch relies on the text being on the card (no hover needed).
-- Review: fresh-agent review found 2 medium (non-404 errors shown as missing; refresh storm/flicker) + 4 low (migration backfill crash-safety, getAsset race, selectedAssetIds during refresh, uncapped snapshot) — fixed. Re-review found a card left blank after a
-  failed (non-404) first lookup: one retry sweep 5 s later (`retryTimer`, at most every 5 s). All confirmed by the same reviewer.

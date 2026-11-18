@@ -464,6 +464,8 @@ def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_ve
     shots: dict[str, str] = {}
     def row_shots(d: dict) -> list:
         out = list(d.get("shots") or [])
+        if isinstance(d.get("shot"), str):  # a reference image's picture (kind "image", FORMAT.md)
+            out.append(d["shot"])
         for x in d.get("replies") or []:  # pictures attached to replies
             if isinstance(x, dict) and not x.get("deleted"):
                 out += list(x.get("shots") or [])
@@ -756,6 +758,8 @@ body.zoomed { overflow: hidden; }
   var DATA_TEXT = document.getElementById("data").textContent;
   var D = JSON.parse(DATA_TEXT);
   var R = D.report, PKG = D.package;
+  // Reference images (kind "image") show their picture from the package's shots.
+  RC.setImageSource(function(sid){ return (PKG.shots || {})[sid] || ""; });
   // A downloaded page (D.copy) keeps its own local state, apart from the page it was made from.
   var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at + (D.copy ? ":" + D.copy : "");
   var rows = {};
@@ -967,7 +971,8 @@ body.zoomed { overflow: hidden; }
     var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
     function plain(){ fetch(src).then(function(r){ return r.blob(); }).then(function(b){ saveBlob(b, name); }).catch(function(){}); }
     var img = new Image();
-    img.onload = function(){
+    img.onload = function(){ RC.imagesReady(list).then(flat, flat); };  // reference images decoded first
+    function flat(){
       var W = img.naturalWidth, H = img.naturalHeight;
       if (!W || !H){ plain(); return; }
       var c = document.createElement("canvas"); c.width = W; c.height = H;
@@ -980,7 +985,7 @@ body.zoomed { overflow: hidden; }
         g.restore();
       }
       try { c.toBlob(function(b){ if (b) saveBlob(b, name); else plain(); }, "image/jpeg", 0.92); } catch (_){ plain(); }
-    };
+    }
     img.onerror = plain;
     img.src = src;
   }

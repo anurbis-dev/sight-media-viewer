@@ -63,6 +63,7 @@ const ICON = {
   trash: ico(`<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/>`),
   reply: ico(`<path d="M10 8 5 12.5l5 4.5"/><path d="M5 12.5h9a5 5 0 0 1 5 5V19"/>`),
   view: ico(`<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/>`),
+  image: ico(`<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="m21 16-5-5-9 9"/>`),
 };
 
 // [id, combo, label, icon]
@@ -79,6 +80,7 @@ const TOOLS = [
   ["ellipse", "KeyO", "Ellipse — Shift circle", ICON.ellipse],
   ["text", "KeyT", "Text", ICON.text],
   ["pin", "KeyN", "Numbered pin", ICON.pin],
+  ["image", "Shift+KeyI", "Reference image — click to pick pictures, drop them on the frame, or drag them from the library (Tab)", ICON.image],
 ];
 // The frame stamp (a device preference, not review data): where / how the frame label sits over the video and on
 // report pictures. `size` is a percentage of the picture's width; the defaults are the look the label always had.
@@ -104,9 +106,10 @@ const DEFAULT_STYLES = {
   ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.2, opacity: 1 },
   text: { font: "sans", size: 28, color: "#ffffff", bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1 },
   pin: { color: "#ff3b30", size: 30 },
+  image: { border: 0, borderColor: "#ffffff", shadow: 0, opacity: 1 },
 };
 // Keys whose value is a length (converted between screen px and doc units).
-const LEN_KEYS = new Set(["size", "width", "radius", "outline"]);
+const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border"]);
 
 // Props bar descriptors per object type.
 //   t: color | num | toggle | select | seg   create: only while drawing (hidden for a selection)
@@ -141,6 +144,9 @@ const P = {
   psize: { k: "size", t: "num", label: "Size", min: 10, max: 200, exp: true, unit: "px" },
   esize: { k: "size", t: "num", label: "Size", min: 2, max: 400, exp: true, unit: "px" },
   emode: { k: "mode", t: "seg", label: "Erase", options: [["object", "Object"], ["partial", "Partial"]] },
+  border: { k: "border", t: "num", label: "Frame", min: 0, max: 200, exp: false, unit: "px" },
+  borderColor: { k: "borderColor", t: "color", label: "Frame colour" },
+  shadow: { k: "shadow", t: "num", label: "Shadow", min: 0, max: 1, pct: true },
 };
 const PROPS = {
   brush: [P.color, P.size, P.opacity, P.pressure, P.smooth],
@@ -153,10 +159,36 @@ const PROPS = {
   ellipse: [P.strokeOn, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.opacity],
   text: [P.font, P.tsize, P.color, P.bold, P.italic, P.underline, P.align, P.bgOn, P.bg, P.bgOpacity, P.outline, P.outlineColor, P.opacity],
   pin: [P.color, P.psize],
+  image: [P.border, P.borderColor, P.shadow, P.opacity],
   select: [],
 };
 
 const isDrawing = (it) => it.kind !== "note";
+// Reference images (kind "image") show Sight's stored shots.
+RC.setImageSource((id) => (/^[0-9a-f]{16}$/.test(String(id)) ? `/api/review/shots/${id}` : ""));
+// Pictures a reference image is made from: anything the browser decodes. Kept at most REF_MAX px on the long side.
+const REF_MAX = 2048;
+const REF_RE = /\.(jpe?g|png|gif|webp|bmp|avif|svg)$/i;
+const refAlpha = (typeOrName) => /png|gif|webp|svg|avif/i.test(String(typeOrName || ""));
+// A reference image's crop frame: the whole source picture in doc units — origin O (its top-left), axes u / v
+// (the drawing's rotation) and the doc units per picture width / height (sx, sy). Cropping moves the box, never
+// the picture, so every crop gesture works from the frame taken when it started.
+function cropFrame(d){
+  const c = RC.imgCrop(d), sx = d.w / c[2], sy = d.h / c[3];
+  const a = (d.rot || 0) * Math.PI / 180, u = [Math.cos(a), Math.sin(a)], v = [-Math.sin(a), Math.cos(a)];
+  const tlx = d.x + d.w / 2 - u[0] * d.w / 2 - v[0] * d.h / 2, tly = d.y + d.h / 2 - u[1] * d.w / 2 - v[1] * d.h / 2;
+  return { O: [tlx - u[0] * c[0] * sx - v[0] * c[1] * sy, tly - u[1] * c[0] * sx - v[1] * c[1] * sy], u, v, sx, sy };
+}
+const toImg = (F, x, y) => { const dx = x - F.O[0], dy = y - F.O[1]; return [(dx * F.u[0] + dy * F.u[1]) / F.sx, (dx * F.v[0] + dy * F.v[1]) / F.sy]; };
+const fromImg = (F, nx, ny) => [F.O[0] + F.u[0] * nx * F.sx + F.v[0] * ny * F.sy, F.O[1] + F.u[1] * nx * F.sx + F.v[1] * ny * F.sy];
+// Sets the crop window c (0…1 of the picture) and the box that shows it, the picture staying where frame F has it.
+function applyCrop(d, F, c){
+  d.w = c[2] * F.sx; d.h = c[3] * F.sy;
+  const tl = fromImg(F, c[0], c[1]);
+  const cx = tl[0] + F.u[0] * d.w / 2 + F.v[0] * d.h / 2, cy = tl[1] + F.u[1] * d.w / 2 + F.v[1] * d.h / 2;
+  d.x = cx - d.w / 2; d.y = cy - d.h / 2;
+  d.crop = c[0] <= 1e-4 && c[1] <= 1e-4 && c[2] >= 1 - 1e-4 && c[3] >= 1 - 1e-4 ? null : c.map((v) => Math.round(v * 1e5) / 1e5);
+}
 // Elements that already carry this module's pointer listeners (a board view keeps one viewport for ever).
 const wired = new WeakSet();
 
@@ -185,7 +217,7 @@ export function createAnnotator(host){
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
     tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
-    sel: new Set(), undo: [], redo: [], clip: null, clipCut: false,
+    sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
@@ -980,6 +1012,7 @@ export function createAnnotator(host){
   const editSel = () => selVisible().filter(editable);
   // Handles in screen px: [id, x, y] (review-core xfHandles, mapped from doc units).
   function handles(){
+    if (cropItem()) return [];  // a reference image being cropped has the crop grips instead (cropHandles)
     return RC.xfHandles(editSel(), k(), S.drag?.xf).map(([id, x, y]) => [id, ...toScreen(x, y)]);
   }
   function renderSel(){
@@ -987,7 +1020,8 @@ export function createAnnotator(host){
     if (!L) return;
     syncViewBox();
     // Handles and the box are for the editable selection; a baked drawing (selected for Delete) gets a dashed outline.
-    let html = RC.xfSvg(editSel(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
+    const ci = cropItem();
+    let html = ci ? cropSvg(ci) : RC.xfSvg(editSel(), { px: k(), u: 1, map: toScreen, D: S.drag?.xf });
     for (const it of selVisible()){
       if (!baked(it)) continue;
       const b = boundsOf(it), a = toScreen(b[0], b[1]), c = toScreen(b[2], b[3]);
@@ -1038,6 +1072,178 @@ export function createAnnotator(host){
     return st;
   }
 
+  // ---- reference images: adding, cropping ------------------------------------------------------
+  // The reference image being cropped (S.crop: its id) — only while it is the one selected, visible and editable.
+  function cropItem(){
+    const it = S.crop ? S.items.get(S.crop) : null;
+    return it && typeOf(it) === "image" && S.sel.size === 1 && S.sel.has(it.id) && visibleNow(it) && editable(it) ? it : null;
+  }
+  function startCrop(){
+    const sel = editSel();
+    if (sel.length !== 1 || typeOf(sel[0]) !== "image") return false;
+    if (S.tool !== "select") setTool("select");
+    S.crop = sel[0].id;
+    toast("Crop: drag an edge or corner · drag inside to move the picture · Enter or Esc when done", 2600);
+    renderSel(); renderProps();
+    if (S.hover) updateCursor(...S.hover);
+    return true;
+  }
+  function endCrop(){
+    if (!S.crop) return false;
+    S.crop = null;
+    renderSel(); renderProps();
+    if (S.hover) updateCursor(...S.hover);
+    return true;
+  }
+  // [handle, sx, sy] of the crop window's corners and edges, in screen px.
+  function cropHandles(it){
+    const F = cropFrame(it.data), c = RC.imgCrop(it.data), l = c[0], t = c[1], r = c[0] + c[2], b = c[1] + c[3], mx = (l + r) / 2, my = (t + b) / 2;
+    return [["nw", l, t], ["n", mx, t], ["ne", r, t], ["e", r, my], ["se", r, b], ["s", mx, b], ["sw", l, b], ["w", l, my]]
+      .map(([h, nx, ny]) => [h, ...toScreen(...fromImg(F, nx, ny))]);
+  }
+  // What a press at (sx, sy) screen / (x, y) doc does to the image being cropped: a grip, "pan" (inside), or null.
+  function cropAt(it, sx, sy, x, y){
+    const fing = S.lastPtr === "touch" ? 18 : 10;
+    const h = cropHandles(it).find(([, hx, hy]) => hyp(sx - hx, sy - hy) <= fing);
+    if (h) return h[0];
+    const [nx, ny] = toImg(cropFrame(it.data), x, y), c = RC.imgCrop(it.data);
+    return nx >= c[0] && nx <= c[0] + c[2] && ny >= c[1] && ny <= c[1] + c[3] ? "pan" : null;
+  }
+  // The crop overlay: the whole picture dimmed, the kept part at full strength, its outline and grips.
+  function cropSvg(it){
+    const d = it.data, F = cropFrame(d), c = RC.imgCrop(d), u = RC.imageUrl(d.shot);
+    const P = (nx, ny) => toScreen(...fromImg(F, nx, ny));
+    const p0 = P(0, 0), p1 = P(1, 0), p2 = P(0, 1);
+    const m = `matrix(${[p1[0] - p0[0], p1[1] - p0[1], p2[0] - p0[0], p2[1] - p0[1], p0[0], p0[1]].map((v) => Math.round(v * 1000) / 1000).join(" ")})`;
+    const vb = c.map((v) => Math.round(v * 1e5) / 1e5).join(" ");
+    let h = "";
+    if (u){
+      h += `<g transform="${m}" opacity="0.38"><image href="${esc(u)}" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></g>`;
+      h += `<g transform="${m}"><svg x="${c[0]}" y="${c[1]}" width="${c[2]}" height="${c[3]}" viewBox="${vb}" preserveAspectRatio="none" overflow="hidden"><image href="${esc(u)}" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g>`;
+    }
+    const poly = (pts, extra) => `<polygon points="${pts.map((q) => r2(q[0]) + "," + r2(q[1])).join(" ")}" fill="none" stroke="#4c9aff" ${extra}/>`;
+    h += poly([P(0, 0), P(1, 0), P(1, 1), P(0, 1)], 'stroke-width="1" stroke-dasharray="4 3"');
+    h += poly([P(c[0], c[1]), P(c[0] + c[2], c[1]), P(c[0] + c[2], c[1] + c[3]), P(c[0], c[1] + c[3])], 'stroke-width="1.5"');
+    const z = S.lastPtr === "touch" ? 1.6 : 1;
+    for (const [, x, y] of cropHandles(it)) h += `<rect x="${r2(x - 5 * z)}" y="${r2(y - 5 * z)}" width="${r2(10 * z)}" height="${r2(10 * z)}" fill="#fff" stroke="#4c9aff" stroke-width="1.5"/>`;
+    return h;
+  }
+  // A crop gesture: a grip moves that edge of the window (the picture stays put), "pan" slides the picture
+  // inside the window (the box stays put). Both from the frame / window the gesture started with.
+  function cropDrag(D, x, y){
+    const it = S.items.get(D.id);
+    if (!it) return;
+    const [nx, ny] = toImg(D.F, x, y), c = D.c0;
+    if (!D.moved && hyp((nx - D.n0[0]) * D.F.sx, (ny - D.n0[1]) * D.F.sy) / k() < 2) return;  // a click is not a crop
+    D.moved = true;
+    if (D.crop === "pan"){
+      const l = clamp(c[0] - (nx - D.n0[0]), 0, 1 - c[2]), t = clamp(c[1] - (ny - D.n0[1]), 0, 1 - c[3]);
+      it.data.crop = [l, t, c[2], c[3]].map((v) => Math.round(v * 1e5) / 1e5);
+      if (!(l > 1e-4 || t > 1e-4 || c[2] < 1 - 1e-4 || c[3] < 1 - 1e-4)) it.data.crop = null;
+    } else {
+      const h = D.crop, mx = 12 * k() / D.F.sx, my = 12 * k() / D.F.sy;
+      let l = c[0], t = c[1], r = c[0] + c[2], b = c[1] + c[3];
+      if (h.includes("w")) l = clamp(nx, 0, r - mx);
+      if (h.includes("e")) r = clamp(nx, l + mx, 1);
+      if (h.includes("n")) t = clamp(ny, 0, b - my);
+      if (h.includes("s")) b = clamp(ny, t + my, 1);
+      applyCrop(it.data, D.F, [l, t, r - l, b - t]);
+    }
+    renderItem(it);
+    renderSel();
+  }
+  function resetCrop(){
+    const it = editSel().find((x) => typeOf(x) === "image" && x.data.crop);
+    if (!it) return;
+    commit([it.id], () => { const d = it.data; applyCrop(d, cropFrame(d), [0, 0, 1, 1]); });
+  }
+  // One picture (a File / Blob, or a URL of the library's own file) scaled to REF_MAX and stored as a shot.
+  async function storeRef(src, alpha){
+    const url = typeof src === "string" ? src : URL.createObjectURL(src);
+    try {
+      const im = new Image();
+      im.decoding = "async";
+      im.src = url;
+      await im.decode();
+      let nw = im.naturalWidth || im.width, nh = im.naturalHeight || im.height;
+      if (!nw || !nh){ nw = 1024; nh = 1024; }  // an SVG with only a viewBox has no size of its own
+      const sc = Math.min(1, REF_MAX / Math.max(nw, nh));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(nw * sc)); cv.height = Math.max(1, Math.round(nh * sc));
+      cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+      const type = alpha ? "image/png" : "image/jpeg";
+      const blob = await new Promise((res) => cv.toBlob(res, type, 0.9));
+      if (!blob) throw new Error("encode failed");
+      const r = await host.api("/api/review/shots", { method: "POST", headers: { "content-type": type }, body: blob });
+      return { id: r.id, w: cv.width, h: cv.height };
+    } finally {
+      if (typeof src !== "string") URL.revokeObjectURL(url);
+    }
+  }
+  const refsAllowed = () => supported() && !isBoard() && host.refImages !== false;
+  // Adds pictures to the frame / view on screen as reference images, centred on `at` (doc units; null = the
+  // middle of the view), each one fitted into a third of the view. srcs: [{src: File | URL, alpha}].
+  async function addRefs(srcs, at){
+    if (!srcs.length || !refsAllowed() || !surfaceEl()) return;
+    if (!S.on && !toggle(true)) return;
+    finishEdit();
+    if (S.kind === "video"){ const v = video(); if (v) vidPause(v); }  // they belong to the frame they were dropped on
+    if (S.b3) S.b3.pauseAnim?.();
+    const aid = S.asset?.id, ctx = ctxNow(false, true);  // the frame / view they were dropped on, whatever happens meanwhile
+    toast(srcs.length > 1 ? `Adding ${srcs.length} pictures…` : "Adding the picture…", 8000);
+    const made = [];
+    for (const x of srcs){ try { made.push(await storeRef(x.src, x.alpha)); } catch (e){ console.warn(e); } }
+    if (S.asset?.id !== aid || !surfaceEl() || !S.on) return;   // another file / the mode left meanwhile
+    if (!made.length){ toast("Could not read the picture"); return; }
+    const g = geom(), vw = g.w / g.s, vh = g.h / g.s;
+    let [cx, cy] = at || [(g.w / 2 - g.ox) / g.s, (g.h / 2 - g.oy) / g.s];
+    const st = styleDoc("image"), its = [];
+    for (const m of made){
+      const f = Math.min(vw * 0.34 / m.w, vh * 0.34 / m.h), w = m.w * f, h = m.h * f;
+      its.push(newItem("image", null, { shot: m.id, x: cx - w / 2, y: cy - h / 2, w, h, rot: 0, crop: null, iw: m.w, ih: m.h, border: st.border, borderColor: st.borderColor, shadow: st.shadow, opacity: st.opacity }));
+      cx += 24 * k(); cy += 24 * k();
+    }
+    for (const it of its) it.data.ctx = ctx && typeof ctx === "object" ? structuredClone(ctx) : ctx;
+    if (S.pinFocus){ S.pinFocus = null; renderPanel(); }
+    commit(its.map((it) => it.id), () => { for (const it of its) S.items.set(it.id, it); });
+    setTool("select");
+    S.sel = new Set(its.map((it) => it.id));
+    renderSel(); renderProps();
+    toast(made.length < srcs.length ? `Added ${made.length} of ${srcs.length} — the rest could not be read` : made.length > 1 ? `${made.length} pictures added` : "Picture added", 1600);
+  }
+  function pickRefs(at){
+    if (!refsAllowed()) return;
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
+    inp.onchange = () => { const fs = [...(inp.files || [])]; if (fs.length) addRefs(fs.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) })), at); };
+    inp.click();
+  }
+  // The pictures selected in the library (the grid beside the lightbox: Tab) — the touch way to bring them in.
+  function addSelectedRefs(){
+    const list = host.selectedPictures?.() || [];
+    if (!list.length){ toast(host.toggleLibrary ? "Select pictures in the library first (Tab shows it)" : "Nothing selected"); return; }
+    addRefs(list, null);
+  }
+  // A drag over the surface that may carry pictures: files from outside, or library files (the grid's drag).
+  function refDrag(e){
+    const t = e.dataTransfer?.types;
+    return !!t && refsAllowed() && !!surfaceEl() && ([...t].includes("Files") || [...t].includes("application/x-sight-ids"));
+  }
+  function onRefDrop(e){
+    if (!refDrag(e)) return;
+    const files = [...(e.dataTransfer.files || [])].filter((f) => /^image\//.test(f.type) || REF_RE.test(f.name));
+    let srcs = files.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) }));
+    if (!srcs.length){
+      let ids = [];
+      try { ids = JSON.parse(e.dataTransfer.getData("application/x-sight-ids") || "[]"); } catch {}
+      if (Array.isArray(ids) && ids.length) srcs = host.pictureSources?.(ids) || [];
+    }
+    if (!srcs.length) return;  // a review file (.srev) and the like: the page's own drop handler takes it
+    e.preventDefault();
+    e.stopPropagation();
+    addRefs(srcs, toDoc(e));
+  }
+
   let suppressClick = false;
   function onDown(e){
     if (!S.on || !surfaceEl()) return;  // (a board switch nulls the surface while the listeners stay wired)
@@ -1047,6 +1253,7 @@ export function createAnnotator(host){
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
     const pen = e.pointerType === "pen";
+    S.lastPtr = e.pointerType;
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
     // The host's own control under the press (compare: a split under the finger, Alt+drag) — not while an area is
     // being picked, with the pen's eraser end, or Alt with the select tool (its duplicate-drag).
@@ -1070,6 +1277,17 @@ export function createAnnotator(host){
       return;
     }
     if (tool === "select"){
+      const ci = cropItem();
+      if (ci){
+        const ch = cropAt(ci, sx, sy, x, y);
+        if (ch){
+          grab(e);
+          const [nx, ny] = toImg(cropFrame(ci.data), x, y);
+          S.drag = { crop: ch, id: ci.id, F: cropFrame(ci.data), c0: RC.imgCrop(ci.data).slice(), n0: [nx, ny], ids: [ci.id], src: new Map([[ci.id, snap(ci)]]), moved: false };
+          return;
+        }
+        endCrop();  // a press elsewhere ends cropping and then does what it always does
+      }
       const h = S.sel.size ? handleAt(sx, sy) : null;
       if (h){ grab(e); startHandleDrag(h, x, y, e); return; }
       const hit = hitAt(x, y);
@@ -1139,6 +1357,11 @@ export function createAnnotator(host){
       const st = styleDoc("text");
       const it = newItem("text", null, { ...st, text: "", x, y: y - st.size * 0.6, rot: 0 });
       editText(it, true);
+      return;
+    }
+    if (tool === "image"){
+      release(e);
+      pickRefs([x, y]);
       return;
     }
     if (tool === "pin"){
@@ -1238,6 +1461,7 @@ export function createAnnotator(host){
       renderSel();
       return;
     }
+    if (D.crop){ cropDrag(D, x, y); return; }
     if (D.handle){ dragHandle(D, x, y, e); return; }
   }
   const toDocS = (sx, sy) => { const g = geom(); return [(sx - g.ox) / g.s, (sy - g.oy) / g.s]; };
@@ -1279,7 +1503,7 @@ export function createAnnotator(host){
       return;
     }
     if (D.marquee){ renderSel(); renderProps(); return; }
-    if (D.move || D.handle){
+    if (D.move || D.handle || D.crop){
       if (!D.moved){
         if (D.move && D.plain && S.sel.size > 1){ S.sel = new Set([D.hit]); renderProps(); }
         renderSel();
@@ -1364,7 +1588,10 @@ export function createAnnotator(host){
     let c = "crosshair";
     if (altCam()) c = "";
     else if (S.region) c = "crosshair";
-    else if (S.tool === "select"){
+    else if (S.tool === "select" && cropItem()){
+      const [x, y] = toDocS(sx, sy), ch = cropAt(cropItem(), sx, sy, x, y);
+      c = ch === "pan" ? "grab" : ch ? RC.XF_CURSOR[ch] : "default";
+    } else if (S.tool === "select"){
       const h = S.sel.size ? handleAt(sx, sy) : null;
       if (h) c = RC.XF_CURSOR[h];
       else {
@@ -1373,6 +1600,7 @@ export function createAnnotator(host){
       }
     } else if (STROKE_TOOLS.has(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
+    else if (S.tool === "image") c = "copy";
     el.style.cursor = c;
   }
   // The tool a press would use now: Ctrl held turns any drawing tool into the eraser.
@@ -1616,6 +1844,7 @@ export function createAnnotator(host){
     if (!bar) return;
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
     bar.querySelectorAll("[data-act=shot], [data-act=region]").forEach((b) => { b.hidden = isBoard(); });  // no picture to capture on a board
+    bar.querySelector("[data-tool=image]").hidden = isBoard() || host.refImages === false;  // a board places pictures itself
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
     if (S.kind !== "video") closeStampPop();
@@ -1623,8 +1852,9 @@ export function createAnnotator(host){
     bar.querySelector("[data-act=panel]").classList.toggle("on", S.panelOn);
   }
   function setTool(t){
-    if (!PROPS[t]) return;
+    if (!PROPS[t] || (t === "image" && !refsAllowed())) return;  // (Shift+I on a board: no such tool there)
     finishEdit();
+    S.crop = null;
     S.tool = t;
     if (t !== "select" && S.sel.size){ S.sel.clear(); renderSel(); }
     paintAlt();
@@ -1657,6 +1887,7 @@ export function createAnnotator(host){
   function renderProps(){
     const el = S.bar?.querySelector(".an-props");
     if (!el || numDrag?.isConnected) return;
+    if (S.crop && !cropItem()) S.crop = null;  // cropping ends with the image's selection
     const tg = propsTarget();
     let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
     if (tg.items) list = list.filter((p) => !p.create);
@@ -1683,6 +1914,15 @@ export function createAnnotator(host){
     if (tg.items && tg.items.some((it) => editable(it) && S.kind === "video" && it.data.ctx?.t != null)){
       const h = tg.items.find((it) => editable(it) && it.data.ctx?.t != null).data.ctx?.hold ?? 0;
       html += `<label class="an-psel" title="How long the selection stays on screen"><span>Hold</span><select data-shold>${HOLDS.map(([v, n]) => `<option value="${v}"${v === h ? " selected" : ""}>${n}</option>`).join("")}</select></label>`;
+    }
+    // Reference images: where pictures come from (the tool), crop (one selected picture).
+    if (!tg.items && S.tool === "image" && refsAllowed()){
+      html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="refdisk" title="Pick pictures on this computer — or click the frame where they should go">From disk…</button>`;
+      if (host.toggleLibrary) html += `<button type="button" class="an-tg" data-cmd="reflib" title="Show the library beside the player and drag pictures from it onto the frame (Tab)">Library</button><button type="button" class="an-tg" data-cmd="refsel" title="Add the pictures selected in the library">Add selected</button>`;
+    }
+    if (tg.items && tg.type === "image" && tg.items.length === 1 && editable(tg.items[0])){
+      html += `<span class="an-sep"></span><button type="button" class="an-tg${cropItem() ? " on" : ""}" data-cmd="crop" title="Crop — drag the edges, drag inside to move the picture (double-click the picture; Enter / Esc to finish)">Crop</button>`;
+      if (tg.items[0].data.crop) html += `<button type="button" class="an-tg" data-cmd="uncrop" title="Show the whole picture again">Reset crop</button>`;
     }
     if (tg.items){
       html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="front" title="Bring to front (Ctrl+])">Front</button><button type="button" class="an-tg" data-cmd="back" title="Send to back (Ctrl+[)">Back</button><button type="button" class="an-tg" data-cmd="del" title="Delete (Del)">${ICON.trash}</button>`;
@@ -1740,6 +1980,11 @@ export function createAnnotator(host){
     el.querySelector("[data-cmd=front]")?.addEventListener("click", () => reorder(1));
     el.querySelector("[data-cmd=back]")?.addEventListener("click", () => reorder(-1));
     el.querySelector("[data-cmd=del]")?.addEventListener("click", () => deleteSelection());
+    el.querySelector("[data-cmd=refdisk]")?.addEventListener("click", () => pickRefs(null));
+    el.querySelector("[data-cmd=reflib]")?.addEventListener("click", () => host.toggleLibrary?.());
+    el.querySelector("[data-cmd=refsel]")?.addEventListener("click", () => addSelectedRefs());
+    el.querySelector("[data-cmd=crop]")?.addEventListener("click", () => { if (!endCrop()) startCrop(); });
+    el.querySelector("[data-cmd=uncrop]")?.addEventListener("click", () => { resetCrop(); renderProps(); });
     el.querySelectorAll(".an-num").forEach((n) => bindNum(n, list[Number(n.dataset.p)]));
   }
   // Compact number control: drag sideways, scroll, or click to type.
@@ -3042,6 +3287,7 @@ export function createAnnotator(host){
   const drawItems = (cx, items) => RC.drawCanvas(cx, items, numOf);
   // What is on screen right now (picture + visible drawings), at device resolution.
   async function composeView(){
+    await RC.imagesReady(visibleDrawings());  // reference images decoded before they are drawn
     const g = geom();
     if (!g) return null;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -3228,6 +3474,7 @@ export function createAnnotator(host){
     return true;
   }
   async function gatherReport1(forPage, everyNote){
+    await RC.imagesReady([...S.items.values()].filter(isDrawing));  // composeNative draws reference images synchronously
     const a = S.asset, notes = notesSorted();
     const toJpeg = (cv) => cv ? cv.toDataURL("image/jpeg", 0.9) : null;
     const out = [];
@@ -3425,7 +3672,7 @@ export function createAnnotator(host){
     if (want === S.on) return true;
     S.on = want;
     if (!want){
-      closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.drag = null; S.pinFocus = null; flush();
+      closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.crop = null; S.drag = null; S.pinFocus = null; flush();
       // A board keeps its drawings on show with the mode off: no hover circle, no "hidden" left over from the bar.
       S.hover = null;   // drawings stay on show (shownOff): no brush circle left over the picture
       if (isBoard()) S.hidden = false;
@@ -3528,7 +3775,7 @@ export function createAnnotator(host){
     const G = { tool: "Drawing tools", edit: "Editing", notes: "Notes and panels", nav: "Moving the selection", video: "Video", d3: "3D models", gen: "General" };
     const rows = [
       ["Shift+Slash", () => toggleHelp(), "Show / hide this list", G.gen],
-      ["Escape", () => { if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }, "Deselect / clear pin focus, then leave annotation mode", G.gen],
+      ["Escape", () => { if (endCrop()) return; if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }, "Deselect / clear pin focus, then leave annotation mode", G.gen],
       ["KeyA", () => toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen], ["Shift+KeyA", (e) => e.repeat || toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen],
       ["Ctrl+KeyZ", () => undo(), "Undo", G.edit], ["Ctrl+Shift+KeyZ", () => redo(), "Redo", G.edit], ["Ctrl+KeyY", () => redo(), "Redo", G.edit],
       ["Delete", () => deleteSelection(), "Delete the selection", G.edit], ["Backspace", () => deleteSelection(), "Delete the selection", G.edit], ["KeyX", () => deleteSelection(), "Delete the selection", G.edit],
@@ -3540,7 +3787,7 @@ export function createAnnotator(host){
       ...TOOLS.filter(Boolean).map(([id, combo, label]) => [combo, () => setTool(id), label, G.tool]),
       ["KeyS", () => { screenshot(false); }, "Screenshot of the view into the note", G.notes], ["Shift+KeyS", () => { screenshot(true); }, "Screenshot of an area", G.notes],
       ["KeyC", () => togglePanel(), "Show / hide the notes panel", G.notes], ["Shift+KeyH", () => toggleHidden(), "Hide / show the drawings", G.notes],
-      ["Enter", () => focusComposer(), "Write a note (Enter adds it, Shift+Enter is a new line)", G.notes],
+      ["Enter", () => { if (!endCrop()) focusComposer(); }, "Write a note (Enter adds it, Shift+Enter is a new line); finish cropping", G.notes],
       ["Alt+KeyM", () => dictateNote(), "Dictate into the note / reply / picture text (again: stop; right-click the mic: language)", G.notes],
       ["ArrowLeft", () => nudge(-1, 0), "Nudge the selection 1 px", G.nav], ["ArrowRight", () => nudge(1, 0), "Nudge the selection 1 px", G.nav], ["ArrowUp", () => nudge(0, -1), "Nudge the selection 1 px", G.nav], ["ArrowDown", () => nudge(0, 1), "Nudge the selection 1 px", G.nav],
       ["Shift+ArrowLeft", () => nudge(-10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowRight", () => nudge(10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowUp", () => nudge(0, -10), "Nudge the selection 10 px", G.nav], ["Shift+ArrowDown", () => nudge(0, 10), "Nudge the selection 10 px", G.nav],
@@ -3702,7 +3949,7 @@ export function createAnnotator(host){
     if (S.b2?.board) S.layer?.root.remove();
     S.b2 = S.b3 = null;
     S.layer = null;
-    S.items.clear(); S.saved.clear(); S.sel.clear();
+    S.items.clear(); S.saved.clear(); S.sel.clear(); S.crop = null;
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear(); S.adopt.clear();
@@ -3731,6 +3978,9 @@ export function createAnnotator(host){
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onUp);
     el.addEventListener("pointerleave", () => { S.hover = null; if (S.on && !S.drag) renderSel(); });
+    // Pictures dropped on the frame become reference images (files from outside, or files dragged from the library).
+    el.addEventListener("dragover", (e) => { if (!refDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+    el.addEventListener("drop", onRefDrop);
     // A drawing gesture must not also count as the viewer's click (video play/pause) or
     // double-click (frame / 100%).
     el.addEventListener("click", (e) => { if (suppressClick){ suppressClick = false; e.stopImmediatePropagation(); } }, true);
@@ -3739,6 +3989,14 @@ export function createAnnotator(host){
       const [x, y] = toDoc(e);
       const hit = hitAt(x, y);
       if (hit && typeOf(hit) === "text" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editText(hit); return; }
+      // A reference image: double-click crops it (again, or on the empty frame: done).
+      if (S.tool === "select" && hit && typeOf(hit) === "image" && editable(hit)){
+        e.stopImmediatePropagation(); e.preventDefault();
+        if (cropItem()?.id === hit.id){ endCrop(); return; }
+        S.sel = new Set([hit.id]);
+        startCrop();
+        return;
+      }
       if (S.tool !== "select"){ e.stopImmediatePropagation(); e.preventDefault(); }
     }, true);
   }

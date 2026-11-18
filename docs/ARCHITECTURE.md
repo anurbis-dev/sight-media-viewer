@@ -352,6 +352,25 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 
 (The same editor also runs on Canvas boards, scope `board` — see "Board annotations" under Canvas.)
 
+**Reference images** (kind `image`, FORMAT.md) — a drawing whose picture is a shot (`/api/review/shots`, stored by
+`storeRef`: decoded in the browser, ≤ 2048 px, PNG when the source may have alpha else JPEG). Added by `addRefs`
+(annotate.js) from a drop on the surface (`onRefDrop`: OS files, or `application/x-sight-ids` from the grid via
+`host.pictureSources` → index.html `pictureSource`), a click with the tool (`pickRefs`), or *Add selected*
+(`host.selectedPictures`). Not on boards (`host.refImages: false`; a board places pictures as items). Scaling is always
+uniform (review-core `transformItem` / `xfDrag` treat it like text). Crop mode (`S.crop`, `cropItem()` gates it to the
+one selected editable visible image): `cropFrame(d)` = the whole source picture in doc units (origin + rotated axes +
+units per picture), `applyCrop` sets the window and a box that keeps the picture where the frame had it; grips move
+an edge, "pan" slides the window; the overlay (`cropSvg`) is in the `.an-ui` layer. Canvas exports await
+`RC.imagesReady` (composeView, gatherReport1); `RC.setImageSource` is set by each client (annotate.js module
+init, the HTML page, the phone's `refShots` which makes object URLs ahead since the core asks synchronously).
+
+**Library beside the lightbox** (index.html, `state.lightSplit` / `lightSplitRatio` in `sight.layout`, Tab and
+`#libBtn`) — reuses the board split: `applyViewDom()` shows the grid at its ratio, `#splitHandle`, and behind the
+lightbox either the board (still open) or the empty `#lightSlot`; `placeLightSplit()` sets the fixed lightbox's
+`left` to the divider's right edge (ResizeObserver on the grid); `body.light-split` hides the inspector. Only while a
+lightbox is open (`lightSplitOn`); closing it restores the layout. The divider's double-click (stacked) is ignored
+there. Tab also toggles the board split (`toggleCanvasSplit`); `#splitBtn` sits at the left of the top bar.
+
 **Notes panel vs drawing** — two modes: `S.on` (drawing: tools + the panel per `S.panelOn`) and reading
 (`S.readOn`, `sight.annotate.read[.board]`): the panel alone, `.an-read` hides the composer; a click on a note /
 its picture still picks it and goes to its frame / view / board place. `togglePanel` flips the flag of the mode in

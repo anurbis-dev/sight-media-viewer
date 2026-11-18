@@ -49,6 +49,12 @@
   It stays open while you flip through files and is remembered next time.
 - **PSD layers** — in the lightbox of a PSD press `D` (or the ☰ button bottom-right) for the layer
   list; click a layer to view it alone, "Composite" to return to the full image.
+- **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar
+  and the library grid on the left and the lightbox / video player on the right, with a divider to drag
+  (the width is remembered). Double-click a thumbnail to open it, drag pictures from the grid onto the frame
+  as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
+  way you left it. On a board `Tab` shows / hides the library beside it in the same way (◧ now sits at the
+  left of the top bar).
 - **Reading notes** — the speech-bubble button in the lightbox's top bar (its badge counts the notes) or `C`
   opens the notes panel without the drawing tools: read the notes and replies, click a note or its picture to go
   to its frame / view (only its drawings show; Esc shows all again). The same button sits in the top bar for a
@@ -71,6 +77,18 @@
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
     eraser end erases too) · `L` line · `W` arrow · `R` rectangle · `O` ellipse · `T` text ·
     `N` numbered pin. `[` / `]` make the brush / width smaller / larger.
+  - **Reference images** (`Shift+I`, the picture button in the toolbar): put pictures on the frame /
+    picture as references. Drop picture files from outside onto the frame (any tool — annotating turns on
+    by itself), drag pictures from the library beside the player (below), click the frame with the tool to
+    pick files on the computer (they land where you clicked), or use the tool's *From disk…* / *Library* /
+    *Add selected* buttons (*Add selected* takes the pictures selected in the library — the way on a touch
+    screen). On a video a reference image belongs to the frame it was dropped on (and *Hold*, like any
+    drawing). A selected reference image has: *Frame* (border width) and its colour, *Shadow* (strength),
+    *Opacity*; corners scale it without stretching, the knob turns it. *Crop* (or double-click the picture)
+    shows the whole picture dimmed with grips: drag an edge or corner to cut it, drag inside to slide the
+    picture within the cut; Enter / Esc / a press elsewhere finishes, *Reset crop* shows it all again.
+    Reference images travel with the review (web page, `.srev`, PDF / ZIP pictures, the phone app shows
+    them).
   - Shapes: stroke on/off, width, dash (solid / dashed / dotted), fill on/off, fill colour and
     opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
     (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the

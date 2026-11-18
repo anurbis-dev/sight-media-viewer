@@ -26,6 +26,7 @@ export async function burn(pic, docW, docH, items, numOf, ox = 0, oy = 0){
   if (im.close) im.close();
   const sx = c.width / (docW || c.width), sy = c.height / (docH || c.height);
   g.setTransform(sx, 0, 0, sy, -ox * sx, -oy * sy);
+  await RC().imagesReady(items);  // reference images decoded before they are burned in
   RC().drawCanvas(g, items, numOf);
   const blob = await canvasBlob(c, "image/jpeg", 0.88), out = { blob, w: c.width, h: c.height };
   dropCanvas(c);

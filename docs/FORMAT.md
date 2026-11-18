@@ -79,7 +79,7 @@ One row per object; the same shape in the package and (plus Sight-only columns) 
 | Key | |
 |-----|--|
 | `id` | row id |
-| `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `status` |
+| `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `image` · `status` |
 | `shape_kind` | `stroke`: `brush` · `pencil` · `marker`; `shape`: `rect` · `ellipse` · `line` · `arrow`; else null |
 | `x` `y` `w` `h` | the drawing's bounding box in doc units — for queries only, the geometry is in `data`; null for notes / status |
 | `rotation`, `z_index` | `z_index` = paint order (higher on top); `rotation` stays 0 (rotation lives in `data.rot`) |
@@ -153,7 +153,7 @@ the reply back. Reply pictures appeared in 0.19 (older Sight ignores `shots` on 
 author, created}`. Never edited or deleted. The note's real state is still `status` / `status_at`;
 events are only the history. Older Sight shows an event as an empty reply.
 
-### Drawings — `stroke`, `shape`, `text`, `pin`
+### Drawings — `stroke`, `shape`, `text`, `pin`, `image`
 
 Common `data` keys:
 
@@ -186,9 +186,19 @@ Per type (all lengths in doc units):
   `underline`, `align` `left` | `center` | `right`, `bgOn`, `bg`, `bgOpacity` (box behind the text,
   padding 0.3·size), `outline` (width), `outlineColor`, `rot`. Line height 1.25·size.
 - **`pin`**: `x, y` (centre), `color`, `size` (diameter). Shows the number of its note.
+- **`image`** (reference image, Sight 0.75+; `shape_kind` null): `shot` (id of the picture in the shots — the
+  package's `shots` map carries it like a note's screenshot; import remaps it like `data.shots`), `x, y, w, h`
+  (the box the shown part fills, positive), `rot` (degrees about the box centre), `crop` (`[x, y, w, h]` of the
+  source picture, 0…1; null / absent = all of it — the box keeps the shown part's aspect, so the picture is
+  never stretched), `iw, ih` (the stored picture's pixel size), `border` (frame width outside the box, doc
+  units; 0 = none), `borderColor`, `shadow` (0…1, strength of a soft shadow down-right), `opacity`. Older
+  clients (before 0.75) skip it as an unknown kind (`validItem` false) and keep the row.
 
 The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `primCanvas` in
-`review-core.js`; every client draws through it, so a drawing looks the same everywhere.
+`review-core.js`; every client draws through it, so a drawing looks the same everywhere. An `image`
+drawing's picture is found through `setImageSource(fn)` (shot id → URL: Sight's `/api/review/shots/<id>`, the
+page's / phone's data or object URLs); canvas drawing needs it decoded first (`imagesReady(items)`), else a grey
+placeholder is drawn.
 
 ### Context — `data.ctx`
 

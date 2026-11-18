@@ -3696,6 +3696,8 @@ class Library:
                         data["note"] = ids[data["note"]]
                     if isinstance(data.get("shots"), list):
                         data["shots"] = [shot_map.get(str(x), str(x)) for x in data["shots"]]
+                    if isinstance(data.get("shot"), str):  # a reference image's picture (kind "image")
+                        data["shot"] = shot_map.get(data["shot"], data["shot"])
                     if not isinstance(data.get("replies"), (list, type(None))):
                         data["replies"] = []
                     if data.get("replies"):  # pictures attached to replies (web page / Sight)

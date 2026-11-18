@@ -259,6 +259,7 @@ export function shotIds(rows){
   live(rows).forEach((r) => {
     const d = r.data || {};
     (d.shots || []).forEach((s) => out.add(String(s)));
+    if (r.kind === "image" && typeof d.shot === "string") out.add(d.shot);  // a reference image's picture
     (d.replies || []).forEach((x) => { if (x && !x.deleted) (x.shots || []).forEach((s) => out.add(String(s))); });
   });
   return out;

@@ -233,6 +233,40 @@ var SightReviewCore = (function(){
     return { lines: lines, widths: widths, w: w, h: lh * lines.length, lh: lh, pad: pad, box: [d.x - pad, d.y - pad, w + pad * 2, lh * lines.length + pad * 2] };
   }
 
+  // ---- reference images (kind "image", FORMAT.md) -------------------------------------------------
+  // A reference image's picture is a shot (data.shot); each client says where its shots live:
+  // Sight → /api/review/shots/<id>, the HTML page / phone app → the package's data URLs.
+  var imgSrc = function(){ return ""; };
+  function setImageSource(fn){ imgSrc = typeof fn === "function" ? fn : function(){ return ""; }; if (imgCache) imgCache.clear(); }
+  function imageUrl(shot){ return shot ? String(imgSrc(shot) || "") : ""; }
+  // Decoded pictures for canvas drawing (exports), one per URL. Not loaded yet → drawCanvas paints a
+  // placeholder; await imagesReady(items) before drawing a picture that must be complete.
+  var imgCache = typeof Map !== "undefined" ? new Map() : null;
+  function imageEl(shot){
+    var u = imageUrl(shot);
+    if (!u || !imgCache || typeof Image === "undefined") return null;
+    var im = imgCache.get(u);
+    if (!im){ im = new Image(); im.decoding = "async"; im.src = u; imgCache.set(u, im); }
+    return im;
+  }
+  function imagesReady(items){
+    return Promise.all((items || []).filter(function(it){ return typeOf(it) === "image"; }).map(function(it){
+      var im = imageEl(it.data.shot);
+      if (!im || im.complete) return null;
+      return new Promise(function(res){
+        im.addEventListener("load", res, { once: true });
+        im.addEventListener("error", res, { once: true });
+        setTimeout(res, 15000);
+      });
+    }));
+  }
+  // The crop window of a reference image: [x, y, w, h] of the source picture, 0…1 (null = all of it).
+  function imgCrop(d){
+    var c = d.crop;
+    if (!Array.isArray(c) || c.length !== 4 || !c.every(Number.isFinite) || c[2] <= 0 || c[3] <= 0) return [0, 0, 1, 1];
+    return c;
+  }
+
   // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known.
   function primsOf(it, numOf){
     var d = it.data, t = typeOf(it), op, rot, out, path;
@@ -270,6 +304,28 @@ var SightReviewCore = (function(){
       out.push({ text: L.lines, widths: L.widths, x: d.x, y: d.y, w: L.w, lh: L.lh, font: textFont(d), family: fontStack(d.font), size: d.size, bold: d.bold, italic: d.italic, underline: d.underline, align: d.align || "left", fill: d.color, stroke: d.outline ? d.outlineColor : null, sw: d.outline ? d.outline * 2 : 0, op: op, rot: rot });
       return out;
     }
+    if (t === "image"){
+      op = d.opacity != null ? d.opacity : 1;
+      var bw = Math.max(0, d.border || 0), ix = d.x, iy = d.y, iw = d.w, ih = d.h;
+      rot = d.rot ? [d.rot, ix + iw / 2, iy + ih / 2] : null;
+      out = [];
+      // The shadow: stacked translucent rounded boxes (no blur filter — SVG ids and canvas filters differ
+      // between clients; this looks the same everywhere), offset down-right in the picture's own axes.
+      var sh = clamp(Number(d.shadow) || 0, 0, 1);
+      if (sh > 0){
+        var spread = Math.max(1, Math.min(iw, ih) * 0.05 + bw), N = 6;
+        var ux = rot ? Math.cos(d.rot * Math.PI / 180) : 1, uy = rot ? Math.sin(d.rot * Math.PI / 180) : 0;
+        var offx = spread * 0.45, offy = spread * 0.7, dx = offx * ux - offy * uy, dy = offx * uy + offy * ux;
+        for (var si = N; si >= 1; si--){
+          var e = spread * si / N, sx0 = ix - bw - e + dx, sy0 = iy - bw - e + dy;
+          var sr = rot ? [d.rot, ix + iw / 2 + dx, iy + ih / 2 + dy] : null;
+          out.push({ d: rectPath(sx0, sy0, iw + 2 * bw + 2 * e, ih + 2 * bw + 2 * e, e), fill: "#000000", op: op * sh * 0.32, rot: sr });
+        }
+      }
+      out.push({ img: d.shot, x: ix, y: iy, w: iw, h: ih, crop: imgCrop(d), op: op, rot: rot });
+      if (bw > 0) out.push({ d: rectPath(ix - bw / 2, iy - bw / 2, iw + bw, ih + bw, 0), stroke: d.borderColor || "#ffffff", sw: bw, op: op, join: "miter", rot: rot });
+      return out;
+    }
     if (t === "pin"){
       var r = d.size / 2, num = numOf ? numOf(it) : "";
       return [
@@ -284,6 +340,12 @@ var SightReviewCore = (function(){
     var tf = p.rot ? ' transform="rotate(' + r2(p.rot[0]) + " " + r2(p.rot[1]) + " " + r2(p.rot[2]) + ')"' : "";
     var op = p.op != null && p.op < 1 ? ' opacity="' + r2(p.op) + '"' : "";
     var st;
+    if (p.img !== undefined){
+      var u = imageUrl(p.img), c = p.crop || [0, 0, 1, 1];
+      if (!u) return "<g" + tf + op + '><rect x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + r2(p.w) + '" height="' + r2(p.h) + '" fill="#808080" fill-opacity="0.35"/></g>';
+      // A nested viewport clips to the crop window; the picture is 1 × 1 units inside it, so the crop needs no pixel size.
+      return "<g" + tf + op + '><svg x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + r2(Math.max(0, p.w)) + '" height="' + r2(Math.max(0, p.h)) + '" viewBox="' + c.map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" ") + '" preserveAspectRatio="none" overflow="hidden"><image href="' + esc(u) + '" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g>';
+    }
     if (p.text){
       var anchor = p.align === "center" ? "middle" : p.align === "right" ? "end" : "start";
       var x0 = p.center ? p.x : p.align === "center" ? p.x + p.w / 2 : p.align === "right" ? p.x + p.w : p.x;
@@ -300,6 +362,17 @@ var SightReviewCore = (function(){
     cx.save();
     if (p.rot){ cx.translate(p.rot[1], p.rot[2]); cx.rotate(p.rot[0] * Math.PI / 180); cx.translate(-p.rot[1], -p.rot[2]); }
     cx.globalAlpha = p.op != null ? p.op : 1;
+    if (p.img !== undefined){
+      var im = imageEl(p.img), c = p.crop || [0, 0, 1, 1];
+      if (im && im.complete && im.naturalWidth){
+        var nw = im.naturalWidth, nh = im.naturalHeight;
+        try { cx.drawImage(im, c[0] * nw, c[1] * nh, c[2] * nw, c[3] * nh, p.x, p.y, p.w, p.h); } catch (_){}
+      } else {
+        cx.globalAlpha *= 0.35; cx.fillStyle = "#808080"; cx.fillRect(p.x, p.y, p.w, p.h);
+      }
+      cx.restore();
+      return;
+    }
     if (p.text){
       cx.font = p.font;
       cx.textBaseline = "alphabetic";
@@ -359,12 +432,12 @@ var SightReviewCore = (function(){
       return [Math.min.apply(null, xs) - r, Math.min.apply(null, ys) - r, Math.max.apply(null, xs) + r, Math.max.apply(null, ys) + r];
     }
     var box, rot = d.rot || 0;
-    if (t === "rect" || t === "ellipse") box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
+    if (t === "rect" || t === "ellipse" || t === "image") box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
     else if (t === "text") box = textLayout(d).box;
     else if (t === "pin") return [d.x - d.size / 2, d.y - d.size / 2, d.x + d.size / 2, d.y + d.size / 2];
     else return [0, 0, 0, 0];
     var x = box[0], y = box[1], w = box[2], h = box[3], cx = x + w / 2, cy = y + h / 2;
-    var pad = t === "text" ? 0 : (d.strokeOn !== false ? d.width / 2 : 0);
+    var pad = t === "text" ? 0 : t === "image" ? Math.max(0, d.border || 0) : (d.strokeOn !== false ? d.width / 2 : 0);
     var cs = [[x - pad, y - pad], [x + w + pad, y - pad], [x + w + pad, y + h + pad], [x - pad, y + h + pad]].map(function(p){ return rotPt(p[0], p[1], cx, cy, rot); });
     var cxs = cs.map(function(c){ return c[0]; }), cys = cs.map(function(c){ return c[1]; });
     return [Math.min.apply(null, cxs), Math.min.apply(null, cys), Math.max.apply(null, cxs), Math.max.apply(null, cys)];
@@ -395,6 +468,7 @@ var SightReviewCore = (function(){
     else box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
     var bx = box[0], by = box[1], bw = box[2], bh = box[3], cx = bx + bw / 2, cy = by + bh / 2;
     var lp = rotPt(x, y, cx, cy, -(d.rot || 0)), lx = lp[0], ly = lp[1];
+    if (t === "image"){ var ib = Math.max(0, d.border || 0) + tol; return lx >= bx - ib && lx <= bx + bw + ib && ly >= by - ib && ly <= by + bh + ib; }
     if (t === "text" || d.fillOn) return lx >= bx - tol && lx <= bx + bw + tol && ly >= by - tol && ly <= by + bh + tol;
     var sw = d.width / 2 + tol;
     if (t === "rect"){
@@ -438,6 +512,15 @@ var SightReviewCore = (function(){
       var N = textLayout(d);
       d.x = c[0] - N.box[2] / 2 + N.pad; d.y = c[1] - N.box[3] / 2 + N.pad;
       d.rot = ((s.rot || 0) + da) % 360;
+    } else if (t === "image"){
+      // Always uniform (a picture never stretches): a corner / rotation passes k; an edge of a mixed selection
+      // passes axis scales, whose mean scale is used.
+      var q = k !== 1 ? k : Math.sqrt(Math.abs(sx * sy));
+      c = map(s.x + s.w / 2, s.y + s.h / 2);
+      d.w = Math.abs(s.w) * q; d.h = Math.abs(s.h) * q;
+      d.x = c[0] - d.w / 2; d.y = c[1] - d.h / 2;
+      d.rot = ((s.rot || 0) + da) % 360;
+      if (s.border) d.border = s.border * q;
     } else if (t === "pin"){
       c = map(s.x, s.y); d.x = c[0]; d.y = c[1];
     }
@@ -535,7 +618,7 @@ var SightReviewCore = (function(){
     var sx = horiz ? (x - ox) / (Math.abs(w0) < 1e-6 ? 1e-6 : w0) : 1;
     var sy = vert ? (y - oy) / (Math.abs(h0) < 1e-6 ? 1e-6 : h0) : 1;
     var corner = h.length === 2;
-    var onlyText = its.every(function(it){ var t = typeOf(it); return t === "text" || t === "pin"; });
+    var onlyText = its.every(function(it){ var t = typeOf(it); return t === "text" || t === "pin" || t === "image"; });
     if ((corner && m.shift) || onlyText){
       var mm = corner ? Math.max(Math.abs(sx), Math.abs(sy)) : Math.abs(h === "n" || h === "s" ? sy : sx);
       sx = Math.sign(sx || 1) * mm; sy = Math.sign(sy || 1) * mm;
@@ -588,6 +671,7 @@ var SightReviewCore = (function(){
     if (t === "line" || t === "arrow") return Array.isArray(d.pts) && d.pts.length === 4;
     if (t === "rect" || t === "ellipse") return [d.x, d.y, d.w, d.h].every(Number.isFinite);
     if (t === "text" || t === "pin") return Number.isFinite(d.x) && Number.isFinite(d.y);
+    if (t === "image") return typeof d.shot === "string" && !!d.shot && [d.x, d.y, d.w, d.h].every(Number.isFinite);
     return false;
   }
 
@@ -821,6 +905,7 @@ var SightReviewCore = (function(){
       var data = isObj(r.data) ? clone(r.data) : {};
       if (typeof data.note === "string" && Object.prototype.hasOwnProperty.call(ids, data.note)) data.note = ids[data.note];
       if (Array.isArray(data.shots)) data.shots = data.shots.map(mapShot);
+      if (typeof data.shot === "string") data.shot = mapShot(data.shot);  // a reference image's picture
       if (data.replies !== undefined && data.replies !== null && !Array.isArray(data.replies)) data.replies = [];
       if (pyTrue(data.replies)){  // pictures attached to replies (web page / Sight)
         data.replies = data.replies.map(function(x){ return isObj(x) && Array.isArray(x.shots) ? Object.assign({}, x, { shots: x.shots.map(mapShot) }) : x; });
@@ -888,6 +973,7 @@ var SightReviewCore = (function(){
     smoothPath: smoothPath, strokeRadii: strokeRadii, strokeOutline: strokeOutline, dashArray: dashArray,
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
+    setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
