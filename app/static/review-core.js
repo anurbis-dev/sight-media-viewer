@@ -467,7 +467,12 @@ var SightReviewCore = (function(){
       // The shadow: stacked translucent rounded boxes (no blur filter — SVG ids and canvas filters differ
       // between clients; this looks the same everywhere), offset down-right in the picture's own axes.
       var sh = clamp(Number(d.shadow) || 0, 0, 1);
-      if (sh > 0){
+      if (sh > 0 && !(bw > 0)){
+        // No border: the shadow follows the picture's alpha (PNG/WebP with transparency), not its box. A blurred
+        // black silhouette of the picture itself (SVG filter / canvas shadowBlur), offset in the picture's own axes.
+        var sp = Math.max(1, Math.min(Math.abs(iw), Math.abs(ih)) * 0.05);
+        out.push({ img: d.shot, x: ix, y: iy, w: iw, h: ih, crop: imgCrop(d), op: op, rot: rot, shadow: { dx: sp * 0.45, dy: sp * 0.7, blur: sp * 0.45, a: Math.min(1, sh * 0.7) } });
+      } else if (sh > 0){
         var spread = Math.max(1, Math.min(iw, ih) * 0.05 + bw), N = 6;
         var ux = rot ? Math.cos(d.rot * Math.PI / 180) : 1, uy = rot ? Math.sin(d.rot * Math.PI / 180) : 0;
         var offx = spread * 0.45, offy = spread * 0.7, dx = offx * ux - offy * uy, dy = offx * uy + offy * ux;
@@ -491,12 +496,20 @@ var SightReviewCore = (function(){
     return [];
   }
 
+  var shadowSeq = 0;
   function primSvg(p){
     var tf = p.rot ? ' transform="rotate(' + r2(p.rot[0]) + " " + r2(p.rot[1]) + " " + r2(p.rot[2]) + ')"' : "";
     var op = p.op != null && p.op < 1 ? ' opacity="' + r2(p.op) + '"' : "";
     var st;
     if (p.img !== undefined){
       var u = imageUrl(p.img), c = p.crop || [0, 0, 1, 1];
+      if (p.shadow){
+        // Shadow-only prim: the picture turned black, scaled to the shadow alpha, blurred, then moved. Ids are unique per page.
+        if (!u) return "";
+        var fid = "rcsh" + (++shadowSeq), s = p.shadow, k = r2(s.a);
+        var sw2 = r2(Math.max(0, p.w)), sh2 = r2(Math.max(0, p.h)), fm = s.blur * 3 + 1;
+        return "<g" + tf + op + '><g transform="translate(' + r2(s.dx) + " " + r2(s.dy) + ')"><defs><filter id="' + fid + '" filterUnits="userSpaceOnUse" x="' + r2(p.x - fm) + '" y="' + r2(p.y - fm) + '" width="' + r2(sw2 + 2 * fm) + '" height="' + r2(sh2 + 2 * fm) + '" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ' + k + ' 0"/><feGaussianBlur stdDeviation="' + r2(s.blur) + '"/></filter></defs><g filter="url(#' + fid + ')"><svg x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + sw2 + '" height="' + sh2 + '" style="width:' + sw2 + 'px;height:' + sh2 + 'px;overflow:hidden" viewBox="' + c.map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" ") + '" preserveAspectRatio="none" overflow="hidden"><image href="' + esc(u) + '" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g></g></g>';
+      }
       if (!u) return "<g" + tf + op + '><rect x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + r2(p.w) + '" height="' + r2(p.h) + '" fill="#808080" fill-opacity="0.35"/></g>';
       // A nested viewport clips to the crop window; the picture is 1 × 1 units inside it, so the crop needs no pixel size.
       // The size is also an inline style: host pages size their own <svg>s by CSS (`.x svg { width: 100% }`),
@@ -524,8 +537,35 @@ var SightReviewCore = (function(){
       var im = imageEl(p.img), c = p.crop || [0, 0, 1, 1];
       if (im && im.complete && im.naturalWidth){
         var nw = im.naturalWidth, nh = im.naturalHeight;
+        if (p.shadow){
+          // shadowOffset/shadowBlur ignore the transform, so they are converted from doc units. The picture itself is
+          // drawn shifted left in device space until it is fully off-canvas; the offset compensates, so only the shadow lands.
+          var s = p.shadow;
+          if (!cx.getTransform){
+            cx.fillStyle = "rgba(0,0,0," + s.a * 0.6 + ")"; cx.fillRect(Math.min(p.x, p.x + p.w) + s.dx, Math.min(p.y, p.y + p.h) + s.dy, Math.abs(p.w), Math.abs(p.h));
+            cx.restore(); return;
+          }
+          var m = cx.getTransform(), sc = Math.hypot(m.a, m.b) || 1;
+          var xs = [p.x, p.x + p.w], ys = [p.y, p.y + p.h], x0 = 1e30, x1 = -1e30, y0 = 1e30, y1 = -1e30;
+          for (var ci = 0; ci < 4; ci++){
+            var qx = xs[ci & 1], qy = ys[ci >> 1], dx = m.a * qx + m.c * qy + m.e, dy = m.b * qx + m.d * qy + m.f;
+            x0 = Math.min(x0, dx); x1 = Math.max(x1, dx); y0 = Math.min(y0, dy); y1 = Math.max(y1, dy);
+          }
+          var ox = m.a * s.dx + m.c * s.dy, oy = m.b * s.dx + m.d * s.dy, mg = 3 * s.blur * sc + 2;
+          var cw = cx.canvas.width, ch = cx.canvas.height;
+          if (x1 + ox + mg < 0 || x0 + ox - mg > cw || y1 + oy + mg < 0 || y0 + oy - mg > ch){ cx.restore(); return; }
+          var D = x1 + mg + 1;
+          cx.setTransform(m.a, m.b, m.c, m.d, m.e - D, m.f);
+          cx.shadowColor = "rgba(0,0,0," + s.a + ")";
+          cx.shadowBlur = 2 * s.blur * sc;
+          cx.shadowOffsetX = ox + D;
+          cx.shadowOffsetY = oy;
+          try { cx.drawImage(im, c[0] * nw, c[1] * nh, c[2] * nw, c[3] * nh, p.x, p.y, p.w, p.h); } catch (_){}
+          cx.restore();
+          return;
+        }
         try { cx.drawImage(im, c[0] * nw, c[1] * nh, c[2] * nw, c[3] * nh, p.x, p.y, p.w, p.h); } catch (_){}
-      } else {
+      } else if (!p.shadow){
         cx.globalAlpha *= 0.35; cx.fillStyle = "#808080"; cx.fillRect(p.x, p.y, p.w, p.h);
       }
       cx.restore();

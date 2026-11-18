@@ -14,6 +14,22 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.83.1 — 2026-11-18 — Reference shadows follow the picture's alpha
+- **What:** a reference image with transparency (PNG / WebP) now casts a drop shadow of its alpha shape instead
+  of its rectangle — in Sight, the HTML page, the phone app and canvas exports (screenshots / PDF).
+- **Where:** review-core.js — `primsOf` image branch (a shadow-only image prim `p.shadow = {dx, dy, blur, a}`
+  before the picture), `primSvg` (black `feColorMatrix` + `feGaussianBlur`, `filterUnits="userSpaceOnUse"`
+  with an explicit region, unique `rcshN` ids), `primCanvas`.
+- **Notes:** canvas path avoids `ctx.filter` (no Safari): it uses `shadowBlur` with the image drawn off-canvas in
+  device space (`setTransform` shift by D past the image's device bbox, `shadowOffsetX += D`), skips the shadow
+  when its box misses the canvas, and falls back to an offset rect without `getTransform`. Canvas shadows ignore
+  the transform, so offset / blur are converted with `getTransform()`. Bordered refs keep the old stacked-box
+  shadow (opaque frame). An unloaded picture has no shadow. Needs an on-device iOS check (very large shadow
+  offsets).
+- Review (fresh agent): 4 findings — a ghost copy of the picture when it sat off the right edge in canvas exports,
+  flipped (negative size) refs getting a 1 px shadow, no fallback without `getTransform`, a filter region
+  rebuilt on the unclipped image every drag frame. All fixed; the same reviewer confirmed the fixes, nothing new.
+
 ## 0.83.0 — 2026-11-18 — Importing a review file offers to restore notes / drawings deleted here
 - **What:** owner's report "the review file does not restore notes and drawings". Not a bug in the merge: rule 5
   (FORMAT.md) keeps a row deleted here when the delete is later than the file's copy. Now the import counts
@@ -371,26 +387,3 @@ Add new entries directly below this line.
   old Groq key left on disk, the upload cap relying on Content-Length only; fixed (local hosts bypass the proxy,
   cloud hosts keep it; body read with a running 20 MB cap). Re-review: a key saved with no address could not be
   removed, a one-time race deleting a fresh config with the Groq file; fixed; the same reviewer confirmed all.
-
-## 0.70.0 — 2026-11-17 — Dictation with automatic language detection (Whisper via Groq)
-- **What:** Settings → Dictation: engine *Browser* (as before) or *Whisper (Groq)* plus a Groq API key. With
-  Whisper the mic's language "Auto" really detects the language (owner's request; the browser's recogniser
-  cannot — its "auto" is the browser's language). Words arrive phrase by phrase (after each pause), not live.
-- **Where:** new `app/stt.py` (`GroqStt`), `app/server.py` `/api/stt/status|key|transcribe`, `dictation.js`
-  provider `groq` + `getEngine` in `createDictationUI`, annotate.js (passes `getEngine`), index.html
-  `bindDictationSettings` + Settings markup, `tests/test_stt.py`. PLAN-stt.md (tier 2 done), ARCHITECTURE, MANUAL.
-- **Notes:** the key lives only in `<SIGHT_HOME>/stt.json` (0600), never in settings.json / the page / logs;
-  `/api/stt/status` says only whether one is set. Stdlib `urllib` multipart, model `whisper-large-v3-turbo`, no
-  `language` field = detect. Phrases: one MediaRecorder per phrase (each upload a complete file), cut by 0.7 s of
-  quiet after ≥ 0.25 s of voice (AnalyserNode RMS), or at 20 s. Not testable from the dev container (Groq is not
-  reachable here): verified up to the POST and the "unreachable" toast with Chromium's fake microphone. Phrases are
-  delivered in order (numbered), the next recorder starts before the old stops (no word lost at a 20 s cut), the
-  session ends only when every recorder and upload is done, a missing key is reported before recording, leaving
-  the composer still appends the phrases in flight (editors that save on blur drop them, Enter drops them).
-  `/api/stt/transcribe` takes `audio/*` only (another site's "simple" POST cannot spend the quota) and checks the
-  size first; urllib never follows a redirect (it would re-send the key).
-- Review (fresh agent): mic left on when stopped during the permission prompt, phrases out of order, last phrase
-  lost on blur / just after a cut, suspended AudioContext dropping everything, a word lost at the 20 s cut, no-key
-  reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
-  briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
-  — fixed; confirmed by the same reviewer.
