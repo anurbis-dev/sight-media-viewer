@@ -2,6 +2,32 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
+- **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
+  instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle
+  (drop, Export menu, palette) merges every clip in the library and shows one summary ("2 clips updated · 1 not in
+  your library: x · 1 damaged · y: same file as clip 1"); the others still land. Exactly one clip updated → it
+  opens as for a plain package; otherwise nothing new opens, open affected clips reload (undo cleared) and the
+  sequence's off-screen timeline marks are re-read. Also: the import toast without a lightbox (dropped on the grid)
+  now shows (page `flash`, plain text) — before it went to `#v3dToast`, which exists only in the lightbox.
+- **Where:** review.py (`parse_review_file`, `build_bundle`, `find_review_asset`, `import_package`,
+  `import_review_file`), server.py (`/api/review/import` → `import_review_file`; new `/api/review/export/package-all`
+  with `asset_ids`), annotate.js (`importedBundle`, toast passes `ms`), index.html (`seqExportAll` "pkg",
+  `seqReviewChanged`, `htmlToText`, main host `toast`), tests/test_review_bundle.py, tests/test_pwa.py
+  (`sight_import` calls the shared function), FORMAT.md, MANUAL, ARCHITECTURE, PLAN-multiclip.
+- **Notes:** packages inside are unchanged and merge by the same code (merge parity untouched). A plain package's
+  import response is exactly as before (404 missing / 400 damaged); a bundle is always 200 with `results` per
+  package, each committed on its own. Damaged-file 400s now also cover sqlite binding errors and a non-numeric
+  `version` (were 500). Two packages matching one local file: the first claims it even if it turns out damaged;
+  the later is reported as duplicate (no second try). Older Sight (< 0.75) rejects a bundle as "Not a Sight review
+  file" — the stage-2 page's one-clip reply must stay a plain package. Stage 2 (multi-clip page) and 3 (phone) not
+  started.
+- Review (fresh agent): damaged inner package lost its name in the report; a duplicate after a damaged first copy
+  was imported again; `package-all` iterated a string `asset_ids` per char / 500 on a number; a bundle opened a clip
+  even when nothing changed; MANUAL said the `.srev` export visits clips; fixed. Re-review: fixes confirmed except a
+  `continue` that skipped reloading the first changed clip when several changed (stale rows + undo over the merge);
+  removed, confirmed by the same reviewer.
+
 ## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
 - **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
   drawing out and the next annotated frame's in. Now, while drawing on a video with onion on, between two frames

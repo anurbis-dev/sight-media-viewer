@@ -14,6 +14,31 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.87.0 — 2026-11-18 — Compare: synced video on one clock, toolbar button, drop-to-compare, layer reorder
+- **What:** compare clips play on one clock that waits for the slowest clip ("· loading" while held); scrubbing
+  (mouse / finger) moves every clip; the video RAM cache is split between the clips around their playheads. The
+  compare button moved from the notes panel to the viewer's top bar (greyed out with nothing to compare, badge =
+  dropped files). Files dragged from the library beside the viewer (Tab) join a comparison with the open file;
+  a drop no longer turns annotating on (only while annotating does a picture become a reference). Touch: select
+  files in the library beside the viewer and tap the button. Layer chips reorder by mouse drag or touch hold+drag;
+  the order is the split / tile order and is kept in a note's comparison (`session().ids`).
+- **Where:** compare.js (`syncVideos` / `canGo`, `paintMirrors`, `pushFocus`, `mkMedia` / `refCopy`, `C.scrub`,
+  touch reorder in `bindUi`, `captureView`); library.py `SlidingVideoCache` (`_Window`, `focus_many`); server.py
+  `/api/video/focus` `items`; index.html (`#cmpBtn`, `lightCompareIds`, `addToCompareStack`, `paintCmpBtn`,
+  `compareFromContext`, focus handling); annotate.js (`onRefDrop` → `host.dropForCompare`, `host.onVersions`,
+  versions-row Compare removed); MANUAL, ARCHITECTURE.
+- **Notes:** root cause of the desync: the clock ran on while a clip seeked; a 4K / long-GOP seek took longer than
+  the 0.25 s tolerance, so the clip was re-seeked forever (6 × 4K60: up to 7.9 s apart → < 0.3 s). Invariant: never
+  seek towards a running clock. Paused-clip "ready" = frame + 0.4 s buffered (Chromium keeps paused elements at
+  HAVE_CURRENT_DATA). Hung seek > 8 s re-issued; a clip at its end is never play()ed. The lightbox `focus()` is one
+  cache window; closing compare re-focuses it. `light.cmpStack` survives moving between its own files. Not done:
+  6-connections-per-host with 6+ clips on slow storage; reorder not written back to the drop stack; the button
+  ignores note-stored comparisons on files without versions. `tests.test_board_missing` fails on master already
+  (UNIQUE board_items.id) — unrelated.
+- Review (fresh agent, run by the implementing agent): 8 findings (end-of-clip play() restart, re-seek timer
+  counting the seek, lightbox focus wiping compare's windows, hidden reference without a window, stack edge cases,
+  mirrors painting mid-seek, stuck scrub, Windows press-and-hold menu). All fixed; same reviewer confirmed.
+
 ## 0.86.0 — 2026-11-18 — Number pins with a leader line; note icons on hover; Ctrl+C copies hovered note text; Shift = H/V
 - **What:** owner's asks.
   - The note pin tool is now a *number pin*: a click puts a numbered circle, a drag draws a line from the press
@@ -341,29 +366,3 @@ Add new entries directly below this line.
   missing clips dropped silently from html-all, the strip scrolled on every save. Re-review: names of missing clips
   came out as "clip" and Send could be pressed mid-load → fixed; then Send could stay disabled after a re-render
   mid-load → fixed (`render()` when the field was replaced); all confirmed by the same reviewer.
-
-## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
-- **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
-  instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle
-  (drop, Export menu, palette) merges every clip in the library and shows one summary ("2 clips updated · 1 not in
-  your library: x · 1 damaged · y: same file as clip 1"); the others still land. Exactly one clip updated → it
-  opens as for a plain package; otherwise nothing new opens, open affected clips reload (undo cleared) and the
-  sequence's off-screen timeline marks are re-read. Also: the import toast without a lightbox (dropped on the grid)
-  now shows (page `flash`, plain text) — before it went to `#v3dToast`, which exists only in the lightbox.
-- **Where:** review.py (`parse_review_file`, `build_bundle`, `find_review_asset`, `import_package`,
-  `import_review_file`), server.py (`/api/review/import` → `import_review_file`; new `/api/review/export/package-all`
-  with `asset_ids`), annotate.js (`importedBundle`, toast passes `ms`), index.html (`seqExportAll` "pkg",
-  `seqReviewChanged`, `htmlToText`, main host `toast`), tests/test_review_bundle.py, tests/test_pwa.py
-  (`sight_import` calls the shared function), FORMAT.md, MANUAL, ARCHITECTURE, PLAN-multiclip.
-- **Notes:** packages inside are unchanged and merge by the same code (merge parity untouched). A plain package's
-  import response is exactly as before (404 missing / 400 damaged); a bundle is always 200 with `results` per
-  package, each committed on its own. Damaged-file 400s now also cover sqlite binding errors and a non-numeric
-  `version` (were 500). Two packages matching one local file: the first claims it even if it turns out damaged;
-  the later is reported as duplicate (no second try). Older Sight (< 0.75) rejects a bundle as "Not a Sight review
-  file" — the stage-2 page's one-clip reply must stay a plain package. Stage 2 (multi-clip page) and 3 (phone) not
-  started.
-- Review (fresh agent): damaged inner package lost its name in the report; a duplicate after a damaged first copy
-  was imported again; `package-all` iterated a string `asset_ids` per char / 500 on a number; a bundle opened a clip
-  even when nothing changed; MANUAL said the `.srev` export visits clips; fixed. Re-review: fixes confirmed except a
-  `continue` that skipped reloading the first changed clip when several changed (stale rows + undo over the merge);
-  removed, confirmed by the same reviewer.

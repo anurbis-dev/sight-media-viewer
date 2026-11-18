@@ -389,6 +389,7 @@ export function createAnnotator(host){
     try { list = (await host.api(`/api/assets/${a.id}/versions`)).items || []; } catch {}
     if (S.asset?.id !== a.id) return;
     S.versions = list;
+    host.onVersions?.(a.id, list); // (the lightbox's compare button: enabled with 2+ versions)
     const i = list.findIndex((x) => x.id === a.id);
     const prev = i > 0 ? list[i - 1] : null;
     if (prev){
@@ -416,11 +417,9 @@ export function createAnnotator(host){
     el.hidden = false;
     el.innerHTML = `<div class="an-vrow"><span>Version <b>${i + 1}</b> of ${list.length}</span>
         <button type="button" class="an-ib sm" data-ver="-1" title="Previous version"${i ? "" : " disabled"}>‹</button>
-        <button type="button" class="an-ib sm" data-ver="1" title="Next version"${i < list.length - 1 ? "" : " disabled"}>›</button>
-        <button type="button" class="an-ib" data-act="compare" title="Compare versions (K)">Compare</button></div>
+        <button type="button" class="an-ib sm" data-ver="1" title="Next version"${i < list.length - 1 ? "" : " disabled"}>›</button></div>
       ${cand.length ? `<div class="an-vrow carry"><span><b>${esc(S.prevOpen.asset.name)}</b> has ${cand.length} open note${cand.length > 1 ? "s" : ""}</span><button type="button" class="an-ib" data-act="carry" title="Copy them (with their drawings) onto this version">Copy here</button></div>` : ""}`;
     el.querySelectorAll("[data-ver]").forEach((b) => { b.onclick = () => { const t = list[i + Number(b.dataset.ver)]; if (t) host.openAsset?.(t.id); }; });
-    el.querySelector("[data-act=compare]").onclick = () => host.openCompare?.(list.map((x) => x.id), S.asset.id);
     const cb = el.querySelector("[data-act=carry]");
     if (cb) cb.onclick = () => carryOver();
   }
@@ -1275,15 +1274,22 @@ export function createAnnotator(host){
     const t = e.dataTransfer?.types;
     return !!t && refsAllowed() && !!surfaceEl() && ([...t].includes("Files") || [...t].includes("application/x-sight-ids"));
   }
+  // A drop becomes reference images only while annotating. Otherwise library files go to the host's comparison
+  // stack (host.dropForCompare: the lightbox compares the open file with them) and nothing turns annotating on.
   function onRefDrop(e){
     if (!refDrag(e)) return;
     const files = [...(e.dataTransfer.files || [])].filter((f) => /^image\//.test(f.type) || REF_RE.test(f.name));
-    let srcs = files.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) }));
-    if (!srcs.length){
-      let ids = [];
+    let ids = [];
+    if (!files.length){
       try { ids = JSON.parse(e.dataTransfer.getData("application/x-sight-ids") || "[]"); } catch {}
-      if (Array.isArray(ids) && ids.length) srcs = host.pictureSources?.(ids) || [];
+      if (!Array.isArray(ids)) ids = [];
     }
+    if (!S.on){
+      if (ids.length && host.dropForCompare){ e.preventDefault(); e.stopPropagation(); host.dropForCompare(ids); return; }
+      if (files.length){ e.preventDefault(); e.stopPropagation(); toast("Turn annotating on (A) to drop reference pictures"); }
+      return;
+    }
+    const srcs = files.length ? files.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) })) : ids.length ? host.pictureSources?.(ids) || [] : [];
     if (!srcs.length) return;  // a review file (.srev) and the like: the page's own drop handler takes it
     e.preventDefault();
     e.stopPropagation();

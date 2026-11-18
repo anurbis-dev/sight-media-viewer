@@ -736,8 +736,10 @@ zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is dr
 bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
 to visible layer i — with `mix-blend-mode: difference` in Difference mode; tile layouts put a copy
 of the reference under each cell for the same effect. Video: `C.T` is a wall-clock timeline;
-layer local time = T − start/fps; `syncVideos()` nudges playbackRate for drift < 0.25 s and seeks
-beyond, pauses clips outside their span (dimmed). Keys go through `cmp.onKey` first while it is
+layer local time = T − start/fps; `syncVideos()` holds the clock
+(`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
+never seek towards a running clock. Clips outside their span pause (dimmed). Reference copies under Difference tiles are
+canvases painted from its one `<video>`. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
 

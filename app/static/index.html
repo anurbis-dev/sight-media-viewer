@@ -472,6 +472,10 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .v3d-gear[hidden], .v3d-shade[hidden], .v3d-explode[hidden], .v3d-sep[hidden] { display: none; }
 /* The same for the lightbox's .btn icons (mirror, annotate): .btn's display would beat [hidden]. */
 .btn[hidden] { display: none; }
+/* The lightbox's compare button: the count of files dropped on the picture to compare. */
+.cmp-lbtn { position: relative; }
+.cmp-lbtn:disabled:active { transform: none; }
+.cmp-lbtn[data-n]::after { content: attr(data-n); position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 16px; font-weight: 600; }
 #boardAnnoBtn.on, #boardNotesBtn.on { color: var(--accent); }
 #boardNotesBtn { position: relative; }
 .v3d-help { padding: 6px 8px 2px; font-size: 11px; line-height: 1.55; color: var(--subtle); }
@@ -1156,7 +1160,10 @@ const annot = createAnnotator({
     if (light) showInLight(a); else toggleLight(a);
   },
   onModeChange: () => syncLightHint(),
-  openCompare: (ids, focus) => openCompare(ids, focus),
+  // The compare button in the lightbox's top bar: enabled with 2+ versions or files dropped for comparing.
+  onVersions: (id, list) => { if (light && light.id === id){ light.cmpVers = list.length; paintCmpBtn(); } },
+  // Library files dropped on the picture while not annotating: the comparison stack (not reference images).
+  dropForCompare: (ids) => addToCompareStack(ids),
   // A note added / resolved or the review state changed: the grid pill and the sidebar counts.
   // (a bundle import also lands on sequence clips that are not on screen: their timeline marks are re-read)
   onReviewChanged: (aid) => { scheduleRefreshItems(); scheduleMeta(); seqReviewChanged(aid); },
@@ -1210,7 +1217,6 @@ const cmpAnnot = createAnnotator({
   onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
   // The panel's versions row: open a version in the viewer / compare those versions.
   openAsset: async (id) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (light) showInLight(a); else toggleLight(a); },
-  openCompare: (ids, focus) => openCompare(ids, focus),
 });
 // The annotator follows the selected layer lazily: a file's notes are fetched once annotating is on.
 function cmpBind(){
@@ -1229,6 +1235,7 @@ const cmp = createCompare({
   api: (path, opts) => api(path, opts),
   putSetting: (k, v) => putSetting(k, v),
   getZoomSettings: () => state.theme,
+  cacheMb: () => clampCache(state.theme.videoCache), // the RAM window budget, split between the clips
   assetById: (id) => assetById(id),
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
   openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
@@ -1245,6 +1252,9 @@ const cmp = createCompare({
   onClose: () => {
     cmpAnnot.unmount();
     cmpAnnotAsset = null; cmpView = null;
+    // The server's RAM windows followed the compare's clips: back to the lightbox's video, or dropped.
+    if (light?.video && light.asset) pushVideoFocus(light.video, light.asset, 0);
+    else fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true }) }).catch(() => {});
     // The lightbox underneath shows a file annotated here: re-read its notes (the stage stays as it is).
     if (light && cmpAnnotUsed.has(light.id)) annot.reload();
   },
@@ -1252,6 +1262,7 @@ const cmp = createCompare({
 let cmpAnnotAsset = null;
 function openCompare(ids, focus, session){
   for (const m of [light?.video, light?.audio]) { try { m?.pause(); } catch {} }
+  if (light) clearTimeout(light.focusTimer); // (a late lightbox focus would replace the compare's RAM windows)
   return cmp.open(ids, focus, session);
 }
 // A note written in the compare: open that comparison again, on the note's frame, with annotating on.
@@ -1272,10 +1283,40 @@ async function latestCompareSession(id){
   withSess.sort((a, b) => (b.data.created || 0) - (a.data.created || 0));
   return withSess[0]?.data.compare || null;
 }
+// The lightbox's comparison: the open file plus the library files dropped on it (light.cmpStack) or, the touch
+// way, the files selected in the library beside it (Tab). Null: none — K / the button fall back to versions.
+function lightCompareIds(){
+  const a = light?.asset;
+  if (!a || !comparable(a)) return null;
+  const extra = (light.cmpStack || []).filter((id) => id !== a.id);
+  if (!extra.length && lightSplitOn()) for (const s of selectedAssets()) if (comparable(s) && s.id !== a.id) extra.push(s.id);
+  return extra.length ? [a.id, ...extra] : null;
+}
+function addToCompareStack(ids){
+  if (!light) return;
+  if (!comparable(light.asset)){ flashV3DToast("Only images and videos can be compared"); return; }
+  const st = (light.cmpStack ||= []);
+  const add = ids.map((id) => assetById(id) || canvasCtl?.assetOf?.(id)).filter((x) => comparable(x) && x.id !== light.id && !st.includes(x.id));
+  if (!add.length){ flashV3DToast(ids.length ? "Only images and videos can be compared" : "Nothing to compare"); return; }
+  st.push(...add.map((x) => x.id));
+  paintCmpBtn();
+  flashV3DToast(`${st.length + 1} files to compare — K or the ⧉ button opens them`);
+}
+function paintCmpBtn(){
+  const b = light?.el.querySelector("#cmpBtn");
+  if (!b) return;
+  const a = light.asset, ids = lightCompareIds();
+  b.hidden = !a || !comparable(a);
+  b.disabled = !ids && (light.cmpVers || 0) < 2;
+  b.title = ids ? `Compare these ${ids.length} files (K)` : b.disabled ? "Compare — drop files from the library here (Tab shows it), or open a file with versions" : "Compare versions (K)";
+  if (light.cmpStack?.length) b.dataset.n = String(light.cmpStack.length + 1); else delete b.dataset.n;
+}
 async function compareFromContext(){
   let ids = null, focus = null;
-  if (light) focus = light.id;
-  else {
+  if (light){
+    focus = light.id;
+    ids = lightCompareIds();
+  } else {
     const sel = activeSelectionAssetIds().map((id) => assetById(id) || canvasCtl?.assetOf?.(id)).filter(comparable);
     if (sel.length >= 2){
       sel.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -2184,6 +2225,7 @@ function paintSelection(){
   const sb = document.getElementById("seqBtn");
   if (sb) sb.hidden = nSeq < 2;
   syncTouchSel(nSeq);
+  if (light) paintCmpBtn(); // (the files selected in the library beside the lightbox can be compared)
 }
 // Touch selection mode (docs/PLAN-viewer.md): a long-press on a tile starts it with just that tile; while it
 // is on, a finger tap toggles a tile (appending, so click order holds) and a double tap opens nothing. It ends
@@ -2724,6 +2766,7 @@ function toggleLightSplit(){
   state.lightSplit = !state.lightSplit;
   applyViewDom();
   saveLayout();
+  paintCmpBtn();
 }
 new ResizeObserver(() => { if (lightSplitOn()) placeLightSplit(); }).observe(grid);
 
@@ -6662,6 +6705,7 @@ function toggleLight(a){
       <span class="light-hint" id="lightHint"></span>
       <button class="btn ghost an-btn" id="notesBtn" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
       <button class="btn ghost" id="drawEyeBtn" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
+      <button class="btn ghost cmp-lbtn" id="cmpBtn" type="button" style="width:40px;padding:0" title="Compare (K)" aria-label="Compare" disabled hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
       <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Draw &amp; write notes — the drawing tools (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
       <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
@@ -6732,6 +6776,7 @@ function toggleLight(a){
   annot.mount(wrap);
   wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
   bindAnnoReset(wrap.querySelector("#annoBtn"), [annot, boardAnnot, cmpAnnot]);
+  wrap.querySelector("#cmpBtn").onclick = () => compareFromContext();
   wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
   wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
@@ -6814,6 +6859,12 @@ function showInLight(a, opts = {}){
     if (light.seq && !opts.seqPend) light.seq.pendT = light.seq.pendPlay = null; // a jump's landing is only for seqGo's own clip
   }
   releaseMedia(a.kind !== "video");
+  // The files dropped to compare stay together while the viewer moves between them (compare's ⤢); another file
+  // starts afresh.
+  if (light.cmpStack?.length){
+    const set = [light.id, ...light.cmpStack];
+    light.cmpStack = set.includes(a.id) ? set.filter((id) => id !== a.id) : [];
+  }
   light.id = a.id;
   light.snap = null;
   light.scrubT = null;
@@ -6855,6 +6906,8 @@ function showInLight(a, opts = {}){
   $("v3dGear").classList.remove("on");
   $("v3dPanel").hidden = true;
   light.asset = a;
+  light.cmpVers = 0; // (annotate reports the new file's versions: onVersions)
+  paintCmpBtn();
   syncLightHint();
   light.el.classList.toggle("v3d-loading", is3d); // controls appear once boot3d() has the model up
   if (is3d){ paintShadeButtons(); renderV3DPanel(); }

@@ -191,8 +191,8 @@
     Shift+← / Shift+→ jump to the first / last frame (of the whole sequence while one plays). All kept per device.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
-    first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them
-    and *Compare*. When the previous version still has open notes, *Copy here* brings them over
+    first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them;
+    the compare button in the viewer's top bar (or `K`) compares them. When the previous version still has open notes, *Copy here* brings them over
     with their drawings (scaled if the size changed; the note says where it came from).
   - **Video** — drawings belong to the frame they were made on. A note has a marker on each frame
     its drawings (or a text of one of its pictures) are on — not on the frame where it was typed; a
@@ -470,7 +470,13 @@
   `.srev` goes back to Sight with every view in place. PDF / web page: each view as a picture, "View N".
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
-  file (see *Versions* above). Also the palette and the review panel's *Compare* button.
+  file (see *Versions* above). Also the palette and the compare button in the viewer's top bar.
+  - **Any files from the viewer**: with the library beside the viewer (`Tab`), drag images / videos from the
+    grid onto the picture — they join a comparison with the open file (the compare button shows how many
+    files; it is greyed out while there is nothing to compare). The button or `K` opens it. Moving the viewer
+    to a file outside that set starts a new one. On a touch screen:
+    select the files in the library beside the viewer (long-press a tile) and tap the compare button. A picture
+    dropped while annotating is still added as a reference image instead; a drop no longer turns annotating on.
   - Layouts (`1`–`4`): **Swipe** — all layers stacked in one view and cut by split lines, one
     region per layer; drag anywhere to move the nearest split (Alt+drag pans), `V` switches between
     side-by-side and top / bottom splits. **Tile**, **Row** (horizontal strip), **Column** (vertical
@@ -479,9 +485,12 @@
     difference to the reference layer (★, `R` makes the selected layer the reference) — identical
     pixels turn black, so any change stands out. Works in every layout.
   - Layers bar at the bottom: click selects (`↑` / `↓`), ☆ reference, ◉ show / hide (`H`), drag a
-    chip to reorder, ⤢ opens the file in the viewer, × removes, *+ Add* brings in another version.
+    chip to reorder (touch: hold it, then drag) — the order is the order of the splits and tiles and is kept
+    with a note written in the comparison, ⤢ opens the file in the viewer, × removes, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
-    `Home`, `L` loop). Each clip has a **first-frame offset** (− / + on its chip, click the number to
+    `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
+    the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
+    goes on from where you let go. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (− / + on its chip, click the number to
     type it, or `[` / `]` for the selected clip, `Shift` ×10): where its first frame sits on the
     timeline, to line up clips that start or run differently. The coloured bars on the timeline show
     each clip's span; 🔈 picks whose sound plays.

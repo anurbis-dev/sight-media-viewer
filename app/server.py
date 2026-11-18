@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import queue
 import re
@@ -675,6 +676,24 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if body.get("release"):
             lib.video_cache.release()
             return {"ok": True, "mb": lib.video_cache.budget_mb}
+        if isinstance(body.get("items"), list):
+            # The version compare: one window per clip, the budget split between them (SlidingVideoCache).
+            focus = []
+            for it in body["items"][:32]:
+                a = lib.get_asset(str(it.get("id") or "")) if isinstance(it, dict) else None
+                if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+                    continue
+                try:
+                    t, duration = float(it.get("t") or 0), float(it.get("duration") or 0)
+                except (TypeError, ValueError):
+                    t, duration = 0.0, 0.0
+                if not (math.isfinite(t) and math.isfinite(duration)):
+                    t, duration = 0.0, 0.0
+                play = lib.playback_path(a)
+                size = os.path.getsize(play)
+                focus.append((play, max(0, min(size, int(size * (t / duration)) if duration > 0 else 0))))
+            lib.video_cache.focus_many(focus)
+            return {"ok": True, "files": len(focus), "mb": lib.video_cache.budget_mb, "bytes": lib.video_cache.snapshot()["bytes"]}
         aid = str(body.get("id") or "")
         if not aid:
             return {"ok": True, "mb": lib.video_cache.budget_mb}
