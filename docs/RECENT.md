@@ -14,6 +14,31 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.83.0 — 2026-11-18 — Box select in 3D annotation (Ctrl+drag, Box button)
+- **What:** owner's ask. Annotating a 3D model, select tool: Ctrl+drag draws a selection box (plain empty-space
+  drags still orbit). Rules as in the library grid (`combineSelection`): Ctrl = toggle against the selection the
+  drag started from, Ctrl+Shift = add; Ctrl+drag starts a box even over a drawing; a Ctrl-click without a drag
+  toggles the drawing under it. Touch: a *Box* switch in the select tool's bar (3D only) makes a plain drag
+  box-select. Same Ctrl rules now in 2D annotation too (one code path).
+- **Where:** annotate.js — onDown select branch (Ctrl → `S.drag.marquee` with `hit` / `boxed`; `S.box3d`
+  lets the 3D empty-space press through to the marquee), onMove marquee (4 px click threshold), onUp marquee
+  (Ctrl-click toggle, 3D empty Ctrl-click → `S.b3.pickMesh`, ignored on pointercancel), updateCursor, renderProps
+  (`box3d` button + hint), bindProps. index.html — mesh pick moved into `pickMeshAt(cx, cy, ctrl)` in boot3d,
+  passed to `bindAnnot3d(…, pick)` → host `pickMesh` (absent for splats). MANUAL.
+- **Notes:** reused the annotator's own existing 2D marquee (not index.html's DOM-rect one: drawings are in doc
+  units, hit by `boundsOf`). Changed 2D behaviour: Ctrl+press on a drawing no longer toggles-and-drags it (a
+  Ctrl+drag is a box now, as in the grid / board); Ctrl+Shift box = add (was toggle). The annotator grabs
+  the Ctrl press, so the viewer never sees it — hence the explicit `pickMesh` hand-back to keep the 3D Ctrl+click
+  mesh pick working while annotating. `S.box3d` is per session, not saved.
+  A marquee is tied to its pointer (`pid`): a second finger is ignored, so pinch-zoom is unavailable while
+  *Box* is on (turn it off to zoom); `lostpointercapture` ends a stuck marquee.
+- Review (fresh agent): 4 findings — Ctrl+Shift-click on a selected drawing removed it (now only adds); a plain
+  Box-mode click / Ctrl+Shift click on empty 3D space no longer cleared the mesh selection (`pickMesh(cx, cy,
+  ctrl)` now gets every unboxed empty click, ctrl = toggle); a second finger restarted the box and stole the
+  first finger's moves (pid guard); Cmd on Mac does not switch the cursor (cosmetic, left). The same reviewer
+  confirmed the three fixes; its one new edge (a stuck touch marquee swallowing later presses) is closed with
+  `lostpointercapture` (treated like pointercancel: no click toggle / mesh pick) — confirmed by the reviewer.
+
 ## 0.82.0 — 2026-11-18 — Phone / HTML page drawing: arrows along a stroke and lasso brush
 - **What:** owner's ask. The shared drawing canvas (review-draw.js: the HTML page, the phone app) can now make
   0.81's new drawings. *Arrows and lines* row: a sixth kind, *Arrows along a stroke*; with it in hand the row
@@ -374,19 +399,3 @@ Add new entries directly below this line.
   reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
   briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
   — fixed; confirmed by the same reviewer.
-
-## 0.69.1 — 2026-11-17 — Sequence: no black frame across a cut, picture scrub runs through clips
-- **What:** scrubbing back (or forward) across a cut no longer flashes black; dragging on the picture scrubs the
-  whole sequence and runs on into the neighbouring clips instead of stopping at the clip's ends.
-- **Where:** index.html `seqHold` / `seqKeepStill` / `seqDropHold` / `seqReleaseHold`, `seqDragTo`, `seqNow`,
-  `seqScrubBegin`, the attachViewer scrub hand-over (`sd.handed`), `bindSeqBar` (uses `seqDragTo`), `.seq-hold` CSS.
-- **Notes:** a clip opened from scratch shows nothing until decoded, so the frame on screen is held as a canvas
-  (the visible scrub copy, else the player, else — mid-seek, when nothing can be drawn — the last presented frame
-  of that same element) placed with the player's box and turn / mirror / zoom transform inside a box clipped like
-  the frame; it goes when the new clip presents its frame (rVFC, 250 ms fallback; 1.5 s cap). The picture scrub is
-  handed to window listeners once it starts (each cut replaces the stage and the element holding the pointer);
-  a release outside the window ends it on the next move without a button.
-- Review (fresh agent): hold skipped mid-seek, wrong source while the scrub copy shows, geometry for turned /
-  masked views, stuck drag after a release outside, a swallowed tap after a cancelled hand-over, rVFC not firing,
-  timer of chained holds, `seqNow` before a landing; re-review: the mid-seek still placed with another clip's
-  geometry — all fixed; confirmed by the same reviewer.

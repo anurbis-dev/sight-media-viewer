@@ -4568,18 +4568,22 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       const d = pickDown;
       pickDown = null;
       if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+      pickMeshAt(e.clientX, e.clientY, (e.ctrlKey || e.metaKey) && !e.shiftKey); // exact modifiers (Alt is excluded above)
+    });
+    // Also the annotator's: with its select tool a Ctrl-press is its box-select, so a Ctrl-click that did
+    // not become a box on empty drawing space is handed back here (bindAnnot3d pickMesh).
+    function pickMeshAt(cx, cy, ctrl){
       const ins = v3dInspect;
       if (!ins || !light || ins.aid !== light.id) return;
-      const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey; // exact modifiers (Alt is excluded above)
       if (!ctrl && !ins.sel) return;
       const r = renderer.domElement.getBoundingClientRect();
       const ray = new THREE.Raycaster();
-      ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+      ray.setFromCamera(new THREE.Vector2((cx - r.left) / r.width * 2 - 1, -((cy - r.top) / r.height) * 2 + 1), camera);
       const hit = ray.intersectObjects(ins.meshes.map((m) => m.c).filter((c) => c.visible), false)[0];
       const i = hit ? ins.meshes.findIndex((m) => m.c === hit.object) : -1;
       if (i < 0) setInspectSel(null);
       else if (ctrl) setInspectSel(ins.sel && ins.sel.kind === "mesh" && ins.sel.i === i ? null : { kind: "mesh", i }, true);
-    });
+    }
 
     let obj = null, origMats = null, rigRadius = 5;
     let shadeApplied = { base: null, wire: null, xray: null, explode: null, solid: null };
@@ -4791,7 +4795,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       camRig = makeCameraRig(THREE, camera, controls, aid, { get: () => getModelTurns(aid), set: turnTo });
       camRig.setHome(size);
       v3dCam = camRig;
-      bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved));
+      bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved), pickMeshAt);
       onV3DRotate = () => turnTo((getModelTurns(aid) + 1) & 3);
       obj.traverse((c) => { if (c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
       skyOcc.markCasters(obj);
@@ -4912,7 +4916,7 @@ function renderStill(renderer, scene, camera, rig, ex, refit){
   return renderer.domElement;
 }
 
-function bindAnnot3d(host, aid, rig, controls, capture){
+function bindAnnot3d(host, aid, rig, controls, capture, pick){
   const damp = controls.enableDamping;
   annot.bind3d({
     aid, host, capture,
@@ -4931,6 +4935,8 @@ function bindAnnot3d(host, aid, rig, controls, capture){
     },
     // While annotating, orbit damping is off: the camera must stop exactly where the drawing was made.
     annotating: (on) => { controls.enableDamping = on ? false : damp; },
+    // The viewer's click pick at a client point: (cx, cy, ctrl) — ctrl picks, otherwise only clears (absent for splats).
+    pickMesh: pick || undefined,
     // The animation pose ({clip, t}; null: no clips) — a view keeps the one it was made at (FORMAT.md ctx.anim).
     getAnim: () => (v3dAnim && v3dAnim.aid === aid ? v3dAnim.a.state() : null),
     setAnim: (s) => { if (v3dAnim && v3dAnim.aid === aid) v3dAnim.a.set(s); },
