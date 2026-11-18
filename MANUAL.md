@@ -79,8 +79,11 @@
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
     eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) · `R` / `O` the shape tool as
     a rectangle / an ellipse (its *Shape* switch ▭ / ◯ in the styles bar does the same by touch) · `T` text ·
-    `N` note pin (a marker with the number of the note it belongs to — before the note is added, the number it
-    will get). `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
+    `N` number pin: a click puts a numbered circle there, a drag draws a line from where you pressed and puts the
+    circle where you let go (a callout). A small field then asks for the number — type it and Enter (or tap
+    elsewhere); left empty it takes the next free number, Esc drops the new pin. A click on a pin with this tool
+    (or a double-click with another one) changes its number. Pins from before 0.84 keep showing their note's
+    number. The tool's keys stay live once the number is set. `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
     the brush. The drawing tools and the notes panel are independent: the ✎ button / `Shift+A` shows / hides
     the tools only, the speech-bubble button / `C` the panel only.
   - **Reference images** (`Shift+I`, the picture button in the toolbar): put pictures on the frame /
@@ -109,8 +112,8 @@
     out of it opens it. Text: font, size, colour, bold / italic / underline,
     alignment, background box (colour, opacity), outline; double-click a text to edit it again
     (`Ctrl+Enter` or Esc finishes).
-  - While drawing: `Shift` snaps lines, arrows and straight brush strokes to 15° steps (0/45/90…),
-    makes rectangles square and ellipses round. Select tool: click /
+  - While drawing: `Shift` keeps lines, arrows, a pin's line and straight brush strokes horizontal or vertical
+    (also when dragging a line's end), makes rectangles square and ellipses round. Select tool: click /
     Shift+click / drag a box to select, drag to move (Shift locks the axis), Alt+drag duplicates,
     corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
@@ -132,7 +135,10 @@
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `?` (or the ? button in the toolbar) opens a list of every annotation shortcut; Esc / ? / a click outside closes it, and nothing underneath reacts while it is open. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
-    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text (or the pencil on the card: shown on hover, and on a picked card for touch) to edit, the clock marks it *In progress* (someone took
+    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text (or the pencil on the card) to edit — a card's buttons (pencil, reply, in progress,
+    resolve, delete; a reply's) show while the pointer is over it, and on the picked (tapped) card on a touch
+    screen; `Ctrl+C` with the pointer over a note's, a reply's or a picture's text (in the panel or on the text
+    plate over the picture) copies that text — a real text selection is copied as usual, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it.
     **Picture texts** — the note's text is its topic; each of its pictures (the image, a video frame,

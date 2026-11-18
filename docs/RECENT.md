@@ -14,6 +14,34 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.86.0 — 2026-11-18 — Number pins with a leader line; note icons on hover; Ctrl+C copies hovered note text; Shift = H/V
+- **What:** owner's asks.
+  - The note pin tool is now a *number pin*: a click puts a numbered circle, a drag draws a line from the press
+    point with the circle where it is let go. A small field then takes the number (Enter / tap elsewhere; empty =
+    the next free number; Esc drops a new pin). A click with the tool on a pin, or a double-click with another
+    tool, edits its number. The tool no longer focuses the note composer, which had swallowed every hotkey.
+  - Shift while drawing (straight stroke, line / arrow, pin line, dragging a line's end) keeps the line horizontal
+    or vertical instead of snapping to 15° (rotation still uses 15° steps).
+  - A note card's action icons show on hover only; on touch, on the picked card.
+  - Ctrl+C with the pointer over a note's / reply's / picture's text (the panel or the text plate) copies that
+    text, with a "Copied" toast.
+- **Where:** review-core.js: `primsOf` pin (`label`, leader `ax, ay`), `pinLeader` / `pinLineW`, `boundsOf`,
+  `hitTest`, `transformItem`, `snapHV` (exported; used by `xfDrag` line ends). annotate.js: pin branch in
+  `onDown` / `onMove` / `onUp` / `abortGesture`, `editPin` / `finishPinEdit` / `nextPinNumber` (`S.pinEdit`,
+  `.an-pinedit`), `copyHoveredText` (onKey, composer / caption fields), `snapAngle = RC.snapHV`, CSS
+  `.an-nh .an-ib`. FORMAT.md pin; MANUAL.
+- **Notes:** `label` is a string set when the pin is created (the next free number among this media's pins; older
+  pins count with their note number). Pins without `label` / `ax, ay` render as before (the note's number, no
+  line); older clients show new pins that way too. The leader is drawn only when its start lies outside the circle.
+  The phone / HTML drawing canvas (review-draw.js) has no pin tool; it draws, moves and hit-tests pins through
+  review-core, so leaders follow there too. The hovered-text copy steps aside for a real text selection, also
+  inside a focused field. On touch there is no Shift, so no H/V constraint there.
+- Review (fresh agent, run by the implementing agent): 6 findings — Ctrl+C dead while the composer kept focus; a
+  press while the number field was open only confirmed it (every other quick click placed a pin, a double-click
+  on a pin flashed the field); the circle showed a different number than the field until confirmed; a short drag
+  ending inside a pin stacked a duplicate; a stale comment — all fixed; compare-mode copy not applicable. The same
+  reviewer confirmed all fixes, nothing new.
+
 ## 0.85.0 — 2026-11-18 — Lightbox video bar: sound, scrub audio, loop, typed frame jump, Shift+arrows
 - **What:** the lightbox video bar gets a sound icon (click = mute, press-and-drag up or the wheel = volume with a
   pop-up slider, right-click or long press = sound while scrubbing, shown by an accent dot), a loop button, and a
@@ -339,31 +367,3 @@ Add new entries directly below this line.
   even when nothing changed; MANUAL said the `.srev` export visits clips; fixed. Re-review: fixes confirmed except a
   `continue` that skipped reloading the first changed clip when several changed (stale rows + undo over the merge);
   removed, confirmed by the same reviewer.
-
-## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
-- **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
-  drawing out and the next annotated frame's in. Now, while drawing on a video with onion on, between two frames
-  that carry drawings the earlier ones fade out and the later ones fade in as the playhead moves (linear over the
-  gap; over 1 s before the first / after the last). And the toolbar's eye is gone: the top bar's eye (lightbox
-  `#drawEyeBtn`, new `#boardEyeBtn` next to the board's pen) works while drawing too. Owner, next: onion skin is a
-  way of viewing, not a tool — its toolbar button is gone; right-click / long-press on the eye toggles it (video;
-  click still hides / shows), it works while just watching too and is kept with the settings
-  (`sight.annotate.onion`); the eye shows the onion icon while it is on.
-- **Where:** annotate.js (`onionFade` replaces `ghostNow`, `paintVisibility` inline opacity, `.an-doc g.ghost` CSS
-  removed; `paintEye` used by `paintBar` / `paintBadge`; toolbar `data-act=hide` removed), index.html
-  (`#boardEyeBtn`, host `eyeBtn`, activePane, `applyViewDom`), MANUAL, ARCHITECTURE.
-- **Notes:** a span = the drawing's frame + its hold (a held drawing fades from the end of its hold); a drawing
-  held for the whole clip (`hold: -1`) is not part of it. Spans group by their end / start within half a frame.
-  The rules that decide what may show (hidden replies, deleted notes, the compose / pick narrowing) apply to the
-  ghosts too. A board's eye shows only while drawing there (the board resets the eye when drawing ends).
-  Verified with Playwright: opacities at 0.4 … 3.8 s over drawings at 1.6 / 2.0 / 2.6 s match the formula; no
-  toolbar eye; the top-bar eye while drawing hides everything.
-- Review (fresh agent): the first cross-fade only counted spans that had ended, so at every annotated frame in the
-  middle the previous drawings popped back and the next jumped (and held drawings sat at half opacity); a fade cut
-  off when an overlapping hold ended; a hidden state carried over from another file gave no sign while drawing (new
-  strokes vanished); fixed (groups by start frame: the group that started last fades out from each drawing's own
-  end, the next fades in once it is over; the eye shows while drawing when hidden). Accepted: the version compare
-  has no eye (Shift+H still works there; onion is off there). Re-review: fixes confirmed; new: a touch long-press
-  on Android / a pen on Windows toggling onion twice (their contextmenu), drawings frozen after onion unhid them
-  on a playing video, an earlier group's long hold ending with no fade; fixed; the same reviewer confirmed all three. Then: a pen's barrel
-  button (pointerdown `button` 2) counts as a right-click and toggles onion too (confirmed by the same reviewer).

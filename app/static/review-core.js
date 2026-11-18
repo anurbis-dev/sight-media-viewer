@@ -421,7 +421,12 @@ var SightReviewCore = (function(){
     return w * 1.7 + Math.max(Number(d.len) || w * 6, w) + Math.max(w * 4.5, w + 9) * (d.headSize || 1) * 0.6;
   }
 
-  // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known.
+  // A pin's leader line: present when its start (ax, ay) lies outside the circle.
+  function pinLeader(d){ return Number.isFinite(d.ax) && Number.isFinite(d.ay) && hyp(d.x - d.ax, d.y - d.ay) > d.size / 2 + 0.5; }
+  function pinLineW(d){ return Math.max(1.5, d.size * 0.07); }
+
+  // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known; a pin with
+  // its own `label` shows that instead.
   function primsOf(it, numOf){
     var d = it.data, t = typeOf(it), op, rot, out, path;
     if (t === "brush" || t === "pencil") return fillPrims(d).concat([{ d: strokeOutline(it), fill: d.color, op: d.opacity != null ? d.opacity : 1 }]);
@@ -487,11 +492,20 @@ var SightReviewCore = (function(){
       return out;
     }
     if (t === "pin"){
-      var r = d.size / 2, num = numOf ? numOf(it) : "";
-      return [
-        { d: ellipsePath(d.x, d.y, r, r), fill: d.color, stroke: "#ffffff", sw: Math.max(1, r * 0.14), op: 1 },
-        { text: [String(num || "•")], widths: null, x: d.x, y: d.y - r * 0.62, w: 0, lh: r * 1.24, font: "700 " + (r * 1.05) + "px " + fontStack("sans"), family: fontStack("sans"), size: r * 1.05, bold: true, align: "center", fill: "#ffffff", op: 1, center: true },
-      ];
+      // 0.84+: `label` = the number typed for it (else, older pins: the note's number); `ax, ay` = the leader
+      // line's start (the point pinned), drawn from there to the circle's edge with a dot at the start.
+      var r = d.size / 2, lab = d.label != null && d.label !== "" ? String(d.label) : String((numOf ? numOf(it) : "") || "\u2022");
+      var fs = r * 1.05 * (lab.length >= 3 ? 0.62 : lab.length === 2 ? 0.82 : 1);
+      out = [];
+      if (pinLeader(d)){
+        var lw = pinLineW(d), ll = hyp(d.x - d.ax, d.y - d.ay);
+        var ex = d.x - (d.x - d.ax) / ll * r, ey = d.y - (d.y - d.ay) / ll * r;
+        out.push({ d: "M" + r2(d.ax) + " " + r2(d.ay) + "L" + r2(ex) + " " + r2(ey), stroke: d.color, sw: lw, op: 1, cap: "round", join: "round" });
+        out.push({ d: ellipsePath(d.ax, d.ay, lw * 1.3, lw * 1.3), fill: d.color, op: 1 });
+      }
+      out.push({ d: ellipsePath(d.x, d.y, r, r), fill: d.color, stroke: "#ffffff", sw: Math.max(1, r * 0.14), op: 1 });
+      out.push({ text: [lab], widths: null, x: d.x, y: d.y - fs * 0.59, w: 0, lh: fs * 1.18, font: "700 " + fs + "px " + fontStack("sans"), family: fontStack("sans"), size: fs, bold: true, align: "center", fill: "#ffffff", op: 1, center: true });
+      return out;
     }
     return [];
   }
@@ -632,7 +646,11 @@ var SightReviewCore = (function(){
     var box, rot = d.rot || 0;
     if (t === "rect" || t === "ellipse" || t === "image") box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
     else if (t === "text") box = textLayout(d).box;
-    else if (t === "pin") return [d.x - d.size / 2, d.y - d.size / 2, d.x + d.size / 2, d.y + d.size / 2];
+    else if (t === "pin"){
+      var pr = d.size / 2, pb = [d.x - pr, d.y - pr, d.x + pr, d.y + pr];
+      if (pinLeader(d)){ var pl = pinLineW(d) * 1.3; pb = [Math.min(pb[0], d.ax - pl), Math.min(pb[1], d.ay - pl), Math.max(pb[2], d.ax + pl), Math.max(pb[3], d.ay + pl)]; }
+      return pb;
+    }
     else return [0, 0, 0, 0];
     var x = box[0], y = box[1], w = box[2], h = box[3], cx = x + w / 2, cy = y + h / 2;
     var pad = t === "text" ? 0 : t === "image" ? Math.max(0, d.border || 0) : (d.strokeOn !== false ? d.width / 2 : 0);
@@ -678,7 +696,7 @@ var SightReviewCore = (function(){
       for (i = 1; i < pts.length; i++) if (segDist(x, y, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) <= d.width / 2 + tol) return true;
       return false;
     }
-    if (t === "pin") return hyp(x - d.x, y - d.y) <= d.size / 2 + tol;
+    if (t === "pin") return hyp(x - d.x, y - d.y) <= d.size / 2 + tol || (pinLeader(d) && segDist(x, y, d.ax, d.ay, d.x, d.y) <= pinLineW(d) * 1.3 + tol);
     var box;
     if (t === "text") box = textLayout(d).box;
     else box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
@@ -745,6 +763,7 @@ var SightReviewCore = (function(){
       if (s.border) d.border = s.border * q;
     } else if (t === "pin"){
       c = map(s.x, s.y); d.x = c[0]; d.y = c[1];
+      if (Number.isFinite(s.ax) && Number.isFinite(s.ay)){ c = map(s.ax, s.ay); d.ax = c[0]; d.ay = c[1]; }
     }
   }
 
@@ -792,12 +811,14 @@ var SightReviewCore = (function(){
   function xfStart(h, items, x, y){
     return { handle: h, x: x, y: y, items: items, src: items.map(cloneItem), box: xfBox(items), moved: false, at: null };
   }
+  // Shift while drawing: keeps the end on the horizontal or the vertical through (x0, y0), whichever is nearer.
+  function snapHV(x0, y0, x, y){ return Math.abs(x - x0) >= Math.abs(y - y0) ? [x, y0] : [x0, y]; }
   function snap15(x0, y0, x, y){
     var a = Math.atan2(y - y0, x - x0), l = hyp(x - x0, y - y0), s = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
     return [x0 + Math.cos(s) * l, y0 + Math.sin(s) * l];
   }
-  // Moves the drag to (x, y). m: {shift, alt} — move: Shift keeps one axis; line ends: Shift snaps
-  // to 15°; rotate: Shift snaps to 15°; corners: Shift keeps the ratio; Alt scales about the centre.
+  // Moves the drag to (x, y). m: {shift, alt} — move: Shift keeps one axis; line ends: Shift keeps the line
+  // horizontal / vertical; rotate: Shift snaps to 15°; corners: Shift keeps the ratio; Alt scales about the centre.
   function xfDrag(D, x, y, m){
     m = m || {};
     D.moved = true;
@@ -812,7 +833,7 @@ var SightReviewCore = (function(){
       var d = its[0].data, s = src[0].data;
       if (h === "p0" || h === "p1"){
         var fx = h === "p0" ? s.pts[2] : s.pts[0], fy = h === "p0" ? s.pts[3] : s.pts[1];
-        var p = m.shift ? snap15(fx, fy, x, y) : [x, y];
+        var p = m.shift ? snapHV(fx, fy, x, y) : [x, y];
         d.pts = h === "p0" ? [p[0], p[1], s.pts[2], s.pts[3]] : [s.pts[0], s.pts[1], p[0], p[1]];
       } else {
         // Dragging the middle bends the line (a straight one turns into a curve).
@@ -1198,7 +1219,7 @@ var SightReviewCore = (function(){
     setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
-    xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
+    xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
     ctxVisible: ctxVisible, camMatch: camMatch, animMatch: animMatch, drawingRow: drawingRow,
     picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel, picFileName: picFileName,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,

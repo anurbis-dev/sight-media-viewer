@@ -224,7 +224,11 @@ Per type (all lengths in doc units):
   `serif` | `mono` | `hand` | `impact`, `size` (px of the font), `color`, `bold`, `italic`,
   `underline`, `align` `left` | `center` | `right`, `bgOn`, `bg`, `bgOpacity` (box behind the text,
   padding 0.3·size), `outline` (width), `outlineColor`, `rot`. Line height 1.25·size.
-- **`pin`**: `x, y` (centre), `color`, `size` (diameter). Shows the number of its note.
+- **`pin`**: `x, y` (centre of the circle), `color`, `size` (diameter). **0.86+**: `label` (string, the number
+  typed for it — shown in the circle; absent / empty = older pins: the number of its note), `ax, ay` (optional:
+  the start of a leader line, drawn from there to the circle's edge, width max(1.5, 0.07·size), with a dot of
+  1.3× that radius at the start; ignored when inside the circle). Moving / scaling moves both points. Older
+  clients show the note's number and no line.
 - **`image`** (reference image, Sight 0.79+; `shape_kind` null): `shot` (id of the picture in the shots — the
   package's `shots` map carries it like a note's screenshot; import remaps it like `data.shots`), `x, y, w, h`
   (the box the shown part fills, positive), `rot` (degrees about the box centre), `crop` (`[x, y, w, h]` of the

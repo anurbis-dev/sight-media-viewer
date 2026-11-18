@@ -2,6 +2,34 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
+- **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
+  drawing out and the next annotated frame's in. Now, while drawing on a video with onion on, between two frames
+  that carry drawings the earlier ones fade out and the later ones fade in as the playhead moves (linear over the
+  gap; over 1 s before the first / after the last). And the toolbar's eye is gone: the top bar's eye (lightbox
+  `#drawEyeBtn`, new `#boardEyeBtn` next to the board's pen) works while drawing too. Owner, next: onion skin is a
+  way of viewing, not a tool — its toolbar button is gone; right-click / long-press on the eye toggles it (video;
+  click still hides / shows), it works while just watching too and is kept with the settings
+  (`sight.annotate.onion`); the eye shows the onion icon while it is on.
+- **Where:** annotate.js (`onionFade` replaces `ghostNow`, `paintVisibility` inline opacity, `.an-doc g.ghost` CSS
+  removed; `paintEye` used by `paintBar` / `paintBadge`; toolbar `data-act=hide` removed), index.html
+  (`#boardEyeBtn`, host `eyeBtn`, activePane, `applyViewDom`), MANUAL, ARCHITECTURE.
+- **Notes:** a span = the drawing's frame + its hold (a held drawing fades from the end of its hold); a drawing
+  held for the whole clip (`hold: -1`) is not part of it. Spans group by their end / start within half a frame.
+  The rules that decide what may show (hidden replies, deleted notes, the compose / pick narrowing) apply to the
+  ghosts too. A board's eye shows only while drawing there (the board resets the eye when drawing ends).
+  Verified with Playwright: opacities at 0.4 … 3.8 s over drawings at 1.6 / 2.0 / 2.6 s match the formula; no
+  toolbar eye; the top-bar eye while drawing hides everything.
+- Review (fresh agent): the first cross-fade only counted spans that had ended, so at every annotated frame in the
+  middle the previous drawings popped back and the next jumped (and held drawings sat at half opacity); a fade cut
+  off when an overlapping hold ended; a hidden state carried over from another file gave no sign while drawing (new
+  strokes vanished); fixed (groups by start frame: the group that started last fades out from each drawing's own
+  end, the next fades in once it is over; the eye shows while drawing when hidden). Accepted: the version compare
+  has no eye (Shift+H still works there; onion is off there). Re-review: fixes confirmed; new: a touch long-press
+  on Android / a pen on Windows toggling onion twice (their contextmenu), drawings frozen after onion unhid them
+  on a playing video, an earlier group's long hold ending with no fade; fixed; the same reviewer confirmed all three. Then: a pen's barrel
+  button (pointerdown `button` 2) counts as a right-click and toggles onion too (confirmed by the same reviewer).
+
 ## 0.73.0 (docs) — 2026-11-17 — Plan: one review page / `.srev` bundle for several clips
 - **What:** `docs/PLAN-multiclip.md` (linked from PLAN.md and CLAUDE.md): a bundle envelope (`format:
   "sight-review-bundle"`, `.srev` too) around unchanged single-asset packages; stage 1 format + Sight import /

@@ -44,7 +44,7 @@ const ICON = {
   rect: ico(`<rect x="4" y="6" width="16" height="12" rx="2"/>`),
   ellipse: ico(`<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>`),
   text: ico(`<path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>`),
-  pin: ico(`<path d="M12 21s-6.5-5.6-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><path d="M11 8h1.5v5"/>`),
+  pin: ico(`<circle cx="14" cy="10" r="6.5"/><path d="M13 7.5h1.5v5"/><path d="M9.4 14.6 4 20"/>`),
   undo: ico(`<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>`),
   redo: ico(`<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>`),
   shot: ico(`<path d="M14.5 5h-5L8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>`),
@@ -73,10 +73,10 @@ const TOOLS = [
   ["marker", "KeyM", "Highlighter", ICON.marker],
   ["eraser", "KeyE", "Eraser — or hold Ctrl with any tool", ICON.eraser],
   null,
-  ["arrow", "KeyW", "Arrow — a line with Start / End heads set to none · Shift snaps to 15°", ICON.arrow],
+  ["arrow", "KeyW", "Arrow — a line with Start / End heads set to none · Shift keeps it horizontal / vertical", ICON.arrow],
   ["rect", "KeyR", "Shape — rectangle or ellipse (O) · Shift square / circle", ICON.rect],
   ["text", "KeyT", "Text", ICON.text],
-  ["pin", "KeyN", "Note pin — a marker with the number of the note it belongs to", ICON.pin],
+  ["pin", "KeyN", "Number pin — click for a numbered circle, drag for a line to it; type the number, Enter", ICON.pin],
   ["image", "Shift+KeyI", "Reference image — click to pick pictures, drop them on the frame, or drag them from the library (Tab)", ICON.image],
 ];
 // The frame stamp (a device preference, not review data): where / how the frame label sits over the video and on
@@ -1298,6 +1298,15 @@ export function createAnnotator(host){
     if (!e.altKey && e.target.closest?.(".an-stamp")) return;  // the frame stamp has its own drag
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
+    if (S.pinEdit){
+      // A press on the pin being numbered (a double-click) leaves the field open; elsewhere it sets the number,
+      // and with the pin tool goes on to place the next pin.
+      if (e.button !== 0) return;
+      const [qx, qy] = toDoc(e);
+      if (hitAt(qx, qy)?.id === S.pinEdit.it.id){ release(e); S.pinEdit.inp.focus(); return; }
+      finishPinEdit();
+      if (S.tool !== "pin"){ release(e); return; }
+    }
     const pen = e.pointerType === "pen";
     S.lastPtr = e.pointerType;
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
@@ -1421,11 +1430,14 @@ export function createAnnotator(host){
       return;
     }
     if (tool === "pin"){
+      // A click: a circle here; a drag: a leader line from here, the circle where it is let go. The number is
+      // typed after (editPin). A click on a pin (no drag) edits its number instead.
+      const hit = hitAt(x, y);
       const st = styleDoc("pin");
-      const it = newItem("pin", null, { color: st.color, size: st.size, x, y });
-      commit([it.id], () => S.items.set(it.id, it));
-      release(e);
-      focusComposer();
+      const it = newItem("pin", null, { color: st.color, size: st.size, x, y, label: nextPinNumber() });
+      S.items.set(it.id, it);
+      S.drag = { pin: it, x, y, sx, sy, hit: hit && typeOf(hit) === "pin" && editable(hit) ? hit : null, moved: false };
+      renderAll();
       return;
     }
   }
@@ -1457,7 +1469,7 @@ export function createAnnotator(host){
       const it = D.stroke, d = it.data;
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
       if (e.shiftKey){
-        // Shift: straight stroke from where it started, snapped to 15°.
+        // Shift: straight stroke from where it started, horizontal or vertical.
         const [ex, ey] = snapAngle(D.start[0], D.start[1], x, y);
         const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, (d.size || d.width * 2) / 3)));
         d.pts = [];
@@ -1491,6 +1503,15 @@ export function createAnnotator(host){
         d.x = D.x; d.y = D.y; d.w = w; d.h = h;
       }
       renderItem(it);
+      return;
+    }
+    if (D.pin){
+      const d = D.pin.data;
+      if (!D.moved && hyp(sx - D.sx, sy - D.sy) < 6) return;
+      D.moved = true;
+      const [ex, ey] = e.shiftKey ? snapAngle(D.x, D.y, x, y) : [x, y];
+      d.ax = D.x; d.ay = D.y; d.x = ex; d.y = ey;
+      renderItem(D.pin);
       return;
     }
     if (D.eraser){ eraseAt(x, y); renderSel(); return; }
@@ -1554,6 +1575,15 @@ export function createAnnotator(host){
       commit([it.id], () => S.items.set(it.id, it));
       return;
     }
+    if (D.pin){
+      const it = D.pin, d = it.data;
+      const click = !D.moved || hyp(d.x - D.x, d.y - D.y) <= d.size / 2;  // no line: a circle where it was pressed
+      if (click){ delete d.ax; delete d.ay; d.x = D.x; d.y = D.y; }
+      if (click && D.hit){ S.items.delete(it.id); renderAll(); editPin(D.hit, false); return; }
+      renderItem(it);
+      editPin(it, true);
+      return;
+    }
     if (D.eraser){
       if (D.before.size){
         const after = new Map([...D.before.keys()].map((id) => [id, snap(S.items.get(id))]));
@@ -1588,13 +1618,14 @@ export function createAnnotator(host){
     if (!D) return;
     if (D.eraser){ onUp({ pointerId: -1 }); return; }
     S.drag = null;
-    if (D.stroke || D.shape) S.items.delete((D.stroke || D.shape).id);
+    if (D.stroke || D.shape || D.pin) S.items.delete((D.stroke || D.shape || D.pin).id);
     else if (D.src) for (const [id, src] of D.src) if (src) S.items.set(id, structuredClone(src));
     renderAll();
     renderSel(); renderProps();
   }
 
-  const snapAngle = RC.snap15;
+  // Shift while drawing (straight stroke, line / arrow, pin leader): horizontal or vertical only.
+  const snapAngle = RC.snapHV;
 
 
   function eraseAt(x, y){
@@ -1745,6 +1776,7 @@ export function createAnnotator(host){
     renderProps();
   }
   function finishEdit(){
+    finishPinEdit();
     const E = S.edit;
     if (!E) return;
     S.edit = null;
@@ -1765,6 +1797,76 @@ export function createAnnotator(host){
       commit([it.id], () => S.items.set(it.id, after));
     }
     S.sel = new Set([it.id]);
+    afterChange();
+  }
+  // ---- pin number ------------------------------------------------------------------------------
+  // The smallest number no pin of this media shows yet (older pins show their note's number).
+  function nextPinNumber(skip){
+    const used = new Set();
+    for (const it of S.items.values()) if (typeOf(it) === "pin" && it.id !== skip) used.add(String(it.data.label || numOf(it) || ""));
+    let n = 1;
+    while (used.has(String(n))) n++;
+    return String(n);
+  }
+  // A small field over the pin: type its number, Enter (or a tap elsewhere) sets it — empty = the next free
+  // number; Esc drops a new pin / keeps an old one's number. Keys typed there never reach the tool shortcuts,
+  // and the focus leaves it once it is done (so the hotkeys work again with the pin tool still in hand).
+  function editPin(it, isNew){
+    finishEdit();
+    const el = surfaceEl();
+    if (!el){ if (isNew) S.items.delete(it.id); return; }
+    const inp = document.createElement("input");
+    inp.className = "an-pinedit";
+    inp.type = "text";
+    inp.inputMode = "numeric";
+    inp.maxLength = 4;
+    inp.spellcheck = false;
+    inp.autocomplete = "off";
+    inp.value = isNew ? "" : it.data.label || "";
+    inp.placeholder = isNew ? String(it.data.label || nextPinNumber(it.id)) : String(it.data.label || numOf(it) || "");
+    inp.setAttribute("aria-label", "Pin number");
+    (S.b2 && S.layer ? S.layer.root : el).appendChild(inp);
+    inp.style.pointerEvents = "auto";
+    S.pinEdit = { it, inp, isNew, before: isNew ? null : snap(it) };
+    const place = () => {
+      const d = it.data, g = geom(), [cx, cy] = toScreen(d.x, d.y), w = Math.max(44, d.size * g.s * 1.4), h = Math.max(30, d.size * g.s);
+      Object.assign(inp.style, { left: (cx - w / 2) + "px", top: (cy - h / 2) + "px", width: w + "px", height: h + "px", fontSize: Math.max(14, d.size * g.s * 0.5) + "px" });
+    };
+    S.pinEdit.place = place;
+    place();
+    inp.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (hotkey(e, "Enter")){ e.preventDefault(); finishPinEdit(); }
+      else if (hotkey(e, "Escape")){ e.preventDefault(); finishPinEdit(true); }
+    });
+    inp.addEventListener("blur", () => setTimeout(() => { if (S.pinEdit?.inp === inp && document.activeElement !== inp) finishPinEdit(); }, 0));
+    inp.addEventListener("pointerdown", (e) => e.stopPropagation());
+    inp.focus();
+    inp.select();
+    requestAnimationFrame(() => { if (S.pinEdit?.inp === inp && document.activeElement !== inp) inp.focus(); });
+  }
+  function finishPinEdit(cancel){
+    const E = S.pinEdit;
+    if (!E) return;
+    S.pinEdit = null;
+    E.inp.remove();
+    const it = E.it;
+    if (cancel){
+      if (E.isNew) S.items.delete(it.id);
+      renderAll();
+      return;
+    }
+    // Empty: a new pin takes the next free number; an old one keeps what it shows.
+    const label = E.inp.value.trim() || (E.isNew ? E.inp.placeholder || nextPinNumber(it.id) : E.before.data.label || "");
+    if (E.isNew){
+      it.data.label = label;
+      S.items.delete(it.id);
+      commit([it.id], () => S.items.set(it.id, it));
+    } else if (label !== (E.before.data.label || "")){
+      const after = structuredClone(E.before);
+      after.data.label = label;
+      commit([it.id], () => S.items.set(it.id, after));
+    }
     afterChange();
   }
   function hexA(hex, a){
@@ -2259,6 +2361,7 @@ export function createAnnotator(host){
     const inp = el.querySelector(".an-input");
     inp.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      if (hotkey(e, "Ctrl+KeyC") && inp.selectionStart === inp.selectionEnd && copyHoveredText()){ e.preventDefault(); return; }  // nothing selected here: the hovered text
       if (hotkey(e, "Enter")){ e.preventDefault(); addNote(); }
       else if (hotkey(e, "Escape")){ e.preventDefault(); inp.blur(); }
     });
@@ -2271,6 +2374,7 @@ export function createAnnotator(host){
     const cin = el.querySelector(".an-cin");
     cin.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      if (hotkey(e, "Ctrl+KeyC") && cin.selectionStart === cin.selectionEnd && copyHoveredText()){ e.preventDefault(); return; }  // nothing selected here: the hovered text
       if (hotkey(e, "Enter")){ e.preventDefault(); addNote(); }
       else if (hotkey(e, "Escape")){ e.preventDefault(); cin.blur(); }
     });
@@ -3399,6 +3503,7 @@ export function createAnnotator(host){
         paintStamp();
         renderSel();
         if (S.edit) S.edit.place();
+        if (S.pinEdit) S.pinEdit.place();
         if (S.ui && !S.ui.hidden) renderPending();
       }
     }
@@ -3998,7 +4103,7 @@ export function createAnnotator(host){
     }
     // Mouse / touch things that are not hotkeys (static: they live in the pointer code, not in the table).
     const extra = {
-      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Line / arrow snap to 15°, rectangle square, ellipse circle"]],
+      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Straight stroke, line / arrow, pin line: horizontal or vertical only; rectangle square, ellipse circle"]],
       "General": [[["Alt + drag"], isBoard() ? "Pan the board while a drawing tool is active (middle-drag and the wheel pan too, right-drag / Ctrl+wheel zoom)" : "Hand the drag to the viewer (pan / zoom, orbit in 3D) while a drawing tool is active"]],
       ...(S.kind !== "model3d" ? {} : { "3D models": [[["Shift+A"], "Enter / leave annotation mode (A flies the camera in a 3D view)"], [["Alt+1–9"], "Save the camera view (1–9 recall it)"]] }),
     };
@@ -4052,6 +4157,10 @@ export function createAnnotator(host){
     if (S.shotView && hotkey(e, "Escape")){ e.preventDefault(); closeShotView(); return true; }
     const tag = e.target?.tagName;
     const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable;
+    // Ctrl+C with the pointer over a note's / reply's / picture's text (the panel or the text plate): copies that text.
+    // (Also from a focused field with nothing selected in it, e.g. the note composer kept focused.)
+    const fieldSel = typing && typeof e.target.selectionStart === "number" && e.target.selectionStart !== e.target.selectionEnd;
+    if (!fieldSel && !e.target?.isContentEditable && hotkey(e, "Ctrl+KeyC") && copyHoveredText()){ e.preventDefault(); return true; }
     if (!S.on){
       if (typing) return false;
       // The notes panel opens for reading without the drawing tools (C, or the notes button).
@@ -4066,6 +4175,24 @@ export function createAnnotator(host){
     if (typing) return false;
     if (S.region && hotkey(e, "Escape")){ e.preventDefault(); cancelRegion(); return true; }
     return runHotkeys(e, keyTable());
+  }
+  // The text under the pointer in the notes panel / the text plate (a note's text, a reply, a picture's text), copied
+  // to the clipboard. Not when there is a real text selection (the browser copies that) or nothing is hovered.
+  function copyHoveredText(){
+    const sel = window.getSelection?.();
+    if (sel && !sel.isCollapsed && String(sel).trim()) return false;
+    const el = S.light?.querySelector(".an-nt:hover, .an-rt:hover, .an-cap:hover, .scp-theme:hover, .scp-text:hover");
+    if (!el) return false;
+    let text;
+    if (el.classList.contains("an-nt")){
+      const n = S.items.get(el.closest(".an-note")?.dataset.id);
+      text = n?.kind === "note" ? n.data.text : "";
+    } else if (el.classList.contains("an-cap")) text = el.querySelector("span")?.textContent;
+    else text = el.textContent;
+    if (!text || !String(text).trim()) return false;
+    navigator.clipboard?.writeText(String(text)).then(() => toast("Copied"), () => toast("Clipboard not available"))
+      ?? toast("Clipboard not available");
+    return true;
   }
   function resizeTool(f){
     const tg = propsTarget();
@@ -4169,6 +4296,8 @@ export function createAnnotator(host){
       const [x, y] = toDoc(e);
       const hit = hitAt(x, y);
       if (hit && typeOf(hit) === "text" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editText(hit); return; }
+      // A pin: double-click edits its number (with the pin tool a single click does).
+      if (S.tool !== "pin" && !S.pinEdit && hit && typeOf(hit) === "pin" && editable(hit)){ e.stopImmediatePropagation(); e.preventDefault(); editPin(hit, false); return; }
       // A reference image: double-click crops it (again, or on the empty frame: done).
       if (S.tool === "select" && hit && typeOf(hit) === "image" && editable(hit)){
         e.stopImmediatePropagation(); e.preventDefault();
@@ -4206,7 +4335,7 @@ export function createAnnotator(host){
   function viewChanged(){
     if (!S.layer || !(S.on || shownOff())) return;
     syncViewBox();
-    if (S.on){ renderSel(); if (S.edit) S.edit.place(); }
+    if (S.on){ renderSel(); if (S.edit) S.edit.place(); if (S.pinEdit) S.pinEdit.place(); }
   }
   // 3D: host element, camera get/set, synchronous capture of the rendered frame.
   function bind3d(r){
@@ -4270,6 +4399,8 @@ function injectStyles(){
 .an-ui .an-regionshade { fill: rgb(0 0 0 / .45); fill-rule: evenodd; }
 .an-ui .an-region { fill: none; stroke: #fff; stroke-width: 1; stroke-dasharray: 4 3; }
 .an-ui .an-regionlbl { fill: #fff; font: 11px system-ui, sans-serif; paint-order: stroke; stroke: rgb(0 0 0 / .7); stroke-width: 3; }
+.an-pinedit { position: absolute; z-index: 6; margin: 0; padding: 0 4px; box-sizing: border-box; border: 1px solid #4c9aff; border-radius: 8px; outline: none; background: rgb(20 20 24 / .9); color: #fff; font-weight: 700; text-align: center; font-family: system-ui, sans-serif; }
+.an-pinedit::placeholder { color: rgb(255 255 255 / .55); }
 .an-textedit { position: absolute; z-index: 6; margin: 0; padding: 0; border: 1px dashed #4c9aff; outline: none; resize: none; overflow: hidden; white-space: pre; min-width: 24px; box-sizing: content-box; }
 .an-top { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: 13; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; max-width: calc(100% - 140px); }
 .an-top[hidden] { display: none; }
@@ -4394,9 +4525,10 @@ function injectStyles(){
 .an-note { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; }
 .an-note:hover { border-color: var(--border-strong); }
 .an-note.on { border-color: var(--accent); }
-.an-nedb { visibility: hidden; }
-.an-note:hover .an-nedb, .an-note.on .an-nedb { visibility: visible; }
-@media (hover: none) { .an-note:hover:not(.on) .an-nedb { visibility: hidden; } }
+/* A note's action icons show on hover only; on a touch screen (no hover) on the picked (tapped) note. */
+.an-nh .an-ib { visibility: hidden; }
+.an-note:hover .an-nh .an-ib, .an-note.on .an-nh .an-ib, .an-nh .an-ib:focus-visible { visibility: visible; }
+@media (hover: none) { .an-note:hover:not(.on) .an-nh .an-ib { visibility: hidden; } }
 .an-note.done { opacity: .6; }
 .an-note.done .an-nt { text-decoration: line-through; text-decoration-color: rgb(255 255 255 / .35); }
 .an-nh { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
@@ -4420,7 +4552,7 @@ function injectStyles(){
 .an-rh { display: flex; align-items: center; gap: 4px; color: var(--subtle); font-size: 10px; }
 .an-rh span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-rh .an-ib { visibility: hidden; height: 16px; min-width: 16px; }
-.an-rep:hover .an-rh .an-ib { visibility: visible; }
+.an-rep:hover .an-rh .an-ib, .an-note.on .an-rh .an-ib, .an-rh .an-ib:focus-visible { visibility: visible; }
 .an-rdraw { flex: none; display: inline-flex; align-items: center; gap: 2px; height: 16px; padding: 0 5px 0 3px; border: 0; border-radius: 8px; background: none; color: var(--subtle); font: inherit; font-size: 10px; cursor: pointer; }
 .an-rdraw svg { width: 12px; height: 12px; }
 .an-rdraw:hover { color: var(--fg); background: rgb(127 127 127 / .18); }
