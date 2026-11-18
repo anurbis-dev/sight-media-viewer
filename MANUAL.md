@@ -288,7 +288,8 @@
   adds a note — on a video at the frame on screen; while it is open the picture is clean (only its
   own drawing) and so is the timeline (only the frames it is drawn on). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
   highlighter, arrows and lines, shapes, text, eraser, the colour, undo / redo, clear, pinch / pan /
-  turn), its buttons floating over the picture. A tap on *Arrows and lines* or *Shapes* takes it and
+  turn), its buttons floating over the picture; on a video the tools sit above the transport, and when they do
+  not fit the screen's width, drag the row sideways to reach the rest. A tap on *Arrows and lines* or *Shapes* takes it and
   shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
   rectangle, rounded, ellipse, filled rectangle, filled ellipse — and at its end the fill colour:
   a second row with the line's own colour (lighter, the default) or one of six; picking a colour
@@ -383,7 +384,12 @@
   send all. Any group you made yourself sends the same way.
   Tap a group's picture to review it as a sequence: it opens on the clip you saw last there (the first one
   at first); the header shows ‹ / › around the clip's name and “group · 2 / 5” under it (keyboard: Page Up /
-  Page Down). Back leaves the sequence in one step. Pictures and 3D models in a group work the same way. For a round trip with Sight, open the
+  Page Down), or swipe the clip's name sideways (left: next, right: previous). Back leaves the sequence in one
+  step. Pictures and 3D models in a group work the same way. When a group has two or more videos, a bar under
+  the timeline shows them end to end (a segment per clip, its name inside, the current one highlighted, ticks
+  for notes and drawings): tap or drag it to move through the whole sequence, playing runs on from one clip into
+  the next (loop: back to the first after the last), and dragging on the picture past a clip's start or end
+  carries on into the neighbouring clip. The last frame stays on screen until the next clip's is ready. For a round trip with Sight, open the
   original from Files (*Open a file…*): the Photos picker hands over a converted copy (HEIC becomes
   JPEG, video may be re-encoded), whose name / size Sight does not know. Press and hold a review in
   the list to delete it. When a new version of the app is out, a bar offers *Reload*.

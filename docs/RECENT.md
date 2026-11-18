@@ -14,6 +14,56 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.79.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
+- **What:** owner: the drawing tools sat under the video transport, and on a narrow phone some icons went off the
+  edge. Now the tools row is the bottom bar's top row (over the host's footer / transport), in one line; when it
+  does not fit it scrolls sideways by a drag (finger, pen or mouse), centred while it fits. The colour button
+  stays at the right end.
+- **Where:** app/static/review-draw.js (`dragScroll`, `.dtrow` inside `.dtools`, bar order, CSS) — shared by
+  the phone app and the HTML review page; tests/pwa_e2e.cjs `seqbar` end + test_pwa.py `test_seq_bar`.
+- **Notes:** `.rd-panel` is `touch-action: none`, so the scroll is done in JS, not natively. Past 6 px a drag is
+  the scroll's: the pressed button gets a synthetic `pointercancel` (cancels its 550 ms hold), open flyouts
+  close, the click after a mouse drag is eaten. Flyouts still open above the whole bar (now above the tools).
+- Review (fresh agent): touch / pen drag stopped after the first move (the button's implicit capture moving to
+  the row fired `lostpointercapture` that ended the drag) → ignored unless on the row itself; a mouse released
+  outside the row left the drag stuck → cleared on a buttonless move; a leftover `eat` swallowed one keyboard
+  click after a touch drag → cleared on the next task. The test now asserts the full scroll. Confirmed by the
+  same reviewer.
+
+## 0.79.0 — 2026-11-18 — Phone: the sequence bar under the timeline, title swipe between clips
+- **What:** owner: like Sight, a group's videos should play and scrub across the cuts, not one by one. A review
+  whose group has 2+ videos now has a bar under the clip's own timeline with every video as a segment (name, current one
+  highlighted, note / drawing ticks, playhead across all); tap / drag it to move through the whole sequence,
+  playing runs on into the next clip (loop: the first after the last), a scrub on the picture past a clip's
+  edge carries on into the neighbour, the last frame is held until the next clip shows. Swiping the header's
+  title sideways switches clips (left = next) for any group, pictures and 3D included.
+- **Where:** mobile/js/app.js (`bindTitleSwipe`, `seqInfo` / `seqLoad` / `seqGeom` / `seqAt` / `renderSeqBar` /
+  `paintSeqPh` / `bindSeqBar` / `seqDragBegin` … `seqDragEnd` / `seqDragTo` / `seqSwitch` / `seqEnded` /
+  `seqApply` / `seqHold*` / `seqStop`; `buildStage` video branch; `bindStage` scrub hand-over; `scrubDelta`
+  (+ `scrubStep` wrapper); `openReviewNow` opts.seq, rate / clean carried; `setLoop`, `paintTime`,
+  `paintMarkers`), mobile/index.html (`.sqb`, `.seqhold`, `.ttl.swipe`), tests/pwa_e2e.cjs `seqbar`,
+  tests/test_pwa.py `test_seq_bar`, MANUAL, ARCHITECTURE.
+- **Notes:** each clip is still its own review (notes, drawings, exports untouched); a cut = one `openReview`
+  with `{replace, seq}`, so history stays one entry. Drags live on window listeners (`seqDrag`) because the
+  bar / stage are rebuilt at a cut. Not done: preloading the next clip (Sight's seamless adopt) — a cut on the
+  phone costs one open, hidden by the held frame. Pictures / 3D models are not on the bar (videos only); a clip
+  without its file on the phone stays a dimmed segment and stops playback there. No cut while drawing or with an
+  unsent note (`seqLocked`: the drag holds at the clip's edge, play stops at the end); ‹ › / title swipe /
+  Page keys ask first when a draft would be lost. `ended` goes on only after real play (`R.playOn`: a paused
+  seek to the very end also fires `ended`).
+- Review (fresh agent): a cut dropped a drawing session / unsent draft → `seqLocked`; a touch drag lost its
+  events on iOS once its target was detached → the target is moved into a hidden `.seqkeep` holder at the
+  rebuild (`seqKeepTarget` in renderReview; first version moved it too early and blanked the held frame) +
+  touchend safety net; paused seek to the end cut → `R.playOn`; hold not watched on a direct seek; a new
+  pointer on the new stage mid-drag; panel / filter / hide reset at each cut → carried on `opts.seq`; geometry
+  bounced at a cut when a length was guessed → frozen per drag (`seqDrag.G`); seqGo dropped drafts → asks
+  (one dialog at a time: no ask while any sheet is open — a flag got stuck when the sheet was closed by its
+  backdrop / Back); deleted-clip path repaints the header. All confirmed by the same reviewer.
+- Checked (owner asked): scrub on the picture across the cut both ways, mouse and CDP touch, screencast of a
+  test clip whose brightness tracks time: no black / blank frame, no flash of the wrong end of the next clip,
+  the drag carries on at once (≈ 3–4 frames of held picture at a cut). Found and fixed there: the big Play
+  button flashed over the picture at each cut → not added on a clip reached through the sequence (`seqPend`).
+
 ## 0.78.0 — 2026-11-18 — Phone: review a group as a sequence, clip by clip
 - **What:** owner: reviewing a sequence on the phone meant going back to the list after every clip. Now a tap on
   a group's picture opens its sequence on the clip last seen there (else the first); the review header of any
@@ -319,49 +369,3 @@ Add new entries directly below this line.
   rounds: pause landing a frame late / dimming at a clip's first frame, a step past the end dimming the clip, a
   flash after closing during the fps wait, `reload()` keeping undo and racing its own save — fixed; confirmed by
   the same reviewer.
-
-## 0.67.0 — 2026-11-17 — Sequence: every clip's markers, Shift+, / . across clips, up-front conversion (stage 3)
-- **What:** the sequence bar shows tick marks for every clip's drawings / notes (taller = a note's);
-  `Shift+,` / `Shift+.` continue into the previous / next clips when the current one has no further marker. A
-  clip the browser cannot play is found when the sequence opens and converted ahead of its turn.
-- **Where:** index.html — `seqLoadMarks`, `seqMarksFromAnnot`, `seqRepaintSoon`, `seqMarker`,
-  `seqProbePlayable` / `seqProbe` / `seqConvertAhead`, marks in `paintSeqBar`, `.seq-mk` CSS; annotate.js —
-  `renderMarks` → `host.marksChanged`, `jumpMarker` → `host.seqMarker`, API `marks()` / `loading()`.
-- **Notes:** the clip on screen reports annotate.js's exact marks; the others are an estimate from their rows
-  (drawings' `ctx.t`, a note mark when `data.note` links it; notes' caption frames) fetched once at open. A
-  clip left keeps the marks annotate last reported — a re-read raced the debounced save and dropped new marks.
-  `seqMarker` stays put while a jump is pending or the clip's rows are loading (else a fast double press skips a
-  clip). Conversion: probes load metadata only; `POST /api/video/transcode` goes out only for clips without a
-  picture, **one at a time and only for the next two clips** — the server encodes one job at a time, so queuing
-  all of them held back the clip the user jumps to and kept ffmpeg busy after closing. Deliberately not done:
-  extending the server RAM cache (`SlidingVideoCache`, one file) to prefetch the next clip — the hidden preload
-  `<video>` already pulls the next clip's head; worth it only for slow network drives.
-- Review (fresh agent): conversions queued for every clip at once, the left clip's re-read racing its save, a
-  just-opened clip reporting no marks (Shift+. skipping it), markers past a clip's end, per-clip fetch / repaint
-  cost; fixed (landing at t + 1 ms instead of annotate's quarter-frame kept: correct for stored frame starts).
-  Re-review: a clip left while its rows were loading kept no marks, a jump into a clip whose conversion failed
-  blocked frame / marker keys (pendT never cleared), probes started from clip 0 — fixed; confirmed by the same
-  reviewer.
-
-## 0.66.0 — 2026-11-17 — Touch selection by long-press (Sequence stage 2)
-- **What:** on a touch screen (finger or stylus) holding a grid tile ~0.5 s starts touch selection mode with
-  just that tile; then a tap toggles a tile (appended, so tap order = sequence order), a double tap opens
-  nothing, a tap on empty space does nothing (owner's choice: a missed tile must not drop the selection). A
-  bottom bar shows "N selected", *▶▶ Play in sequence* (2+ videos) and ✕; ✕ / Esc end the mode.
-- **Where:** index.html — `syncTouchSel`, `startLongPress` / `cancelLongPress`, `lastGridPtr` / `fingerish`
-  (after `paintSelection`), grid pointerdown / click / dblclick / pointermove / pointercancel, `onPtrUp`,
-  card `draggable`, `selectOnly` (drops `state.touchSelect`), `applyViewDom`, `#touchSelBar` + CSS.
-- **Notes:** the mode is the explicit flag `state.touchSelect`, set **after** `selectOnly` (which drops it);
-  it also drops when the selection becomes empty (`syncTouchSel` from `paintSelection`). `selectSet` paths
-  (Ctrl+A, marquee, find in folder) keep it, as specced. A click's input is decided by the same gesture's
-  pointerdown (`lastGridPtr`), not the click's own `pointerType` (older Safari clicks are no PointerEvents).
-  The long-press sets `skipClick` when it fires, so the release click does not run `clickSelect`. Cards are
-  not `draggable` for touch (a held finger would start an HTML5 drag whose dragstart replaces the selection);
-  a pen keeps drag-to-board (drag starts only on movement, a still pen gets the long-press). Behaviour
-  change outside the mode too: `pointercancel` (a touch scroll) is now an abort in `onPtrUp` — it no longer
-  clears the selection as a click on empty space. The bar hides with the grid (full-screen board) and the
-  narrow-screen inspector stops above it. `navigator.vibrate` was dropped (no user activation in a timer).
-- Review (fresh agent): 8 findings — scroll from empty space wiping the selection (marquee + pointercancel),
-  a missed tap ending the mode, click type taken from the click, pen left out, bar over the board, bar
-  covering the inspector, vibrate; fixed (the mode surviving `selectSet` kept as specced). The re-review
-  caught that the first fix also blocked pen drag-to-board — restored; confirmed by the same reviewer.

@@ -12,6 +12,8 @@
 //     a fresh app opens a bundle of several clips (one damaged): one group, clips without media greyed;
 //     a note on one clip, the group's reply → outFile (only the changed clip); a second reply finds
 //     nothing changed.
+//   node tests/pwa_e2e.cjs seqbar <baseURL> <dir with seq_a.webm, seq_b.webm>
+//     two clips grouped: the sequence bar, tap / drag across the cut, play on past the end, title swipe, scrub.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -284,7 +286,112 @@ async function bundle(){
   return res;
 }
 
-(mode === "make" ? make() : mode === "bundle" ? bundle() : merge()).then((res) => {
+// Two clips of a group as one sequence: the bar over the timeline, a tap / drag on it across the cut, play on
+// past a clip's end, a scrub on the picture past the end, a swipe on the header's title.
+async function seqbar(){
+  const dir = a1, res = {};
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const p = await page(ctx);
+  for (const f of ["seq_a.webm", "seq_b.webm"]){
+    await p.setInputFiles("label.pick-file input", path.join(dir, f));
+    await p.waitForFunction((n) => { const R = window.__sightReview.R; return R && R.meta.asset.name === n && R.video && R.video.readyState >= 1; }, f);
+    await tap(p.locator('button[title="All reviews"]'));
+    await p.waitForSelector(".list .row");
+  }
+  const keys = await p.evaluate(async () => { const ms = await window.__sightReview.DB.all("reviews"); return ["seq_a.webm", "seq_b.webm"].map((n) => ms.find((m) => m.asset.name === n).key); });
+  await p.evaluate((ks) => localStorage.setItem("sight-review:groups", JSON.stringify([{ id: "gseq", name: "Seq", keys: ks, open: true }])), keys);
+  await p.reload();
+  await p.waitForSelector(".list .row.group");
+  await p.locator(".list .row.group > .item .th").click();
+  const name = () => p.evaluate(() => window.__sightReview.R.meta.asset.name);
+  const ready = (n) => p.waitForFunction((n) => { const R = window.__sightReview.R; return R && R.meta.asset.name === n && R.video && R.video.readyState >= 2 && !R.video.seeking && R.want == null; }, n);
+  await ready("seq_a.webm");
+  await p.waitForSelector(".sqb:not([hidden]) .sqs + .sqs");
+  res.segs = await p.$$eval(".sqb .sqs", (xs) => xs.map((x) => [x.textContent, x.classList.contains("cur")]));
+  const hist0 = await p.evaluate(() => history.length);
+  const bar = async () => p.locator(".sqb").boundingBox();
+  // A tap at 3/4 of the bar (two 2 s clips): the second clip, 1 s in.
+  let bb = await bar();
+  await p.mouse.click(bb.x + bb.width * 0.75, bb.y + bb.height / 2);
+  await ready("seq_b.webm");
+  res.tap = await p.evaluate(() => [window.__sightReview.R.video.currentTime, document.querySelector(".sqb .sqs.cur").textContent]);
+  // A drag back across the cut to 1/4: the first clip, 1 s in.
+  bb = await bar();
+  await p.mouse.move(bb.x + bb.width * 0.75, bb.y + bb.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(bb.x + bb.width * 0.25, bb.y + bb.height / 2, { steps: 12 });
+  await p.mouse.up();
+  await ready("seq_a.webm");
+  res.drag = await p.evaluate(() => [window.__sightReview.R.video.currentTime, window.__sightReview.R.dragging]);
+  // Played to its end: on into the second clip, still playing.
+  await p.evaluate(() => { const v = window.__sightReview.R.video; v.currentTime = v.duration - 0.2; v.play(); });
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.meta.asset.name === "seq_b.webm" && R.video && !R.video.paused && R.video.currentTime > 0.05; }, null, { timeout: 15000 });
+  res.played = true;
+  await p.evaluate(() => window.__sightReview.R.video.pause());
+  // A swipe right on the title: the previous clip; left: the next.
+  const swipe = async (dx) => {
+    const t = await p.locator(".hdr .ttl").boundingBox(), y = t.y + t.height / 2, x = t.x + t.width / 2;
+    await p.mouse.move(x, y); await p.mouse.down(); await p.mouse.move(x + dx, y, { steps: 8 }); await p.mouse.up();
+  };
+  await swipe(120);
+  await ready("seq_a.webm");
+  res.swipe = [await name()];
+  await swipe(-120);
+  await ready("seq_b.webm");
+  res.swipe.push(await name());
+  await swipe(120);
+  await ready("seq_a.webm");
+  // A scrub on the picture from near the first clip's end on past it: into the second clip.
+  await p.evaluate(() => { const v = window.__sightReview.R.video; v.currentTime = v.duration - 0.1; });
+  await ready("seq_a.webm");
+  const st = await p.locator(".stage").boundingBox(), y = st.y + st.height * 0.3;
+  await p.mouse.move(st.x + 40, y); await p.mouse.down();
+  await p.mouse.move(st.x + st.width - 40, y, { steps: 20 });
+  await p.mouse.up();
+  await ready("seq_b.webm");
+  res.scrub = await p.evaluate(() => window.__sightReview.R.dragging);
+  // A touch tap on the bar across the cut (CDP touch events): it lands, the drag ends, play still runs on.
+  const cdp = await ctx.newCDPSession(p);
+  bb = await bar();
+  const tp = { x: bb.x + bb.width * 0.4, y: bb.y + bb.height / 2 };
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [tp] });
+  await ready("seq_a.webm");
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await p.waitForTimeout(200);
+  res.touch = await p.evaluate(() => [window.__sightReview.R.video.currentTime, window.__sightReview.R.dragging]);
+  await p.evaluate(() => { const v = window.__sightReview.R.video; v.currentTime = v.duration - 0.2; v.play(); });
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.meta.asset.name === "seq_b.webm" && R.video && !R.video.paused; }, null, { timeout: 15000 });
+  await p.evaluate(() => window.__sightReview.R.video.pause());
+  // A seek to the very end while paused is no play-on (loop on: it would go to the first clip).
+  await tap(p.locator(".tp .loopb"));
+  await p.evaluate(() => { const v = window.__sightReview.R.video; v.currentTime = 0.5; });
+  await ready("seq_b.webm");
+  await p.evaluate(() => { window.__sightReview.R.playOn = false; const v = window.__sightReview.R.video; v.currentTime = v.duration; });
+  await p.waitForTimeout(800);
+  res.endSeek = await name();
+  await tap(p.locator(".tp .loopb"));
+  res.hist = (await p.evaluate(() => history.length)) - hist0;
+  await p.waitForTimeout(400);
+  res.hold = await p.locator(".seqhold").count();
+  // The drawing canvas on a narrow screen: the tools row (over the transport) scrolls by a finger drag.
+  await p.evaluate(() => document.fullscreenElement ? document.exitFullscreen() : null);  // (the app's auto full screen)
+  await p.waitForTimeout(300);
+  await p.setViewportSize({ width: 300, height: 700 });
+  await tap(p.locator(".fab.pencil"));
+  await p.waitForSelector(".draw .dtrow");
+  res.toolsAbove = await p.evaluate(() => document.querySelector(".draw .dtools").getBoundingClientRect().bottom <= document.querySelector(".draw .dfoot").getBoundingClientRect().top + 1);
+  const rb = await p.locator(".draw .dtrow").boundingBox(), ry = rb.y + rb.height / 2;
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: rb.x + rb.width - 30, y: ry }] });
+  for (let i = 1; i <= 10; i++){ await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: rb.x + rb.width - 30 - i * 8, y: ry }] }); await p.waitForTimeout(16); }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  res.rowScroll = await p.evaluate(() => { const r = document.querySelector(".draw .dtrow"); return [r.scrollLeft, r.scrollWidth - r.clientWidth]; });
+  await p.click(".draw .btn:has-text('Cancel')");
+  await b.close();
+  return res;
+}
+
+(mode === "make" ? make() : mode === "bundle" ? bundle() : mode === "seqbar" ? seqbar() : merge()).then((res) => {
   res.log = log;
   process.stdout.write(JSON.stringify(res));
 }).catch((e) => { console.error(e); console.error(log.join("\n")); process.exit(1); });

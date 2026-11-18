@@ -212,6 +212,22 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .tl .mk.dr { width: 6px; height: 6px; top: -1px; margin-left: -3px; border-radius: 3px; background: var(--ov-mut); }
 .tl .mk.mine { width: 8px; height: 8px; top: -2px; margin-left: -4px; border-radius: 4px; background: var(--accent); box-shadow: 0 0 0 2px var(--ov); }
 .tl .ph { position: absolute; top: -6px; width: 16px; height: 16px; margin-left: -8px; border-radius: 8px; background: var(--ov-fg); box-shadow: 0 1px 4px rgb(0 0 0 / .35); pointer-events: none; }
+/* The sequence bar (a group's videos end to end, under the clip's timeline): a segment per clip, the playhead across all. */
+.sqb { position: relative; height: 22px; margin: 0 10px 4px; touch-action: none; cursor: pointer; }
+.sqb[hidden] { display: none; }
+.sqb .sqt { position: absolute; inset: 0; }
+.sqb .sqs { position: absolute; top: 2px; bottom: 4px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--rd-fg) 16%, transparent); box-shadow: inset -1px 0 0 var(--rd-line); }
+.sqb .sqs.alt { background: color-mix(in srgb, var(--rd-fg) 26%, transparent); }
+.sqb .sqs.cur { background: color-mix(in srgb, var(--accent) 42%, transparent); }
+.sqb .sqs.nomedia { opacity: .45; }
+.sqb .sqs span { display: block; padding: 0 4px; font-size: 10px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; pointer-events: none; }
+.sqb .mk { position: absolute; bottom: 0; width: 2px; height: 7px; margin-left: -1px; border-radius: 1px; background: #ff453a; pointer-events: none; }
+.sqb .mk.done { background: #30d158; } .sqb .mk.progress { background: #ffd60a; }
+.sqb .mk.dr { width: 4px; height: 4px; margin-left: -2px; border-radius: 2px; background: var(--ov-mut); }
+.sqb .ph { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--rd-fg); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); pointer-events: none; }
+.seqkeep { position: fixed; left: -10px; top: -10px; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.stage .seqhold { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.hdr .ttl.swipe { cursor: grab; -webkit-user-select: none; user-select: none; }
 /* The Notes Panel bar: a thin handle under the player; open, it holds the status filters. */
 .pbar { position: relative; height: var(--pbh); display: flex; align-items: center; justify-content: center; gap: 6px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .02em; cursor: pointer; touch-action: none; transition: height .28s, padding .28s; }
 .pbar .grip { position: absolute; left: 50%; top: 4px; width: 34px; height: 4px; margin-left: -17px; border-radius: 2px; background: var(--line); }

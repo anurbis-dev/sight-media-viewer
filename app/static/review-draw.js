@@ -66,7 +66,12 @@ var SightReviewDraw = (function(){
     ".draw .tb.on { background: #0a84ff; color: #fff; opacity: 1; }",
     ".draw .tb[disabled] { opacity: .3; cursor: default; }",
     ".draw [hidden] { display: none !important; }",
-    ".draw .dbar > .dtools { flex-wrap: wrap; }",
+    // The tools in one row; more than fit scroll sideways by a drag (dragScroll), centred while they fit.
+    ".draw .dbar > .dtools { flex-wrap: nowrap; }",
+    ".draw .dtools .dtrow { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior: contain; }",
+    ".draw .dtools .dtrow::-webkit-scrollbar { display: none; }",
+    ".draw .dtools .dtrow > :first-child { margin-left: auto; } .draw .dtools .dtrow > :last-child { margin-right: auto; }",
+    ".draw .dtools .dtrow > * { flex: none; }",
     ".draw .dbar > .dtools { position: relative; padding-right: 42px; }",
     ".draw .dtools .dcol { position: absolute; right: 0; top: 0; width: 38px; height: 38px; border: 0; background: none; display: grid; place-items: center; cursor: pointer; padding: 0; }",
     ".draw .dtools .dcol i { display: block; width: 24px; height: 24px; border-radius: 12px; border: 2px solid var(--rd-fg, #fff); box-shadow: 0 0 0 1px rgb(0 0 0 / .3); }",
@@ -82,6 +87,39 @@ var SightReviewDraw = (function(){
     ".draw .dsize span { font-size: 12px; font-variant-numeric: tabular-nums; padding: 1px 8px; border-radius: 9px; background: var(--rd-pop, rgb(28 28 32 / .86)); border: 1px solid var(--rd-line, rgb(255 255 255 / .14)); white-space: nowrap; }",
     ".draw .dtext { position: absolute; z-index: 1; margin: 0; border: 1px dashed #0a84ff; border-radius: 0; outline: none; resize: none; overflow: hidden; white-space: pre; background: rgb(0 0 0 / .6); box-sizing: content-box; min-width: 1em; -webkit-user-select: text; user-select: text; touch-action: auto; }",
   ].join("\n");
+  // A row wider than its box scrolls sideways when dragged (finger, pen or mouse): past 6 px the drag is
+  // the scroll's, the button under it gets a pointercancel (no hold) and the click after it is eaten.
+  function dragScroll(sc, onDrag){
+    var st = null, eat = false;
+    sc.addEventListener("pointerdown", function(e){
+      if (st || (e.pointerType === "mouse" && e.button !== 0)) return;
+      st = { id: e.pointerId, x: e.clientX, s: sc.scrollLeft, on: false, b: e.target.closest ? e.target.closest("button") : null };
+      eat = false;
+    });
+    sc.addEventListener("pointermove", function(e){
+      if (!st || e.pointerId !== st.id) return;
+      if (e.pointerType === "mouse" && !(e.buttons & 1)){ st = null; return; }  // released outside the row
+      var dx = e.clientX - st.x;
+      if (!st.on){
+        if (Math.abs(dx) < 6 || sc.scrollWidth <= sc.clientWidth + 1) return;
+        st.on = true; eat = true;
+        try { sc.setPointerCapture(e.pointerId); } catch (_){}
+        if (st.b) st.b.dispatchEvent(new Event("pointercancel"));
+        if (onDrag) onDrag();
+      }
+      sc.scrollLeft = st.s - dx;
+    });
+    function end(e){
+      // A button's own (implicit, touch / pen) capture moved to the row is no end of the drag.
+      if (e.type === "lostpointercapture" && e.target !== sc) return;
+      if (!st || e.pointerId !== st.id) return;
+      // The click after a mouse drag comes in this task; a touch drag has none: no later click is eaten.
+      if (st.on) setTimeout(function(){ eat = false; }, 0);
+      st = null;
+    }
+    sc.addEventListener("pointerup", end); sc.addEventListener("pointercancel", end); sc.addEventListener("lostpointercapture", end);
+    sc.addEventListener("click", function(e){ if (eat){ eat = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  }
   var cssDone = false;
   function css(){
     if (cssDone) return;
@@ -249,7 +287,9 @@ var SightReviewDraw = (function(){
     });
     clipBar.addEventListener("pointerdown", function(){ closeFly(); });
     clipBar.hidden = true;
-    var tools = el("div", "dtools");
+    var tools = el("div", "dtools"), trow = el("div", "dtrow");
+    tools.appendChild(trow);
+    dragScroll(trow, function(){ closeFly(); });
     // The flyout of a slot (or of the colour): {el, slot}.
     var fly = null;
     // Hidden at once, removed a moment later: the tap that picked from it is still going up to the
@@ -374,7 +414,7 @@ var SightReviewDraw = (function(){
           return vb;
         }).concat(s === "shapes" ? [fillButton()] : []));
       });
-      b.dataset.t = s; tools.appendChild(b);
+      b.dataset.t = s; trow.appendChild(b);
       if (s === "text") b.addEventListener("mousedown", keepField);
       // Press and hold: the tool in hand, at its default size and opacity (the preview shows it).
       var ht = null;
@@ -477,8 +517,9 @@ var SightReviewDraw = (function(){
       }));
     };
     tools.appendChild(colB);
-    if (o.footer){ var foot = el("div", "dfoot"); foot.appendChild(o.footer); bar.appendChild(foot); }
+    // The tools over the host's footer (the timeline): the bar's top row, nearest the picture.
     bar.appendChild(tools);
+    if (o.footer){ var foot = el("div", "dfoot"); foot.appendChild(o.footer); bar.appendChild(foot); }
     root.appendChild(top); root.appendChild(view); root.appendChild(clipBar); root.appendChild(bar);
     var ctrlHeld = false;
     function paintBar(){

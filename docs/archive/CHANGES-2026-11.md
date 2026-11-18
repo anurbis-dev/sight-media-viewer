@@ -2,6 +2,52 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.67.0 — 2026-11-17 — Sequence: every clip's markers, Shift+, / . across clips, up-front conversion (stage 3)
+- **What:** the sequence bar shows tick marks for every clip's drawings / notes (taller = a note's);
+  `Shift+,` / `Shift+.` continue into the previous / next clips when the current one has no further marker. A
+  clip the browser cannot play is found when the sequence opens and converted ahead of its turn.
+- **Where:** index.html — `seqLoadMarks`, `seqMarksFromAnnot`, `seqRepaintSoon`, `seqMarker`,
+  `seqProbePlayable` / `seqProbe` / `seqConvertAhead`, marks in `paintSeqBar`, `.seq-mk` CSS; annotate.js —
+  `renderMarks` → `host.marksChanged`, `jumpMarker` → `host.seqMarker`, API `marks()` / `loading()`.
+- **Notes:** the clip on screen reports annotate.js's exact marks; the others are an estimate from their rows
+  (drawings' `ctx.t`, a note mark when `data.note` links it; notes' caption frames) fetched once at open. A
+  clip left keeps the marks annotate last reported — a re-read raced the debounced save and dropped new marks.
+  `seqMarker` stays put while a jump is pending or the clip's rows are loading (else a fast double press skips a
+  clip). Conversion: probes load metadata only; `POST /api/video/transcode` goes out only for clips without a
+  picture, **one at a time and only for the next two clips** — the server encodes one job at a time, so queuing
+  all of them held back the clip the user jumps to and kept ffmpeg busy after closing. Deliberately not done:
+  extending the server RAM cache (`SlidingVideoCache`, one file) to prefetch the next clip — the hidden preload
+  `<video>` already pulls the next clip's head; worth it only for slow network drives.
+- Review (fresh agent): conversions queued for every clip at once, the left clip's re-read racing its save, a
+  just-opened clip reporting no marks (Shift+. skipping it), markers past a clip's end, per-clip fetch / repaint
+  cost; fixed (landing at t + 1 ms instead of annotate's quarter-frame kept: correct for stored frame starts).
+  Re-review: a clip left while its rows were loading kept no marks, a jump into a clip whose conversion failed
+  blocked frame / marker keys (pendT never cleared), probes started from clip 0 — fixed; confirmed by the same
+  reviewer.
+
+## 0.66.0 — 2026-11-17 — Touch selection by long-press (Sequence stage 2)
+- **What:** on a touch screen (finger or stylus) holding a grid tile ~0.5 s starts touch selection mode with
+  just that tile; then a tap toggles a tile (appended, so tap order = sequence order), a double tap opens
+  nothing, a tap on empty space does nothing (owner's choice: a missed tile must not drop the selection). A
+  bottom bar shows "N selected", *▶▶ Play in sequence* (2+ videos) and ✕; ✕ / Esc end the mode.
+- **Where:** index.html — `syncTouchSel`, `startLongPress` / `cancelLongPress`, `lastGridPtr` / `fingerish`
+  (after `paintSelection`), grid pointerdown / click / dblclick / pointermove / pointercancel, `onPtrUp`,
+  card `draggable`, `selectOnly` (drops `state.touchSelect`), `applyViewDom`, `#touchSelBar` + CSS.
+- **Notes:** the mode is the explicit flag `state.touchSelect`, set **after** `selectOnly` (which drops it);
+  it also drops when the selection becomes empty (`syncTouchSel` from `paintSelection`). `selectSet` paths
+  (Ctrl+A, marquee, find in folder) keep it, as specced. A click's input is decided by the same gesture's
+  pointerdown (`lastGridPtr`), not the click's own `pointerType` (older Safari clicks are no PointerEvents).
+  The long-press sets `skipClick` when it fires, so the release click does not run `clickSelect`. Cards are
+  not `draggable` for touch (a held finger would start an HTML5 drag whose dragstart replaces the selection);
+  a pen keeps drag-to-board (drag starts only on movement, a still pen gets the long-press). Behaviour
+  change outside the mode too: `pointercancel` (a touch scroll) is now an abort in `onPtrUp` — it no longer
+  clears the selection as a click on empty space. The bar hides with the grid (full-screen board) and the
+  narrow-screen inspector stops above it. `navigator.vibrate` was dropped (no user activation in a timer).
+- Review (fresh agent): 8 findings — scroll from empty space wiping the selection (marquee + pointercancel),
+  a missed tap ending the mode, click type taken from the click, pen left out, bar over the board, bar
+  covering the inspector, vibrate; fixed (the mode surviving `selectSet` kept as specced). The re-review
+  caught that the first fix also blocked pen drag-to-board — restored; confirmed by the same reviewer.
+
 ## 0.65.0 — 2026-11-17 — Play in sequence (stage 1 of docs/PLAN-viewer.md "clips in sequence")
 - **What:** 2+ selected videos play back to back in the lightbox (Space over one of the selected videos,
   top-bar *▶▶ Sequence*, right-click menu, palette), in selection (click) order, cut to cut without a black

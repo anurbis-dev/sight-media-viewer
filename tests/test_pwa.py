@@ -244,6 +244,34 @@ class RoundTrip(unittest.TestCase):
         self.assertIn("From Sight", [x.get("text") for x in bnote["data"]["replies"]])
 
 
+    def test_seq_bar(self) -> None:
+        """Phone sequences (0.79): a group's videos end to end over the timeline; a tap / drag on the bar, play
+        past a clip's end and a scrub on the picture go on into the next clip; a swipe on the title switches."""
+        if not (self.video and has_playwright()):
+            self.skipTest("needs ffmpeg, node and Playwright")
+        d = self.tmp / "seqbar"
+        d.mkdir()
+        for name, color in (("seq_a.webm", "red"), ("seq_b.webm", "blue")):
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:size=320x180:rate=24:duration=2",
+                            "-c:v", "libvpx-vp9", "-b:v", "100k", str(d / name)], check=True)
+        res = self.e2e("seqbar", self.base, str(d))
+        self.assertEqual(res["segs"], [["seq_a.webm", True], ["seq_b.webm", False]])
+        self.assertAlmostEqual(res["tap"][0], 1.0, delta=0.1)
+        self.assertEqual(res["tap"][1], "seq_b.webm")
+        self.assertAlmostEqual(res["drag"][0], 1.0, delta=0.1)
+        self.assertFalse(res["drag"][1])
+        self.assertTrue(res["played"])
+        self.assertEqual(res["swipe"], ["seq_a.webm", "seq_b.webm"])
+        self.assertFalse(res["scrub"])  # landed in the second clip (ready), the drag over
+        self.assertAlmostEqual(res["touch"][0], 1.6, delta=0.1)
+        self.assertFalse(res["touch"][1])
+        self.assertEqual(res["endSeek"], "seq_b.webm")  # last clip, loop on: a paused seek to the end stays
+        self.assertEqual(res["hist"], 0)  # every move replaces the history entry
+        self.assertEqual(res["hold"], 0)  # the held frame is gone once the clip shows
+        self.assertTrue(res["toolsAbove"])  # drawing canvas: the tools over the transport
+        self.assertGreater(res["rowScroll"][1], 0)  # 300 px wide: the row does not fit...
+        self.assertEqual(res["rowScroll"][0], min(80, res["rowScroll"][1]))  # ...and an 80 px finger drag scrolls it all the way
+
     def test_bundle(self) -> None:
         """Multi-clip stage 3: the phone opens a Sight bundle (one group, a damaged clip reported), a note
         on one clip goes back as a bundle of that clip only, with the same bundle id, and Sight merges it."""

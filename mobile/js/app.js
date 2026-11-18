@@ -450,7 +450,7 @@ function route(){
   }
   const m = /^#r=([0-9a-f]{16})$/.exec(location.hash);
   if (m && (!R || R.meta.key !== m[1])) openReview(m[1], null, true);
-  else if (!m) { ++openSeq; openingKey = null; closeReview(); renderHome(); }
+  else if (!m) { ++openSeq; openingKey = null; seqStop(); closeReview(); renderHome(); }
 }
 window.addEventListener("popstate", route);
 
@@ -1242,6 +1242,7 @@ async function openReview(key, file, fromRoute, extras, opts){
 async function openReviewNow(key, file, fromRoute, extras, opts){
   const seq = ++openSeq;
   openingKey = key;
+  if (!(opts && opts.seq)) seqStop();  // not a move along the sequence bar / a cut: nothing pending from one
   fsArm();
   await flush();
   const meta = await DB.get("reviews", key);
@@ -1249,7 +1250,7 @@ async function openReviewNow(key, file, fromRoute, extras, opts){
   if (!meta){
     openingKey = null;
     // A clip of a sequence that is gone (deleted elsewhere): out of its group, on to the one after it.
-    if (opts && opts.replace){ dropFromGroups(key); if (R && seqGo(opts.dir || 1) === false) paintSeq(); return; }
+    if (opts && opts.replace){ dropFromGroups(key); if (R){ paintSeq(); seqGo(opts.dir || 1); } return; }
     if (fromRoute){ history.replaceState(null, "", location.pathname); renderHome(); } else toast("This review is not on the device any more"); return; }
   const rr = await DB.get("rows", key);
   // A file picked before is kept on the device (autoKeep), so the review opens with it; without
@@ -1272,6 +1273,9 @@ async function openReviewNow(key, file, fromRoute, extras, opts){
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
     frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
     views: meta.asset.kind === "model3d" ? M.views3d(rr ? rr.rows : []) : new Map(), curVk: null, v3d: null, v3dReady: null, extras: extras || [] };
+  // A move along the sequence keeps the speed and the hidden controls.
+  if (opts && opts.replace && prev){ rv.rate = prev.rate; rv.clean = prev.clean; }
+  if (opts && opts.seq && prev){ rv.panel = prev.panel; rv.filter = prev.filter; rv.hide = prev.hide; }
   if (replace){ history.replaceState(null, "", "#r=" + key); rv.pushed = wasPushed; }
   else if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
   if (file) await bindFile(rv, file);
@@ -1365,6 +1369,7 @@ let nbRO = null;
 function renderReview(){
   const a = R.meta.asset;
   document.title = a.name + " — Sight Review";
+  seqKeepTarget();
   root.textContent = ""; root.className = "review" + (R.panel ? " open" : "");
   const slide = el("div", "slide"), player = el("div", "player"), stage = el("div", "stage");
   const hdr = el("header", "hdr rd-panel"), r1 = el("div", "row"), r2 = el("div", "row"), ttl = el("div", "ttl");
@@ -1375,7 +1380,7 @@ function renderReview(){
   // In a group (a sequence): the previous / next clip around the title, "2 / 5" under it.
   const sq = seqOf(R.meta.key), sks = sq ? seqKeys(sq, R.meta.key) : [], pos = sks.indexOf(R.meta.key);
   const seqBtn = (d) => { const b = ibtn(d < 0 ? "prev" : "next", d < 0 ? "Previous clip (Page Up)" : "Next clip (Page Down)", () => seqGo(d)); b.classList.add("seqb"); b.disabled = !sks[pos + d]; return b; };
-  if (sq) r1.appendChild(seqBtn(-1));
+  if (sq){ r1.appendChild(seqBtn(-1)); bindTitleSwipe(ttl); }
   r1.appendChild(ttl);
   if (sq) r1.appendChild(seqBtn(1));
   r1.appendChild(ibtn("more", "Export and more", reviewActions));
@@ -1420,18 +1425,289 @@ function paintSeq(){
   els.seq = sq ? `${sq.name} · ${pos + 1} / ${sks.length}` : "";
   document.querySelectorAll(".hdr .seqb").forEach((b) => { b.disabled = !sks[pos + (b.title.startsWith("Previous") ? -1 : 1)]; });
   paintReview();
+  if (R.video) seqLoad(R.meta.key);
 }
 function dropFromGroups(key){ const gs = loadGroups(); gs.forEach((g) => { g.keys = g.keys.filter((k) => k !== key); }); saveGroups(gs); }
 // The previous / next clip of the open review's group (no wrap). Edits are saved by openReview (flush).
 // Not while a busy overlay works on the open review (an export reads its frames).
-function seqGo(d){
+function seqGo(d, sure){
   if (!R || document.querySelector(".busy")) return false;
+  // A note / reply being written is not dropped without asking (as a swipe down asks).
+  if (!sure && draftBusy()){
+    if (sheets.length) return;  // one question at a time (a sheet closed by its backdrop / Back never answers)
+    const rv = R;
+    ask({ title: "Go to the " + (d < 0 ? "previous" : "next") + " clip?", text: "A note or reply you are writing is not sent yet and will be lost.", ok: "Go", danger: true })
+      .then((y) => { if (y && R === rv) seqGo(d, true); });
+    return;
+  }
   const base = openingKey || R.meta.key, g = seqOf(base), ks = g ? seqKeys(g, base) : [], k = ks[ks.indexOf(base) + d];
   if (!g || !k) return false;
   openReview(k, null, false, undefined, { replace: true, dir: d });
 }
+// Swipe the header's title sideways: the next (left) / previous (right) clip. It follows the finger a little.
+function bindTitleSwipe(ttl){
+  ttl.style.touchAction = "none";
+  ttl.classList.add("swipe");
+  let s = null;
+  const reset = () => { ttl.style.transition = "transform .18s ease-out"; ttl.style.transform = ""; };
+  ttl.addEventListener("pointerdown", (e) => {
+    if (s || (e.pointerType === "mouse" && e.button !== 0)) return;
+    s = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    try { ttl.setPointerCapture(e.pointerId); } catch {}
+  });
+  ttl.addEventListener("pointermove", (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x;
+    if (Math.abs(dx) > 6){ ttl.style.transition = ""; ttl.style.transform = `translateX(${RC.clamp(dx * 0.5, -60, 60)}px)`; }
+  });
+  const end = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x, dy = e.clientY - s.y;
+    s = null;
+    reset();
+    if (e.type === "pointerup" && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) seqGo(dx < 0 ? 1 : -1);
+  };
+  ttl.addEventListener("pointerup", end); ttl.addEventListener("pointercancel", end);
+}
+
+// ---- the sequence bar: a group's videos end to end under the timeline-----------------------------
+// As Sight's sequence bar: every video of the open review's group (in the group's order) as a segment, the
+// playhead running across all of them. A tap / drag on the bar, a scrub on the picture past a clip's start /
+// end, and the end of a clip while playing go on into the neighbouring clip — each clip is still its own
+// review (openReview with {replace, seq}); `seqPend` says where the clip being opened lands, and the last
+// frame stays on screen as a canvas (`seqHoldEl`) until the new clip shows its own.
+let seqInfo = null;   // {gid, items: [{key, name, dur, nomedia, marks}]}: video clips only, null below two
+let seqPend = null;   // {key, t, play, drag}: t < 0 counts from the end
+let seqDrag = null;   // {id, mode: "bar" | "pic", T, lx, lt, rect}: a drag through the sequence, on window listeners
+let seqHoldEl = null, seqHoldT = null, seqLoadN = 0, seqKeep = null;
+// Not while drawing or writing: a cut builds a new review and would drop the canvas / the unsent draft.
+const draftBusy = () => !!R && Object.values(R.drafts).some((d) => d && (d.text.trim() || d.shots.length || d.state || d.draw));
+const seqLocked = () => !R || !!R.drawS || !!document.querySelector(".draw") || composing() || draftBusy();
+function seqMarksOf(rows){
+  const out = [], same = (a, b) => Math.abs(a - b) < 5e-4;
+  M.notesSorted(rows, "video").forEach((n) => RC.noteTimes(n.data, M.noteFrameTimes(rows, n), same, true).forEach((t) => out.push({ t, cls: M.noteState(n) })));
+  M.drawings(rows).forEach((r) => { const t = r.data.ctx && r.data.ctx.t; if (typeof t === "number" && !out.some((m) => same(m.t, t))) out.push({ t, cls: "dr" }); });
+  return out;
+}
+async function seqLoad(key){
+  const n = ++seqLoadN, g = seqOf(key);
+  let info = null;
+  if (g){
+    const metas = await Promise.all(seqKeys(g, key).map((k) => DB.get("reviews", k).catch(() => null)));
+    const vids = metas.filter((m) => m && m.asset && m.asset.kind === "video");
+    if (vids.length >= 2 && vids.some((m) => m.key === key)){
+      const items = await Promise.all(vids.map(async (m) => {
+        const rr = m.key === key ? null : await DB.get("rows", m.key).catch(() => null);
+        return { key: m.key, name: m.asset.name, dur: m.asset.duration || 0, nomedia: !!m.nomedia, marks: rr ? seqMarksOf(rr.rows) : [] };
+      }));
+      info = { gid: g.id, items };
+    }
+  }
+  if (n !== seqLoadN) return;
+  seqInfo = info;
+  if (R && R.meta.key === key && els && els.sqb){
+    const was = !els.sqb.hidden;
+    renderSeqBar();
+    if (was !== !els.sqb.hidden) applyStageView();
+  }
+}
+// Durations (the open clip's own once known; unknown ones the mean of the rest), offsets, total.
+function seqGeom(){
+  const si = seqInfo;
+  if (!R || !si) return null;
+  const i = si.items.findIndex((x) => x.key === R.meta.key);
+  if (i < 0) return null;
+  const known = si.items.map((x, j) => (j === i ? durOf() || x.dur : x.dur) || 0), pos = known.filter((d) => d > 0);
+  const avg = pos.length ? pos.reduce((a, b) => a + b, 0) / pos.length : 1;
+  const durs = known.map((d) => d > 0 ? d : avg), offs = [];
+  let total = 0;
+  durs.forEach((d) => { offs.push(total); total += d; });
+  return { items: si.items, i, durs, offs, total };
+}
+function seqAt(G, T){
+  const n = G.items.length;
+  for (let j = 0; j < n; j++) if (T < G.offs[j] + G.durs[j] || j === n - 1) return { j, t: RC.clamp(T - G.offs[j], 0, G.durs[j]) };
+}
+const pct = (x, G) => (G.total ? Math.min(100, Math.max(0, x / G.total * 100)) : 0).toFixed(3) + "%";
+function renderSeqBar(){
+  const bar = els && els.sqb;
+  if (!bar) return;
+  const G = seqGeom();
+  bar.hidden = !G;
+  if (R.video) R.video.loop = loopOn && !G;  // in a sequence the loop is the whole sequence's (seqEnded)
+  const trk = bar.firstChild;
+  trk.textContent = "";
+  bar.ph = null;
+  if (!G) return;
+  G.items.forEach((it, j) => {
+    const s = el("div", "sqs" + (j % 2 ? " alt" : "") + (j === G.i ? " cur" : "") + (it.nomedia ? " nomedia" : ""));
+    s.style.left = pct(G.offs[j], G); s.style.width = pct(G.durs[j], G);
+    s.appendChild(el("span", "", it.name));
+    trk.appendChild(s);
+  });
+  G.items.forEach((it, j) => (j === G.i ? markerList() : it.marks).forEach((m) => {
+    if (m.cls === "mine") return;
+    const i = el("i", "mk " + m.cls);
+    i.style.left = pct(G.offs[j] + Math.min(m.t, G.durs[j]), G);
+    trk.appendChild(i);
+  }));
+  bar.ph = trk.appendChild(el("i", "ph"));
+  paintSeqPh();
+}
+function paintSeqPh(){
+  const bar = els && els.sqb, v = R && R.video;
+  if (!bar || !bar.ph || !v) return;
+  const G = seqGeom();
+  if (G) bar.ph.style.left = pct(G.offs[G.i] + Math.min(R.scrubT != null ? R.scrubT : v.currentTime, G.durs[G.i]), G);
+}
+function bindSeqBar(bar){
+  bar.addEventListener("pointerdown", (e) => {
+    if (!R || !R.video || (e.pointerType === "mouse" && e.button !== 0)) return;
+    const G = seqGeom(), r = bar.getBoundingClientRect();
+    if (!G || !r.width) return;
+    e.preventDefault();
+    try { bar.setPointerCapture(e.pointerId); } catch {}
+    seqDragBegin(e, "bar", RC.clamp((e.clientX - r.left) / r.width, 0, 1) * G.total, r);
+  });
+}
+// A drag through the sequence. Its moves are read on window: the bar / the stage holding the pointer is
+// replaced at each cut (renderReview), so their own listeners go with them.
+function seqDragBegin(e, mode, T, rect){
+  seqDragEnd();
+  // The geometry is frozen for the drag (a guessed length made real at a cut must not move the cut under the finger).
+  seqDrag = { id: e.pointerId, mode, T, lx: e.clientX, lt: e.timeStamp, rect, G: seqGeom(), el: e.target };
+  window.addEventListener("pointermove", seqMove, true);
+  window.addEventListener("pointerup", seqUp, true);
+  window.addEventListener("pointercancel", seqUp, true);
+  // Safety net: the touch is over (iOS can stop sending pointer events after a cut).
+  window.addEventListener("touchend", seqTouchEnd, true);
+  window.addEventListener("touchcancel", seqTouchEnd, true);
+  seqDragTo(T);
+}
+function seqMove(e){
+  const d = seqDrag;
+  if (!d || e.pointerId !== d.id || !R) return;
+  if (d.mode === "bar"){
+    if (d.G && d.rect.width) seqDragTo(RC.clamp((e.clientX - d.rect.left) / d.rect.width, 0, 1) * d.G.total);
+    return;
+  }
+  const dx = e.clientX - d.lx, dt = e.timeStamp - d.lt;
+  d.lx = e.clientX; d.lt = e.timeStamp;
+  if (dx) seqDragTo(d.T + scrubDelta(dx, dt, e.shiftKey));
+}
+function seqUp(e){ if (seqDrag && e.pointerId === seqDrag.id) seqDragEnd(); }
+function seqTouchEnd(e){ if (seqDrag && !(e.touches && e.touches.length)) seqDragEnd(); }
+function seqDragEnd(){
+  if (!seqDrag) return;
+  seqDrag = null;
+  window.removeEventListener("pointermove", seqMove, true);
+  window.removeEventListener("pointerup", seqUp, true);
+  window.removeEventListener("pointercancel", seqUp, true);
+  window.removeEventListener("touchend", seqTouchEnd, true);
+  window.removeEventListener("touchcancel", seqTouchEnd, true);
+  if (seqKeep){ seqKeep.remove(); seqKeep = null; }
+  if (seqPend) seqPend.drag = false;
+  if (R && R.video && R.dragging) dragEnd();
+}
+// The playhead to sequence time T: within the clip on screen a seek, else that clip is opened (or the one
+// being opened is told the new time).
+function seqDragTo(T){
+  const G = seqDrag && seqDrag.G;
+  if (!G || !R) return;
+  T = RC.clamp(T, 0, G.total);
+  let { j, t } = seqAt(G, T), k = G.items[j].key;
+  const here = openingKey || R.meta.key;
+  if (here !== k && seqLocked()){
+    // Drawing / writing: the drag stays in the clip on screen, held at its edge.
+    const h = G.items.findIndex((x) => x.key === here);
+    if (h < 0) return;
+    j = h; k = here; t = RC.clamp(T - G.offs[h], 0, G.durs[h]); T = G.offs[h] + t;
+  }
+  seqDrag.T = T;
+  if (here === k){
+    if (!openingKey && R.video && R.video.readyState >= 1){
+      seqPend = null; R.dragging = true; seekTo(t);
+      if (seqHoldEl) seqHoldWatch(R.video);
+    } else seqPend = { key: k, t, play: false, drag: true };
+    return;
+  }
+  seqSwitch(k, t, false, true);
+}
+function seqSwitch(k, t, play, drag){
+  if (!R || document.querySelector(".busy") || seqLocked()) return false;
+
+  const si = seqInfo, it = si && si.items.find((x) => x.key === R.meta.key);
+  // The clip left behind keeps what the bar knew of it live (its marks, its real length).
+  if (it && R.video){ it.marks = markerList().filter((m) => m.cls !== "mine"); it.dur = durOf() || it.dur; }
+  const ks = si ? si.items.map((x) => x.key) : [];
+  seqHold();
+  seqPend = { key: k, t, play, drag };
+  openReview(k, null, false, undefined, { replace: true, seq: true, dir: ks.indexOf(k) < ks.indexOf(R.meta.key) ? -1 : 1 });
+}
+// The clip played to its end: on into the next one; past the last, the first again when looping.
+function seqEnded(){
+  const G = seqGeom();
+  if (!G || seqLocked()) return;
+  const nx = G.items[G.i + 1] || (loopOn ? G.items[0] : null);
+  if (nx) seqSwitch(nx.key, 0, true, false);
+}
+// The clip just opened by the sequence: where it lands, and whether it plays on.
+function seqApply(v){
+  const p = seqPend;
+  if (!p || !R || R.video !== v || p.key !== R.meta.key) return;
+  seqPend = null;
+  if (p.drag && seqDrag) R.dragging = true;
+  if (p.t) seekTo(p.t < 0 ? durOf() + p.t : p.t);
+  if (p.play) togglePlay();
+  seqHoldWatch(v);
+}
+// The last frame over the stage (a canvas, the picture fitted as the player fits it) until the next
+// clip's first frame is on screen — no black between clips. At most 1.5 s.
+function seqHold(){
+  const v = R && R.video, st = els && els.stage;
+  if (!v || !st) return;
+  const si = els.scrubImg, src = si && !si.hidden && si.naturalWidth ? si : v;
+  const w = src.naturalWidth || src.videoWidth, h = src.naturalHeight || src.videoHeight, W = st.clientWidth, H = st.clientHeight;
+  if (!w || !h || !W || !H) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1), c = el("canvas", "seqhold");
+  c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+  const g = c.getContext("2d"), s = Math.min(W / w, H / h) * dpr, dw = w * s, dh = h * s;
+  try {
+    if (viewOf().mirror){ g.translate(c.width, 0); g.scale(-1, 1); }
+    g.drawImage(src, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh);
+  } catch { return; }
+  seqDropHold();
+  seqHoldEl = c;
+  st.appendChild(c);
+  seqHoldT = setTimeout(seqDropHold, 1500);
+}
+// The element a sequence drag's finger went down on must stay in the document through a cut: WebKit keeps
+// sending a touch's events to that node, and a detached one never reaches window. Moved out of the review
+// (into a hidden body-level holder) by renderReview just before it clears the screen — not earlier, so the
+// old picture and the held frame stay on screen while the next clip opens.
+function seqKeepTarget(){
+  const d = seqDrag;
+  if (!(d && d.el && d.el.isConnected && root.contains(d.el))) return;
+  if (!seqKeep){ seqKeep = el("div", "seqkeep"); document.body.appendChild(seqKeep); }
+  seqKeep.appendChild(d.el);
+}
+function seqDropHold(){ clearTimeout(seqHoldT); if (seqHoldEl) seqHoldEl.remove(); seqHoldEl = null; }
+function seqHoldWatch(v){
+  const go = () => {
+    if (!seqHoldEl || !R || R.video !== v) return;
+    if (v.readyState < 2 || v.seeking){ setTimeout(go, 30); return; }
+    let done = false;
+    const drop = () => { if (!done){ done = true; seqDropHold(); } };
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(drop);
+    else requestAnimationFrame(() => requestAnimationFrame(drop));
+    setTimeout(drop, 250);
+  };
+  go();
+}
+function seqStop(){ seqDragEnd(); seqPend = null; seqDropHold(); }
 function leaveReview(){
   ++openSeq; openingKey = null;  // an open still loading (a › tapped just before) must not land after Back
+  seqStop();
   if (R && R.pushed) history.back();
   else { closeReview(); history.replaceState(null, "", location.pathname + location.search); renderHome(); }
 }
@@ -2023,7 +2299,8 @@ function buildStage(){
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
   if (a.kind !== "model3d") bindStage(stage);  // (3D: the model takes the fingers, model3d.js)
-  els.m3d = null; els.animUi = null;
+  els.m3d = null; els.animUi = null; els.sqb = null;
+  if (!(a.kind === "video" && R.url)){ seqDropHold(); seqPend = null; }  // nothing here to land on
   if (els.sel3d){ els.sel3d.remove(); els.sel3d = null; }
   if (a.kind === "model3d") buildStage3d(stage, missing);
   else if (a.kind === "image"){
@@ -2043,10 +2320,13 @@ function buildStage(){
       const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
       els.scrubImg = si;
       sv.appendChild(v); sv.appendChild(si); sv.appendChild(svg); stage.appendChild(sv);
+      if (seqHoldEl) stage.appendChild(seqHoldEl);  // the last clip's frame, until this one shows its own
       const big = btn("playbig", null, () => togglePlay(), "Play"); big.innerHTML = ico("play", 30);
-      stage.appendChild(big);
+      // Not on a clip reached through the sequence (a drag / play across a cut): it would flash over the picture.
+      if (!(seqPend && seqPend.key === R.meta.key)) stage.appendChild(big);
       v.addEventListener("loadedmetadata", () => {
         if (!R || R.video !== v) return;
+        seqApply(v);
         const aa = R.meta.asset;
         if (!aa.width && v.videoWidth){ aa.width = v.videoWidth; aa.height = v.videoHeight; }
         if (!aa.duration && Number.isFinite(v.duration)) aa.duration = v.duration;
@@ -2061,7 +2341,9 @@ function buildStage(){
           setTimeout(() => { if (R === rv && rv.scrub) rv.scrub.start(); }, 600);
         }
       });
-      v.addEventListener("error", () => toast("This device cannot play this video (format or codec).", 5000));
+      v.addEventListener("error", () => { if (R && R.video === v) seqDropHold(); toast("This device cannot play this video (format or codec).", 5000); });
+      // Only a clip played to its end goes on (a seek to the very end fires "ended" too, paused).
+      v.addEventListener("ended", () => { if (R && R.video === v && R.playOn && !seqDrag) seqEnded(); });
       ["timeupdate", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (composing() && els.where) els.where(); }));
       // Chrome: no sound decoded after a quarter second of (unmuted) play = the clip has none — a
       // guess, taken back as soon as some sound is decoded after all (the container's word, from
@@ -2085,10 +2367,18 @@ function buildStage(){
       });
       // The big play button only until the clip is first played or moved: it would cover the frame.
       // (A seek still landing keeps the cached picture until its frame is shown: settle on "seeked".)
-      v.addEventListener("play", () => { big.remove(); R.scrubT = null; R.want = null; if (!v.seeking) hideCached(); paintTime(); loop(); });
+      v.addEventListener("play", () => { R.playOn = true; big.remove(); R.scrubT = null; R.want = null; if (!v.seeking) hideCached(); paintTime(); loop(); });
       v.addEventListener("seeking", () => big.remove());
       els.T = makeTransport();
-      tp.appendChild(els.T.el); tp.hidden = false;
+      // Under the clip's own timeline: the group's videos end to end (renderSeqBar; hidden outside a sequence).
+      const sqb = el("div", "sqb");
+      sqb.appendChild(el("div", "sqt"));
+      els.sqb = sqb;
+      bindSeqBar(sqb);
+      tp.appendChild(els.T.el);
+      tp.appendChild(sqb); tp.hidden = false;
+      renderSeqBar();
+      seqLoad(R.meta.key);
     }
   }
   // The pencil floats at the bottom right of the picture, as in the full-screen viewer (on a
@@ -2223,6 +2513,7 @@ function seekTo(t){
   const v = R && R.video;
   if (!v) return;
   if (!v.paused) v.pause();
+  R.playOn = false;
   t = snapT(t);
   R.scrubT = t; R.want = t;
   if (R.drawS) R.drawS.moved(t);  // first: a seek that lands at once (same frame) settles the canvas
@@ -2465,7 +2756,7 @@ try { loopOn = localStorage.getItem(LOOP_KEY) === "1"; } catch {}
 function setLoop(on){
   loopOn = on;
   try { localStorage.setItem(LOOP_KEY, on ? "1" : "0"); } catch {}
-  if (R && R.video) R.video.loop = on;
+  if (R && R.video) R.video.loop = on && !seqGeom();
   TPS.forEach(paintLoop);
   toast(on ? "Loop: plays on from the start" : "Once: stops at the end", 1400);
 }
@@ -2509,8 +2800,8 @@ function paintMarks(T){
   });
 }
 function paintCache(T){ T.cache.style.width = ((R && R.cacheF || 0) * 100).toFixed(1) + "%"; }
-function paintTime(){ if (R && R.video) TPS.forEach(paintTransport); }
-function paintMarkers(){ if (R && R.video) TPS.forEach(paintMarks); }
+function paintTime(){ if (R && R.video){ TPS.forEach(paintTransport); paintSeqPh(); } }
+function paintMarkers(){ if (R && R.video){ TPS.forEach(paintMarks); renderSeqBar(); } }
 // The scrub cache (ScrubCache) puts the frame wanted up at once; the player's own picture takes
 // over when its last seek has landed.
 function cachedAt(t){
@@ -2545,11 +2836,12 @@ let hideSeq = 0;
 // 4 px when slow, faster the faster the finger moves; Shift a quarter of that) — not the screen's
 // width for the whole clip. Nothing happens until the finger has moved sideways a few px, so a tap
 // still plays / pauses.
-function scrubStep(t, dx, dt, fine){
+function scrubDelta(dx, dt, fine){
   const speed = Math.abs(dx) / Math.max(1, dt);  // px per ms
   const gain = 0.25 * Math.min(12, 1 + Math.max(0, speed - 0.25) * 5) * (fine ? 0.25 : 1);
-  return RC.clamp(t + dx * gain * frameDur(), 0, durOf() || 0);
+  return dx * gain * frameDur();
 }
+const scrubStep = (t, dx, dt, fine) => RC.clamp(t + scrubDelta(dx, dt, fine), 0, durOf() || 0);
 // The player's picture. One finger: a drag sideways scrubs the video, a swipe up opens the Notes
 // Panel, a swipe down goes back to the reviews, a tap plays / pauses (a picture: opens it full
 // screen). Two fingers pan, zoom and turn it (the drawing canvas' rules, SightReviewDraw.pinch);
@@ -2587,6 +2879,7 @@ function bindStage(stage){
   stage.addEventListener("pointerdown", (e) => {
     if (!R || e.target.closest("button, label, input") || (e.pointerType === "mouse" && e.button !== 0)) return;
     if (e.pointerType === "mouse" && pts.size) return;
+    if (seqDrag) return;  // a drag through the sequence goes on (its stage may be a cut behind): no new gesture
     const p = rel(e);
     pts.set(e.pointerId, { x: p[0], y: p[1] });
     if (pts.size === 1 && !g){
@@ -2595,7 +2888,7 @@ function bindStage(stage){
       return;
     }
     // A second finger: the picture is moved by two; a scrub under way stops where it is.
-    if (one){ if (one.mode === "scrub") dragEnd(); one = null; }
+    if (one){ if (one.mode === "scrub") dragEnd(); else if (one.mode === "seq") seqDragEnd(); one = null; }
     eatUntil = Infinity;
     try { stage.setPointerCapture(e.pointerId); } catch {}
     gestStart();
@@ -2625,12 +2918,19 @@ function bindStage(stage){
       else if (dy > 60 && dy > Math.abs(dx) * 1.5){ one.mode = "none"; swipeLeave(); }
       return;
     }
-    // The clip runs on from where it is, at a fixed pace (scrubStep), not the screen's width for the whole clip.
+    // The clip runs on from where it is, at a fixed pace (scrubDelta), not the screen's width for the whole clip.
     if (one.mode !== "scrub" || !v) return;
     const dx = e.clientX - one.lx, dt = e.timeStamp - one.lt;
     one.lx = e.clientX; one.lt = e.timeStamp;
     if (!dx || !durOf()) return;  // a recorder's WebM may have no duration
-    one.t = scrubStep(one.t, dx, dt, e.shiftKey);
+    const raw = one.t + scrubDelta(dx, dt, e.shiftKey), G = seqGeom();
+    // Past the clip's start / end in a sequence: on into the neighbouring clip (the drag is handed to window).
+    if (G && !seqLocked() && ((raw < 0 && G.i > 0) || (raw > durOf() && G.i < G.items.length - 1))){
+      one.mode = "seq";
+      seqDragBegin(e, "pic", G.offs[G.i] + raw);
+      return;
+    }
+    one.t = RC.clamp(raw, 0, durOf());
     seekTo(one.t);
   });
   function up(e){

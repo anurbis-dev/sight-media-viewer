@@ -818,6 +818,19 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   `openReview` of a grouped review stores `cur`, `seqRemember`). In a review whose key is in a group the header
   has `.seqb` ‹ › (`seqGo(±1)`, also Page Up / Down, no wrap); the switch is `openReview(k, …, {replace: true})`
   — `history.replaceState` and the previous review's `pushed` carried over, so Back leaves the sequence.
+  Swiping the header's `.ttl` sideways (> 50 px) = `seqGo` too (`bindTitleSwipe`).
+- **Sequence bar** (0.79, `seqLoad` … `seqStop`): `.sqb` in the player's transport, under the timeline, when the
+  review's group has 2+ videos (`seqInfo.items` = the group's visible video reviews: name, stored duration,
+  other clips' marks read from their rows; rebuilt by `seqLoad` at each `buildStage`). `seqGeom()` = durations
+  (the open clip's `durOf()`; unknown = mean of the known), offsets, total. Every clip is still its own review:
+  moving into another clip = `seqSwitch` → `openReview(k, …, {replace, seq})` with `seqPend = {key, t, play,
+  drag}` applied by `seqApply` on that clip's `loadedmetadata`. Drags (the bar; the picture scrub handed over
+  past a clip's edge, `one.mode = "seq"`) run on **window** listeners (`seqDrag`), since the bar / stage holding
+  the pointer is rebuilt at each cut. `ended` → `seqEnded` (next clip playing; after the last the first if
+  `loopOn`; the element's own `loop` is off in a sequence). The last frame is held as a canvas `.seqhold`
+  (`seqHold`, re-appended into the new stage by `buildStage`) until the new clip presents a frame (≤ 1.5 s).
+  Any open that is not a sequence move (`opts.seq`), Back, `route` home → `seqStop`. Rate and hidden controls
+  carry over on a sequence move. No preloading of the next clip (unlike Sight): a cut costs one open.
 - **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?, bundle?, cur?}]` (localStorage;
   `thumb` = `{url}` a ≤ 200 px data URL or `{color}`); the order list holds a group as
   `"g:<id>"`. Any review (on its own or a member) held over the middle of another visible row's
