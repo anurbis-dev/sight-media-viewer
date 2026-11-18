@@ -483,6 +483,27 @@ def mac_launch_prefix(browser: list[str]) -> list[str]:
     return ["/usr/bin/open", "-n", "-a", exe[: cut + 4], "--args"]
 
 
+def mac_agent_note() -> None:
+    """Logs whether the running Sight.app is an agent (LSUIElement, set by build_app_macos.sh). Sight.app
+    never runs a Cocoa event loop (its main thread is uvicorn), so as a regular Dock app it cannot answer
+    the Apple Events macOS sends it — a click on its Dock icon to bring a minimized window back — and
+    macOS flags it "not responding". The window is the browser's own app; Sight.app must stay out of
+    the Dock. A build without the key is named in the log, so a report can be traced to it."""
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import plistlib
+
+        plist = Path(sys.executable).resolve().parent.parent / "Info.plist"
+        with open(plist, "rb") as f:
+            info = plistlib.load(f)
+        agent = bool(info.get("LSUIElement")) or bool(info.get("LSBackgroundOnly"))
+        log("macOS: Sight.app runs as an agent (no Dock icon)" if agent
+            else "macOS: Sight.app is not an agent (LSUIElement missing) - its Dock icon will show 'not responding'")
+    except Exception as exc:  # diagnostics only, never in the way of the start
+        log(f"macOS: Info.plist not read ({exc})")
+
+
 def close_browser(proc: subprocess.Popen, user_data_dir: str | None = None) -> None:
     """Closes the browser main() opened, when the start failed after the launch. On Windows the
     Popen handle is usually only a launcher that has already exited (see _process_tree()), so the
@@ -597,6 +618,7 @@ def main() -> None:
         log(f"opening {url}")
         frozen = getattr(sys, "frozen", False)
         log("closing the Sight tab will quit" if frozen else "close this window to quit")
+        mac_agent_note()
 
         def _wait_serving(timeout: float = 20.0) -> None:
             deadline = time.time() + timeout
@@ -620,7 +642,16 @@ def main() -> None:
                 ready_port = free_port(47990) if sys.platform == "win32" else None
                 query = "?app=1" + (f"&ready={ready_port}" if ready_port else "")
                 if browser:
-                    launch_extra: list[str] = []
+                    # Every platform: a minimized / hidden window is "hidden" to Chromium, which throttles
+                    # timers to once a minute after ~5 minutes (intensive wake-up throttling). The page's
+                    # 3 s heartbeat then stops reaching the packaged build's watchdog (10 s), the server
+                    # quits under the minimized window, and the restored window is a dead page. Windows
+                    # always had these; macOS / Linux lacked them.
+                    launch_extra: list[str] = [
+                        "--disable-backgrounding-occluded-windows",
+                        "--disable-renderer-backgrounding",
+                        "--disable-background-timer-throttling",
+                    ]
                     maximized = False
                     if sys.platform == "win32":
                         # Launch off-screen (not hidden — see reveal_when_ready() for why) at its
@@ -635,11 +666,7 @@ def main() -> None:
                             f"--window-size={w},{h}",
                             f"--window-position={off_x},{off_y}",
                             "--disable-features=CalculateNativeWinOcclusion",
-                            "--disable-backgrounding-occluded-windows",
-                            "--disable-renderer-backgrounding",
-                            # A minimized window is "hidden" to Chromium, which would otherwise
-                            # throttle the heartbeat timer to once a minute and let the watchdog quit.
-                            "--disable-background-timer-throttling",
+                            *launch_extra,
                         ]
                     try:
                         # Sight gets its own browser profile, hence its own browser process. With the
@@ -727,6 +754,8 @@ def main() -> None:
                         app.state.last_heartbeat = now + (STARTUP_GRACE - HEARTBEAT_TIMEOUT)
                     last_tick = now
                     if now - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
+                        # Logged so a "window came back dead" report can be told apart from a crash.
+                        log(f"no heartbeat from the window for {now - app.state.last_heartbeat:.0f} s - quitting")
                         server.should_exit = True
                         return
 

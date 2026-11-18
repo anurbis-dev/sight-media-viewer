@@ -66,6 +66,22 @@ echo "Sight - build: compiling Sight.app (this can take a minute)"
   --workpath .buildenv/work \
   --specpath .buildenv
 
+if [ "$(uname)" = "Darwin" ]; then
+  # Sight.app is only the server: its main thread runs uvicorn, never a Cocoa event loop, and the window is
+  # the browser's own app. As a regular Dock app it could not answer the Apple Events macOS sends it (a click
+  # on its Dock icon to bring a minimized window back), so macOS flagged it "not responding". LSUIElement makes
+  # it an agent: no Dock icon, no Cmd+Tab entry, nothing to answer. NSAppSleepDisabled keeps App Nap from
+  # slowing the server while its (invisible) app is in the background. Editing Info.plist breaks PyInstaller's
+  # ad-hoc signature seal, so the bundle is signed ad hoc again (--deep, as PyInstaller itself signs it).
+  PLIST="dist/Sight.app/Contents/Info.plist"
+  for kv in "LSUIElement:true" "NSAppSleepDisabled:true"; do
+    key="${kv%%:*}"; val="${kv#*:}"
+    /usr/libexec/PlistBuddy -c "Set :$key $val" "$PLIST" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :$key bool $val" "$PLIST"
+  done
+  codesign --force --deep --sign - dist/Sight.app
+fi
+
 echo
 if [ "$(uname)" = "Darwin" ]; then
   echo "Sight - build: done. dist/Sight.app is ready - copy it anywhere (e.g. /Applications)"

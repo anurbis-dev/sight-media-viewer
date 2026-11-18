@@ -14,6 +14,23 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.84.2 — 2026-11-18 — macOS: restoring a minimized window no longer shows "not responding"
+- **What:** macOS: restoring a minimized Sight window no longer makes macOS report "Sight not responding", and a
+  window left minimized for long no longer comes back to a dead page. Sight.app is now an agent with no Dock
+  icon: the window lives under the browser's own icon.
+- **Where:** build_app_macos.sh (sets `LSUIElement` and `NSAppSleepDisabled` in Info.plist with PlistBuddy, then
+  re-signs ad hoc); Sight.py (`_open()` passes the anti-throttling Chromium flags on every platform; new
+  `mac_agent_note()` logs whether the bundle is an agent; the watchdog logs why it quits).
+- **Notes:** root cause (read from code, ~75% sure, not run on a Mac): Sight.app's main thread is uvicorn and never
+  runs a Cocoa event loop, so as a regular Dock app it could not answer the reopen Apple Event sent by a click on
+  its Dock icon. Do not give Sight.app a Dock icon / tray again without a real NSApplication loop on the main
+  thread (pyobjc) and uvicorn moved to a thread. Second cause: on macOS / Linux Chromium throttled a minimized
+  window's 3 s heartbeat to once a minute, so the 10 s watchdog quit the server; the flags were Windows-only
+  (Windows command line unchanged). Editing Info.plist after PyInstaller needs the ad-hoc re-sign. Gap: an agent
+  app still cannot answer the logout / shutdown quit event (true before too). Needs a check on a Mac build:
+  minimize 1 min and 6+ min, restore, log has no "no heartbeat … quitting".
+- Review (fresh agent run by the fixing agent): no correctness bugs; Windows command line confirmed unchanged.
+
 ## 0.84.1 — 2026-11-18 — 3D: notes panel shows the drawings right away
 - **What:** opening the notes panel on a 3D model now shows its annotation drawings at once (before, only after
   clicking a note — and in fact not even then). With annotation mode off they show, not editable, and follow the
@@ -333,28 +350,3 @@ Add new entries directly below this line.
   import UI and response, damaged inner packages, shared import function, html-all / package-all, one-clip page
   replying with a plain package, duplicate asset match, bundle id ownership); all written into the plan; the last
   round found it ready to implement.
-
-## 0.73.0 — 2026-11-17 — Notes panel apart from the drawing tools; board notes remember their place
-- **What:** owner: open the notes panel just to read and click pictures; drawing is what brings the tools; the
-  panel must work on boards too, and a board note must remember where it was written (like a 3D view) and glide
-  the camera there (smooth start and stop) when its picture is clicked. A notes button (speech bubble + note
-  count) sits in the lightbox bar and, for a board, in the top bar; `C` does the same with the mode off. The
-  pen no longer carries the count.
-- **Where:** annotate.js (`readKey` / `S.readOn`, `togglePanel`, `panelShown`, `syncPanel` `.an-read`,
-  `paintNotesBtn`, `onKey` off-mode C / Esc-unpin, `modeAllows` pin while watching, board `ctxNow` → `bv`,
-  `flyToNote`, `boardPreview`, `.an-bprev` click), canvas.js (`stripWidth`, `frameRect(…, opts)`, `viewRect`,
-  `flyTo` / `stopFly`), index.html (`#notesBtn`, `#boardNotesBtn`, host `notesBtn` / `notesBtnShown` /
-  `boardView`, activePane for the top-bar board buttons), FORMAT.md (board ctx `bv`), MANUAL, ARCHITECTURE.
-- **Notes:** the reading panel has no composer (adding a note is part of the drawing mode); card actions (reply,
-  resolve, delete) stay. Two flags so the panel does not pop up on every file: reading is off by default,
-  drawing keeps its own (`sight.annotate.panel`). `bv` is stored for new board notes only; older ones fly to their
-  drawings' bounds. The fly takes 450–1100 ms by distance / zoom ratio, any press or wheel on the board stops it.
-  Also: `toggle(false)` closes an enlarged screenshot; the top-bar board pen makes the board the key pane.
-- Review (fresh agent): `modeAllows` reading the view mode before declaring it (threw whenever the mode was off and
-  a drawing belonged to a note — drawings, leaving the mode and picking a note broke), C in the compare toggling the
-  lightbox's reading panel behind it, the compare picking up the lightbox's reading flag (`host.readPanel: false`
-  now), a glide still running when another board opens / the board closes (`stopFly` in open / close); fixed.
-  Also: closing the reading panel unpins the note; a screenshot landing after the mode was left no longer opens the
-  reading panel. Re-review: the same reviewer confirmed every fix. Earlier review of 0.72.0's board pen / screenshots / Esc: board keys going to the
-  library after a click on the top-bar pen in split view, a screenshot left open when the mode is switched off by
-  the pen; fixed, confirmed by the same reviewer.
