@@ -14,6 +14,21 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.83.1 — 2026-11-18 — 3D: a picked note's drawings show with annotating off
+- **What:** owner's bug: with the drawing tools off, clicking a note in the notes panel of a 3D model moved the
+  camera to the note's view but showed none of its drawings. Now they show (not editable); orbiting off the
+  view hides them (as with the tools on), Esc / a second click on the card / a click on the empty list unpins.
+- **Where:** annotate.js — `shownOff` (3D counts while `S.pinFocus`), `followOff` (ticks for 3D with a pin, so
+  `S.curVk` follows the camera), `paintVisibility` now also sets `L.root.hidden` (every unpin path calls it),
+  `goNote` calls `renderAll` + `startTick` while watching 3D (the layer did not exist yet). MANUAL, ARCHITECTURE.
+- **Notes:** 3D still shows no drawings while just watching without a pick (0.72 decision kept); only the
+  picked note's drawings show (`modeAllows` pin rule). Verified with Playwright (pin → shown, orbit → hidden,
+  unpin / Esc → layer hidden).
+- Review (fresh agent): 3 findings — a pin on a deleted note (delete from the panel / reload) showed every drawing
+  of the view (`shownOff` now needs a live note); loose drawings showed beside the picked note's (`modeAllows`:
+  hidden in 3D watching while pinned only — unpinned composeView unchanged); the eye stayed after unpin
+  (`paintVisibility` repaints it for 3D off). The same reviewer confirmed all three fixes, nothing new.
+
 ## 0.83.0 — 2026-11-18 — Box select in 3D annotation (Ctrl+drag, Box button)
 - **What:** owner's ask. Annotating a 3D model, select tool: Ctrl+drag draws a selection box (plain empty-space
   drags still orbit). Rules as in the library grid (`combineSelection`): Ctrl = toggle against the selection the
@@ -376,26 +391,3 @@ Add new entries directly below this line.
   old Groq key left on disk, the upload cap relying on Content-Length only; fixed (local hosts bypass the proxy,
   cloud hosts keep it; body read with a running 20 MB cap). Re-review: a key saved with no address could not be
   removed, a one-time race deleting a fresh config with the Groq file; fixed; the same reviewer confirmed all.
-
-## 0.70.0 — 2026-11-17 — Dictation with automatic language detection (Whisper via Groq)
-- **What:** Settings → Dictation: engine *Browser* (as before) or *Whisper (Groq)* plus a Groq API key. With
-  Whisper the mic's language "Auto" really detects the language (owner's request; the browser's recogniser
-  cannot — its "auto" is the browser's language). Words arrive phrase by phrase (after each pause), not live.
-- **Where:** new `app/stt.py` (`GroqStt`), `app/server.py` `/api/stt/status|key|transcribe`, `dictation.js`
-  provider `groq` + `getEngine` in `createDictationUI`, annotate.js (passes `getEngine`), index.html
-  `bindDictationSettings` + Settings markup, `tests/test_stt.py`. PLAN-stt.md (tier 2 done), ARCHITECTURE, MANUAL.
-- **Notes:** the key lives only in `<SIGHT_HOME>/stt.json` (0600), never in settings.json / the page / logs;
-  `/api/stt/status` says only whether one is set. Stdlib `urllib` multipart, model `whisper-large-v3-turbo`, no
-  `language` field = detect. Phrases: one MediaRecorder per phrase (each upload a complete file), cut by 0.7 s of
-  quiet after ≥ 0.25 s of voice (AnalyserNode RMS), or at 20 s. Not testable from the dev container (Groq is not
-  reachable here): verified up to the POST and the "unreachable" toast with Chromium's fake microphone. Phrases are
-  delivered in order (numbered), the next recorder starts before the old stops (no word lost at a 20 s cut), the
-  session ends only when every recorder and upload is done, a missing key is reported before recording, leaving
-  the composer still appends the phrases in flight (editors that save on blur drop them, Enter drops them).
-  `/api/stt/transcribe` takes `audio/*` only (another site's "simple" POST cannot spend the quota) and checks the
-  size first; urllib never follows a redirect (it would re-send the key).
-- Review (fresh agent): mic left on when stopped during the permission prompt, phrases out of order, last phrase
-  lost on blur / just after a cut, suspended AudioContext dropping everything, a word lost at the 20 s cut, no-key
-  reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
-  briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
-  — fixed; confirmed by the same reviewer.

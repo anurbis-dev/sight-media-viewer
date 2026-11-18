@@ -2,6 +2,29 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.70.0 — 2026-11-17 — Dictation with automatic language detection (Whisper via Groq)
+- **What:** Settings → Dictation: engine *Browser* (as before) or *Whisper (Groq)* plus a Groq API key. With
+  Whisper the mic's language "Auto" really detects the language (owner's request; the browser's recogniser
+  cannot — its "auto" is the browser's language). Words arrive phrase by phrase (after each pause), not live.
+- **Where:** new `app/stt.py` (`GroqStt`), `app/server.py` `/api/stt/status|key|transcribe`, `dictation.js`
+  provider `groq` + `getEngine` in `createDictationUI`, annotate.js (passes `getEngine`), index.html
+  `bindDictationSettings` + Settings markup, `tests/test_stt.py`. PLAN-stt.md (tier 2 done), ARCHITECTURE, MANUAL.
+- **Notes:** the key lives only in `<SIGHT_HOME>/stt.json` (0600), never in settings.json / the page / logs;
+  `/api/stt/status` says only whether one is set. Stdlib `urllib` multipart, model `whisper-large-v3-turbo`, no
+  `language` field = detect. Phrases: one MediaRecorder per phrase (each upload a complete file), cut by 0.7 s of
+  quiet after ≥ 0.25 s of voice (AnalyserNode RMS), or at 20 s. Not testable from the dev container (Groq is not
+  reachable here): verified up to the POST and the "unreachable" toast with Chromium's fake microphone. Phrases are
+  delivered in order (numbered), the next recorder starts before the old stops (no word lost at a 20 s cut), the
+  session ends only when every recorder and upload is done, a missing key is reported before recording, leaving
+  the composer still appends the phrases in flight (editors that save on blur drop them, Enter drops them).
+  `/api/stt/transcribe` takes `audio/*` only (another site's "simple" POST cannot spend the quota) and checks the
+  size first; urllib never follows a redirect (it would re-send the key).
+- Review (fresh agent): mic left on when stopped during the permission prompt, phrases out of order, last phrase
+  lost on blur / just after a cut, suspended AudioContext dropping everything, a word lost at the 20 s cut, no-key
+  reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
+  briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
+  — fixed; confirmed by the same reviewer.
+
 ## 0.69.1 — 2026-11-17 — Sequence: no black frame across a cut, picture scrub runs through clips
 - **What:** scrubbing back (or forward) across a cut no longer flashes black; dragging on the picture scrubs the
   whole sequence and runs on into the neighbouring clips instead of stopping at the clip's ends.

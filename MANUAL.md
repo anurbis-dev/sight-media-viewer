@@ -65,7 +65,8 @@
   appears at the top with a second row that always shows the settings of the current tool — or of
   the selected drawings, which stay editable: every drawing is a vector object you can select, move,
   scale, rotate, restyle and delete at any time. With annotating off, a picture's or video's drawings still
-  show while you just watch (a video's on their frames as it plays); the eye button next to the pen (or
+  show while you just watch (a video's on their frames as it plays; a 3D model's while a note is picked in the
+  notes panel: its view and drawings come up, and the drawings hide once you orbit away); the eye button next to the pen (or
   `Shift+H`) hides / shows them — the one eye, in the top bar, while drawing too (a board's sits next to its pen). In a 3D model a note shows a picture of each camera
   view its drawings were made from (its own view first), like a video note's frames; click a picture
   of another view to go to it. Hold **Alt** with a drawing tool to work the picture without switching to

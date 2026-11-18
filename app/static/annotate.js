@@ -811,7 +811,8 @@ export function createAnnotator(host){
     return modeCache;
   }
   function modeAllows(it){
-    if (!it.data.note) return true;
+    // 3D while watching shows only the picked note's drawings (shownOff): no loose ones beside them.
+    if (!it.data.note) return !(S.b3 && !S.on && viewMode().pin);
     const m = viewMode();
     if (!S.on && !isBoard()) return m.pin ? it.data.note === m.pin : true;   // just watching: all, or the picked note's
     // A board shows every drawing all the time (no "clean picture" while a note is made); only a picked note
@@ -983,9 +984,12 @@ export function createAnnotator(host){
     g.__z = it.z;
   }
   // Drawings stay on show (not editable) with annotating off: always on a board; on a picture / video during
-  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D keeps them for the annotating mode.
+  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D keeps them for the annotating mode,
+  // except a note picked in the read panel: its drawings show at its view (they hide once the camera leaves it).
   // (Not in the version compare: host.showWhileWatching false — it has no eye of its own.)
-  const shownOff = () => isBoard() || (host.showWhileWatching !== false && !!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd"));
+  const shownOff = () => isBoard() || (host.showWhileWatching !== false && (
+    (!!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd"))
+    || (!!S.b3 && S.kind === "model3d" && S.items.get(S.pinFocus)?.kind === "note")));  // (a pin on a deleted note does not count)
   // Drawings that can show at all (a deleted / hidden reply's or a deleted note's never do): the eye's subject.
   const hasDrawings = () => {
     for (const it of S.items.values()){
@@ -996,8 +1000,10 @@ export function createAnnotator(host){
     return false;
   };
   // A playing video's drawings follow its frame with the mode off: the tick runs only then (a paused one restarts
-  // it on play / seek — bind2d). A still picture or a board follows the view through viewChanged.
-  const followOff = () => !S.on && !isBoard() && shownOff() && !!S.b2?.isVid && !S.hidden && !!S.layer?.els.size && !S.b2.media.paused;
+  // it on play / seek — bind2d). A still picture or a board follows the view through viewChanged. A 3D model with a
+  // picked note ticks too: the camera decides the view (S.curVk), and so whether the note's drawings show.
+  const followOff = () => !S.on && !isBoard() && shownOff() && !S.hidden && !!S.layer?.els.size
+    && (S.b2 ? !!S.b2.isVid && !S.b2.media.paused : !!S.b3);
   function renderAll(){
     const L = S.on || shownOff() ? ensureLayer() : S.layer;
     if (!L) return;
@@ -1028,6 +1034,8 @@ export function createAnnotator(host){
       g.style.display = vis || ghost ? "" : "none";
       g.style.opacity = ghost ? String(Math.round(op * 100) / 100) : "";
     }
+    L.root.hidden = !S.on && !shownOff();  // 3D while watching: shown only while a note is picked (shownOff)
+    if (S.b3 && !S.on) paintEye();  // its eye comes and goes with the pick (unpin paths only repaint visibility)
     // What the view mode hides must not stay selected: Delete / nudge / copy would act on it unseen.
     let unsel = false;
     for (const id of S.sel){ const it = S.items.get(id); if (!it || !visibleNow(it)){ S.sel.delete(id); unsel = true; } }
@@ -2970,7 +2978,9 @@ export function createAnnotator(host){
     if (t0 != null){ const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(t0)); } }
     if (c?.vk) goView(c.vk, c.v3d, c.explode);
     S.sel = new Set();
-    renderSel(); renderProps(); renderPanel(); paintVisibility();
+    renderSel(); renderProps(); renderPanel();
+    // Watching a 3D model: the picked note's drawings need the layer (made only while shownOff) and the tick.
+    if (!S.on && S.b3){ renderAll(); startTick(); } else paintVisibility();
     if (isBoard() && S.pinFocus === id) flyToNote(id);
   }
   // Board: back to where the note was written (ctx.bv), else to its drawings — gliding, not jumping.

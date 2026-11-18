@@ -383,7 +383,8 @@ card picture (`boardPreview`) shows that rectangle with its drawings; a click �
 Older notes without `bv` fall back to their drawings' bounds.
 
 **Drawings while just watching** — `shownOff()` (annotate.js): a board, or a 2D picture / video, keeps its layer
-on show with the mode off (not editable, `pointer-events: none`); `modeAllows` shows every drawing of the frame
+on show with the mode off (not editable, `pointer-events: none`); a 3D model only while a note is picked
+(`S.pinFocus`; `followOff` ticks then so the camera's view decides what shows); `modeAllows` shows every drawing of the frame
 then (no compose / clean-picture / pin narrowing, except on a board), the tick keeps running while there are
 drawings so a video's follow its frame. `S.hidden` is the one hide flag: the toolbar eye, `#drawEyeBtn` in the
 lightbox bar / `#boardEyeBtn` for a board (`host.eyeBtn`) — the only eye since 0.74 (none in the toolbar), shown
