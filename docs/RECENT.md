@@ -14,7 +14,7 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
-## 0.75.0 — 2026-11-18 — Reference images on the frame (crop, frame, shadow); library beside the lightbox / player (Tab)
+## 0.79.0 — 2026-11-18 — Reference images on the frame (crop, frame, shadow); library beside the lightbox / player (Tab)
 - **What:** owner: reference pictures in the annotating mode of the lightbox and the video player, a toolbar icon,
   settings crop / frame (width, colour) / shadow (strength); pictures dropped onto the frame from outside or picked;
   picking = the board's way (sidebar + thumbnail grid left of the player, a vertical divider) as a mode of its own
@@ -48,6 +48,100 @@ Add new entries directly below this line.
   SVGs with only a viewBox failing; fixed (`rv.refAsked` / `refWait`, ctx taken before the uploads, `setTool` gate,
   2 px threshold, `await refShots` before the report, Tab gate, `--light-l`, cache cleared in `setImageSource`,
   1024 px fallback). Accepted: no LRU on the cache. Re-review: the same reviewer confirmed all nine fixes.
+
+## 0.78.0 — 2026-11-18 — Phone: review a group as a sequence, clip by clip
+- **What:** owner: reviewing a sequence on the phone meant going back to the list after every clip. Now a tap on
+  a group's picture opens its sequence on the clip last seen there (else the first); the review header of any
+  grouped review has ‹ / › around the title and "group · 2 / 5" in the subtitle; Page Up / Page Down on a
+  keyboard. Back leaves the sequence in one step. Works for pictures and 3D models too.
+- **Where:** mobile/js/app.js (`seqOf`, `openSequence`, `seqRemember`, `seqGo`; `openReview(…, opts.replace)`;
+  `renderReview` header, `paintReview` subtitle `els.seq`; group header `thumb`; keydown table),
+  mobile/index.html (`.seqb:disabled`), tests/pwa_e2e.cjs `bundle` + test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE.
+- **Notes:** the sequence = the review's UI group (`g.keys` order), not `meta.groups`. No wrap at the ends. No
+  swipe on the player for clip switching (it competes with scrub / pinch / drawing) — buttons serve touch. A
+  clip switch flushes edits (openReview) like Back does; an unsent composer draft is dropped as on Back.
+- Review (fresh agent): `pushed` was read from a review still loading (Back out of step after quick ›) → the
+  history entry is settled before any await, an overtaken unshown review hands its entry over, `openingKey` is
+  the base for quick taps; Back during a loading › was undone → `++openSeq` in leaveReview / route; PageDown
+  during an export swapped clips → no switch while `.busy`; hidden reviews were in the sequence → `seqKeys`;
+  a deleted clip was a dead end → dropped from the group and skipped. Nits: `openingKey` cleared on a thrown
+  open (wrapper `openReview` → `openReviewNow`), header refreshed after a drop (`paintSeq`, player untouched).
+  Confirmed by the same reviewer.
+
+## 0.77.0 — 2026-11-18 — The phone app opens and answers a sequence's `.srev` bundle (multi-clip plan, stage 3)
+- **What:** opening a bundle on the phone merges every clip into its own review (one summary toast: damaged
+  clips / non-media named, the rest land; "same file as clip N" for a duplicate) and puts them in one home
+  group named by the bundle's title; a review with no media on the phone is greyed ("Media not on this
+  device — notes readable") until its file is picked. The group's menu has *Review file for Sight (.srev)*:
+  one bundle of the clips changed since the last send, with the received bundle id (nothing changed → asks
+  to send all). Works for user-made groups too (their own id). A one-clip bundle behaves like a package.
+- **Where:** mobile/js/model.js (`parseReviewFile`, `buildBundle`, `checkPackage`), mobile/js/app.js
+  (`importReviewFile` split into `reviewKeyFor` / `mergeInto` / `importBundle` / `bundleGroup`;
+  `dirty(user)`, `packageOf`, `isChanged`, `markSent`, `exportBundle`, `offerFile(…, onSent)`, `nomedia`
+  row), mobile/index.html (`.row.nomedia`), tests/pwa_unit.cjs, tests/pwa_e2e.cjs `bundle`,
+  tests/test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE, FORMAT, PLAN-multiclip, PLAN-mobile.
+- **Notes:** no IndexedDB version bump: new meta fields `groups`, `changed`, `nomedia`. `changed` = time of the
+  last user edit; merges never set it (`dirty(false)`); a send clears it only if it is unchanged since the
+  package was built. Missing `changed` (made on the phone / before 0.77) counts as changed — extra clips are
+  harmless under the merge rules. The UI group holds a review at most once; a reply takes the group's keys plus
+  every review whose `meta.groups` has the bundle id. "Merge a review file…" with a bundle imports it as a
+  bundle (not into the open review). Merge code untouched (merge parity).
+- Review (fresh agent): a review opened mid-import could read its rows before the merge and drop it on the next
+  save → busy overlay over the import loop; a lone clip of a later bundle did not join the bundle's existing
+  group → `bundleGroup` for any clip count; bundle `version` parsing now matches Python's `int(v or 0)`. All
+  confirmed by the same reviewer. Left as is: back / forward during the import can still open a review
+  mid-merge (deliberate action, tiny window); `version: []` / `"1_0"` parity quirks.
+
+## 0.76.0 — 2026-11-17 — One web page for a sequence's review (multi-clip plan, stage 2)
+- **What:** Sequence → Export → *Web page, all clips* writes **one** page (was one per clip). It has a clip strip on
+  top (name, notes, open notes; a dot = changed here), ‹ / › buttons, `←` / `→` (not in text fields, the full-screen
+  picture, the drawing canvas or a sheet). The bottom bar counts every clip; *Download reply* = one `.srev` bundle of
+  the changed clips with the page's bundle id; *Discard* asks this clip / all clips (Esc / Cancel / backdrop close);
+  the clip's details (tap the title) have *Download this clip's reply* — a plain package for Sight < 0.75. Switching
+  clips resets the search / state filter. A sequence with one clip with notes gets the ordinary one-clip page.
+- **Where:** review.py (`build_html` → `_page`, new `build_html_all`; page script: `useClip`, `switchClip`, `CL`,
+  `slotKey`, `changesOf` / `editsOf`, `clipCounts`, `paintStrip`, `replyPackage(c)`, `download` / `downloadClip`,
+  `discard`, `header()` clears first, `closeEmpty(target, noRender)`; `plate_js` exposes `hotkey` / `runHotkeys`),
+  server.py (`/api/review/export/html-all`, returns `clips`, `missing`), index.html (`seqExportAll` html → one post),
+  tests/page_multi_e2e.cjs + test_review_page.py `MultiClipPage`, MANUAL, ARCHITECTURE, PLAN-multiclip.
+- **Notes:** data block is now `{clips: [{report, package, edits?}], bundle?, copy?}` (a one-clip page too; `bundle`
+  only with 2+ clips). One-clip page invariants kept: storage key `sight-review:<asset id>:<exported_at>[:copy]`,
+  reply = plain package (`page_e2e.cjs` passes unchanged). Multi-clip key `sight-review:<bundle id>:<asset id>[:copy]`.
+  All clips' edits live in memory (`CL[i].E`, the shown one is `E`; `editsOf(c)` reads the right one) and each save
+  writes the shown clip's slot. The page's clips = clips with notes (client scan, as before); a tombstone-only clip
+  is not on the page (deletes travel in the `.srev` bundle). A composer with a picture still loading counts as not
+  empty and cannot send (`dr.pending`). Stage 3 (phone) not started.
+- Review (fresh agent): no correctness bugs; low items fixed — a picture still loading was lost on a clip switch
+  (field closed as empty), search / filter carried over to the next clip, discard sheet had no keyboard close,
+  missing clips dropped silently from html-all, the strip scrolled on every save. Re-review: names of missing clips
+  came out as "clip" and Send could be pressed mid-load → fixed; then Send could stay disabled after a re-render
+  mid-load → fixed (`render()` when the field was replaced); all confirmed by the same reviewer.
+
+## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
+- **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
+  instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle
+  (drop, Export menu, palette) merges every clip in the library and shows one summary ("2 clips updated · 1 not in
+  your library: x · 1 damaged · y: same file as clip 1"); the others still land. Exactly one clip updated → it
+  opens as for a plain package; otherwise nothing new opens, open affected clips reload (undo cleared) and the
+  sequence's off-screen timeline marks are re-read. Also: the import toast without a lightbox (dropped on the grid)
+  now shows (page `flash`, plain text) — before it went to `#v3dToast`, which exists only in the lightbox.
+- **Where:** review.py (`parse_review_file`, `build_bundle`, `find_review_asset`, `import_package`,
+  `import_review_file`), server.py (`/api/review/import` → `import_review_file`; new `/api/review/export/package-all`
+  with `asset_ids`), annotate.js (`importedBundle`, toast passes `ms`), index.html (`seqExportAll` "pkg",
+  `seqReviewChanged`, `htmlToText`, main host `toast`), tests/test_review_bundle.py, tests/test_pwa.py
+  (`sight_import` calls the shared function), FORMAT.md, MANUAL, ARCHITECTURE, PLAN-multiclip.
+- **Notes:** packages inside are unchanged and merge by the same code (merge parity untouched). A plain package's
+  import response is exactly as before (404 missing / 400 damaged); a bundle is always 200 with `results` per
+  package, each committed on its own. Damaged-file 400s now also cover sqlite binding errors and a non-numeric
+  `version` (were 500). Two packages matching one local file: the first claims it even if it turns out damaged;
+  the later is reported as duplicate (no second try). Older Sight (< 0.75) rejects a bundle as "Not a Sight review
+  file" — the stage-2 page's one-clip reply must stay a plain package. Stage 2 (multi-clip page) and 3 (phone) not
+  started.
+- Review (fresh agent): damaged inner package lost its name in the report; a duplicate after a damaged first copy
+  was imported again; `package-all` iterated a string `asset_ids` per char / 500 on a number; a bundle opened a clip
+  even when nothing changed; MANUAL said the `.srev` export visits clips; fixed. Re-review: fixes confirmed except a
+  `continue` that skipped reloading the first changed clip when several changed (stale rows + undo over the merge);
+  removed, confirmed by the same reviewer.
 
 ## 0.74.0 — 2026-11-17 — Onion skin cross-fades between annotated frames, toggled on the eye; one eye, in the top bar
 - **What:** owner: onion skin looked odd (every drawing within ±1 s at a flat 22 %); it must fade the current
@@ -283,94 +377,3 @@ Add new entries directly below this line.
   Re-review: a clip left while its rows were loading kept no marks, a jump into a clip whose conversion failed
   blocked frame / marker keys (pendT never cleared), probes started from clip 0 — fixed; confirmed by the same
   reviewer.
-
-## 0.66.0 — 2026-11-17 — Touch selection by long-press (Sequence stage 2)
-- **What:** on a touch screen (finger or stylus) holding a grid tile ~0.5 s starts touch selection mode with
-  just that tile; then a tap toggles a tile (appended, so tap order = sequence order), a double tap opens
-  nothing, a tap on empty space does nothing (owner's choice: a missed tile must not drop the selection). A
-  bottom bar shows "N selected", *▶▶ Play in sequence* (2+ videos) and ✕; ✕ / Esc end the mode.
-- **Where:** index.html — `syncTouchSel`, `startLongPress` / `cancelLongPress`, `lastGridPtr` / `fingerish`
-  (after `paintSelection`), grid pointerdown / click / dblclick / pointermove / pointercancel, `onPtrUp`,
-  card `draggable`, `selectOnly` (drops `state.touchSelect`), `applyViewDom`, `#touchSelBar` + CSS.
-- **Notes:** the mode is the explicit flag `state.touchSelect`, set **after** `selectOnly` (which drops it);
-  it also drops when the selection becomes empty (`syncTouchSel` from `paintSelection`). `selectSet` paths
-  (Ctrl+A, marquee, find in folder) keep it, as specced. A click's input is decided by the same gesture's
-  pointerdown (`lastGridPtr`), not the click's own `pointerType` (older Safari clicks are no PointerEvents).
-  The long-press sets `skipClick` when it fires, so the release click does not run `clickSelect`. Cards are
-  not `draggable` for touch (a held finger would start an HTML5 drag whose dragstart replaces the selection);
-  a pen keeps drag-to-board (drag starts only on movement, a still pen gets the long-press). Behaviour
-  change outside the mode too: `pointercancel` (a touch scroll) is now an abort in `onPtrUp` — it no longer
-  clears the selection as a click on empty space. The bar hides with the grid (full-screen board) and the
-  narrow-screen inspector stops above it. `navigator.vibrate` was dropped (no user activation in a timer).
-- Review (fresh agent): 8 findings — scroll from empty space wiping the selection (marquee + pointercancel),
-  a missed tap ending the mode, click type taken from the click, pen left out, bar over the board, bar
-  covering the inspector, vibrate; fixed (the mode surviving `selectSet` kept as specced). The re-review
-  caught that the first fix also blocked pen drag-to-board — restored; confirmed by the same reviewer.
-
-## 0.65.0 — 2026-11-17 — Play in sequence (stage 1 of docs/PLAN-viewer.md "clips in sequence")
-- **What:** 2+ selected videos play back to back in the lightbox (Space over one of the selected videos,
-  top-bar *▶▶ Sequence*, right-click menu, palette), in selection (click) order, cut to cut without a black
-  frame. A sequence bar above the clip's timeline: a segment per clip (alternating accent shades, name),
-  playhead, tap / drag across all clips, ⏮ / ⏭ / ⟲ buttons. Keys: ← / → clip, Home first clip, Shift+L loop,
-  `,` / `.` cross cuts; ↑ / ↓ and arrows with modifiers do nothing (never step out to grid neighbours). Each
-  clip keeps its own notes / drawings (shown through the normal `showInLight` → `annot.setAsset`).
-- **Where:** index.html — `seqCandidates` … `bindSeqBar` (before `toggleLight`), `.seqbar` markup + CSS,
-  `attachViewer` (`opts.adopt`, `ended` listener, `light.vctl`, `seqOnReady`), `showInLight(a, opts)`,
-  `fillStage(…, opts)`, `startVideoCache(…, keep)`, `closeLight`, Space / sequence keys, `paintSelection`
-  (`#seqBtn`), context menu, palette; annotate.js `stepFrame` → `host.seqEdge`. ARCHITECTURE "Sequence".
-- **Notes:** seamless = the next clip is preloaded in a hidden muted `<video class="seq-buf">` and adopted
-  (moved into the stage in the same task, src kept). Measured in headless Chromium: the first frame of the
-  new clip is on screen at once but held ~70 ms before playback moves on (play() start latency); a muted
-  element starts ~30-60 ms sooner, so the adopted clip starts muted and unmutes on its first new frame
-  (`_seqWantMuted` keeps the wanted state across quick adopts). Tried and dropped: a play+pause warm-up and
-  creeping the buffer at rate 1/16 before the cut — neither shortened the start. `ended` cuts only after real
-  playback (`_seqPlayedAt` from `timeupdate` / `playing`), never on a scrub / seek to the end. Not in this
-  stage (PLAN-viewer.md): touch multi-select by long-press + bottom bar, markers of all clips on the sequence
-  bar and Shift+, / . across clips, server RAM-cache prefetch of the next clip, probing / converting clips up
-  front. Known: `#seqBtn` is only refreshed with the selection (may stay shown after a filter change —
-  clicking then just flashes); segment widths settle as clip durations load (assets often have none stored).
-  The title shows "Clip i/n · name" (the planned frame number is not in the title).
-- Review (fresh agent): 12 findings — key repeat running through clips before metadata, modifier+arrows
-  leaving the sequence, `ended` on a scrub to the end, pending landing lost on a converted clip / applied to
-  the wrong clip, O(n²) selection check, Space over a selected non-video, prev / next not reusing the
-  preloaded clip, last-frame landing by the wrong fps, adopted element's autoplay; all fixed except the stale
-  button and segment widths shifting during a drag (accepted). The fixes' re-review found two more (clips
-  staying muted after quick adopts, `ended` ignored after a very short play) — fixed; confirmed by the same reviewer.
-
-## 0.64.2 — 2026-11-17 — macOS: dictation no longer kills Chrome
-- **What:** on a Mac, pressing the dictation mic a second time (after allowing the microphone) made the whole
-  browser quit ("Google Chrome quit unexpectedly", user report on 0.62.1).
-- **Where:** `Sight.py` — new `mac_launch_prefix(browser)` (the Sight window's browser is started as
-  `/usr/bin/open -n -a <Browser>.app --args …` instead of exec'ing the binary), `close_browser(proc, user_data_dir)`
-  (macOS: `pkill -f --user-data-dir=<home>/browser`, since `proc` is the short-lived `open`); `tests/test_mac_launch.py`.
-- **Notes:** root cause (by analysis, not reproduced — no Mac here): a browser exec'd by Sight is its child, and macOS
-  privacy protection (TCC) makes the parent — Sight.app or the Python behind Sight.command — the "responsible" app
-  for the microphone. Neither declares `NSMicrophoneUsageDescription`, so the first real capture gets the browser
-  process killed by the system. Through `open`, launchd starts the browser as its own app, which asks for the
-  microphone under its own name. Rejected: adding `NSMicrophoneUsageDescription` to Sight.app's Info.plist — it covers
-  only the packaged build, not Sight.command (Python / Terminal), and makes Sight, not the browser, the app listed in
-  Privacy settings. `-n` keeps a separate instance next to the user's own Chrome (the separate `--user-data-dir`
-  needs its own process anyway). Verify on a Mac: dictation twice in a row, window position / size restore, quitting
-  Sight when its window is closed, and a failed start closing the window.
-- Review (fresh agent): the `pkill -f` pattern was a raw regex (odd characters, `.../browser` also matching
-  `.../browser2`) and could run before the browser started — now ERE-escaped, anchored at the path's end, run twice
-  1 s apart; confirmed by the same reviewer.
-
-## 0.64.1 — 2026-11-17 — Instant native launch splash (Windows)
-- **What:** the launch splash (the Sight logo) shows at once and closes when the page is ready. It was a PowerShell
-  window started only after 1 s (PowerShell costs ~0.7 s of CPU to start), so it appeared ~1.7 s in or never.
-- **Where:** new `app/splash_win.py` (stdlib ctypes: layered, topmost, click-through, no-taskbar window, GDI+ draws
-  `app/splash.png` into a premultiplied DIB, DPI-aware, centred on the monitor under the cursor); `app/splash.png`
-  (512 px, rendered from `favicon.svg`); `Sight.py` (`Splash`, `--splash` handled at the very top for the frozen exe,
-  started first thing in `main()` before `bootstrap()`); `build_exe.bat` (ships `splash.png`); `tests/test_splash_win.py`.
-  Removed: `app/splash_screen.ps1`, `LazySplash`, `start_splash` (no PowerShell fallback).
-- **Notes:** out of process on purpose: a bad window procedure can only kill the splash, never Sight. Source runs use
-  `pythonw -I -S app/splash_win.py IMAGE EVENT 45`; the frozen build `Sight.exe --splash ...`. The splash waits on a
-  named manual-reset event `Local\SightSplash-<pid>`; the launcher creates and holds the event before starting it. Its
-  name goes into env `SIGHT_SPLASH` so the `bootstrap()` re-exec into the venv reuses the same splash (exactly one);
-  `Splash.forget_env()` pops it right after `bootstrap()` returns and in main()'s finally, so the browser / workers /
-  a nested Sight never inherit it. Close points unchanged (ready ping, `_open()` finally, `main()` finally); 45 s cap
-  (a hard-killed Sight leaves it up to 45 s — accepted). Keep `splash_win.py` stdlib-only and import-light (only `sys`
-  at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
-- Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
-  event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.

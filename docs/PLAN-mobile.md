@@ -88,6 +88,8 @@ separate plan: `docs/PLAN-viewer.md`.
   its frame and drawings burned in, replies, pictures) and **static HTML** (one self-contained file,
   no scripts needed to read it), shared through the Web Share API (*Save to Files*, messengers) or
   a download. Also **`.srev`** export / import for the round trip with Sight.
+  A sequence's `.srev` bundle (several clips, FORMAT.md "Bundle") opens as one group and is answered with
+  one bundle of the changed clips (0.77, PLAN-multiclip.md stage 3).
   PDF on the device: decide between a bundled JS PDF writer (needs an embedded font for Cyrillic /
   CJK) and the browser's print-to-PDF of the static HTML (no control of page breaks on iOS) —
   prototype both on an iPhone first.

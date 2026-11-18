@@ -2,6 +2,97 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.66.0 — 2026-11-17 — Touch selection by long-press (Sequence stage 2)
+- **What:** on a touch screen (finger or stylus) holding a grid tile ~0.5 s starts touch selection mode with
+  just that tile; then a tap toggles a tile (appended, so tap order = sequence order), a double tap opens
+  nothing, a tap on empty space does nothing (owner's choice: a missed tile must not drop the selection). A
+  bottom bar shows "N selected", *▶▶ Play in sequence* (2+ videos) and ✕; ✕ / Esc end the mode.
+- **Where:** index.html — `syncTouchSel`, `startLongPress` / `cancelLongPress`, `lastGridPtr` / `fingerish`
+  (after `paintSelection`), grid pointerdown / click / dblclick / pointermove / pointercancel, `onPtrUp`,
+  card `draggable`, `selectOnly` (drops `state.touchSelect`), `applyViewDom`, `#touchSelBar` + CSS.
+- **Notes:** the mode is the explicit flag `state.touchSelect`, set **after** `selectOnly` (which drops it);
+  it also drops when the selection becomes empty (`syncTouchSel` from `paintSelection`). `selectSet` paths
+  (Ctrl+A, marquee, find in folder) keep it, as specced. A click's input is decided by the same gesture's
+  pointerdown (`lastGridPtr`), not the click's own `pointerType` (older Safari clicks are no PointerEvents).
+  The long-press sets `skipClick` when it fires, so the release click does not run `clickSelect`. Cards are
+  not `draggable` for touch (a held finger would start an HTML5 drag whose dragstart replaces the selection);
+  a pen keeps drag-to-board (drag starts only on movement, a still pen gets the long-press). Behaviour
+  change outside the mode too: `pointercancel` (a touch scroll) is now an abort in `onPtrUp` — it no longer
+  clears the selection as a click on empty space. The bar hides with the grid (full-screen board) and the
+  narrow-screen inspector stops above it. `navigator.vibrate` was dropped (no user activation in a timer).
+- Review (fresh agent): 8 findings — scroll from empty space wiping the selection (marquee + pointercancel),
+  a missed tap ending the mode, click type taken from the click, pen left out, bar over the board, bar
+  covering the inspector, vibrate; fixed (the mode surviving `selectSet` kept as specced). The re-review
+  caught that the first fix also blocked pen drag-to-board — restored; confirmed by the same reviewer.
+
+## 0.65.0 — 2026-11-17 — Play in sequence (stage 1 of docs/PLAN-viewer.md "clips in sequence")
+- **What:** 2+ selected videos play back to back in the lightbox (Space over one of the selected videos,
+  top-bar *▶▶ Sequence*, right-click menu, palette), in selection (click) order, cut to cut without a black
+  frame. A sequence bar above the clip's timeline: a segment per clip (alternating accent shades, name),
+  playhead, tap / drag across all clips, ⏮ / ⏭ / ⟲ buttons. Keys: ← / → clip, Home first clip, Shift+L loop,
+  `,` / `.` cross cuts; ↑ / ↓ and arrows with modifiers do nothing (never step out to grid neighbours). Each
+  clip keeps its own notes / drawings (shown through the normal `showInLight` → `annot.setAsset`).
+- **Where:** index.html — `seqCandidates` … `bindSeqBar` (before `toggleLight`), `.seqbar` markup + CSS,
+  `attachViewer` (`opts.adopt`, `ended` listener, `light.vctl`, `seqOnReady`), `showInLight(a, opts)`,
+  `fillStage(…, opts)`, `startVideoCache(…, keep)`, `closeLight`, Space / sequence keys, `paintSelection`
+  (`#seqBtn`), context menu, palette; annotate.js `stepFrame` → `host.seqEdge`. ARCHITECTURE "Sequence".
+- **Notes:** seamless = the next clip is preloaded in a hidden muted `<video class="seq-buf">` and adopted
+  (moved into the stage in the same task, src kept). Measured in headless Chromium: the first frame of the
+  new clip is on screen at once but held ~70 ms before playback moves on (play() start latency); a muted
+  element starts ~30-60 ms sooner, so the adopted clip starts muted and unmutes on its first new frame
+  (`_seqWantMuted` keeps the wanted state across quick adopts). Tried and dropped: a play+pause warm-up and
+  creeping the buffer at rate 1/16 before the cut — neither shortened the start. `ended` cuts only after real
+  playback (`_seqPlayedAt` from `timeupdate` / `playing`), never on a scrub / seek to the end. Not in this
+  stage (PLAN-viewer.md): touch multi-select by long-press + bottom bar, markers of all clips on the sequence
+  bar and Shift+, / . across clips, server RAM-cache prefetch of the next clip, probing / converting clips up
+  front. Known: `#seqBtn` is only refreshed with the selection (may stay shown after a filter change —
+  clicking then just flashes); segment widths settle as clip durations load (assets often have none stored).
+  The title shows "Clip i/n · name" (the planned frame number is not in the title).
+- Review (fresh agent): 12 findings — key repeat running through clips before metadata, modifier+arrows
+  leaving the sequence, `ended` on a scrub to the end, pending landing lost on a converted clip / applied to
+  the wrong clip, O(n²) selection check, Space over a selected non-video, prev / next not reusing the
+  preloaded clip, last-frame landing by the wrong fps, adopted element's autoplay; all fixed except the stale
+  button and segment widths shifting during a drag (accepted). The fixes' re-review found two more (clips
+  staying muted after quick adopts, `ended` ignored after a very short play) — fixed; confirmed by the same reviewer.
+
+## 0.64.2 — 2026-11-17 — macOS: dictation no longer kills Chrome
+- **What:** on a Mac, pressing the dictation mic a second time (after allowing the microphone) made the whole
+  browser quit ("Google Chrome quit unexpectedly", user report on 0.62.1).
+- **Where:** `Sight.py` — new `mac_launch_prefix(browser)` (the Sight window's browser is started as
+  `/usr/bin/open -n -a <Browser>.app --args …` instead of exec'ing the binary), `close_browser(proc, user_data_dir)`
+  (macOS: `pkill -f --user-data-dir=<home>/browser`, since `proc` is the short-lived `open`); `tests/test_mac_launch.py`.
+- **Notes:** root cause (by analysis, not reproduced — no Mac here): a browser exec'd by Sight is its child, and macOS
+  privacy protection (TCC) makes the parent — Sight.app or the Python behind Sight.command — the "responsible" app
+  for the microphone. Neither declares `NSMicrophoneUsageDescription`, so the first real capture gets the browser
+  process killed by the system. Through `open`, launchd starts the browser as its own app, which asks for the
+  microphone under its own name. Rejected: adding `NSMicrophoneUsageDescription` to Sight.app's Info.plist — it covers
+  only the packaged build, not Sight.command (Python / Terminal), and makes Sight, not the browser, the app listed in
+  Privacy settings. `-n` keeps a separate instance next to the user's own Chrome (the separate `--user-data-dir`
+  needs its own process anyway). Verify on a Mac: dictation twice in a row, window position / size restore, quitting
+  Sight when its window is closed, and a failed start closing the window.
+- Review (fresh agent): the `pkill -f` pattern was a raw regex (odd characters, `.../browser` also matching
+  `.../browser2`) and could run before the browser started — now ERE-escaped, anchored at the path's end, run twice
+  1 s apart; confirmed by the same reviewer.
+
+## 0.64.1 — 2026-11-17 — Instant native launch splash (Windows)
+- **What:** the launch splash (the Sight logo) shows at once and closes when the page is ready. It was a PowerShell
+  window started only after 1 s (PowerShell costs ~0.7 s of CPU to start), so it appeared ~1.7 s in or never.
+- **Where:** new `app/splash_win.py` (stdlib ctypes: layered, topmost, click-through, no-taskbar window, GDI+ draws
+  `app/splash.png` into a premultiplied DIB, DPI-aware, centred on the monitor under the cursor); `app/splash.png`
+  (512 px, rendered from `favicon.svg`); `Sight.py` (`Splash`, `--splash` handled at the very top for the frozen exe,
+  started first thing in `main()` before `bootstrap()`); `build_exe.bat` (ships `splash.png`); `tests/test_splash_win.py`.
+  Removed: `app/splash_screen.ps1`, `LazySplash`, `start_splash` (no PowerShell fallback).
+- **Notes:** out of process on purpose: a bad window procedure can only kill the splash, never Sight. Source runs use
+  `pythonw -I -S app/splash_win.py IMAGE EVENT 45`; the frozen build `Sight.exe --splash ...`. The splash waits on a
+  named manual-reset event `Local\SightSplash-<pid>`; the launcher creates and holds the event before starting it. Its
+  name goes into env `SIGHT_SPLASH` so the `bootstrap()` re-exec into the venv reuses the same splash (exactly one);
+  `Splash.forget_env()` pops it right after `bootstrap()` returns and in main()'s finally, so the browser / workers /
+  a nested Sight never inherit it. Close points unchanged (ready ping, `_open()` finally, `main()` finally); 45 s cap
+  (a hard-killed Sight leaves it up to 45 s — accepted). Keep `splash_win.py` stdlib-only and import-light (only `sys`
+  at module level). **Untested on Windows** (Linux container) — checklist in PLAN.md "Left to check on Windows" item 2.
+- Review (fresh agent, static): env var leaking to children (medium), import cost, close racing the splash's own
+  event creation, 1 px scaling fringe — all fixed and confirmed by the same reviewer.
+
 ## 0.64.0 — 2026-11-17 — Missing files on boards
 - **What:** a board card whose file is gone (source removed, or asset flagged missing) is a clear "Missing"
   placeholder with the file name and its full path instead of an empty card. Adding the folder again (or a late

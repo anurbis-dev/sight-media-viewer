@@ -8,6 +8,10 @@
 //   node tests/pwa_e2e.cjs merge <baseURL> <srevFile> <mediaDir>
 //     a fresh app (new profile) opens the .srev Sight made, is given the picture, gets a local
 //     note, then opens the .srev again; prints the merged rows.
+//   node tests/pwa_e2e.cjs bundle <baseURL> <bundleFile> <mediaDir> <outFile>
+//     a fresh app opens a bundle of several clips (one damaged): one group, clips without media greyed;
+//     a note on one clip, the group's reply → outFile (only the changed clip); a second reply finds
+//     nothing changed.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -217,7 +221,70 @@ async function merge(){
   return res;
 }
 
-(mode === "make" ? make() : merge()).then((res) => {
+async function bundle(){
+  const [srev, media, outFile] = [a1, a2, process.argv[6]], res = {};
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
+  const p = await page(ctx);
+  await p.setInputFiles("label.pick-file input", srev);
+  await p.waitForSelector(".list .row.group");
+  res.toast = await p.textContent(".toast");
+  res.groups = await p.evaluate(() => window.__sightReview.loadGroups());
+  res.groupRows = await p.locator(".list .row.group").count();
+  res.nomedia = await p.locator(".list .row.nomedia").count();
+  res.metas = await p.evaluate(async () => (await window.__sightReview.DB.all("reviews")).map((m) => ({ name: m.asset.name, groups: m.groups, changed: m.changed, nomedia: !!m.nomedia })));
+  // A note on the picture's clip (its file given: no longer greyed).
+  await p.locator('.item:has-text("shot_v001.png") .th').click();
+  await p.waitForSelector(".review .note");
+  await p.setInputFiles(".stage .none input", path.join(media, "shot_v001.png"));
+  await p.waitForSelector(".stage img");
+  await openPanel(p);
+  await p.click(".newbar .add");
+  await p.fill(".newbar textarea", "Phone note in the bundle");
+  await p.click(".newbar .send");
+  await p.waitForTimeout(400);
+  await p.goto(base);
+  await p.waitForSelector(".list .row.group");
+  res.nomediaAfter = await p.locator(".list .row.nomedia").count();
+  // The group's reply (its menu item calls exportBundle).
+  await p.evaluate(() => { const g = window.__sightReview.loadGroups()[0]; window.__sightReview.exportBundle(g); });
+  await p.waitForSelector('.sheet button:has-text("Download")', { timeout: 90000 });
+  res.sheet = await p.textContent(".sheet h2");
+  const [dl] = await Promise.all([p.waitForEvent("download"), p.click('.sheet button:has-text("Download")')]);
+  await dl.saveAs(outFile);
+  await p.click('.sheet button:has-text("Close")');
+  await p.waitForTimeout(300);
+  res.changedAfter = await p.evaluate(async () => (await window.__sightReview.DB.all("reviews")).map((m) => m.changed));
+  // Nothing changed since: asked before sending all.
+  await p.evaluate(() => { const g = window.__sightReview.loadGroups()[0]; window.__sightReview.exportBundle(g); });
+  await p.waitForSelector(".sheet h2");
+  res.second = await p.textContent(".sheet h2");
+  await p.click('.sheet button:has-text("Cancel")');
+  // The group's picture opens its sequence on the first clip; › / Page Down walk it, Back leaves it.
+  const hist0 = await p.evaluate(() => history.length);
+  await p.locator(".list .row.group > .item .th").click();
+  await p.waitForSelector(".review .hdr .seqb");
+  const name = () => p.evaluate(() => window.__sightReview.R.meta.asset.name);
+  res.seq = [await name(), await p.locator('.hdr .seqb[title^="Previous"]').isDisabled(), await p.textContent(".hdr .ttl span")];
+  await tap(p.locator('.hdr .seqb[title^="Next"]'));
+  await p.waitForFunction(() => window.__sightReview.R.meta.asset.name === "boxes_v001.glb");
+  res.seq.push(await p.locator('.hdr .seqb[title^="Next"]').isDisabled());
+  await p.keyboard.press("PageUp");
+  await p.waitForFunction(() => window.__sightReview.R.meta.asset.name === "shot_v001.png");
+  await p.keyboard.press("PageDown");
+  await p.waitForFunction(() => window.__sightReview.R.meta.asset.name === "boxes_v001.glb");
+  res.seqHist = (await p.evaluate(() => history.length)) - hist0;
+  await tap(p.locator('button[title="All reviews"]'));
+  await p.waitForSelector(".list .row.group");
+  // Back on the group's picture: the clip last seen.
+  await p.locator(".list .row.group > .item .th").click();
+  await p.waitForSelector(".review .hdr .seqb");
+  res.seqResume = await name();
+  await b.close();
+  return res;
+}
+
+(mode === "make" ? make() : mode === "bundle" ? bundle() : merge()).then((res) => {
   res.log = log;
   process.stdout.write(JSON.stringify(res));
 }).catch((e) => { console.error(e); console.error(log.join("\n")); process.exit(1); });

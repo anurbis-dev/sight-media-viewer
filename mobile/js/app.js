@@ -193,8 +193,11 @@ let NUM = new Map();
 const numOf = (it) => NUM.get(it.data && it.data.note) || "";
 
 let saveT = null, savePending = null;
-function dirty(){
+// user: an edit made here (not a merge) — marks the review as changed since it was last sent
+// (meta.changed = when; false after a send, see markSent); the reply bundle takes the changed ones.
+function dirty(user = true){
   R.meta.updated = now();
+  if (user) R.meta.changed = R.meta.updated;
   R.meta.counts = M.counts(R.rows);
   const meta = R.meta, rows = R.rows;
   clearTimeout(saveT);
@@ -331,33 +334,51 @@ async function openMedia(file, extras){
 }
 
 // ---- import / merge a .srev ------------------------------------------------------------------
+// A plain package: merged into its review (or `intoKey`, asked first when the names differ), toasted, and
+// the review opens. A bundle (several clips, FORMAT.md "Bundle"): every clip merged into its own review,
+// one summary toast, the clips put in one group on the home screen (the bundle's id kept with them for the
+// reply); only a one-clip bundle opens its review. "Merge into this review" does not apply to a bundle.
 async function importReviewFile(file, intoKey){
-  let pkg;
-  try { pkg = M.parsePackage(await file.text()); }
+  let parsed;
+  try { parsed = M.parseReviewFile(await file.text()); }
   catch (e){ toast(e.message || "Not a Sight review file", 4000); return; }
-  const a = pkg.asset;
-  if (a.kind && a.kind !== "image" && a.kind !== "video" && a.kind !== "model3d"){ toast(`This review is for a ${a.kind} file — the app opens pictures, videos and 3D models.`, 5000); return; }
+  if (parsed.bundle) return importBundle(parsed);
+  const pkg = parsed.entries[0], a = pkg.asset;
+  if (!kindOk(a)){ toast(`This review is for a ${a.kind} file — the app opens pictures, videos and 3D models.`, 5000); return; }
   await flush();
-  let key = intoKey;
-  if (!key){
-    // An earlier import of the same review first (it holds the rows), then the same name + size.
-    let best = null, bestN = 0;
-    for (const m of await DB.all("reviews")){
-      const rr = await DB.get("rows", m.key), n = M.overlap(rr ? rr.rows : [], pkg);
-      if (n > bestN){ best = m.key; bestN = n; }
-    }
-    key = best || await assetKey(a.name, a.size);
-  }
-  let meta = await DB.get("reviews", key);
+  const key = intoKey || await reviewKeyFor(pkg);
+  const meta = await DB.get("reviews", key);
   if (intoKey && meta && (String(meta.asset.name).toLowerCase() !== String(a.name || "").toLowerCase() || (a.size != null && meta.asset.size !== a.size))){
     if (!await ask({ title: "Another file?", text: `This review file is for “${a.name}”. Merge it into the review of “${meta.asset.name}” anyway?`, ok: "Merge" })) return;
   }
+  const res = await mergeInto(key, pkg);
+  toast(res.parts.length ? `Merged the review${pkg.author ? " from " + pkg.author : ""}: ${res.parts.join(" · ")}` : "Already up to date — nothing new in this review file", 4000);
+  if (!res.open) await openReview(key, null);
+}
+const kindOk = (a) => !a.kind || a.kind === "image" || a.kind === "video" || a.kind === "model3d";
+// The review a package goes into: an earlier import of the same review first (it holds the rows), then
+// the same name + size.
+async function reviewKeyFor(pkg){
+  let best = null, bestN = 0;
+  for (const m of await DB.all("reviews")){
+    const rr = await DB.get("rows", m.key), n = M.overlap(rr ? rr.rows : [], pkg);
+    if (n > bestN){ best = m.key; bestN = n; }
+  }
+  return best || assetKey(pkg.asset.name, pkg.asset.size);
+}
+// Merges one package into review `key` (made from the package's identity when the phone has none: no
+// media, its notes readable — `nomedia` until the file is picked), with its pictures. No toast, no
+// question, nothing opens. `group`: a bundle id kept with the review (meta.groups, the reply reuses it).
+// A review made here starts as not changed (`changed: false`); a user edit marks it (dirty).
+async function mergeInto(key, pkg, group){
+  const a = pkg.asset;
+  let meta = await DB.get("reviews", key);
   if (!meta){
     const t = now();
     const asset = Object.fromEntries(M.ASSET_KEYS.map((k) => [k, a[k] === undefined ? null : a[k]]));
     if (!asset.kind) asset.kind = kindOf({ name: asset.name || "", type: "" }) || "image";
     if (!asset.ext) asset.ext = extOf(asset.name);
-    meta = { key, asset, fps: null, created: t, opened: t, updated: t, counts: M.counts([]), thumb: null, kept: false };
+    meta = { key, asset, fps: null, created: t, opened: t, updated: t, counts: M.counts([]), thumb: null, kept: false, changed: false, nomedia: true };
   }
   // Pictures: hex ids are kept (the same id is the same picture), others get one from the bytes.
   const shotMap = {};
@@ -368,16 +389,70 @@ async function importReviewFile(file, intoKey){
     if (id !== sid) shotMap[sid] = id;
     if (!await DB.has("shots", id)) await DB.put("shots", { id, blob: new Blob([d.bytes], { type: d.type }) });
   }
-  const open = R && R.meta.key === key;
+  const open = !!(R && R.meta.key === key);
   const rows = open ? R.rows : ((await DB.get("rows", key)) || { rows: [] }).rows;
   const res = M.mergePackage(rows, pkg, shotMap);
-  meta.counts = M.counts(res.rows); meta.updated = now();
+  const groups = (open ? R.meta.groups : meta.groups) || [];
+  const ch = { counts: M.counts(res.rows), updated: now() };
+  if (group && !groups.includes(group)) ch.groups = groups.concat([group]);
   // The open review takes the merged rows at once: an edit made while they are saved goes into them.
-  if (open){ R.rows = res.rows; R.meta = Object.assign(R.meta, { counts: meta.counts, updated: meta.updated }); dirty(); }
-  else await DB.saveReview(meta, res.rows);
-  const s = res.stats, parts = [["new", s.added], ["updated", s.updated], ["deleted", s.deleted]].filter((x) => x[1]).map((x) => x[1] + " " + x[0]);
-  toast(parts.length ? `Merged the review${pkg.author ? " from " + pkg.author : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 4000);
-  if (!open) await openReview(key, null);
+  if (open){ R.rows = res.rows; Object.assign(R.meta, ch); dirty(false); }
+  else await DB.saveReview(Object.assign(meta, ch), res.rows);
+  const s = res.stats;
+  return { key, open, stats: s, parts: [["new", s.added], ["updated", s.updated], ["deleted", s.deleted]].filter((x) => x[1]).map((x) => x[1] + " " + x[0]) };
+}
+async function importBundle({ bundle, entries }){
+  await flush();
+  // Over the whole loop: a review opened mid-import would read its rows before they are merged (and a
+  // later save of them would drop the merge).
+  const bz = busy(`Merging ${entries.length} clips…`);
+  try { await importLoop(bundle, entries); } finally { bz.done(); }
+}
+async function importLoop(bundle, entries){
+  const bid = typeof bundle.id === "string" && bundle.id ? bundle.id : RC.uid();
+  const keys = [], at = [], damaged = [], dups = [], skipped = [], tot = { added: 0, updated: 0, deleted: 0 };
+  for (let i = 0; i < entries.length; i++){
+    const e = entries[i];
+    if (e instanceof Error){ damaged.push(e.clipName || "clip " + (i + 1)); continue; }
+    const name = e.asset.name || "clip " + (i + 1);
+    if (!kindOk(e.asset)){ skipped.push(name); continue; }
+    try {
+      const key = await reviewKeyFor(e);
+      // Two packages for one review (the same file twice): the first wins, the later is reported.
+      const j = keys.indexOf(key);
+      if (j >= 0){ dups.push(`${name}: same file as clip ${at[j] + 1}`); continue; }
+      const res = await mergeInto(key, e, bid);
+      keys.push(key); at.push(i);
+      Object.keys(tot).forEach((k) => { tot[k] += res.stats[k] || 0; });
+    } catch (err){ console.error(err); damaged.push(name); }
+  }
+  if (keys.length) bundleGroup(bid, bundle.title, keys);  // one clip: only into the bundle's group made earlier
+  const n = keys.length, parts = [["new", tot.added], ["updated", tot.updated], ["deleted", tot.deleted]].filter((x) => x[1]).map((x) => x[1] + " " + x[0]);
+  const msg = [n ? (parts.length ? `Merged ${n} clip${n > 1 ? "s" : ""}${bundle.author ? " from " + bundle.author : ""}: ${parts.join(" · ")}` : `Already up to date — ${n} clip${n > 1 ? "s" : ""}, nothing new`) : "No clip could be merged"];
+  if (damaged.length) msg.push(`${damaged.length} damaged: ${damaged.join(", ")}`);
+  if (skipped.length) msg.push(`not a picture, video or 3D model: ${skipped.join(", ")}`);
+  msg.push(...dups);
+  toast(msg.join(" · "), damaged.length || skipped.length || dups.length ? 7000 : 4500);
+  if (entries.length === 1 && n === 1){ if (!(R && R.meta.key === keys[0])) await openReview(keys[0], null); }
+  else if (!R) renderHome();
+  else if (keys.includes(R.meta.key)) paintReview();
+}
+// The bundle's clips as one group on the home screen: the group made for this bundle earlier (g.bundle)
+// takes the clips that are in no group; else a new group of those (at least two), first in the list. A
+// clip the user put in another group stays there (it still goes out with this bundle's reply: meta.groups).
+function bundleGroup(bid, title, keys){
+  const gs = loadGroups(), inAny = (k) => gs.some((g) => g.keys.includes(k));
+  const g = gs.find((x) => x.bundle === bid), free = keys.filter((k) => !inAny(k));
+  if (!free.length) return;
+  let order = loadOrder().filter((k) => !free.includes(k));
+  if (g) g.keys.push(...free);
+  else {
+    if (free.length < 2) return;
+    const ng = { id: RC.uid(), name: String(title || "").trim() || "Sequence review", keys: free, open: true, bundle: bid };
+    gs.push(ng);
+    order = ["g:" + ng.id].concat(order);
+  }
+  saveGroups(gs); saveOrderKeys(order);
 }
 
 // ---- screens -------------------------------------------------------------------------------
@@ -391,7 +466,7 @@ function route(){
   }
   const m = /^#r=([0-9a-f]{16})$/.exec(location.hash);
   if (m && (!R || R.meta.key !== m[1])) openReview(m[1], null, true);
-  else if (!m) { closeReview(); renderHome(); }
+  else if (!m) { ++openSeq; openingKey = null; closeReview(); renderHome(); }
 }
 window.addEventListener("popstate", route);
 
@@ -683,6 +758,7 @@ function groupMenu(g){
   menu(g.name, [
     { label: g.open ? "Close the group" : "Open the group", fn: () => setGroup(g.id, { open: !g.open }) },
     { label: "Rename…", fn: async () => { const v = await askText({ title: "Group name", value: g.name }); if (v != null && v.trim()) setGroup(g.id, { name: v.trim() }); } },
+    { label: "Review file for Sight (.srev)", note: "the clips changed here, in one file", fn: () => exportBundle(g) },
     { label: "Picture…", note: "a frame, a picture or a colour", fn: () => groupThumbSheet(g) },
     { label: "Ungroup", fn: () => {
       const all = loadGroups(), cur = all.find((x) => x.id === g.id) || g, gs = all.filter((x) => x.id !== g.id), order = loadOrder(), i = order.indexOf("g:" + g.id);
@@ -802,7 +878,9 @@ function reviewRow(m, grp){
   } else info.appendChild(document.createTextNode("No notes"));
   info.appendChild(document.createTextNode(" · " + fmtDate(m.updated)));
   tx.appendChild(info);
-  tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : m.asset.kind === "model3d" ? " 3D model" : " picture")));
+  const nomedia = m.nomedia && !m.kept;
+  row.classList.toggle("nomedia", !!nomedia);
+  tx.appendChild(el("span", "", nomedia ? "Media not on this device — notes readable" : m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : m.asset.kind === "model3d" ? " 3D model" : " picture")));
   it.appendChild(th); it.appendChild(tx);
   return rowGestures(row, it, { open: () => toggleSel(m.key, row), thumb: () => { homeSel.clear(); openReview(m.key, null); }, menu: () => reviewMenu(m), name: m.asset.name });
 }
@@ -847,7 +925,8 @@ function groupHead({ g, ms }){
   const chev = el("span", "chev"); chev.innerHTML = ico("back", 18);
   it.appendChild(th); it.appendChild(tx); it.appendChild(chev);
   row.appendChild(it);
-  return rowGestures(row, it, { group: true, name: g.name,
+  th.title = "Review the sequence"; th.setAttribute("aria-label", "Review “" + g.name + "” clip by clip");
+  return rowGestures(row, it, { group: true, name: g.name, thumb: () => openSequence(g),
     open: () => { g.open = !g.open; row.classList.toggle("shut", !g.open); setGroup(g.id, { open: g.open }, true); },
     menu: () => groupMenu(g) });
 }
@@ -1170,13 +1249,24 @@ function closeReview(){
 // Only the latest open counts: a second tap while the first review is still loading wins, and the
 // first one stops at its next step (each open has its own `rv`, nothing writes through `R` late).
 let openSeq = 0;
-async function openReview(key, file, fromRoute, extras){
+// opts.replace: the next / previous clip of a sequence (seqGo) — it takes the current history entry's place,
+// so Back leaves the sequence instead of walking through its clips.
+async function openReview(key, file, fromRoute, extras, opts){
+  try { return await openReviewNow(key, file, fromRoute, extras, opts); }
+  catch (e){ if (openingKey === key) openingKey = null; throw e; }  // a failed open: › steps from the shown review
+}
+async function openReviewNow(key, file, fromRoute, extras, opts){
   const seq = ++openSeq;
+  openingKey = key;
   fsArm();
   await flush();
   const meta = await DB.get("reviews", key);
   if (seq !== openSeq) return;
-  if (!meta){ if (fromRoute){ history.replaceState(null, "", location.pathname); renderHome(); } else toast("This review is not on the device any more"); return; }
+  if (!meta){
+    openingKey = null;
+    // A clip of a sequence that is gone (deleted elsewhere): out of its group, on to the one after it.
+    if (opts && opts.replace){ dropFromGroups(key); if (R && seqGo(opts.dir || 1) === false) paintSeq(); return; }
+    if (fromRoute){ history.replaceState(null, "", location.pathname); renderHome(); } else toast("This review is not on the device any more"); return; }
   const rr = await DB.get("rows", key);
   // A file picked before is kept on the device (autoKeep), so the review opens with it; without
   // one the stage asks for the file.
@@ -1191,16 +1281,24 @@ async function openReview(key, file, fromRoute, extras){
     if (kept && kept.extras && kept.blob && kept.blob.size === file.size) extras = kept.extras;
   }
   if (seq !== openSeq) return;
+  // The history entry is settled now, before any await, so a later open reads a settled `pushed`. A review
+  // still loading when this one takes over (never shown) leaves its entry to this one.
+  const prev = R, wasPushed = !!(prev && prev.pushed), replace = !!(opts && opts.replace) || !!(prev && !prev.shown && wasPushed);
   closeReview();
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
     frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
     views: meta.asset.kind === "model3d" ? M.views3d(rr ? rr.rows : []) : new Map(), curVk: null, v3d: null, v3dReady: null, extras: extras || [] };
+  if (replace){ history.replaceState(null, "", "#r=" + key); rv.pushed = wasPushed; }
+  else if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
   if (file) await bindFile(rv, file);
   if (R !== rv) return;
   meta.opened = now();
+  if (rv.file) delete meta.nomedia;
   DB.put("reviews", meta).catch(() => {});
-  if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
+  if (seq === openSeq) openingKey = null;
+  seqRemember(key);
   renderReview();
+  rv.shown = true;
   if (picked && rv.file) autoKeep(rv);
 }
 // Keeps the picked file in the app (IndexedDB "files") so the review opens with it next time — the
@@ -1290,7 +1388,12 @@ function renderReview(){
   const sub = el("span");
   ttl.appendChild(sub);
   r1.appendChild(ibtn("back", "All reviews", leaveReview));
+  // In a group (a sequence): the previous / next clip around the title, "2 / 5" under it.
+  const sq = seqOf(R.meta.key), sks = sq ? seqKeys(sq, R.meta.key) : [], pos = sks.indexOf(R.meta.key);
+  const seqBtn = (d) => { const b = ibtn(d < 0 ? "prev" : "next", d < 0 ? "Previous clip (Page Up)" : "Next clip (Page Down)", () => seqGo(d)); b.classList.add("seqb"); b.disabled = !sks[pos + d]; return b; };
+  if (sq) r1.appendChild(seqBtn(-1));
   r1.appendChild(ttl);
+  if (sq) r1.appendChild(seqBtn(1));
   r1.appendChild(ibtn("more", "Export and more", reviewActions));
   hdr.appendChild(r1); hdr.appendChild(r2);
   const tp = el("div", "tp rd-panel");
@@ -1302,7 +1405,7 @@ function renderReview(){
   const newbar = el("footer", "newbar"), nb = el("div");
   newbar.appendChild(nb);
   root.appendChild(newbar);
-  els = { sub, stage, tools: r2, tp, pbar, plist, keep, notes, nb, newbar, svg: null, T: null };
+  els = { seq: sq ? `${sq.name} · ${pos + 1} / ${sks.length}` : "", sub, stage, tools: r2, tp, pbar, plist, keep, notes, nb, newbar, svg: null, T: null };
   // The player's height leaves room for the new-note bar, whatever it holds.
   if (!nbRO) nbRO = new ResizeObserver(() => { if (els && els.newbar.isConnected) root.style.setProperty("--nbh", els.newbar.offsetHeight + "px"); });
   nbRO.disconnect(); nbRO.observe(newbar);
@@ -1311,7 +1414,40 @@ function renderReview(){
   buildStage();
   paintReview();
 }
+// ---- sequences: a group's reviews one after another ------------------------------------------------
+// The key of the open in flight (a › tapped twice quickly steps from where the first tap is going).
+let openingKey = null;
+// The group a review is in, or null; its sequence = its keys as listed (reviews hidden for now left out,
+// except `key` itself).
+function seqOf(key){ return loadGroups().find((g) => g.keys.includes(key)) || null; }
+function seqKeys(g, key){ const h = hiddenKeys(); return g.keys.filter((k) => k === key || !h.has(k)); }
+// The clip a group's sequence opens on: the one last seen in it (g.cur), else its first.
+function openSequence(g){
+  const cur = loadGroups().find((x) => x.id === g.id) || g, ks = seqKeys(cur);
+  if (!ks.length) return;
+  homeSel.clear();
+  openReview(ks.includes(cur.cur) ? cur.cur : ks[0], null);
+}
+function seqRemember(key){ const g = seqOf(key); if (g && g.cur !== key) setGroup(g.id, { cur: key }, true); }
+// The header's ‹ › and "i / n" after the group changed under the open review (the player is left alone).
+function paintSeq(){
+  if (!R || !els) return;
+  const sq = seqOf(R.meta.key), sks = sq ? seqKeys(sq, R.meta.key) : [], pos = sks.indexOf(R.meta.key);
+  els.seq = sq ? `${sq.name} · ${pos + 1} / ${sks.length}` : "";
+  document.querySelectorAll(".hdr .seqb").forEach((b) => { b.disabled = !sks[pos + (b.title.startsWith("Previous") ? -1 : 1)]; });
+  paintReview();
+}
+function dropFromGroups(key){ const gs = loadGroups(); gs.forEach((g) => { g.keys = g.keys.filter((k) => k !== key); }); saveGroups(gs); }
+// The previous / next clip of the open review's group (no wrap). Edits are saved by openReview (flush).
+// Not while a busy overlay works on the open review (an export reads its frames).
+function seqGo(d){
+  if (!R || document.querySelector(".busy")) return false;
+  const base = openingKey || R.meta.key, g = seqOf(base), ks = g ? seqKeys(g, base) : [], k = ks[ks.indexOf(base) + d];
+  if (!g || !k) return false;
+  openReview(k, null, false, undefined, { replace: true, dir: d });
+}
 function leaveReview(){
+  ++openSeq; openingKey = null;  // an open still loading (a › tapped just before) must not land after Back
   if (R && R.pushed) history.back();
   else { closeReview(); history.replaceState(null, "", location.pathname + location.search); renderHome(); }
 }
@@ -2047,6 +2183,7 @@ async function rebind(file, extras){
   await DB.del("frames", rv.meta.key + "|img").catch(() => {});
   await bindFile(rv, file);
   if (R !== rv) return;
+  if (rv.file) delete rv.meta.nomedia;
   DB.put("reviews", rv.meta).catch(() => {});
   buildStage(); paintReview();
   autoKeep(rv, true);  // the file picked now is the one to open with next time
@@ -2620,7 +2757,7 @@ function paintReview(){
   NUM = numMap();
   if (is3d()){ R.views = M.views3d(R.rows); updateCurVk(); }
   const c = M.counts(R.rows), a = R.meta.asset;
-  els.sub.textContent = [c.notes ? `${c.notes} note${c.notes > 1 ? "s" : ""}` : "No notes yet", a.kind === "video" && a.duration ? fmtTime(a.duration, R.fps) : a.kind === "model3d" ? (R.views.size ? `${R.views.size} view${R.views.size > 1 ? "s" : ""}` : "3D model") : a.width ? `${a.width} × ${a.height}` : ""].filter(Boolean).join(" · ");
+  els.sub.textContent = [els.seq, c.notes ? `${c.notes} note${c.notes > 1 ? "s" : ""}` : "No notes yet", a.kind === "video" && a.duration ? fmtTime(a.duration, R.fps) : a.kind === "model3d" ? (R.views.size ? `${R.views.size} view${R.views.size > 1 ? "s" : ""}` : "3D model") : a.width ? `${a.width} × ${a.height}` : ""].filter(Boolean).join(" · ");
   paintKeep();
   paintPanelBar();
   renderNotes();
@@ -3935,7 +4072,10 @@ function reviewActions(){
   menu(R.meta.asset.name, items);
 }
 // A finished file: Share (Save to Files, messengers…) needs a fresh tap, so it is offered here.
-function offerFile(blob, name, what){
+// onSent: called once the file was downloaded or shared (a send: the reply's reviews stop counting as changed).
+function offerFile(blob, name, what, onSent){
+  let sent = false;
+  const done = () => { if (!sent && onSent){ sent = true; onSent(); } };
   const file = new File([blob], name, { type: blob.type || "application/octet-stream" });
   const canShare = !!(navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [file] }); } catch { return false; } })());
   sheet((sh, close) => {
@@ -3947,9 +4087,10 @@ function offerFile(blob, name, what){
       const u = URL.createObjectURL(blob), l = el("a");
       l.href = u; l.download = name; document.body.appendChild(l); l.click(); l.remove();
       setTimeout(() => URL.revokeObjectURL(u), 30000);
+      done();
     }));
     if (canShare) a.appendChild(btn("btn primary", "Share…", async () => {
-      try { await navigator.share({ files: [file], title: name }); close(); }
+      try { await navigator.share({ files: [file], title: name }); done(); close(); }
       catch (e){ if (e && e.name !== "AbortError") toast("Sharing failed: " + (e.message || e)); }
     }));
     sh.appendChild(a);
@@ -3983,17 +4124,67 @@ async function exportReport(type){
     toast("Export failed: " + (e.message || e), 5000);
   } finally { b.done(); }
 }
-async function exportSrev(){
+// A review's package from what is stored (the open review: its rows in memory, saved first). `mark` is its
+// changed mark as packed (markSent clears it only if no edit came after).
+async function packageOf(key){
   await flush();
-  if (!await ensureName()) return;
+  const open = R && R.meta.key === key;
+  const meta = open ? R.meta : await DB.get("reviews", key);
+  if (!meta) return null;
+  const rows = open ? R.rows : ((await DB.get("rows", key)) || { rows: [] }).rows;
   const shots = {};
-  for (const id of M.shotIds(R.rows)){
+  for (const id of M.shotIds(rows)){
     const s = await DB.get("shots", id).catch(() => null);
     if (s) shots[id] = await blobToDataUrl(s.blob);
   }
-  const pkg = M.buildPackage({ asset: R.meta.asset, rows: R.rows, shots, author: who, app: APP_LABEL + " (phone)" });
+  return { key, meta, mark: meta.changed, pkg: M.buildPackage({ asset: meta.asset, rows, shots, author: who, app: APP_LABEL + " (phone)" }) };
+}
+// Never sent (no mark: made here, or before 0.77) counts as changed; sending more than needed is harmless.
+const isChanged = (m) => m.changed !== false;
+// After a send: the sent reviews are not changed any more — unless edited since they were packed.
+async function markSent(sent){
+  for (const { key, mark } of sent){
+    try {
+      if (R && R.meta.key === key){ if (R.meta.changed === mark){ R.meta.changed = false; await DB.put("reviews", R.meta); } continue; }
+      const m = await DB.get("reviews", key);
+      if (m && m.changed === mark){ m.changed = false; await DB.put("reviews", m); }
+    } catch (e){ console.warn(e); }
+  }
+}
+async function exportSrev(){
+  if (!await ensureName()) return;
+  const p = await packageOf(R.meta.key);
+  if (!p) return;
   const name = safeName(stemOf(R.meta.asset.name) + " review" + (who ? " - " + who : "")) + ".srev";
-  offerFile(new Blob([JSON.stringify(pkg)], { type: "application/json" }), name, "Review file");
+  offerFile(new Blob([JSON.stringify(p.pkg)], { type: "application/json" }), name, "Review file", () => markSent([p]));
+}
+// A group's reply for Sight: one bundle (FORMAT.md "Bundle") of its reviews changed since the last send —
+// the group's reviews and every review that came in the bundle this group answers (meta.groups), so a clip
+// the user moved to another group still goes back. The bundle keeps the id of the bundle it answers
+// (a group made here: its own id).
+async function exportBundle(g){
+  if (!await ensureName()) return;
+  await flush();
+  const cur = loadGroups().find((x) => x.id === g.id) || g, bid = cur.bundle || cur.id;
+  const all = await DB.all("reviews").catch(() => []), byKey = new Map(all.map((m) => [m.key, m]));
+  const keys = cur.keys.filter((k) => byKey.has(k));
+  if (cur.bundle) all.forEach((m) => { if ((m.groups || []).includes(cur.bundle) && !keys.includes(m.key)) keys.push(m.key); });
+  if (R && byKey.has(R.meta.key)) byKey.set(R.meta.key, R.meta);
+  let pick = keys.filter((k) => isChanged(byKey.get(k)));
+  if (!pick.length){
+    if (!keys.length || !await ask({ title: "Nothing changed", text: `No review in “${cur.name}” changed since the last send. Send all ${keys.length} anyway?`, ok: "Send all" })) return;
+    pick = keys;
+  }
+  const b = busy("Packing the reviews…");
+  try {
+    const out = [];
+    for (const k of pick){ const p = await packageOf(k); if (p) out.push(p); }
+    if (!out.length) return;
+    const bundle = M.buildBundle({ packages: out.map((p) => p.pkg), id: bid, title: cur.name, author: who, app: APP_LABEL + " (phone)" });
+    const name = safeName(cur.name + " review" + (who ? " - " + who : "")) + ".srev";
+    offerFile(new Blob([JSON.stringify(bundle)], { type: "application/json" }), name, `Review file (${out.length} clip${out.length > 1 ? "s" : ""})`, () => markSent(out));
+  } catch (e){ console.error(e); toast("Export failed: " + (e.message || e), 5000); }
+  finally { b.done(); }
 }
 
 // ---- keys (desktop / iPad keyboard), through Sight's one shortcut rule -----------------------
@@ -4002,6 +4193,7 @@ document.addEventListener("keydown", (e) => {
   if (sheets.length){ runHotkeys(e, [["Escape", () => { sheets[sheets.length - 1](); }]]); return; }
   if (e.target.closest && e.target.closest("input, textarea, select")) return;
   if (e.code === "Space" && e.target.closest && e.target.closest("button")) return;
+  if (R && runHotkeys(e, [["PageUp", () => seqGo(-1)], ["PageDown", () => seqGo(1)]])) return;
   if (!R || !R.video) return;
   runHotkeys(e, [
     ["Space", () => togglePlay()], ["Comma", () => step(-1)], ["Period", () => step(1)],
@@ -4051,4 +4243,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote };
+window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote, exportBundle, loadGroups };

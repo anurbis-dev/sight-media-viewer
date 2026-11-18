@@ -397,7 +397,8 @@ out and the next span's fade in, linearly over the gap (1 s at the clip's ends);
 each (`seqGo` + `seqWaitClip`: clip on screen, annotator bound and loaded, fps known), takes `annot.report(kind)`
 (= `gatherReport`), then POSTs `/api/review/export/pdf-all` | `zip-all` (`review.build_pdf_all` merges per-clip
 PDFs and numbers the pages through; `build_zip_all` puts each clip under "NN name/") or one `/export/html` per
-clip; `.srev` per clip needs no pictures. Afterwards `seqGo` back to the clip / time it started from.
+clip; `.srev` needs no pictures and no visits: `/export/package-all` with every clip id, the server keeps the clips
+with notes or tombstones and writes one bundle (FORMAT.md "Bundle", `review.build_bundle`). Afterwards `seqGo` back to the clip / time it started from.
 
 **Data** — rows of `annotations` with `scope='asset'`, `target_asset_id` = the asset. `kind` /
 `shape_kind`: `stroke` brush|pencil|marker (`data.pts` = flat `[x, y, pressure, …]`), `shape`
@@ -577,7 +578,19 @@ The lightbox view's **turn / mirror** (index.html `attachViewer`: `turn {rot, mi
 annotate's layer root (`geom().turn`); `unturn(x, y)` maps the pointer back, so pan / zoom and
 annotate's `local(e)` / `toDoc` work in the unturned frame. Doc units never change.
 
-**HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)`) — the report
+**HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)` or, for a sequence,
+`build_html_all([(report, pkg)…], app_version, title)`) — data block `{clips: [{report, package, edits?}], bundle?, copy?}`
+(`bundle` = `{id, exported_at, app, title}`, only with 2+ clips; one clip → a plain one-clip page). **Several clips**:
+the script works on the shown clip through page-wide variables (`R`, `PKG`, `KEY`, `rows`, `E`, `M`, `VEC`,
+`noteById`, `exported`, `MEDIA_NAME`, `VIEW_KEY`, `drafts`, `openReply`, `newOpen`) that `useClip(i)` points at
+`CL[i]` (stashing the shown clip's `E` / drafts / open fields back first); `switchClip` = `useClip` + `header()`
+(clears and redraws) + `render()`; listeners are bound once. Per-clip storage key: one clip
+`sight-review:<asset id>:<exported_at>[:copy]` (unchanged since before 0.76), several
+`sight-review:<bundle id>:<asset id>[:copy]`. `changes()` sums all clips (`changesOf(E)` = new notes + reply entries);
+*Download reply* = a plain package (one clip) or a bundle with the page's `bundle.id` of the changed clips
+(`replyPackage(c)` per clip); `#dlclip` in the clip's details = that clip's plain package (Sight < 0.75).
+`←` / `→` switch clips via `SightCaptionPlate.runHotkeys` (keys.js exposed by `plate_js`), skipped in text fields
+and while `.zoom` / `.draw` / `.pick` / a `.gate` is up. The report
 comes from `gatherReport(true)`: **clean** pictures (no drawings burned in) — `cover` (images /
 PSD, ≤2000 px) + `coverSize`, per note `frame` (video frame ≤1600 px, or the 3D view capture) +
 `size`, reply `id`s, and `media: {kind: image|video|model3d, w, h, fps}`; picture notes get no
@@ -603,7 +616,7 @@ into rows in `E.rows` (localStorage) with `data.note`, `data.reply` (a reply) an
 (`drawCtx`: video `{t, hold}` of the note, 3D `{vk, cam}`); a new note drawn on a frame takes that
 note's whole ctx. *Download reply* merges `E.rows` like any other row (`RC.mergeRows`). *Download page* (`downloadPage`)
 writes the page back: `ORIG` (the page's markup, captured before any script ran) with the data block replaced by
-`{report, package, edits: E, copy}`; the copy starts from `D.edits` and keeps its own localStorage key (`D.copy`). Drawing on
+`{clips: [{report, package, edits}], bundle?, copy}`; the copy starts from each clip's `edits` and keeps its own localStorage keys (`D.copy`). Drawing on
 an attachment is flattened into a new JPEG attachment (`drawFlat`): attachments have no doc space.
 
 **Rendering** — every object becomes primitives (`primsOf`) that both the SVG overlay (`primSvg`) and
@@ -641,8 +654,13 @@ lays out HTML with PyMuPDF `Story`, which brings fallback fonts for Cyrillic/CJK
 `POST /api/review/export/zip` (`gatherReport(false, true)` — every picture note gets its own
 picture — → `review.build_zip`: a folder per note with its pictures under their `file` names, extension
 from the bytes, and "Note NN.txt"), `POST /api/review/export/html` (the page's report: clean pictures + `coverSize` / `media`, see
-"HTML reviewer page"; the page embeds the report and the package, see `review.build_html`), `POST /api/review/import` (raw file body; asset matched by id,
-else name+size, else name+kind; 404 `{missing}` if no match). Import **merges**
+"HTML reviewer page"; the page embeds the report and the package, see `review.build_html`),
+`POST /api/review/export/html-all` (`{reports, author}` like `pdf-all` → per report the asset's package →
+`review.build_html_all`; a report whose asset is missing / repeated is dropped, none left → 404), `POST /api/review/import` (raw file body → `review.import_review_file`, the one import
+function the tests call too; asset matched by id, then the asset holding most of its row ids, else name+size, else
+name+kind; 404 `{missing}` if no match). A bundle answers 200 `{ok, bundle, id, author, results}`, one result per
+package (`import_package`'s, or `{ok: false, error}` / `{duplicate: n}` when two packages match one local file),
+each committed on its own. Import **merges**
 (`Library.import_annotations`, one transaction, rolled back on a malformed row): rows keep their
 ids (an id that already belongs to another asset gets a stable derived one), the later **content
 stamp** wins (`_content_at`: a note's `data.edited_at`, else `data.created`; a drawing's
@@ -805,7 +823,21 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   review), a click with no pointer (keyboard) acts on the click. A tap on a card toggles
   `homeSel` (`.sel`), on its picture (`.th`) opens the review; `.selbar` (Move to… / Hide /
   Delete) acts on all picked.
-- **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?}]` (localStorage;
+- **Bundles on the phone** (multi-clip stage 3): `importReviewFile` → `M.parseReviewFile`; a bundle goes
+  to `importBundle` (per package `reviewKeyFor` + `mergeInto(key, pkg, bundleId)` — no toast / question /
+  open; a duplicate key = "same file as clip N"), then `bundleGroup` (a UI group with `bundle: <id>`, made
+  of the clips in no group yet). Review meta fields: `groups: [bundleId]` (every bundle the review came
+  in), `changed` (time of the last user edit, `false` after a send; missing = never sent → counts as
+  changed), `nomedia` (made by an import, cleared when the file is bound). `dirty(user = true)` sets
+  `changed`; merges call `dirty(false)`. Group menu → `exportBundle(g)`: the group's keys plus every review
+  whose `groups` has `g.bundle`, changed ones only (else asks), id = `g.bundle || g.id`; `offerFile`'s
+  `onSent` (Download / successful Share) → `markSent` clears `changed` only if it still equals the value
+  packed (`packageOf`). The single-review `.srev` export clears it too.
+- **Sequences** (0.78): the group header's `.th` → `openSequence(g)` (opens `g.cur` or the first key; every
+  `openReview` of a grouped review stores `cur`, `seqRemember`). In a review whose key is in a group the header
+  has `.seqb` ‹ › (`seqGo(±1)`, also Page Up / Down, no wrap); the switch is `openReview(k, …, {replace: true})`
+  — `history.replaceState` and the previous review's `pushed` carried over, so Back leaves the sequence.
+- **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?, bundle?, cur?}]` (localStorage;
   `thumb` = `{url}` a ≤ 200 px data URL or `{color}`); the order list holds a group as
   `"g:<id>"`. Any review (on its own or a member) held over the middle of another visible row's
   `.item` (`st.targets`: not its own group / siblings / the picked ones) and let go →

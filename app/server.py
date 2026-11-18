@@ -1058,6 +1058,39 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         out.write_text(page, encoding="utf-8")
         return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
 
+    # A sequence's review as one web page (index.html seqExportAll "html"): per report the clip's package; one
+    # report makes a plain one-clip page (review.build_html_all).
+    @app.post("/api/review/export/html-all")
+    async def export_review_html_all(request: Request) -> dict:
+        reps, names, body = await _all_reports(request)
+        author = str(body.get("author") or "")
+        missing: list[str] = []
+
+        def build() -> tuple[str, int, str]:
+            clips, seen, first = [], set(), ""
+            for r, name in zip(reps, names):
+                a = lib.get_asset(str(r.get("asset_id") or ""))
+                if not a:  # (_all_reports names it "clip": the report's title is the clip's name)
+                    missing.append(str(r.get("title") or name))
+                if not a or a["id"] in seen:
+                    continue
+                seen.add(a["id"])
+                first = first or a["name"]
+                pkg = review.build_package(a, lib.annotations_for_asset(a["id"]), lib.root, author, APP_VERSION,
+                                           lib.annotation_tombstones(a["id"]))
+                clips.append(({k: r.get(k) for k in ("title", "subtitle", "meta", "cover", "coverSize", "notes", "media")}, pkg))
+            if not clips:
+                raise HTTPException(404, "none of the clips is in the library")
+            title = f"Sequence review — {len(clips)} clip{'' if len(clips) == 1 else 's'}"
+            return review.build_html_all(clips, APP_VERSION, title), len(clips), first
+
+        page, n, first = await asyncio.to_thread(build)
+        stem = review.safe_name(f"Sequence review ({n} clips)" if n > 1 else f"{Path(first).stem} review")
+        out = review.unique_path(review.export_dir(lib.root), stem, ".html")
+        out.write_text(page, encoding="utf-8")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "clips": n, "missing": missing}
+
     @app.post("/api/review/export/package")
     async def export_review_package(request: Request) -> dict:
         body = await json_body(request)
@@ -1071,6 +1104,42 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         out = review.unique_path(review.export_dir(lib.root), stem, review.PACKAGE_EXT)
         out.write_text(json.dumps(pkg, ensure_ascii=False), encoding="utf-8")
         return await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+
+    # A sequence's review files in one bundle (index.html seqExportAll "pkg"): the clips, in order, that
+    # have notes or tombstones (all notes deleted since the last send still has to reach the reviewer).
+    @app.post("/api/review/export/package-all")
+    async def export_review_package_all(request: Request) -> dict:
+        body = await json_body(request)
+        raw_ids = body.get("asset_ids")
+        ids = list(dict.fromkeys(str(x) for x in raw_ids if x)) if isinstance(raw_ids, list) else []
+        if not ids or len(ids) > 500:
+            raise HTTPException(400, "asset_ids required")
+        author = str(body.get("author") or "")
+
+        def build() -> list:
+            pkgs = []
+            for aid in ids:
+                a = lib.get_asset(aid)
+                if not a:
+                    continue
+                rows = lib.annotations_for_asset(a["id"])
+                dead = lib.annotation_tombstones(a["id"])
+                if not dead and not any(r["kind"] == "note" and not (isinstance(r.get("data"), dict) and r["data"].get("deleted"))
+                                       for r in rows):
+                    continue
+                pkgs.append(review.build_package(a, rows, lib.root, author, APP_VERSION, dead))
+            return pkgs
+
+        pkgs = await asyncio.to_thread(build)
+        if not pkgs:
+            return {"ok": True, "clips": 0}
+        title = f"Sequence review — {len(pkgs)} clip{'' if len(pkgs) == 1 else 's'}"
+        bundle = review.build_bundle(pkgs, author, APP_VERSION, title)
+        stem = review.safe_name(f"Sequence review ({len(pkgs)} clip{'' if len(pkgs) == 1 else 's'})")
+        out = review.unique_path(review.export_dir(lib.root), stem, review.PACKAGE_EXT)
+        out.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+        res = await asyncio.to_thread(_review_out, out, bool(body.get("reveal", True)))
+        return {**res, "clips": len(pkgs)}
 
     @app.get("/api/assets/{aid}/versions")
     def asset_versions(aid: str) -> dict:
@@ -1090,33 +1159,16 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
 
     @app.post("/api/review/import")
     async def import_review(request: Request) -> dict:
+        # A plain package: {ok, asset_id, added, updated, deleted, author}; 404 when its media is not
+        # in the library, 400 for a damaged file. A bundle: always 200, per clip in `results`.
+        raw = await request.body()
         try:
-            pkg = review.parse_package(await request.body())
+            res = await asyncio.to_thread(review.import_review_file, lib, raw)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        meta = pkg["asset"]
-        rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
-        # Same path on this machine first, then wherever this review's rows already live (an
-        # earlier import), then name + size / kind.
-        a = None
-        if meta.get("id"):
-            a = lib.get_asset(str(meta["id"]))
-            a = a if a and a.get("status") == "ready" else None
-        a = a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
-        if not a:
-            return JSONResponse({"ok": False, "missing": meta.get("name") or "", "asset": meta}, status_code=404)
-        shot_map: dict[str, str] = {}
-        shots = pkg.get("shots") if isinstance(pkg.get("shots"), dict) else {}
-        for sid, url in shots.items():
-            data = review.decode_data_url(url)
-            if data:
-                shot_map[str(sid)] = await asyncio.to_thread(review.put_shot, lib.root, str(sid), data)
-        deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
-        try:
-            stats = await asyncio.to_thread(lib.import_annotations, a["id"], rows, deleted, shot_map)
-        except (TypeError, ValueError, AttributeError) as e:
-            raise HTTPException(400, f"Review file is damaged ({e})")
-        return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or ""}
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=404)
+        return res
 
     @app.get("/api/events")
     def events():

@@ -14,6 +14,9 @@ file" (review.py `parse_package`, mobile model.js `parsePackage`) — clean, if 
 
 ## Stage 1 — the bundle format, Sight's import and export (backend, FORMAT.md, annotate.js import UI)
 
+**Done in 0.75.0** (see RECENT). Deviation: `package-all` takes `asset_ids` (every clip of the sequence, no
+reports — a package needs no pictures) and the server keeps the clips with notes or tombstones.
+
 - **FORMAT.md, new section "Bundle"**: `{format: "sight-review-bundle", version: 1, id, app, exported_at, author,
   title?, packages: [package, …]}`. `id`: a random bundle id (the page's storage key and the phone's group key
   use it). Each entry is a complete package (its own `asset`, `annotations`, `deleted`, `shots`; shots stay per
@@ -46,6 +49,12 @@ file" (review.py `parse_package`, mobile model.js `parsePackage`) — clean, if 
   missing and one damaged package (others land), a plain package unchanged; export of a two-clip bundle.
 
 ## Stage 2 — the multi-clip web page
+
+**Done in 0.76.0** (see RECENT). Deviations: every clip's edits stay in memory (`CL[i].E`, written to its slot on
+each save), so "Download the page" reads memory, not the slots; the page's clips are the clips with notes (the
+client's scan, as before) — a clip with only tombstones is not on the page (its deletes travel in the `.srev`
+bundle; a page's clip re-sends its package's tombstones anyway); "This clip's reply" sits in the clip's details
+(tap the title).
 
 The page script (review.py `build_html`, one IIFE) holds page-wide state from one clip — `R`, `PKG`, `rows`, `E`,
 `KEY`, `VIEW_KEY`, `M`, `VEC`, `noteById` / `numById`, `exported`, `drafts`, `openReply`, `newOpen` — fixed element
@@ -85,6 +94,13 @@ on a clip switch, the header and the list cleared and redrawn, listeners bound o
   still reply with a plain package (today's test imports `copy.html.srev` and expects 0 added — keep that).
 
 ## Stage 3 — the phone app
+
+**Done in 0.77.0** (see RECENT). Deviations: the group is the phone's existing home-screen group
+(localStorage, `bundle: <id>`) — a review sits in one UI group at most, so `meta.groups` (all bundle ids)
+decides what a reply holds; the reply is in the group's menu (any user-made group sends one too, with the
+group's own id); a review with no `changed` mark (never sent) counts as changed; greyed = `meta.nomedia`
+(made by an import, cleared when its file is picked). A one-clip bundle opens like a plain package and
+makes no group.
 
 - **Open**: `mobile/js/model.js` `parsePackage` accepts a bundle; `importReviewFile` already opens a review without
   its media (`openReview(key, null)`) — refactor it into a per-package import that does not toast, ask (`intoKey`

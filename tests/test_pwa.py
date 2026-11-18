@@ -47,21 +47,11 @@ def has_playwright() -> bool:
 
 
 def sight_import(lib: Library, raw: bytes) -> tuple[dict, dict]:
-    """What POST /api/review/import does with a package."""
-    pkg = review.parse_package(raw)
-    meta = pkg["asset"]
-    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
-    a = lib.get_asset(str(meta["id"])) if meta.get("id") else None
-    a = a if a and a.get("status") == "ready" else None
-    a = a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
-    if not a:
-        raise AssertionError(f"Sight found no asset for {meta.get('name')}")
-    shot_map = {}
-    for sid, url in (pkg.get("shots") or {}).items():
-        data = review.decode_data_url(url)
-        if data:
-            shot_map[str(sid)] = review.put_shot(lib.root, str(sid), data)
-    return a, lib.import_annotations(a["id"], rows, pkg.get("deleted") or [], shot_map)
+    """What POST /api/review/import does with a package (the same function)."""
+    res = review.import_review_file(lib, raw)
+    if not res.get("ok"):
+        raise AssertionError(f"Sight found no asset for {res.get('missing')}")
+    return lib.get_asset(res["asset_id"]), res
 
 
 class Build(unittest.TestCase):
@@ -253,6 +243,63 @@ class RoundTrip(unittest.TestCase):
         bnote = next(r for r in live if r["kind"] == "note" and r["data"]["text"].startswith("Sky"))
         self.assertIn("From Sight", [x.get("text") for x in bnote["data"]["replies"]])
 
+
+    def test_bundle(self) -> None:
+        """Multi-clip stage 3: the phone opens a Sight bundle (one group, a damaged clip reported), a note
+        on one clip goes back as a bundle of that clip only, with the same bundle id, and Sight merges it."""
+        home = self.tmp / "home_bundle"
+        home.mkdir()
+        lib = Library(home)
+        try:
+            sid = lib.add_source(str(self.media))["id"]
+            deadline = time.time() + 30
+            while time.time() < deadline and lib.query("SELECT COUNT(*) AS n FROM assets WHERE source_id=? AND status='ready'", (sid,))[0]["n"] < 2:
+                time.sleep(0.2)
+            assets = {a["name"]: a for a in lib.query("SELECT * FROM assets WHERE source_id=?", (sid,))}
+            now = int(time.time() * 1000)
+            pkgs = []
+            for name in ("shot_v001.png", "boxes_v001.glb"):
+                a = lib.get_asset(assets[name]["id"])
+                lib.add_annotation({"scope": "asset", "target_asset_id": a["id"], "kind": "note",
+                                    "data": {"text": "Desk on " + name, "author": "Desk", "created": now, "status": "open", "ctx": None, "shots": []}})
+                pkgs.append(review.build_package(a, lib.annotations_for_asset(a["id"]), lib.root, "Desk", "test"))
+            broken = {"format": "sight-review", "version": 1, "asset": {"name": "broken.mov"}}
+            bundle = review.build_bundle(pkgs + [broken], "Desk", "test", "Sequence review — 2 clips", "b0b0b0b0b0b0b0b0")
+            src, out = self.tmp / "seq.srev", self.tmp / "seq_reply.srev"
+            src.write_text(json.dumps(bundle), encoding="utf-8")
+            res = self.e2e("bundle", self.base, str(src), str(self.media), str(out))
+            self.assertIn("Merged 2 clips from Desk", res["toast"])
+            self.assertIn("1 damaged: broken.mov", res["toast"])
+            self.assertEqual(res["groupRows"], 1)
+            self.assertEqual(len(res["groups"]), 1)
+            g = res["groups"][0]
+            self.assertEqual((g["bundle"], g["name"], len(g["keys"])), ("b0b0b0b0b0b0b0b0", "Sequence review — 2 clips", 2))
+            self.assertEqual(res["nomedia"], 2)
+            self.assertEqual(res["nomediaAfter"], 1)
+            for m in res["metas"]:
+                self.assertEqual((m["groups"], m["changed"], m["nomedia"]), (["b0b0b0b0b0b0b0b0"], False, True))
+            self.assertIn("1 clip", res["sheet"])
+            self.assertEqual(res["changedAfter"], [False, False])
+            self.assertEqual(res["second"], "Nothing changed")
+            # The sequence: opened from the group's picture, clip by clip, Back leaves it, reopens where left.
+            self.assertEqual(res["seq"][:2], ["shot_v001.png", True])
+            self.assertIn("Sequence review — 2 clips · 1 / 2", res["seq"][2])
+            self.assertTrue(res["seq"][3])
+            self.assertEqual(res["seqHist"], 1)  # one entry for the whole sequence
+            self.assertEqual(res["seqResume"], "boxes_v001.glb")
+            reply = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual((reply["format"], reply["id"], reply["author"]), ("sight-review-bundle", "b0b0b0b0b0b0b0b0", "Phone Tester"))
+            self.assertEqual([p["asset"]["name"] for p in reply["packages"]], ["shot_v001.png"])
+            back = review.import_review_file(lib, out.read_bytes())
+            self.assertTrue(back.get("bundle"))
+            self.assertEqual([(r["ok"], r.get("added")) for r in back["results"]], [(True, 1)])
+            texts = sorted(r["data"]["text"] for r in lib.annotations_for_asset(assets["shot_v001.png"]["id"]) if r["kind"] == "note")
+            self.assertEqual(texts, ["Desk on shot_v001.png", "Phone note in the bundle"])
+        finally:
+            for w in list(lib._watchers.values()):
+                w.stop()
+                w.join(5)
+            lib.close()
 
     def test_model3d(self) -> None:
         out = self.tmp / "out3d"

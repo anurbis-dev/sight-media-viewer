@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -115,6 +116,100 @@ class PageRoundTrip(unittest.TestCase):
         self.assertEqual(sight_import(lib, Path(str(copy) + ".srev").read_bytes())[1]["added"], 0)
 
 
+
+
+@unittest.skipUnless(has_playwright(), "node with Playwright is not available")
+class MultiClipPage(unittest.TestCase):
+    """A page for two clips (review.build_html_all): replies on both come back as one bundle that
+    lands on the right assets; one clip changed → a bundle of one; a clip's own reply is a package."""
+
+    def test_two_clips(self) -> None:
+        from PIL import Image
+
+        tmp = Path(tempfile.mkdtemp(prefix="sight-mpage-"))
+        try:
+            media = tmp / "media"
+            media.mkdir()
+            Image.new("RGB", (640, 360), (40, 90, 160)).save(media / "sh010.png")
+            Image.new("RGB", (640, 360), (160, 90, 40)).save(media / "sh020.png")
+            lib = Library(tmp / "home")
+            try:
+                self.run_page(lib, media, tmp)
+            finally:
+                for w in list(lib._watchers.values()):
+                    w.stop()
+                    w.join(5)
+                lib.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def run_page(self, lib: Library, media: Path, tmp: Path) -> None:
+        sid = lib.add_source(str(media))["id"]
+        deadline = time.time() + 30
+        while time.time() < deadline and len(lib.query("SELECT 1 FROM assets WHERE source_id=? AND status='ready'", (sid,))) < 2:
+            time.sleep(0.2)
+        assets = sorted((lib.get_asset(r["id"]) for r in lib.query("SELECT id FROM assets WHERE source_id=?", (sid,))),
+                        key=lambda a: a["name"])
+        self.assertEqual(len(assets), 2)
+        now = int(time.time() * 1000)
+        clips, notes = [], []
+        for i, a in enumerate(assets):
+            n = lib.add_annotation({"scope": "asset", "target_asset_id": a["id"], "kind": "note",
+                                    "data": {"text": f"Fix clip {i + 1}", "author": "Desk", "created": now, "status": "open", "ctx": None}})
+            notes.append(n)
+            pkg = review.build_package(a, lib.annotations_for_asset(a["id"]), lib.root, "Desk", "test")
+            png = (media / a["name"]).read_bytes()
+            report = {"title": a["name"], "cover": "data:image/png;base64," + base64.b64encode(png).decode(), "coverSize": [640, 360],
+                      "media": {"kind": "image", "w": 640, "h": 360},
+                      "notes": [{"id": n["id"], "num": 1, "text": f"Fix clip {i + 1}", "author": "Desk", "date": "", "ctx": "", "shots": [], "replies": []}]}
+            clips.append((report, pkg))
+        page = tmp / "seq.html"
+        page.write_text(review.build_html_all(clips, "test", "Sequence review — 2 clips"), encoding="utf-8")
+        out = tmp / "out"
+        out.mkdir()
+        r = subprocess.run([NODE, str(ROOT / "tests" / "page_multi_e2e.cjs"), str(page), str(out)],
+                           capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertEqual(res["log"], [])
+        self.assertEqual(res["strip"], 2)
+        self.assertEqual((res["title1"], res["title2"], res["titleBack"]), ("sh010.png", "sh020.png", "sh010.png"))
+        self.assertEqual(res["mineOn2"], 0)                  # clip one's reply stays on clip one
+        self.assertEqual((res["prevEnabled"], res["nextEnabled"]), (True, False))
+        self.assertEqual(res["titleAfterFieldKey"], "sh020.png")  # an arrow key in a text field does not switch
+        self.assertEqual(res["status2"], "3 changes · 2 clips")   # clip one: a reply + a resolve
+        self.assertEqual(res["changedMarks"], 2)
+        self.assertEqual(res["replyName"], "Sequence review — 2 clips - Page Tester.srev")
+        self.assertEqual((res["status1"], res["mineAfterDiscard"]), ("2 changes · 1 clip", 0))  # reply + resolve on clip one
+        self.assertEqual(res["mineBack"], 2)
+        self.assertEqual((res["copyStrip"], res["copyMine"], res["copyStatus"]), (2, 2, "2 changes · 1 clip"))
+        self.assertEqual((res["statusEnd"], res["dlEnd"], res["mineReload"]), ("No changes yet", True, 0))
+
+        both = json.loads((out / "both.srev").read_text(encoding="utf-8"))
+        self.assertEqual(both["format"], "sight-review-bundle")
+        self.assertEqual(len(both["packages"]), 2)
+        page_id = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', page.read_text(encoding="utf-8"), re.S).group(1))["bundle"]["id"]
+        self.assertEqual(both["id"], page_id)               # the reply keeps the page's bundle id
+        res1 = review.import_review_file(lib, (out / "both.srev").read_bytes())
+        self.assertTrue(res1.get("bundle"))
+        self.assertEqual([x.get("asset_id") for x in res1["results"]], [a["id"] for a in assets])
+        for a, n, text in zip(assets, notes, ("Clip one answered", "Clip two answered")):
+            n0 = next(x for x in lib.annotations_for_asset(a["id"]) if x["id"] == n["id"])
+            self.assertEqual([x.get("text") for x in n0["data"]["replies"] if x.get("text")], [text])
+        n1 = next(x for x in lib.annotations_for_asset(assets[0]["id"]) if x["id"] == notes[0]["id"])
+        self.assertEqual(n1["data"]["status"], "done")
+        one = json.loads((out / "one.srev").read_text(encoding="utf-8"))
+        self.assertEqual([p["asset"]["id"] for p in one["packages"]], [assets[0]["id"]])
+        clip = json.loads((out / "clip.srev").read_text(encoding="utf-8"))
+        self.assertNotEqual(clip.get("format"), "sight-review-bundle")
+        self.assertEqual(clip["asset"]["id"], assets[0]["id"])
+        # Every later file re-sends what already landed: nothing new.
+        for f in ("one.srev", "copy.srev"):
+            rr = review.import_review_file(lib, (out / f).read_bytes())
+            self.assertEqual([x["added"] for x in rr["results"]], [0], f)
+        self.assertEqual(review.import_review_file(lib, (out / "clip.srev").read_bytes())["added"], 0)
+        # One clip → a plain one-clip page (its reply must stay a package).
+        self.assertNotIn('"bundle"', review.build_html_all(clips[:1], "test", "x").split('<script id="data"')[1].split("</script>")[0])
 
 
 @unittest.skipUnless(has_playwright(), "node with Playwright is not available")
