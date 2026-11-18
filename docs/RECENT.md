@@ -14,6 +14,31 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.82.0 — 2026-11-18 — Phone / HTML page drawing: arrows along a stroke and lasso brush
+- **What:** owner's ask. The shared drawing canvas (review-draw.js: the HTML page, the phone app) can now make
+  0.81's new drawings. *Arrows and lines* row: a sixth kind, *Arrows along a stroke*; with it in hand the row
+  ends with three tap-to-cycle icon switches (side left / right / both, away / toward, guide on / off). The brush
+  slot became a two-kind slot (brush / lasso); the lasso's row ends with a pattern button opening a second row
+  (none, solid, 8 patterns, random).
+- **Where:** review-draw.js — `ARROWS` + `stroke` entry, `ASTROKE_OPTS` / `ASTROKE0`, `BRUSHES`, `PATTERNS` /
+  `LASSO_PATS` / `RANDOM_PATS` / `patIco`, `astrokeButtons`, `patternButton`, pen keys `brush` / `lasso` /
+  `astroke` (saved with the pen), `begin` (lasso keys on the brush; `stroke.t = "astroke"` makes a
+  `stroke / arrows` item), `extend` / `finish` treat "astroke" like a brush stroke (dropped under 3 px),
+  `roundItem` rounds gap / step / len. MANUAL.
+- **Notes:** no new controls for spacing / length / density / fill colour / fill opacity on the phone (the bar
+  stays small): arrows `step` = 10 × size, `len` = 6 × size (min 12 / 8 px); lasso `gap` = 1.7 × brush size (min
+  5 px), fill = line colour at 0.5 — Sight's panel edits them afterwards. `PATTERNS` is a copy of review-core's
+  (RC is looked up only on open, after this script's top level runs). The cycle switches set the pen only — they
+  do not restyle selected arrows strokes; picking the stroke kind with arrows / lines selected takes the tool
+  instead of converting them. Picking the stroke / lasso kind reopens the row so its switches show. Supersedes
+  0.81's "Not done" about review-draw.js. Hold-to-resize on a selection: an arrows stroke resizes its `width`
+  (`wkey`), and `gap` / `step` / `len` follow the thickness by the same factor (as RC.transformItem).
+- Review (fresh agent): 2 findings — the brush slot (now a group) fell into `groupSel`'s shapes branch, so with
+  the transform tool and a shape selected, tapping Brush / Lasso turned the shape into a rectangle instead of
+  taking the brush (`groupSel` now returns [] for slots other than arrows / shapes); hold-to-resize did nothing
+  on a selected arrows stroke (no `size`) — fixed as above.
+  The same reviewer confirmed both fixes; its one edge note (a hand-made 0 thickness → Infinity) is guarded.
+
 ## 0.81.0 — 2026-11-18 — Arrows along a stroke; brush lasso close with pattern fill
 - **What:** owner's ask. Arrow tool: a *Stroke* on / off icon button in its bar (the tool icon follows); *Stroke* draws a freehand stroke with
   arrows spread along it, turned to its normal — *Every* (spacing), *Length*, *Tip*, *Away / Toward*,
@@ -365,20 +390,3 @@ Add new entries directly below this line.
   masked views, stuck drag after a release outside, a swallowed tap after a cancelled hand-over, rVFC not firing,
   timer of chained holds, `seqNow` before a landing; re-review: the mid-seek still placed with another clip's
   geometry — all fixed; confirmed by the same reviewer.
-
-## 0.69.0 — 2026-11-17 — Compare annotating: splits by Alt / finger, screenshot of the whole comparison
-- **What:** while annotating in the compare's Swipe, `Alt`+drag moves the nearest split (as Alt scrubs a video in
-  the viewer) and a finger / stylus landing within 24 px of a split moves it — no stroke for that press, no need to
-  leave annotating. The annotator's screenshot (`S`, area `Shift+S`) is now the comparison as shown — every visible
-  layer in its split region or tile, Difference, dimmed clips, split lines and names — with the drawings on top
-  (owner: "that is the point of commenting a comparison"); it was the selected layer alone.
-- **Where:** compare.js `wantsPress`, `onDown` (`altPan`; drags keep their `pid`), `captureView`, `C.viewWrap`;
-  annotate.js `onDown` → `host.passThrough`, `composeView` → `host.captureView` (drawings clipped to the surface),
-  `capture()` area offset; index.html `cmpAnnot` hooks, compare `annotating`.
-- **Notes:** `passThrough` is asked after the edit / pen-eraser handling and not while an area is being picked or
-  with Alt on the select tool (its duplicate-drag). Outside annotating Alt+left still pans in Swipe. A video layer
-  caught mid-seek (`readyState` < 2) is drawn as nothing (black) in the screenshot — left as is (rare). Note
-  previews / report pictures still show the annotated layer's own frame (the screenshot is what shows the comparison).
-- Review (fresh agent): a resting palm's split drag following the pen (no pointer id on the drag), Alt duplicate-
-  drag lost with the select tool, area capture / text edit / pen eraser presses taken near a split, drawings not
-  clipped to their tile, label size; fixed (black hole for a seeking video left).

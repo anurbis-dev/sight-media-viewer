@@ -319,11 +319,15 @@
   own drawing) and so is the timeline (only the frames it is drawn on). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
   highlighter, arrows and lines, shapes, text, eraser, the colour, undo / redo, clear, pinch / pan /
   turn), its buttons floating over the picture. A tap on *Arrows and lines* or *Shapes* takes it and
-  shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line /
+  shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line, arrows
+  along a stroke — with it, three tap-to-cycle switches: side left / right / both, away / toward the
+  stroke, guide drawn or not; spacing and length follow the size /
   rectangle, rounded, ellipse, filled rectangle, filled ellipse — and at its end the fill colour:
   a second row with the line's own colour (lighter, the default) or one of six; picking a colour
   with an outlined shape in hand takes its filled kind): tap one to draw with it, or just
-  draw — the row folds and the tool stays; tapping the slot again with its row up puts the tool
+  draw — the row folds and the tool stays. The brush has such a row too: brush, or lasso (the end
+  joins the start and the inside is filled in the line's colour, half see-through) with its pattern
+  button — a second row of patterns (none, solid, lines, grid, cross-hatch, dots, dashes, random); tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; switched on, the box shows its colours in a second
   row above (tap it again: no box), the font button opens the fonts there (sans, serif, mono,

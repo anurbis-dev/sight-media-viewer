@@ -2,6 +2,23 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.69.0 — 2026-11-17 — Compare annotating: splits by Alt / finger, screenshot of the whole comparison
+- **What:** while annotating in the compare's Swipe, `Alt`+drag moves the nearest split (as Alt scrubs a video in
+  the viewer) and a finger / stylus landing within 24 px of a split moves it — no stroke for that press, no need to
+  leave annotating. The annotator's screenshot (`S`, area `Shift+S`) is now the comparison as shown — every visible
+  layer in its split region or tile, Difference, dimmed clips, split lines and names — with the drawings on top
+  (owner: "that is the point of commenting a comparison"); it was the selected layer alone.
+- **Where:** compare.js `wantsPress`, `onDown` (`altPan`; drags keep their `pid`), `captureView`, `C.viewWrap`;
+  annotate.js `onDown` → `host.passThrough`, `composeView` → `host.captureView` (drawings clipped to the surface),
+  `capture()` area offset; index.html `cmpAnnot` hooks, compare `annotating`.
+- **Notes:** `passThrough` is asked after the edit / pen-eraser handling and not while an area is being picked or
+  with Alt on the select tool (its duplicate-drag). Outside annotating Alt+left still pans in Swipe. A video layer
+  caught mid-seek (`readyState` < 2) is drawn as nothing (black) in the screenshot — left as is (rare). Note
+  previews / report pictures still show the annotated layer's own frame (the screenshot is what shows the comparison).
+- Review (fresh agent): a resting palm's split drag following the pen (no pointer id on the drag), Alt duplicate-
+  drag lost with the select tool, area capture / text edit / pen eraser presses taken near a split, drawings not
+  clipped to their tile, label size; fixed (black hole for a seeking video left).
+
 ## 0.68.0 — 2026-11-17 — Annotating in the version compare; notes remember the comparison
 - **What:** compare (K) has *✎ Annotate* / `A`: the notes panel and drawing tools on the **selected layer**
   (owner's choice) — notes / drawings go to that file at its own frame. A note made there stores the
