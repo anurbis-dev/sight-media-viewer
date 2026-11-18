@@ -12,6 +12,8 @@
 - **Details preview** — the details panel shows only the file's thumbnail plus its info, for every
   type. Playback, waveforms, font/text previews and the 3D viewer are in the lightbox (Space /
   double-click).
+- **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
+  thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held Alt / Shift does on a picture or video (turn, scrub).
 - **File info** — in the lightbox press `I` (or the round *i* button in the top-left corner) for a translucent info
   overlay in the top-left corner, like Blender's viewport info. It shows the file's basics plus what
   only that type has: EXIF/camera data for photos, codecs/frame rate/bit depth for video, sample
@@ -166,6 +168,8 @@
     the top of the viewer (`Shift+M`) mirrors it; Sight remembers it per file. Only the
     view changes: the file and the drawings on it stay as they are. Mirror and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
+  - **Reset the toolbar** — hold the pen button (the one that turns annotating on) for about a second: every tool's colours, sizes
+    and options, the hold time and the frame stamp's look return to their defaults (a normal click still toggles annotating).
   - **Turn by hand** — Alt+drag on a picture turns it about its centre, to any angle (on a video Alt+drag
     scrubs; Ctrl+Alt+drag turns the video. A clip with few keyframes — many phone and screen
     recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy

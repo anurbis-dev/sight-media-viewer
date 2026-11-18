@@ -14,6 +14,27 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.84.0 — 2026-11-18 — F fits / finds, long-press resets the annotation bar, modifier cursors
+- **What:** F fits the open picture / video to the frame in the lightbox (like double-click, but always fit); over
+  the thumbnail grid F scrolls to the selected files. Long-press (700 ms, mouse or touch) on the annotate button
+  resets the whole annotation toolbar to defaults (toast). The cursor on a picture / video shows what the held
+  modifier does (Alt turns a picture / scrubs a video, Ctrl+Alt turns a video, Shift = fine scrub) and during
+  pan / zoom / turn drags. The screenshot / area-screenshot buttons are gone from the annotation toolbar
+  (S / Shift+S and the composer's buttons stay).
+- **Where:** index.html (`light.fit` / `toFit` in `attachViewer`, F in the keydown handler, grid F in a
+  window-level capture keydown listener, `bindAnnoReset(btn, annots)`, body classes `k-alt` / `k-ctrl` / `k-shift`
+  + `.view` cursor CSS, drag cursors in `attachViewer`, `.vid` class); annotate.js (`resetPrefs(quiet)`, removed
+  shot / region buttons, help footer); MANUAL.
+- **Notes:** 3D models and canvas boards keep their own F. The grid F listener is capture-phase on `window` so the
+  board's F (canvas.js, on document) does not also frame the board in the split view; it swallows repeats too.
+  `resetPrefs` covers styles, stamp look, hold and tool for all three annotators (lightbox, board, compare —
+  otherwise a stale one saves its old styles back over the reset); not the per-video stamp on/off, drawings,
+  notes. The long-press swallows its release click in the capture phase, `fired` is cleared 60 ms after release.
+  Modifier classes re-sync on pointermove and clear on blur. An annotator tool's inline cursor wins over the CSS.
+- Review (fresh agent): 3 findings — compare annotator not reset (overwrote the reset), a stale long-press flag
+  swallowing the next keyboard activation, F framing the board as well as scrolling the grid in split view. Fixed;
+  the same reviewer confirmed them and noted held-F repeats still reaching the board (fixed: repeats swallowed).
+
 ## 0.83.1 — 2026-11-18 — Reference shadows follow the picture's alpha
 - **What:** a reference image with transparency (PNG / WebP) now casts a drop shadow of its alpha shape instead
   of its rectangle — in Sight, the HTML page, the phone app and canvas exports (screenshots / PDF).
@@ -358,32 +379,3 @@ Add new entries directly below this line.
   + `host.exportBusy` one-at-a-time, the report checked against the clip on screen, `flash()` fallback).
   Re-review (same agents): export fixes confirmed; watching fixes confirmed, plus a missing pause / ended wake
   (the frame a video stops on could keep the previous frame's drawings) — added.
-
-## 0.71.0 — 2026-11-17 — Dictation: built-in browser engine + one-tap language chip; Groq replaced by "my service"
-- **What:** owner: no Groq, keep the app small, use what the system has, picking the language by hand is fine;
-  allow any speech-to-text service the user likes. (1) Next to every mic there is a language chip (RU / EN…): a
-  tap flips between the two languages used last, Alt+Shift+M does the same from a dictation field, right-click /
-  long-press lists all. Switching mid-dictation lets the words heard land, then listens again in the new language.
-  (2) Settings → Dictation: *Browser (built in)* (default) or *My service (OpenAI-compatible)* with Address, Model,
-  API key (optional) — any `POST …/audio/transcriptions` endpoint: a local whisper server, OpenAI, Groq…
-- **Where:** `app/stt.py` (`SttService` replaces `GroqStt`: config `{url, model, key}` in `<SIGHT_HOME>/stt.json`),
-  server.py `/api/stt/config` (replaces `/api/stt/key`; JSON content-type required), `dictation.js` (provider
-  `service` replaces `groq`; `SWITCH`, `recent()` / `remember()` / `cycle()` / `pickLang()`, chips map, `restart` /
-  `stopping` flags), index.html (`bindDictationSettings`, `.stt-row`), tests/test_stt.py, MANUAL, ARCHITECTURE.
-- **Notes:** an old `stt.json` with `groq_key` is simply ignored (not configured), and an engine setting `"groq"`
-  reads as the browser. Status returns url / model / hasKey, never the key. Changing the address drops a stored
-  key unless a new one comes with it (nothing can redirect the user's key to another host); no redirects followed.
-  No key → no Authorization header; no model → `whisper-1`. Auto language without a key is impossible with Web
-  Speech; local Whisper inside Sight was offered and declined (too heavy) — a local whisper server plugs in as
-  "my service". Recent pair: `localStorage["sight.dictation.recent"]` (defaults: browser language + English, or
-  + Russian on an English browser); compared via `fullCode` so a bare "ru" browser code equals "ru-RU". Verified
-  with Playwright: chip / hotkey / restart on a fake recogniser; Settings → save → a real phrase from Chromium's
-  fake mic through the dev server to a fake OpenAI-compatible server (Bearer key, text back).
-- Review (fresh agent), chip block: restart after a user stop, Enter / blur not cancelling the restart, a same-base
-  pair (en-US/en-GB) not flipping, wrong seeding of regional browser codes, floating chip not re-placed, chip tap
-  vs popover close; fixed. Re-review: bare browser code ("ru") needing two taps — fixed; the same reviewer confirmed every fix.
-  Service block review: URLs the browser's `new URL()` rejects (spaces, bad port) saved as configured, the system
-  proxy applied to a local server (key in clear text to it), the key silently dropped on an address change, the
-  old Groq key left on disk, the upload cap relying on Content-Length only; fixed (local hosts bypass the proxy,
-  cloud hosts keep it; body read with a running 20 MB cap). Re-review: a key saved with no address could not be
-  removed, a one-time race deleting a fresh config with the Groq file; fixed; the same reviewer confirmed all.

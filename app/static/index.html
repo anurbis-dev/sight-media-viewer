@@ -515,6 +515,12 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .seq-hold > canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .seq-buf { position: absolute; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
 .view { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; }
+/* Cursor = what the held modifier does (body classes k-alt / k-ctrl / k-shift, kept by the key tracker near the
+   keyup handler): Alt-drag turns a picture (on a video: scrubs it; Ctrl+Alt turns the video), Shift on a video =
+   fine scrub. An annotation tool's own cursor is an inline style and wins; with Alt held the annotator clears it. */
+:root { --cur-rot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 12a7 7 0 1 1-2.2-5.1M19 4v4h-4' stroke='black' stroke-width='4.2'/%3E%3Cpath d='M19 12a7 7 0 1 1-2.2-5.1M19 4v4h-4' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 12 12, alias; }
+body.k-alt .view, body.k-alt .view .view-media { cursor: var(--cur-rot); }
+body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media, body.k-shift:not(.k-alt) .view.vid .view-media { cursor: ew-resize; }
 .view-media { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; }
 /* Lightbox placeholder: the card thumbnail, stretched to the full image's box, shown while the full
    file loads. The full image stays transparent until it is decoded, then fades in over it. */
@@ -2179,6 +2185,26 @@ function syncTouchSel(nSeq){
   document.getElementById("tsSeq").hidden = (nSeq ?? seqSelection().length) < 2;
 }
 const LONG_PRESS_MS = 500;
+// Long-press (mouse or finger) on an annotate button resets the whole annotation toolbar; the click that ends
+// the press is swallowed (capture phase, so it runs before the button's own toggle), a normal click is untouched.
+function bindAnnoReset(btn, annots){
+  if (!btn || btn._annoReset) return;
+  btn._annoReset = true;
+  let timer = 0, fired = false, x = 0, y = 0;
+  const stop = () => { clearTimeout(timer); timer = 0; };
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    fired = false; x = e.clientX; y = e.clientY;
+    stop();
+    timer = setTimeout(() => { timer = 0; fired = true; annots.forEach((an, i) => an.resetPrefs(i > 0)); }, 700);
+  });
+  btn.addEventListener("pointermove", (e) => { if (timer && Math.hypot(e.clientX - x, e.clientY - y) > 10) stop(); });
+  // No click follows a release outside the button: drop the flag after the click would have come, or a later
+  // keyboard activation (Enter / Space) would be swallowed.
+  for (const t of ["pointerup", "pointercancel", "pointerleave"]) btn.addEventListener(t, () => { stop(); setTimeout(() => { fired = false; }, 60); });
+  btn.addEventListener("click", (e) => { if (fired){ fired = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  btn.addEventListener("contextmenu", (e) => { if (fired || timer) e.preventDefault(); });  // a touch long-press must not open a menu
+}
 let longPress = null;
 let lastGridPtr = ""; // the last grid press's pointerType: decides a click's input (not a PointerEvent in older Safari)
 const fingerish = (type) => type === "touch" || type === "pen"; // no keyboard modifiers to select with
@@ -2803,6 +2829,7 @@ function ensureCanvasCtl(){
       annot: boardAnnot,
       annButton: $("boardAnnoBtn"),
     });
+    bindAnnoReset($("boardAnnoBtn"), [boardAnnot, annot, cmpAnnot]);
   }
   return canvasCtl;
 }
@@ -5297,6 +5324,7 @@ function attachViewer(stage, a, src, opts = {}){
   const ph = isVid || cached || opts.embedded ? "" : thumbSrc(a);
   stage.innerHTML = `<div class="view" id="view">${ph ? `<img class="view-ph" alt="" decoding="sync" src="${ph}" draggable="false" />` : ""}<${isVid ? "video" : "img"} class="view-media${isVid || cached ? "" : " loading"}" ${isVid ? 'autoplay playsinline preload="auto"' : `alt="" ${cached ? 'decoding="sync" ' : ""}src="${src}"`} draggable="false" /><div class="view-hud" id="viewHud"></div></div>`;
   const wrap = stage.querySelector(".view");
+  wrap.classList.toggle("vid", isVid);
   // Sequence: the next clip was preloaded in a hidden <video> (seqPreload); it takes the new element's place
   // in this same task, so it never leaves the document and keeps its decoded first frame — a seamless cut.
   if (isVid && opts.adopt){
@@ -5339,7 +5367,7 @@ function attachViewer(stage, a, src, opts = {}){
     if (light) light.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
   }
   if (light && !opts.embedded){
-    light.video = isVid ? el : null; light.setZoom = (n) => toScale(n);
+    light.video = isVid ? el : null; light.setZoom = (n) => toScale(n); light.fit = () => toFit();
     light.vctl = isVid ? { seek: (t) => seekVideo(t), begin: () => beginScrub(), end: () => endScrub() } : null;
     light.turn = () => setTurn({ rot: turn.rot + 90, mir: turn.mir });
     light.mirror = () => setTurn({ rot: turn.rot, mir: !turn.mir });
@@ -5615,6 +5643,7 @@ function attachViewer(stage, a, src, opts = {}){
       wrap.setPointerCapture(e.pointerId);
       const r = wrap.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       vs.rotD = { cx, cy, a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
+      wrap.style.cursor = "var(--cur-rot)";
       return;
     }
     if (isVid && e.button === 0){
@@ -5629,6 +5658,7 @@ function attachViewer(stage, a, src, opts = {}){
       e.preventDefault();
       wrap.setPointerCapture(e.pointerId);
       vs.panD = { x: e.clientX, y: e.clientY, px: vs.pan.x, py: vs.pan.y };
+      wrap.style.cursor = "grabbing";
       return;
     }
     if (e.button === 2){
@@ -5636,6 +5666,7 @@ function attachViewer(stage, a, src, opts = {}){
       wrap.setPointerCapture(e.pointerId);
       const r = wrap.getBoundingClientRect();
       vs.zoomD = { x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: vs.scale };
+      wrap.style.cursor = state.theme.zoomAxis === "x" ? "ew-resize" : "ns-resize";
     }
   });
   wrap.addEventListener("pointermove", (e) => {
@@ -5689,6 +5720,7 @@ function attachViewer(stage, a, src, opts = {}){
   // cancelled: the browser took the pointer, so no click follows the drag and nothing may be swallowed.
   const end = (cancelled) => {
     const scrubbed = vs.scrubD && vs.scrubD.on;
+    const dragged = vs.rotD || vs.panD || vs.zoomD;
     if (vs.scrubD?.handed && !cancelled) justScrubbed = true; // its click must not play / pause
     // A turn or scrub drag ends with a click on the wrap: swallow it, or a video would pause. A turn
     // of an image is not swallowed here (the click handler only looks at videos, so the flag would stay set).
@@ -5698,6 +5730,7 @@ function attachViewer(stage, a, src, opts = {}){
       if (!opts.embedded) saveTurn(a.id, turn); // kept once the drag ends
     }
     vs.panD = vs.zoomD = vs.scrubD = null;
+    if (dragged && !scrubbed) wrap.style.cursor = "";
     if (scrubbed){ wrap.style.cursor = ""; endScrub(); if (!cancelled) justScrubbed = true; }
   };
   wrap.addEventListener("pointerup", () => end(false));
@@ -6357,6 +6390,7 @@ function toggleLight(a){
   applyViewDom();  // the library beside it, if that is how it was left (Tab)
   annot.mount(wrap);
   wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
+  bindAnnoReset(wrap.querySelector("#annoBtn"), [annot, boardAnnot, cmpAnnot]);
   wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
   wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
@@ -6446,7 +6480,7 @@ function showInLight(a, opts = {}){
   light.video = null;
   light.vctl = null;
   light.audio = null;
-  light.setZoom = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
+  light.setZoom = null; light.fit = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
   light.turn = light.mirror = null; // set by attachViewer (pictures, PSD, video)
   const flat = a.kind === "image" || a.kind === "video" || a.ext === ".psd";
   // Icons follow what the file can do: mirror and turn need a flat picture (image, PSD, video); annotation
@@ -9252,6 +9286,13 @@ document.addEventListener("keydown", (e) => {
     const zoomDigit = /^Digit([1-9])$/.exec(e.code);
     if (zoomDigit){ e.preventDefault(); light.setZoom(Number(zoomDigit[1])); return; }
   }
+  // F: in the lightbox fit the picture / video to the frame (as a double-click does); over the thumbnail grid
+  // scroll it to the selected files. (3D models use F above; canvas boards have their own F in canvas.js.)
+  if (hotkey(e, "KeyF") && !typing && !in3d){
+    if (light){
+      if (light.fit){ e.preventDefault(); light.fit(); return; }
+    }
+  }
   // Mesh visibility: H hides the selection, Ctrl+H hides everything else, Alt+H shows all.
   if (in3d && !typing3d && v3dInspect && v3dInspect.aid === light.id && (hotkey(e, "KeyH") || hotkey(e, "Ctrl+KeyH") || hotkey(e, "Alt+KeyH"))){
     e.preventDefault();
@@ -9311,6 +9352,30 @@ document.addEventListener("keydown", (e) => {
 // going on, and losing window focus drops everything (a keyup would never arrive, leaving the
 // camera drifting).
 document.addEventListener("keyup", (e) => { camKeys.delete(e.code); });
+// F over the thumbnail grid scrolls it to the selection. Capture phase on window: in the split view the board's own
+// F (canvas.js, registered earlier on document) must not frame the board as well.
+window.addEventListener("keydown", (e) => {
+  if (light || !hotkey(e, "KeyF")) return;
+  const tag = e.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || grid.hidden || !lastPtr) return;
+  if (!grid.contains(document.elementFromPoint(lastPtr.x, lastPtr.y))) return;
+  const sel = new Set(state.selectedIds);
+  const i = sel.size ? state.items.findIndex((a) => sel.has(a.id)) : -1;
+  if (i < 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (!e.repeat) scrollGridToIndex(i);   // repeats are swallowed too: they must not reach the board's F
+}, true);
+// Modifier state as body classes, for the cursors that show what Alt / Ctrl / Shift would do (.view above).
+// Re-synced from every pointer event too, so a key released outside the window cannot leave a cursor stuck.
+{
+  const setMods = (e) => {
+    const c = document.body.classList;
+    c.toggle("k-alt", !!e.altKey); c.toggle("k-ctrl", !!(e.ctrlKey || e.metaKey)); c.toggle("k-shift", !!e.shiftKey);
+  };
+  for (const t of ["keydown", "keyup"]) window.addEventListener(t, setMods, true);
+  window.addEventListener("pointermove", setMods, { capture: true, passive: true });
+  window.addEventListener("blur", () => document.body.classList.remove("k-alt", "k-ctrl", "k-shift"));
+}
 window.addEventListener("blur", () => camKeys.clear());
 
 // --- Window geometry --------------------------------------------------------------------------

@@ -1879,9 +1879,6 @@ export function createAnnotator(host){
       <div class="an-bar">
         ${TOOLS.map((t) => t ? `<button type="button" class="an-tool" data-tool="${t[0]}" title="${esc(t[2])} (${t[1].replace("Key", "")})">${t[3]}</button>` : `<span class="an-sep"></span>`).join("")}
         <span class="an-sep"></span>
-        <button type="button" class="an-tool" data-act="shot" title="Screenshot to the note (S)">${ICON.shot}</button>
-        <button type="button" class="an-tool" data-act="region" title="Screenshot of an area (Shift+S)">${ICON.region}</button>
-        <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="undo" title="Undo (Ctrl+Z)">${ICON.undo}</button>
         <button type="button" class="an-tool" data-act="redo" title="Redo (Ctrl+Shift+Z)">${ICON.redo}</button>
         <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete)">${ICON.trash}</button>
@@ -1898,8 +1895,6 @@ export function createAnnotator(host){
     bar.querySelector("[data-act=undo]").onclick = () => undo();
     bar.querySelector("[data-act=redo]").onclick = () => redo();
     bar.querySelector("[data-act=clear]").onclick = () => clearShown();
-    bar.querySelector("[data-act=shot]").onclick = () => screenshot(false);
-    bar.querySelector("[data-act=region]").onclick = () => screenshot(true);
     bar.querySelector("[data-act=stamp]").onclick = () => toggleStamp();
     bar.querySelector("[data-act=stampset]").onclick = () => toggleStampPop();
     buildStampPop(lightEl, bar);
@@ -1917,7 +1912,6 @@ export function createAnnotator(host){
     // The arrow tool's icon follows its Line / Stroke mode.
     const ab = bar.querySelector("[data-tool=arrow]"), am = S.styles.arrow.mode === "stroke" ? "stroke" : "line";
     if (ab && ab.dataset.mode !== am){ ab.dataset.mode = am; ab.innerHTML = P.amode.options.find(([id]) => id === am)[2]; }
-    bar.querySelectorAll("[data-act=shot], [data-act=region]").forEach((b) => { b.hidden = isBoard(); });  // no picture to capture on a board
     bar.querySelector("[data-tool=image]").hidden = isBoard() || host.refImages === false;  // a board places pictures itself
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
@@ -1929,6 +1923,21 @@ export function createAnnotator(host){
   }
   // The shape tool's kind: R / O, the bar's Shape switch. (Old names still arrive: "ellipse".)
   function setShape(kind){ S.styles.rect.shape = kind; saveStyles(); setTool("rect"); }
+  // Long-press on the annotate button: every toolbar preference back to its default (tool, per-tool colours / sizes /
+  // options, the hold time, the frame stamp's look). The drawings, notes and the per-video stamp on / off stay.
+  function resetPrefs(quiet){
+    S.styles = structuredClone(DEFAULT_STYLES);
+    S.stamp = { ...STAMP_DEFAULT };
+    S.hold = 0;
+    clearTimeout(styleTimer); clearTimeout(stampTimer);
+    writeJSON("sight.annotate.styles", S.styles); writeJSON("sight.annotate.stamp", S.stamp); writeJSON("sight.annotate.hold", S.hold);
+    if (S.bar){
+      if (S.on) setTool("brush"); else S.tool = "brush";
+      paintBar(); renderProps();
+      try { paintStamp(true); paintStampPop(); } catch {}
+    } else S.tool = "brush";
+    if (!quiet) toast("Annotation toolbar reset to defaults");
+  }
   function setTool(t){
     if (t === "ellipse"){ setShape("ellipse"); return; }
     if (t === "line") t = "arrow";
@@ -4008,7 +4017,7 @@ export function createAnnotator(host){
     el.innerHTML = `<div class="an-hcard" role="dialog" aria-label="Annotation shortcuts">
       <div class="an-hh"><b>Annotation shortcuts</b><button type="button" class="an-ib" data-act="hclose" title="Close (Esc)">${ICON.close}</button></div>
       <div class="an-hbody">${helpGroups().map((g) => `<section><h4>${esc(g.group)}</h4>${g.rows.map(([keys, label]) => `<div class="an-hrow"><span class="an-hk">${keys.map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span><span>${esc(label)}</span></div>`).join("")}</section>`).join("")}</div>
-      <p class="an-hfoot">On a touch screen every tool, undo, screenshot and the notes panel have a button in the toolbar.</p></div>`;
+      <p class="an-hfoot">On a touch screen every tool, undo and the notes panel have a button in the toolbar (screenshots: the buttons by the note field).</p></div>`;
     // A full-screen backdrop: nothing underneath sees the pointer, wheel or touch while this is open.
     for (const t of ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "dblclick", "contextmenu", "touchstart", "touchend", "wheel", "touchmove"]){
       el.addEventListener(t, (ev) => {
@@ -4213,7 +4222,7 @@ export function createAnnotator(host){
 
   return {
     mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, importFile, explodeChanged,
-    isOn: () => S.on,
+    isOn: () => S.on, resetPrefs,
     supports: () => supported(),
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
     marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),
