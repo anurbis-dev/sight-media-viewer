@@ -983,9 +983,9 @@ export function createAnnotator(host){
     g.__z = it.z;
   }
   // Drawings stay on show (not editable) with annotating off: always on a board; on a picture / video during
-  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D keeps them for the annotating mode.
+  // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D too (the camera moves them: followOff ticks).
   // (Not in the version compare: host.showWhileWatching false — it has no eye of its own.)
-  const shownOff = () => isBoard() || (host.showWhileWatching !== false && !!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd"));
+  const shownOff = () => isBoard() || (host.showWhileWatching !== false && ((!!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd")) || (!!S.b3 && S.kind === "model3d")));
   // Drawings that can show at all (a deleted / hidden reply's or a deleted note's never do): the eye's subject.
   const hasDrawings = () => {
     for (const it of S.items.values()){
@@ -997,7 +997,7 @@ export function createAnnotator(host){
   };
   // A playing video's drawings follow its frame with the mode off: the tick runs only then (a paused one restarts
   // it on play / seek — bind2d). A still picture or a board follows the view through viewChanged.
-  const followOff = () => !S.on && !isBoard() && shownOff() && !!S.b2?.isVid && !S.hidden && !!S.layer?.els.size && !S.b2.media.paused;
+  const followOff = () => !S.on && !isBoard() && shownOff() && !S.hidden && !!S.layer?.els.size && (!!S.b3 || (!!S.b2?.isVid && !S.b2.media.paused));
   function renderAll(){
     const L = S.on || shownOff() ? ensureLayer() : S.layer;
     if (!L) return;

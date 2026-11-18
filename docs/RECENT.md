@@ -14,6 +14,19 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.84.1 — 2026-11-18 — 3D: notes panel shows the drawings right away
+- **What:** opening the notes panel on a 3D model now shows its annotation drawings at once (before, only after
+  clicking a note — and in fact not even then). With annotation mode off they show, not editable, and follow the
+  camera: a drawing shows only while the camera is on its view. The eye button / Shift+H toggle them in 3D too.
+- **Where:** annotate.js — `shownOff()` includes `model3d` when `S.b3` is bound; `followOff()` keeps the tick
+  running for 3D while drawings exist and are not hidden.
+- **Notes:** root cause: `shownOff()` covered images, video, PSD and boards but not 3D, so outside annotate mode
+  3D never created / unhid its drawing layer. The compare overlay is unaffected (`showWhileWatching: false`).
+  The 3D tick runs every frame while drawings exist and annotation is off (cheap signature check; repaints only
+  on camera / hidden-mesh / explode / view change); it ends when `S.b3` goes null or drawings are hidden.
+- Review (fresh agent): no findings (rAF teardown, null `S.b3` mid-tick, compare, Shift+H vs 3D H keys,
+  pointer-events on the layer all checked).
+
 ## 0.84.0 — 2026-11-18 — F fits / finds, long-press resets the annotation bar, modifier cursors
 - **What:** F fits the open picture / video to the frame in the lightbox (like double-click, but always fit); over
   the thumbnail grid F scrolls to the selected files. Long-press (700 ms, mouse or touch) on the annotate button
@@ -345,37 +358,3 @@ Add new entries directly below this line.
   reading panel. Re-review: the same reviewer confirmed every fix. Earlier review of 0.72.0's board pen / screenshots / Esc: board keys going to the
   library after a click on the top-bar pen in split view, a screenshot left open when the mode is switched off by
   the pen; fixed, confirmed by the same reviewer.
-
-## 0.72.0 — 2026-11-17 — Drawings shown while just watching (eye to hide); review export of a whole sequence
-- **What:** (1) owner: drawings must show during ordinary playback, without the annotating mode, with an eye to
-  switch them off "as in the mobile app". A picture's / video's drawings now stay on show with annotating off
-  (a video's on their frames as it plays); an eye button next to the pen in the lightbox bar (and Shift+H)
-  hides / shows them — the same flag as the toolbar's eye. 3D keeps drawings for the annotating mode.
-  (2) Export ▾ in a sequence has "…, all clips": the review of every clip with notes — one PDF (a section per
-  clip, pages numbered through), one ZIP (a folder per clip), a web page / .srev per clip.
-- **Where:** annotate.js (`shownOff`, `hasDrawings`, `renderAll` / `tick` / `viewChanged` / `onKey` / `modeAllows`
-  / `paintBadge` / `toggle(false)` clears the hover circle; menu `.an-mseq` + API `assetId / ready / fpsKnown /
-  report / toast`), index.html (`#drawEyeBtn`; `seqExportAll`, `seqWaitClip`, `reviewerName`; host `seqClips`,
-  `seqExport`), review.py (`build_pdf(number=)`, `_number_pages`, `build_pdf_all`, `_zip_report`, `build_zip_all`),
-  server.py `/api/review/export/pdf-all|zip-all`, tests/test_review_all.py, MANUAL, ARCHITECTURE.
-- **Notes:** with the mode off every drawing of the frame shows (no clean picture after "Add", no compose
-  hiding) — that narrowing is an editing aid. The sequence export visits the clips on screen (pictures need
-  the clip decoded) and returns to the clip / time it started from (paused or playing as before); a clip that
-  does not load in 45 s is skipped and named in the toast. HTML / .srev stay one per file (FORMAT.md is per
-  asset). Verified with Playwright: drawings / eye / Shift+H / leaving the frame with the mode off; all four
-  exports over a two-clip sequence (PDF pictures carry the drawings, ZIP folders per clip, back on clip 2).
-- **Also in 0.72.0** (owner): the board's annotate pen moved from the board's top-left corner to the top bar
-  (`#boardAnnoBtn`, next to ◧ — where the lightbox has its pen; canvas.js takes it as `annButton`, its own corner
-  button stays only for a host that passes none). A note's attached screenshots are marked apart from its
-  drawing previews (`.an-shotw`: camera corner badge, dashed edge; clicks go by `[data-shot]` on the wrapper).
-  Esc closes an enlarged screenshot first (annotate.js `onKey`) — before, it was eaten by deselect / pin / leaving
-  the mode, so it took several presses.
-- Review (fresh agents), watching block: boards and still pictures ticking every frame forever, onion ghosts while
-  watching, the compare showing drawings with no way to hide them (and Shift+H hiding the lightbox's behind it),
-  Shift+H with no drawings / on key repeat, the eye counting drawings that never show; fixed (the tick runs only
-  for a playing video — `followOff`, woken by play / seek; the compare passes `showWhileWatching: false`).
-  Export block: a clip switched during its capture mixing clips, playback not resumed, a single export running
-  alongside, a stray separator on the board menu, the failure toast lost with the lightbox; fixed (`S.gathering`
-  + `host.exportBusy` one-at-a-time, the report checked against the clip on screen, `flash()` fallback).
-  Re-review (same agents): export fixes confirmed; watching fixes confirmed, plus a missing pause / ended wake
-  (the frame a video stops on could keep the previous frame's drawings) — added.
