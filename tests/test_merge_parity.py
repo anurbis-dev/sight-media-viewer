@@ -129,6 +129,17 @@ class MergeParity(unittest.TestCase):
         self.assertGreater(rows["00000000000000b2"]["updated_at"], t0 + 10)
         stats = lib.import_annotations(TARGET, [], tomb, {})  # the old tombstones again: nothing deleted
         self.assertEqual(stats["deleted"], 0)
+        # Edited here after the file was made, then deleted: restore undeletes the local (newer) copy.
+        newer = {**note, "data": {"text": "Local", "created": t0, "edited_at": t0 + 5}}
+        moved = {**stroke, "x": 50, "updated_at": t0 + 5}
+        py_merge(lib, {"local": [{**newer, "deleted_at": t0 + 10}, {**moved, "deleted_at": t0 + 10}],
+                       "incoming": [], "deleted": [], "shot_map": {}, "now": t0 + 20})
+        stats = lib.import_annotations(TARGET, [note, stroke], [], {}, restore=True)
+        self.assertEqual(stats["updated"], 2)
+        rows = {r["id"]: r for r in lib.query("SELECT id, x, data, deleted_at FROM annotations")}
+        self.assertTrue(all(r["deleted_at"] is None for r in rows.values()))
+        self.assertEqual(json.loads(rows["00000000000000b1"]["data"])["text"], "Local")
+        self.assertEqual(rows["00000000000000b2"]["x"], 50)
 
 
 class PageInlinesCore(unittest.TestCase):

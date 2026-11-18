@@ -3773,21 +3773,27 @@ export function createAnnotator(host){
       }
     };
     if (!(r = await post(false))) return;
+    let restoreFailed = false;  // pass 1 is committed either way: report it, then say the restore failed
     // Rows of the file that were deleted here after their last edit stay deleted by the merge rules
     // (FORMAT.md rule 5); the user may be importing the file precisely to get them back — ask.
     const gone = r.bundle ? (r.results || []).reduce((s, x) => s + ((x.ok && x.deleted_here) | 0), 0) : r.deleted_here | 0;
-    if (gone && confirm(`This review file holds ${gone} note${gone === 1 ? "" : "s"} / drawing${gone === 1 ? "" : "s"} you deleted here.\n\nRestore ${gone === 1 ? "it" : "them"}?`)){
+    if (gone && confirm(`This review file holds ${gone} note${gone === 1 ? "" : "s"} / drawing${gone === 1 ? "" : "s"} deleted in this library.\n\nRestore ${gone === 1 ? "it" : "them"}?`)){
       const again = await post(true);
-      if (again){
+      if (!again) restoreFailed = true;
+      else {
         // The second pass only revives rows (everything else merged already): report both passes as one.
+        // A clip whose second pass failed keeps its first result (that merge is committed).
         const sum = (a, b) => ({ ...b, added: (a.added | 0) + (b.added | 0), updated: (a.updated | 0) + (b.updated | 0), deleted: (a.deleted | 0) + (b.deleted | 0) });
-        if (r.bundle) r = { ...again, results: (again.results || []).map((x, i) => (x.ok && r.results?.[i]?.ok ? sum(r.results[i], x) : x)) };
-        else r = sum(r, again);
+        if (r.bundle){
+          const first = r.results || [];
+          r = { ...again, results: first.map((x, i) => { const y = again.results?.[i]; return x.ok ? (y?.ok ? sum(x, y) : x) : (y || x); }) };
+        } else r = sum(r, again);
       }
     }
-    if (r.bundle){ await importedBundle(r); return; }
+    const failMsg = "The review merged, but restoring the deleted notes / drawings failed";
+    if (r.bundle){ await importedBundle(r); if (restoreFailed) toast(failMsg, 5000); return; }
     const parts = [["new", r.added], ["updated", r.updated], ["deleted", r.deleted]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
-    toast(parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 3500);
+    toast(restoreFailed ? failMsg : parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", restoreFailed ? 5000 : 3500);
     await host.openAsset?.(r.asset_id);
     if (S.asset?.id === r.asset_id){
       // The rows changed underneath the undo history; it would restore pre-merge states.

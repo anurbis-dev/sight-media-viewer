@@ -26,8 +26,13 @@ Add new entries directly below this line.
 - **Notes:** Sight only — the JS `mergeRows` has no restore (default path unchanged, parity holds; stats keys
   unchanged, the ids go to the `kept_deleted` out-list). A restored row is stamped as edited now (note
   `data.edited_at`, drawing `updated_at`) so the file's / a later package's old tombstones do not delete it
-  again and other copies revive it on merge. The question is the native `confirm()` (works on touch too).
-- Review (fresh agent): not done yet — the reviewer hit the API rate limit; to be run before commit.
+  again and other copies revive it on merge. A restore *undeletes*: when the local copy was edited after
+  the file was made (then deleted), the local copy comes back, not the file's older one. The question is the
+  native `confirm()` (works on touch too) and says "deleted in this library" (a reviewer's tombstone counts too).
+- Review (fresh agent): 3 findings — a failed restore pass hidden by the success toast (now reported after the
+  normal reload), a bundle clip merged in pass 1 shown as damaged when pass 2 failed (keeps its pass-1 result),
+  restore overwriting a newer local copy with the file's older one (fixed as above, test added); prompt wording
+  changed. The same reviewer confirmed all fixes, nothing new.
 
 ## 0.82.0 — 2026-11-18 — Phone / HTML page drawing: arrows along a stroke and lasso brush
 - **What:** owner's ask. The shared drawing canvas (review-draw.js: the HTML page, the phone app) can now make

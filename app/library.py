@@ -3748,7 +3748,10 @@ class Library:
                                 stats["unchanged"] += 1
                                 continue
                             revived = True  # restored on request: stamped as edited now (below)
-                        newer = True
+                            # Undelete: the local copy's content stays when it is the newer one.
+                            newer = inc_at > self._content_at(kind, have, cur["created_at"], cur["updated_at"])
+                        else:
+                            newer = True
                     else:
                         newer = inc_at > self._content_at(kind, have, cur["created_at"], cur["updated_at"])
                     merged = dict(data if newer else have)
@@ -3762,7 +3765,7 @@ class Library:
                             merged["status"], merged["status_at"] = have.get("status"), a_at
                     elif kind == "status" and (have.get("history") or data.get("history")):
                         merged["history"] = self.merge_history(have.get("history"), data.get("history"))
-                    if not newer and merged == have:
+                    if not newer and not revived and merged == have:
                         stats["unchanged"] += 1
                         continue
                     if revived:
@@ -3780,7 +3783,8 @@ class Library:
                         )
                     else:
                         self.conn.execute(
-                            "UPDATE annotations SET data=?, updated_at=?, revision=revision+1 WHERE id=?",
+                            "UPDATE annotations SET data=?, updated_at=?, deleted_at=NULL, revision=revision+1 "
+                            "WHERE id=?",  # (deleted_at is set here only on a restore)
                             (json.dumps(merged), max(now, st(cur["updated_at"])), rid),
                         )
                     stats["updated"] += 1
