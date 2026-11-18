@@ -3645,7 +3645,8 @@ class Library:
         return cls._stamp(updated or created)
 
     def import_annotations(self, target: str, rows: list[dict], deleted: list[dict] | None = None,
-                           shot_map: dict[str, str] | None = None) -> dict:
+                           shot_map: dict[str, str] | None = None, restore: bool = False,
+                           kept_deleted: list[str] | None = None) -> dict:
         """Merges the annotation rows of a review package into asset `target`.
 
         Rows keep their ids, so importing the same file twice — or a file that went to a reviewer
@@ -3657,7 +3658,12 @@ class Library:
         its open/done state goes by `data.status_at`, whichever side is newer otherwise.
         `shot_map` renames screenshot ids (see review.put_shot). The whole merge is one
         transaction: a malformed row rolls everything back. Returns counts
-        {added, updated, deleted, unchanged}."""
+        {added, updated, deleted, unchanged}.
+
+        Sight only (not in the JS port): `restore=True` brings back rows deleted here that the
+        package holds even when the delete is later than their content (the user asked to restore
+        them from the file); `kept_deleted`, when given, collects the ids of such rows that stayed
+        deleted, so the caller can offer that restore."""
         stats = {"added": 0, "updated": 0, "deleted": 0, "unchanged": 0}
         id_re = re.compile(r"[0-9a-f]{16}")
         shot_map = shot_map or {}
@@ -3732,11 +3738,16 @@ class Library:
                     except json.JSONDecodeError:
                         have = {}
                     inc_at = self._content_at(kind, data, r.get("created_at"), upd)
+                    revived = False
                     if cur["deleted_at"] is not None:
                         # Deleted here: only content edited after the delete brings it back.
                         if inc_at <= st(cur["deleted_at"]):
-                            stats["unchanged"] += 1
-                            continue
+                            if not restore:
+                                if kept_deleted is not None:
+                                    kept_deleted.append(rid)
+                                stats["unchanged"] += 1
+                                continue
+                            revived = True  # restored on request: stamped as edited now (below)
                         newer = True
                     else:
                         newer = inc_at > self._content_at(kind, have, cur["created_at"], cur["updated_at"])
@@ -3754,6 +3765,12 @@ class Library:
                     if not newer and merged == have:
                         stats["unchanged"] += 1
                         continue
+                    if revived:
+                        # A deliberate restore is an edit made now: an old tombstone of this row (in a
+                        # later package) must not delete it again, and other copies revive it on merge.
+                        if kind == "note":
+                            merged["edited_at"] = now
+                        upd = max(upd, now)
                     if newer:
                         self.conn.execute(
                             "UPDATE annotations SET kind=?, shape_kind=?, x=?, y=?, w=?, h=?, rotation=?, "

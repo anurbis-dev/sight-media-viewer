@@ -223,7 +223,8 @@
     gets the review on the same media file, found by path, else by name and size. Importing
     **merges**: the same file twice changes nothing, a file that went to someone and came back adds
     their replies / new notes / resolved states, and what was deleted on one side is deleted on the
-    other (unless it was edited there later). *Web page for reviewers (.html)* — one file that opens
+    other (unless it was edited there later). A file that holds notes / drawings you deleted here
+    (an older copy of your own review, say) asks *Restore them?* — yes brings them back. *Web page for reviewers (.html)* — one file that opens
     in any browser, on a phone too, no Sight needed: the picture / frames with the drawings, every
     note, screenshot and reply. The picture on top is the original; each note shows its frame with
     its drawings, and every picture in a card is shown at full width. Under each picture: which

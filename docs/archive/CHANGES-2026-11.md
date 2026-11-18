@@ -2,6 +2,22 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.69.1 — 2026-11-17 — Sequence: no black frame across a cut, picture scrub runs through clips
+- **What:** scrubbing back (or forward) across a cut no longer flashes black; dragging on the picture scrubs the
+  whole sequence and runs on into the neighbouring clips instead of stopping at the clip's ends.
+- **Where:** index.html `seqHold` / `seqKeepStill` / `seqDropHold` / `seqReleaseHold`, `seqDragTo`, `seqNow`,
+  `seqScrubBegin`, the attachViewer scrub hand-over (`sd.handed`), `bindSeqBar` (uses `seqDragTo`), `.seq-hold` CSS.
+- **Notes:** a clip opened from scratch shows nothing until decoded, so the frame on screen is held as a canvas
+  (the visible scrub copy, else the player, else — mid-seek, when nothing can be drawn — the last presented frame
+  of that same element) placed with the player's box and turn / mirror / zoom transform inside a box clipped like
+  the frame; it goes when the new clip presents its frame (rVFC, 250 ms fallback; 1.5 s cap). The picture scrub is
+  handed to window listeners once it starts (each cut replaces the stage and the element holding the pointer);
+  a release outside the window ends it on the next move without a button.
+- Review (fresh agent): hold skipped mid-seek, wrong source while the scrub copy shows, geometry for turned /
+  masked views, stuck drag after a release outside, a swallowed tap after a cancelled hand-over, rVFC not firing,
+  timer of chained holds, `seqNow` before a landing; re-review: the mid-seek still placed with another clip's
+  geometry — all fixed; confirmed by the same reviewer.
+
 ## 0.69.0 — 2026-11-17 — Compare annotating: splits by Alt / finger, screenshot of the whole comparison
 - **What:** while annotating in the compare's Swipe, `Alt`+drag moves the nearest split (as Alt scrubs a video in
   the viewer) and a finger / stylus landing within 24 px of a split moves it — no stroke for that press, no need to

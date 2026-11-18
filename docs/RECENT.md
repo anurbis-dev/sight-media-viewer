@@ -14,6 +14,21 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.83.0 — 2026-11-18 — Importing a review file offers to restore notes / drawings deleted here
+- **What:** owner's report "the review file does not restore notes and drawings". Not a bug in the merge: rule 5
+  (FORMAT.md) keeps a row deleted here when the delete is later than the file's copy. Now the import counts
+  such rows and asks *Restore them?*; yes merges the same file again with restore on and they come back.
+- **Where:** library.py `import_annotations(restore=, kept_deleted=)`; review.py `import_package` /
+  `import_review_file` (`restore`, result key `deleted_here`, per clip in a bundle); server.py
+  `/api/review/import?restore=1`; annotate.js `importFile` (two POSTs, counts of both passes summed for the toast);
+  tests (test_merge_parity `test_restore_deleted_here`, test_review_bundle `test_restore_rows_deleted_here`);
+  FORMAT.md rule 5, MANUAL.
+- **Notes:** Sight only — the JS `mergeRows` has no restore (default path unchanged, parity holds; stats keys
+  unchanged, the ids go to the `kept_deleted` out-list). A restored row is stamped as edited now (note
+  `data.edited_at`, drawing `updated_at`) so the file's / a later package's old tombstones do not delete it
+  again and other copies revive it on merge. The question is the native `confirm()` (works on touch too).
+- Review (fresh agent): not done yet — the reviewer hit the API rate limit; to be run before commit.
+
 ## 0.82.0 — 2026-11-18 — Phone / HTML page drawing: arrows along a stroke and lasso brush
 - **What:** owner's ask. The shared drawing canvas (review-draw.js: the HTML page, the phone app) can now make
   0.81's new drawings. *Arrows and lines* row: a sixth kind, *Arrows along a stroke*; with it in hand the row
@@ -374,19 +389,3 @@ Add new entries directly below this line.
   reported late, unbounded / cross-site POST, mislabelled upstream errors, redirects carrying the key, key file
   briefly world-readable; fixed. Re-review: start errors never reached the toast (end() cleared the session first)
   — fixed; confirmed by the same reviewer.
-
-## 0.69.1 — 2026-11-17 — Sequence: no black frame across a cut, picture scrub runs through clips
-- **What:** scrubbing back (or forward) across a cut no longer flashes black; dragging on the picture scrubs the
-  whole sequence and runs on into the neighbouring clips instead of stopping at the clip's ends.
-- **Where:** index.html `seqHold` / `seqKeepStill` / `seqDropHold` / `seqReleaseHold`, `seqDragTo`, `seqNow`,
-  `seqScrubBegin`, the attachViewer scrub hand-over (`sd.handed`), `bindSeqBar` (uses `seqDragTo`), `.seq-hold` CSS.
-- **Notes:** a clip opened from scratch shows nothing until decoded, so the frame on screen is held as a canvas
-  (the visible scrub copy, else the player, else — mid-seek, when nothing can be drawn — the last presented frame
-  of that same element) placed with the player's box and turn / mirror / zoom transform inside a box clipped like
-  the frame; it goes when the new clip presents its frame (rVFC, 250 ms fallback; 1.5 s cap). The picture scrub is
-  handed to window listeners once it starts (each cut replaces the stage and the element holding the pointer);
-  a release outside the window ends it on the next move without a button.
-- Review (fresh agent): hold skipped mid-seek, wrong source while the scrub copy shows, geometry for turned /
-  masked views, stuck drag after a release outside, a swallowed tap after a cancelled hand-over, rVFC not firing,
-  timer of chained holds, `seqNow` before a landing; re-review: the mid-seek still placed with another clip's
-  geometry — all fixed; confirmed by the same reviewer.

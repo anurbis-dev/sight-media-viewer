@@ -3758,15 +3758,32 @@ export function createAnnotator(host){
   async function importFile(file){
     let r;
     await flush();
-    try {
-      const res = await fetch("/api/review/import", { method: "POST", body: await file.arrayBuffer() });
-      r = await res.json().catch(() => ({}));
-      if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return; }
-      if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return; }
-    } catch (e){
-      console.warn(e);
-      toast("Import failed", 3000);
-      return;
+    const body = await file.arrayBuffer();
+    const post = async (restore) => {
+      try {
+        const res = await fetch("/api/review/import" + (restore ? "?restore=1" : ""), { method: "POST", body });
+        const r = await res.json().catch(() => ({}));
+        if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return null; }
+        if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return null; }
+        return r;
+      } catch (e){
+        console.warn(e);
+        toast("Import failed", 3000);
+        return null;
+      }
+    };
+    if (!(r = await post(false))) return;
+    // Rows of the file that were deleted here after their last edit stay deleted by the merge rules
+    // (FORMAT.md rule 5); the user may be importing the file precisely to get them back — ask.
+    const gone = r.bundle ? (r.results || []).reduce((s, x) => s + ((x.ok && x.deleted_here) | 0), 0) : r.deleted_here | 0;
+    if (gone && confirm(`This review file holds ${gone} note${gone === 1 ? "" : "s"} / drawing${gone === 1 ? "" : "s"} you deleted here.\n\nRestore ${gone === 1 ? "it" : "them"}?`)){
+      const again = await post(true);
+      if (again){
+        // The second pass only revives rows (everything else merged already): report both passes as one.
+        const sum = (a, b) => ({ ...b, added: (a.added | 0) + (b.added | 0), updated: (a.updated | 0) + (b.updated | 0), deleted: (a.deleted | 0) + (b.deleted | 0) });
+        if (r.bundle) r = { ...again, results: (again.results || []).map((x, i) => (x.ok && r.results?.[i]?.ok ? sum(r.results[i], x) : x)) };
+        else r = sum(r, again);
+      }
     }
     if (r.bundle){ await importedBundle(r); return; }
     const parts = [["new", r.added], ["updated", r.updated], ["deleted", r.deleted]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);

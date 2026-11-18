@@ -316,6 +316,9 @@ Merging a package into what a client holds (Sight: `Library.import_annotations`;
    row the `history` lists are unioned (same `at` + `state` + `author` = one entry, the local one
    kept), sorted by `at`.
 5. A row **deleted here** comes back only if the incoming content stamp is later than the delete.
+   *Sight only (0.83+):* the import reports how many rows stayed deleted this way (`deleted_here`) and, when
+   the user agrees, merges again with `restore` — those rows come back stamped as edited at the merge
+   (`data.edited_at` / `updated_at` = now), so old tombstones do not delete them again. Not in the JS port.
 6. Each package tombstone deletes the local row if the tombstone is later than that row's content
    stamp.
 7. Bookkeeping: an updated row gets `updated_at = max(now, old)` when only its replies / state /

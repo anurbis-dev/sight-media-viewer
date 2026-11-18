@@ -1161,9 +1161,11 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     async def import_review(request: Request) -> dict:
         # A plain package: {ok, asset_id, added, updated, deleted, author}; 404 when its media is not
         # in the library, 400 for a damaged file. A bundle: always 200, per clip in `results`.
+        # ?restore=1: also bring back rows deleted here (`deleted_here` in the first answer).
         raw = await request.body()
+        restore = request.query_params.get("restore") == "1"
         try:
-            res = await asyncio.to_thread(review.import_review_file, lib, raw)
+            res = await asyncio.to_thread(review.import_review_file, lib, raw, restore)
         except ValueError as e:
             raise HTTPException(400, str(e))
         if not res.get("ok"):
