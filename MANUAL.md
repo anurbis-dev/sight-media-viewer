@@ -62,6 +62,9 @@
   to its frame / view (only its drawings show; Esc shows all again). The same button sits in the top bar for a
   board; there a note's picture is the part of the board you were looking at when you wrote it, and a click on it
   glides the camera back there.
+- **Saving notes** — notes, replies and drawings save on their own. If Sight cannot save them (the app is busy or
+  was closing), a red "unsaved annotation changes — retrying" badge shows at the bottom; the changes are kept and
+  sent as soon as possible, also at the next start. Click / tap the badge to retry now.
 - **Annotations & review** — in the lightbox of an image, PSD, video or 3D model press `A`
   (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
   appears at the top with a second row that always shows the settings of the current tool — or of

@@ -352,6 +352,19 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 
 (The same editor also runs on Canvas boards, scope `board` — see "Board annotations" under Canvas.)
 
+**Saving (the write queue, `OB` in annotate.js).** No annotator writes rows with fetch() itself: `serverCreate` /
+`stage` (the 300 ms debounced updates) / `serverDelete` put a full copy of the row into one module-level queue shared
+by every annotator (lightbox, board, compare) — one entry per row id, the newest wins (`put {body, create}` / `del`,
+`key` = asset / board id). The queue drains single-flight (creates and deletes one by one as POST upsert / DELETE,
+plain updates in `/api/annotations/batch`, after two batch failures one by one as PATCH, which never revives a
+deleted row), retries with backoff, aborts a request after 20 s, and shows a fixed badge (`.an-outbox`, click =
+retry) while it fails. It is stored in localStorage per window (`sight-annot-outbox:v2:<id>` = {ts, entries},
+refreshed every 5 s, ts 0 on pagehide); a start adopts the keys of windows that stopped refreshing. pagehide
+settles every annotator (open editors commit) and sends the queue with keepalive (60 KB budget). `load()` lays the
+queued and the lately landed (30 s, `OB.recent`) writes over the GET's rows (`obOverlay`). Invariants: leave an
+asset only through `settle()` (blur an open panel field, `finishEdit`, `stage`) while `S.asset` is still the old
+one; never write rows outside the queue (ordering per row id depends on it); `flush()` = stage + wait for the queue.
+
 **Reference images** (kind `image`, FORMAT.md) — a drawing whose picture is a shot (`/api/review/shots`, stored by
 `storeRef`: decoded in the browser, ≤ 2048 px, PNG when the source may have alpha else JPEG). Added by `addRefs`
 (annotate.js) from a drop on the surface (`onRefDrop`: OS files, or `application/x-sight-ids` from the grid via

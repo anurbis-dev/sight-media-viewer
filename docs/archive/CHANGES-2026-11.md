@@ -2,6 +2,31 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.76.0 — 2026-11-17 — One web page for a sequence's review (multi-clip plan, stage 2)
+- **What:** Sequence → Export → *Web page, all clips* writes **one** page (was one per clip). It has a clip strip on
+  top (name, notes, open notes; a dot = changed here), ‹ / › buttons, `←` / `→` (not in text fields, the full-screen
+  picture, the drawing canvas or a sheet). The bottom bar counts every clip; *Download reply* = one `.srev` bundle of
+  the changed clips with the page's bundle id; *Discard* asks this clip / all clips (Esc / Cancel / backdrop close);
+  the clip's details (tap the title) have *Download this clip's reply* — a plain package for Sight < 0.75. Switching
+  clips resets the search / state filter. A sequence with one clip with notes gets the ordinary one-clip page.
+- **Where:** review.py (`build_html` → `_page`, new `build_html_all`; page script: `useClip`, `switchClip`, `CL`,
+  `slotKey`, `changesOf` / `editsOf`, `clipCounts`, `paintStrip`, `replyPackage(c)`, `download` / `downloadClip`,
+  `discard`, `header()` clears first, `closeEmpty(target, noRender)`; `plate_js` exposes `hotkey` / `runHotkeys`),
+  server.py (`/api/review/export/html-all`, returns `clips`, `missing`), index.html (`seqExportAll` html → one post),
+  tests/page_multi_e2e.cjs + test_review_page.py `MultiClipPage`, MANUAL, ARCHITECTURE, PLAN-multiclip.
+- **Notes:** data block is now `{clips: [{report, package, edits?}], bundle?, copy?}` (a one-clip page too; `bundle`
+  only with 2+ clips). One-clip page invariants kept: storage key `sight-review:<asset id>:<exported_at>[:copy]`,
+  reply = plain package (`page_e2e.cjs` passes unchanged). Multi-clip key `sight-review:<bundle id>:<asset id>[:copy]`.
+  All clips' edits live in memory (`CL[i].E`, the shown one is `E`; `editsOf(c)` reads the right one) and each save
+  writes the shown clip's slot. The page's clips = clips with notes (client scan, as before); a tombstone-only clip
+  is not on the page (deletes travel in the `.srev` bundle). A composer with a picture still loading counts as not
+  empty and cannot send (`dr.pending`). Stage 3 (phone) not started.
+- Review (fresh agent): no correctness bugs; low items fixed — a picture still loading was lost on a clip switch
+  (field closed as empty), search / filter carried over to the next clip, discard sheet had no keyboard close,
+  missing clips dropped silently from html-all, the strip scrolled on every save. Re-review: names of missing clips
+  came out as "clip" and Send could be pressed mid-load → fixed; then Send could stay disabled after a re-render
+  mid-load → fixed (`render()` when the field was replaced); all confirmed by the same reviewer.
+
 ## 0.75.0 — 2026-11-17 — `.srev` bundle: a sequence's review in one file (multi-clip plan, stage 1)
 - **What:** Sequence → Export → *Review file (.srev), all clips* writes **one** file (a bundle, FORMAT.md "Bundle")
   instead of one per clip; clips with notes or with tombstones (all notes deleted since) go in. Importing a bundle

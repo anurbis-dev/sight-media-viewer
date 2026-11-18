@@ -236,6 +236,277 @@ function fmtDate(ms){
   catch { return ""; }
 }
 
+// ---- durable write queue (shared by every annotator) ----------------------------------------------
+// Every row write goes through this one queue, never straight to fetch(): one entry per row id (the
+// newest wins: {op: "put", body, create} or {op: "del"}, `key` = the asset / board it belongs to), kept
+// in localStorage until the server has it, retried with backoff while it fails, sent with keepalive when
+// the page goes away. Writes are therefore never tied to the annotator's current asset: switching clips
+// mid-save, a failed request or a closed window used to drop notes and replies (0.87.1).
+// Storage: one key per window (`OB_PREFIX + window id` = {ts, entries}), refreshed while it holds entries;
+// a start adopts the keys of windows that stopped refreshing theirs (closed / crashed). The prefix is
+// outside "sight.*" on purpose: hydrateSettings() drops sight.* keys the server lacks.
+const OB_PREFIX = "sight-annot-outbox:v2:";
+// OB_STALE: background tabs run timers about once a minute, so a live window may refresh its key late.
+const OB_STALE = 180000, OB_TIMEOUT = 20000, OB_RECENT = 30000;
+const OB = {
+  map: new Map(), busy: false, gone: false, timer: 0, fails: 0, batchFails: 0, waiters: [], badge: null, note: "", noteTimer: 0,
+  key: OB_PREFIX + Math.random().toString(16).slice(2) + Date.now().toString(16),
+  // Writes that landed lately (id -> {e, at, sentAt}): a load() whose GET raced them still shows them (obOverlay).
+  recent: new Map(),
+  inflight: new Set(), // row ids with a request on the way (obBeacon leaves them alone)
+  // When the newest write of each row that landed from this window was made (entry.at): an adopted entry made
+  // before it is older than what the server has and is skipped (obAdopt).
+  landedAt: new Map(),
+  handed: new Set(), // rows whose queued writes went to another window: the next write here is an upsert
+  stored: false, // the last obSave() wrote this window's key (so a missing key means another window adopted it)
+  // Every annotator's "commit what is open and queue it" (settle), for the page going away.
+  settlers: new Set(),
+};
+const OB_ID = /^[0-9a-f]{16}$/;
+function obValid(id, e){
+  return typeof id === "string" && OB_ID.test(id) && e && typeof e === "object"
+    && (e.op === "del" || (e.op === "put" && e.body && typeof e.body === "object" && e.body.id === id));
+}
+function obSave(){
+  try {
+    // ts 0 once the page is going away: the next start (a reload, the next launch) adopts it straight away.
+    if (OB.map.size) localStorage.setItem(OB.key, JSON.stringify({ ts: OB.gone ? 0 : Date.now(), entries: [...OB.map] }));
+    else localStorage.removeItem(OB.key);
+    OB.stored = OB.map.size > 0;
+  } catch {
+    // A stale copy would replay old rows over newer ones at the next start: better none at all.
+    OB.stored = false;
+    try { localStorage.removeItem(OB.key); } catch {}
+  }
+}
+// Entries of windows that are gone (their key not refreshed for OB_STALE), plus the v1 single key.
+function obAdopt(){
+  try {
+    const now = Date.now(), keys = [];
+    for (let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (k && (k === "sight-annot-outbox:v1" || (k.startsWith(OB_PREFIX) && k !== OB.key))) keys.push(k);
+    }
+    for (const k of keys){
+      let v = null;
+      try { v = JSON.parse(localStorage.getItem(k)); } catch {}
+      const entries = Array.isArray(v) ? v : v && Array.isArray(v.entries) ? v.entries : null;
+      if (v && !Array.isArray(v) && now - (Number(v.ts) || 0) < OB_STALE) continue; // a live window's queue
+      if (entries) for (const item of entries){
+        if (!Array.isArray(item)) continue;
+        const [id, e] = item;
+        // Not over a newer write of this window (queued, or landed after the adopted one was made).
+        if (obValid(id, e) && !OB.map.has(id) && (Number(e.at) || 0) > (OB.landedAt.get(id) ?? -1)) OB.map.set(id, e);
+      }
+      localStorage.removeItem(k);
+    }
+  } catch {}
+  obSave();
+}
+// Frozen too long (App Nap, a suspended tab, bfcache) and another window adopted this queue: that window sends
+// it, this one drops its copy. Checked before anything here writes or sends (`ignoreGone`: from pageshow).
+function obHandedOff(ignoreGone){
+  let gone = false;
+  try { gone = OB.stored && (ignoreGone || !OB.gone) && localStorage.getItem(OB.key) === null; } catch {}
+  if (!gone) return false;
+  for (const id of OB.map.keys()) OB.handed.add(id);
+  OB.map.clear(); OB.stored = false; obPaint();
+  return true;
+}
+function obPut(body, create){
+  obHandedOff();
+  const prev = OB.map.get(body.id);
+  // A row whose create (or revive after a delete) has not landed yet still needs the POST (an upsert).
+  const mustCreate = !!create || prev?.op === "del" || (prev?.op === "put" && prev.create) || OB.handed.delete(body.id);
+  // A copy: the row as it is now, whatever happens to the live item afterwards.
+  OB.map.set(body.id, { op: "put", body: structuredClone(body), create: mustCreate, key: body.target_asset_id || body.board_id || null, at: Date.now() });
+  obSave();
+  obKick(0);
+}
+function obDel(id, key){
+  obHandedOff();
+  OB.map.set(id, { op: "del", key: key || null, at: Date.now() });
+  obSave();
+  obKick(0);
+}
+function obKick(ms){
+  if (OB.busy) return; // the running pass re-reads the map before it ends
+  clearTimeout(OB.timer);
+  OB.timer = setTimeout(obDrain, ms);
+}
+// Rows of `key` with the writes laid over them that the server may not show yet: queued ones, and ones that
+// landed lately while the GET may have read the database before them. A landed write counts only where the row
+// the GET returned is older than the request (updated_at < sentAt; same machine, same clock) — or, for a create,
+// missing — so a change made on the server since (an import, another window, the phone) is never hidden.
+function obOverlay(rows, key){
+  const out = new Map(rows.map((r) => [r.id, r]));
+  const now = Date.now();
+  const lay = (id, e) => {
+    if (e.op === "del") out.delete(id);
+    else out.set(id, { ...(out.get(id) || {}), id, kind: e.body.kind, shape_kind: e.body.shape_kind, z_index: e.body.z_index, data: structuredClone(e.body.data) });
+  };
+  for (const [id, r] of OB.recent){
+    if (now - r.at > OB_RECENT){ OB.recent.delete(id); continue; }
+    if (r.e.key !== key || OB.map.has(id)) continue;
+    const row = out.get(id), older = row && (Number(row.updated_at) || 0) < r.sentAt;
+    if (r.e.op === "del" ? older : (older || (!row && r.e.create))) lay(id, r.e);
+  }
+  for (const [id, e] of OB.map) if (e.key === key) lay(id, e);
+  return [...out.values()];
+}
+// The rows of `key` are about to be read after a server-side change (an import, a reload): no landed write may
+// stand in for them.
+function obForget(key){ for (const [id, r] of OB.recent) if (r.e.key === key) OB.recent.delete(id); }
+// 4xx (except 408 / 429) = the server refuses this row for good: retrying cannot help, keep the rest moving.
+class ObRefused extends Error {}
+async function obFetch(path, opts){
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), OB_TIMEOUT); // a hung request must not stall the queue for good
+  try {
+    const r = await fetch(path, { ...opts, signal: ctl.signal });
+    if (r.ok) return;
+    const msg = `${opts.method} ${path}: ${r.status}`;
+    if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw new ObRefused(msg);
+    throw new Error(msg);
+  } finally { clearTimeout(t); }
+}
+const JSON_HDR = { "content-type": "application/json" };
+const obReq = (id, e) => e.op === "del" ? [`/api/annotations/${encodeURIComponent(id)}`, { method: "DELETE" }]
+  : e.create ? ["/api/annotations", { method: "POST", headers: JSON_HDR, body: JSON.stringify(e.body) }]
+  : [`/api/annotations/${encodeURIComponent(id)}`, { method: "PATCH", headers: JSON_HDR, body: JSON.stringify(obFields(e.body)) }];
+function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind }; }
+// Removes `e` once sent, unless a newer write for the row came in meanwhile (that one is sent next).
+// `refused`: the server did not take it; it must not show (OB.recent) nor count as landed.
+function obDone(id, e, sentAt, refused){
+  if (OB.map.get(id) !== e) return;
+  OB.map.delete(id);
+  if (!refused){
+    OB.recent.set(id, { e, at: Date.now(), sentAt: sentAt || 0 });
+    OB.landedAt.set(id, Number(e.at) || Date.now());
+  }
+  obSave();
+}
+async function obDrain(){
+  if (OB.busy) return;
+  obHandedOff();
+  OB.busy = true;
+  clearTimeout(OB.timer);
+  let failed = false;
+  try {
+    // Each pass sends what the map holds; rows that failed wait for the next timer, the others keep going.
+    for (let pass = 0; OB.map.size && pass < 50; pass++){
+      const batch = [...OB.map], failedNow = new Set();
+      let down = false; // no answer at all (network error / timeout): the other rows would only wait too
+      const one = async (id, e) => {
+        if (down){ failedNow.add(id); return; }
+        const sentAt = Date.now();
+        OB.inflight.add(id);
+        try { const [p, o] = obReq(id, e); await obFetch(p, o); obDone(id, e, sentAt); }
+        catch (err){
+          if (err instanceof ObRefused){ console.warn("annotation write refused", err); obDone(id, e, 0, true); obRefusedNote(); }
+          else { failedNow.add(id); down = !/^\w+ \S+: \d+$/.test(err.message || ""); console.warn("annotation save failed, will retry", err); }
+        }
+        finally { OB.inflight.delete(id); }
+      };
+      // Creates and deletes one by one; plain updates in one batch, or one by one (PATCH: a row gone on the
+      // server is skipped, never revived) once the batch failed twice or was refused.
+      const updates = batch.filter(([, e]) => e.op === "put" && !e.create && !e.single);
+      for (const [id, e] of batch) if (e.op === "del" || e.create || e.single) await one(id, e);
+      if (updates.length && down) for (const [id] of updates) failedNow.add(id);
+      else if (updates.length){
+        const sentAt = Date.now();
+        for (const [id] of updates) OB.inflight.add(id);
+        try {
+          await obFetch("/api/annotations/batch", { method: "POST", headers: JSON_HDR, body: JSON.stringify({ items: updates.map(([id, e]) => ({ id, ...obFields(e.body) })) }) });
+          for (const [id, e] of updates) obDone(id, e, sentAt);
+          OB.batchFails = 0;
+        } catch (err){
+          console.warn("annotation batch failed", err);
+          if (err instanceof ObRefused || ++OB.batchFails >= 2) for (const [id, e] of updates) if (OB.map.get(id) === e) e.single = true;
+          if (!(err instanceof ObRefused)) for (const [id] of updates) failedNow.add(id);
+        } finally { for (const [id] of updates) OB.inflight.delete(id); }
+      }
+      if (failedNow.size){ failed = true; break; }
+    }
+  } finally {
+    OB.busy = false;
+    obSave();
+  }
+  OB.fails = failed ? OB.fails + 1 : 0;
+  obPaint();
+  if (OB.map.size) OB.timer = setTimeout(obDrain, failed ? Math.min(30000, 1000 * 2 ** Math.min(OB.fails - 1, 5)) : 0);
+  // A waiter is done once the entries it waited for are gone (sent, or replaced by newer ones), or on a failure.
+  OB.waiters = OB.waiters.filter((w) => {
+    const left = w.of.some(([id, e]) => OB.map.get(id) === e);
+    if (left && !failed) return true;
+    w.res(!left);
+    return false;
+  });
+}
+// Resolves once every write queued so far has landed (true), or an attempt failed (false; retries go on).
+function obFlush(){
+  if (!OB.map.size) return Promise.resolve(true);
+  const p = new Promise((res) => OB.waiters.push({ of: [...OB.map], res }));
+  if (!OB.busy) obDrain();
+  return p;
+}
+// The page is going away: every request at once (the page may not live to see one answer), keepalive, within
+// its 64 KB budget. Whatever does not fit or fails stays stored for the next start.
+function obBeacon(){
+  let budget = 60000;
+  for (const [id, e] of OB.map){
+    if (OB.inflight.has(id)) continue; // an older request for the row is on the way: never race it (stays stored)
+    const [p, o] = obReq(id, e.op === "put" && !e.create && !e.single ? { ...e, single: true } : e);
+    const size = (o.body || "").length + 200;
+    if (size > budget) continue;
+    budget -= size;
+    const sentAt = Date.now();
+    OB.inflight.add(id);
+    fetch(p, { ...o, keepalive: true }).then((r) => { if (r.ok) obDone(id, e, sentAt); }).catch(() => {})
+      .finally(() => OB.inflight.delete(id));
+  }
+}
+function obRefusedNote(){
+  OB.note = "⚠ The server refused an annotation change (see the log)";
+  clearTimeout(OB.noteTimer);
+  OB.noteTimer = setTimeout(() => { OB.note = ""; obPaint(); }, 8000);
+}
+// A failing or refused save is shown until it goes through: a fixed badge (tap / click = retry now), on every screen.
+function obPaint(){
+  const show = (OB.fails && OB.map.size) || OB.note;
+  if (!show && !OB.badge) return;
+  if (!OB.badge){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "an-outbox";
+    b.title = "Sight could not save these annotation changes yet. They are kept and retried; click to retry now.";
+    b.addEventListener("click", () => { OB.note = ""; OB.fails = 0; obPaint(); obKick(0); });
+    document.body.appendChild(b);
+    OB.badge = b;
+  }
+  const n = OB.map.size;
+  OB.badge.hidden = !show;
+  OB.badge.textContent = OB.fails && n ? `⚠ ${n} unsaved annotation change${n === 1 ? "" : "s"} — retrying` : OB.note;
+}
+if (typeof window !== "undefined"){
+  // Going away for good: open editors commit too. Only hidden (minimized, another app): queue what is
+  // committed, leave a field being typed in alone.
+  const away = (full) => { for (const s of OB.settlers){ try { (full ? s.settle : s.stage)(); } catch (e){ console.warn(e); } } };
+  window.addEventListener("pagehide", () => { away(true); OB.gone = true; obSave(); if (OB.map.size) obBeacon(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden){ away(false); obSave(); if (OB.map.size) obKick(0); } });
+  window.addEventListener("pageshow", (e) => { if (!e.persisted) return; obHandedOff(true); OB.gone = false; obSave(); if (OB.map.size) obKick(0); });
+  // Keeps this window's stored queue marked as alive, so another window's start does not adopt it.
+  setInterval(() => {
+    if (!OB.map.size || obHandedOff()) return;
+    obSave();
+  }, 5000);
+  // Writes left over from a closed window or the last session (the server was gone): send them now.
+  obAdopt();
+  if (OB.map.size) setTimeout(obDrain, 1500);
+  // A window that crashed while this one ran: its queue turns stale later and is picked up here.
+  setInterval(() => { const n = OB.map.size; obAdopt(); if (OB.map.size > n) obKick(0); }, 60000);
+}
+
 // =================================================================================================
 
 export function createAnnotator(host){
@@ -252,7 +523,7 @@ export function createAnnotator(host){
     sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
-    fps: 25, raf: 0, lastSig: "", dirty: new Set(), creating: new Map(), saveTimer: 0, views: new Map(), curVk: null,
+    fps: 25, raf: 0, lastSig: "", dirty: new Set(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
     plate: null, shotView: null, adopt: new Set(), dict: null, dictTa: null,
   };
@@ -321,45 +592,52 @@ export function createAnnotator(host){
       w: isDrawing(it) ? r2(b[2] - b[0]) : null, h: isDrawing(it) ? r2(b[3] - b[1]) : null,
     };
   }
+  // Writes go into the shared queue (OB above) as full rows built NOW, from the asset they belong to, so
+  // nothing that happens afterwards (another clip opened, the items cleared) can change or drop them.
   function serverCreate(it){
+    S.dirty.delete(it.id);
     S.saved.add(it.id);
-    const p = host.api("/api/annotations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(rowBody(it)) })
-      .catch((e) => { S.saved.delete(it.id); console.warn(e); toast("Could not save the annotation"); })
-      .finally(() => { if (S.creating.get(it.id) === p) S.creating.delete(it.id); });
-    S.creating.set(it.id, p);
-    return p;
+    obPut(rowBody(it), true);
   }
   function serverUpdate(id){ S.dirty.add(id); clearTimeout(S.saveTimer); S.saveTimer = setTimeout(flush, 300); }
-  async function flush(){
+  // Synchronous: the debounced updates go into the queue with this asset's rows.
+  function stage(){
     clearTimeout(S.saveTimer);
-    if (!S.dirty.size || !S.asset) return;
-    const ids = [...S.dirty];
-    S.dirty.clear();
-    await Promise.all(ids.map((id) => S.creating.get(id)).filter(Boolean));
-    const items = [];
-    for (const id of ids){
+    if (S.asset) for (const id of S.dirty){
       const it = S.items.get(id);
       if (!it) continue;
-      if (!S.saved.has(id)){ serverCreate(it); continue; }
-      const b = rowBody(it);
-      items.push({ id, data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind });
+      obPut(rowBody(it), !S.saved.has(id));
+      S.saved.add(id);
     }
-    if (items.length) await host.api("/api/annotations/batch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) }).catch((e) => console.warn(e));
+    S.dirty.clear();
   }
+  // Resolves once the queue has reached the server (or the attempt failed; the queue keeps retrying).
+  function flush(){ stage(); return obFlush(); }
   function serverDelete(id){
     S.dirty.delete(id);
     if (!S.saved.has(id)) return;
     S.saved.delete(id);
-    Promise.resolve(S.creating.get(id)).then(() => host.api(`/api/annotations/${id}`, { method: "DELETE" })).catch((e) => console.warn(e));
+    obDel(id, S.asset?.id);
   }
+  // Before the annotator leaves this asset: an editor still open (a note / reply / caption field in the panel,
+  // text on the picture, a pin number) commits into THIS asset's rows, then they go into the queue.
+  function settle(){
+    const ae = document.activeElement;
+    if (ae && S.ui?.contains(ae) && ae.matches?.("textarea, input")) ae.blur();
+    finishEdit();
+    stage();
+  }
+  OB.settlers.add({ settle, stage });
 
   async function load(a){
     const token = {};
     S.loading = token;
     let rows = [];
-    try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); } catch (e){ console.warn(e); }
+    try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); }
+    catch (e){ console.warn(e); if (S.asset?.id === a.id) toast("Could not load the notes of this file"); }
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
+    rows = obOverlay(rows, a.id);  // writes still queued for this file count (re-opened before they landed)
     S.items.clear(); S.saved.clear();
     // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
     const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
@@ -3918,7 +4196,7 @@ export function createAnnotator(host){
     if (S.asset?.id === r.asset_id){
       // The rows changed underneath the undo history; it would restore pre-merge states.
       S.undo = []; S.redo = [];
-      await load(S.asset); toggle(true); togglePanel(true);
+      obForget(S.asset.id); await load(S.asset); toggle(true); togglePanel(true);
     }
     host.onReviewChanged?.(r.asset_id);
   }
@@ -3943,12 +4221,12 @@ export function createAnnotator(host){
     if (changed.length === 1){
       const aid = changed[0].asset_id;
       await host.openAsset?.(aid);
-      if (S.asset?.id === aid){ S.undo = []; S.redo = []; await load(S.asset); toggle(true); togglePanel(true); }
+      if (S.asset?.id === aid){ S.undo = []; S.redo = []; obForget(S.asset.id); await load(S.asset); toggle(true); togglePanel(true); }
       host.onReviewChanged?.(aid);
       return;
     }
     for (const x of ok){
-      if (S.asset?.id === x.asset_id){ S.undo = []; S.redo = []; await load(S.asset); }
+      if (S.asset?.id === x.asset_id){ S.undo = []; S.redo = []; obForget(S.asset.id); await load(S.asset); }
       host.onReviewChanged?.(x.asset_id);
     }
   }
@@ -4235,8 +4513,8 @@ export function createAnnotator(host){
     S.plate?.destroy(); S.plate = null;
     S.dict?.destroy(); S.dict = S.dictTa = null;
     closeShotView();
-    flush();
-    finishEdit();
+    settle();
+    obFlush();
     cancelAnimationFrame(S.raf);
     S.raf = 0;
     S.on = false; S.stampDrag = false;
@@ -4253,8 +4531,8 @@ export function createAnnotator(host){
     // The plates first (an open edit saves into the old asset's notes), then the flush.
     S.plate?.destroy(); S.plate = null;
     closeShotView();
-    flush();
-    finishEdit();
+    settle();
+    obFlush();
     cancelRegion();
     S.asset = a;
     S.kind = a.ext === ".psd" ? "psd" : a.kind;
@@ -4375,7 +4653,7 @@ export function createAnnotator(host){
       const a = S.asset;
       if (!a || !supported()) return;
       S.undo = []; S.redo = []; paintBar();
-      Promise.resolve(flush()).then(() => { if (S.asset === a) load(a); }); // after its own pending save lands
+      Promise.resolve(flush()).then(() => { if (S.asset === a){ obForget(a.id); load(a); } }); // after its own pending save lands
     },
     // For the board view (canvas.js): save pending edits, drop a half-drawn gesture, the drawings' bounds, modal state.
     flush: () => flush(), abortGesture, modal: () => !!help || !!stampPop && !stampPop.hidden,
@@ -4390,6 +4668,10 @@ function injectStyles(){
   stylesInjected = true;
   const st = document.createElement("style");
   st.textContent = `
+.an-outbox { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 100000; max-width: calc(100vw - 32px);
+  padding: 10px 16px; border-radius: 10px; border: 1px solid #c0392b; background: #2a1414; color: #ffd9d4; font: 13px/1.3 system-ui, sans-serif;
+  cursor: pointer; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+.an-outbox[hidden] { display: none; }
 .an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .an-layer[hidden] { display: none; }
 .an-layer > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
