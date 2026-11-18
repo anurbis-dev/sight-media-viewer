@@ -176,6 +176,13 @@
     in the background and later drags show it, so every position along the way is drawn. Sight keeps
     the newest 20 scrub copies, 1 GB at most, and makes one again when needed); hold
     Shift to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
+  - **Video bar** — right of the timeline: the *sound* icon (click = mute / unmute; press and drag up / down,
+    or the mouse wheel = volume, with a slider above the icon; right-click or long press = *sound while
+    scrubbing* on / off, shown by a dot on the icon) and the *loop* button (replay at the end; inside a
+    sequence the sequence bar's loop applies). The position field left of the timeline: click and type a
+    frame number (or a time such as 1:05) + Enter to jump, Esc cancels; right-click or long press picks
+    *Frame / Time / Frame + time* and, with a sequence of 2+ clips, *local* or *global* counting.
+    Shift+← / Shift+→ jump to the first / last frame (of the whole sequence while one plays). All kept per device.
   - **Versions** — files in the same folder whose names differ only in a version token
     (`shot_v001`, `shot_v002`, `shot.v3`, `shot_rev4`, `shot_r5`; a name without one counts as the
     first) are versions of each other. The panel shows *Version 2 of 3* with ‹ › to step through them

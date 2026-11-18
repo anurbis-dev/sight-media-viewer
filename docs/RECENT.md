@@ -14,6 +14,34 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.85.0 — 2026-11-18 — Lightbox video bar: sound, scrub audio, loop, typed frame jump, Shift+arrows
+- **What:** the lightbox video bar gets a sound icon (click = mute, press-and-drag up or the wheel = volume with a
+  pop-up slider, right-click or long press = sound while scrubbing, shown by an accent dot), a loop button, and a
+  clickable position field (type a frame / time + Enter to jump, Esc cancels; right-click or long press = display
+  Frame / Time / Frame+time and Local / Global counting — Global only in a sequence of 2+ clips).
+  Shift+← / Shift+→ jump to the first / last frame (of the whole sequence when one plays).
+- **Where:** index.html (CSS `.vib` / `.vpop` / `.vtime-in` / `.vctx`; vbar markup; block before `bindVBar`:
+  `vgesture`, `vApplySnd`, `vApplyLoop`, `vposPaint`, `vposJump`, `vposEdit`, `vposMenu`, `vClips` / `vPos`,
+  `vClipFps` / `vFpsMap`, `bindVBarUi`, `lightEdgeJump`; `paintVBar`, `attachViewer`, `seekVideo` /
+  `scrubBlip`, `endScrub` / `endBlip`, `seqAdopt` unmute, `closeLight`, keydown Shift+Arrow); annotate.js
+  (`fps()` accessor, `followOff` ignores `_blip`); MANUAL.
+- **Notes:** prefs in localStorage `sight.vsnd`, `sight.vpos`, `sight.vloop` (type-checked on read; the phone app
+  has its own keys). The mobile code has no volume popup — only its gesture logic and icons are reused. The loop
+  button hides in a sequence (its bar has its own loop; `el.loop` stays off there because `ended` drives
+  `seqAdvance`). Scrub audio = a 90 ms play blip per seek; `el._blip` keeps blips out of `_seqPlayedAt` / the
+  annotator's follow tick, and the scrub end re-seeks to the pointer time (the blip ran past it). Frames are 0-based,
+  floor-based (as annotate's `stepFrame`); fps comes from the annotator when known, else from
+  `/api/assets/{id}/info` (cached per id); "≈" until known. Global frames sum each clip's own
+  round(duration × fps). In frame modes a bare number (also decimal) is a frame; `12s`, `1:05` are times; `f120`
+  a frame. The position input closes on any outside pointerdown. Not done: the sound icon does not grey out for
+  clips without audio (mobile does).
+- Review (fresh agent): 8 findings — blips left the paused frame ~90 ms past the release, the loop button never
+  hid (`.vib` display overrode `[hidden]`), a TypeError closing the lightbox with the field open, the field staying
+  focused after a track click (swallowing keys), global frames using one clip's fps, fps unknown outside annotate,
+  inconsistent decimal parsing, the sequence-cut unmute timer overriding a user's mute. All fixed; the same
+  reviewer confirmed them and noted two leftovers (board-opened video got no fps, Shift+→ used the current clip's
+  fps for the last clip), fixed.
+
 ## 0.84.2 — 2026-11-18 — macOS: restoring a minimized window no longer shows "not responding"
 - **What:** macOS: restoring a minimized Sight window no longer makes macOS report "Sight not responding", and a
   window left minimized for long no longer comes back to a dead page. Sight.app is now an agent with no Dock
@@ -339,14 +367,3 @@ Add new entries directly below this line.
   on Android / a pen on Windows toggling onion twice (their contextmenu), drawings frozen after onion unhid them
   on a playing video, an earlier group's long hold ending with no fade; fixed; the same reviewer confirmed all three. Then: a pen's barrel
   button (pointerdown `button` 2) counts as a right-click and toggles onion too (confirmed by the same reviewer).
-
-## 0.73.0 (docs) — 2026-11-17 — Plan: one review page / `.srev` bundle for several clips
-- **What:** `docs/PLAN-multiclip.md` (linked from PLAN.md and CLAUDE.md): a bundle envelope (`format:
-  "sight-review-bundle"`, `.srev` too) around unchanged single-asset packages; stage 1 format + Sight import /
-  export, stage 2 the multi-clip page (the page script refactor is the main work), stage 3 the phone app. Owner
-  decided: `.srev`, clips without notes left out (clips with tombstones still count), no boards. No code yet.
-- Review (fresh agent, three rounds against the code): wrong assumptions (page script reusable per clip, storage
-  key, "unchanged clips" savings, the phone's change tracking / `dirty()`, `exportSrev` per clip) and gaps (Sight
-  import UI and response, damaged inner packages, shared import function, html-all / package-all, one-clip page
-  replying with a plain package, duplicate asset match, bundle id ownership); all written into the plan; the last
-  round found it ready to implement.

@@ -997,7 +997,7 @@ export function createAnnotator(host){
   };
   // A playing video's drawings follow its frame with the mode off: the tick runs only then (a paused one restarts
   // it on play / seek — bind2d). A still picture or a board follows the view through viewChanged.
-  const followOff = () => !S.on && !isBoard() && shownOff() && !S.hidden && !!S.layer?.els.size && (!!S.b3 || (!!S.b2?.isVid && !S.b2.media.paused));
+  const followOff = () => !S.on && !isBoard() && shownOff() && !S.hidden && !!S.layer?.els.size && (!!S.b3 || (!!S.b2?.isVid && !S.b2.media.paused && !S.b2.media._blip));   // _blip: index.html's scrub-audio run, no playback
   function renderAll(){
     const L = S.on || shownOff() ? ensureLayer() : S.layer;
     if (!L) return;
@@ -4232,6 +4232,7 @@ export function createAnnotator(host){
     busy: () => !!S.gathering,
     ready: () => !!S.asset && !S.loading && !!(S.b2 || S.b3),
     fpsKnown: () => S.kind !== "video" || !!S.fpsKnown,
+    fps: () => S.fps,   // the open video's frame rate (25 until fpsKnown), for the lightbox's position field
     report: async (kind) => { await flush(); return gatherReport(kind === "html", kind === "zip"); },
     toast: (text, ms) => toast(text, ms),
     // Re-read the open file's rows (edited elsewhere); undo / redo would write the old copies back over them.

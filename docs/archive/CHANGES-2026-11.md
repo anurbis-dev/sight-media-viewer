@@ -2,6 +2,17 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.73.0 (docs) — 2026-11-17 — Plan: one review page / `.srev` bundle for several clips
+- **What:** `docs/PLAN-multiclip.md` (linked from PLAN.md and CLAUDE.md): a bundle envelope (`format:
+  "sight-review-bundle"`, `.srev` too) around unchanged single-asset packages; stage 1 format + Sight import /
+  export, stage 2 the multi-clip page (the page script refactor is the main work), stage 3 the phone app. Owner
+  decided: `.srev`, clips without notes left out (clips with tombstones still count), no boards. No code yet.
+- Review (fresh agent, three rounds against the code): wrong assumptions (page script reusable per clip, storage
+  key, "unchanged clips" savings, the phone's change tracking / `dirty()`, `exportSrev` per clip) and gaps (Sight
+  import UI and response, damaged inner packages, shared import function, html-all / package-all, one-clip page
+  replying with a plain package, duplicate asset match, bundle id ownership); all written into the plan; the last
+  round found it ready to implement.
+
 ## 0.73.0 — 2026-11-17 — Notes panel apart from the drawing tools; board notes remember their place
 - **What:** owner: open the notes panel just to read and click pictures; drawing is what brings the tools; the
   panel must work on boards too, and a board note must remember where it was written (like a 3D view) and glide
