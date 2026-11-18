@@ -14,6 +14,18 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.87.4 — 2026-11-18 — New row ids no longer collide on Windows
+- **What:** two board cards (or boards, groups, collections, annotations) created in quick succession could get
+  the same id on Windows and the second one failed with a UNIQUE constraint error (e.g. duplicating a card twice
+  fast). Ids now include a random part. The intermittent `test_board_missing` failure was this bug.
+- **Where:** library.py — the five `asset_id(f"<kind>:{time.time_ns()}:…")` generators (collections, boards,
+  board items, board groups, annotations) now add `secrets.token_hex(8)`; tests/test_splash_win.py expects the OS
+  spelling of the interpreter path (`str(Path("/x/python"))`) — the test, not the code, was wrong.
+- **Notes:** Windows `time.time_ns()` has coarse resolution, so a timestamp is not a unique seed. These ids were
+  never reproducible; the deterministic import remaps (`anno-import:…`) and path-hash asset ids are unchanged,
+  and undo / merge pass the existing id. Full suite passes (87 tests).
+- Review (fresh agent): no findings.
+
 ## 0.87.3 — 2026-11-18 — Sources: nested folders, clean removal, stale-view reset, connection pool
 - **What:** user report "removing a source misbehaves" (two sources, ЛАЙТИНГ and Desktop: ЛАЙТИНГ → Desktop →
   × Desktop → ЛАЙТИНГ shows no previews; the source stays in the menu). Cause: ЛАЙТИНГ lies inside Desktop — not
@@ -348,38 +360,3 @@ Add new entries directly below this line.
   by the reviewer (addNote adopts every loose drawing, so the number is right). Re-review: the fill migration
   must save the migrated styles with its marker (else lost, and the board / compare annotators missed it) —
   fixed; the other fixes confirmed.
-
-## 0.79.0 — 2026-11-18 — Reference images on the frame (crop, frame, shadow); library beside the lightbox / player (Tab)
-- **What:** owner: reference pictures in the annotating mode of the lightbox and the video player, a toolbar icon,
-  settings crop / frame (width, colour) / shadow (strength); pictures dropped onto the frame from outside or picked;
-  picking = the board's way (sidebar + thumbnail grid left of the player, a vertical divider) as a mode of its own
-  on Tab and a button at the left of the top bar, like the board's. New drawing kind `image` (tool `Shift+I`):
-  drop OS files / drag grid files onto the frame (any tool, the mode turns on), click the frame with the tool
-  (file picker, placed there), props-bar *From disk… / Library / Add selected* (touch). Selected: Frame, Frame
-  colour, Shadow, Opacity, *Crop* (or double-click; Enter / Esc / a press elsewhere ends) and *Reset crop*.
-  Tab / ◧ (`#libBtn`, lightbox bar's left end) = library beside the lightbox; Tab on a board toggles its split,
-  and the board's ◧ moved to the left of the top bar.
-- **Where:** review-core.js (`setImageSource / imageUrl / imageEl / imagesReady / imgCrop`, image prims in
-  `primsOf` / `primSvg` / `primCanvas`, bounds / hit / transform / `validItem`, JS merge remaps `data.shot`),
-  annotate.js (TOOLS / DEFAULT_STYLES / P / PROPS `image`, `cropFrame` / `applyCrop`, `addRefs` / `storeRef` /
-  `pickRefs` / `onRefDrop` / crop mode, `S.crop`), index.html (light split: `applyViewDom`, `placeLightSplit`,
-  `toggleLightSplit`, Tab; annotator host `toggleLibrary / pictureSources / selectedPictures`, `pictureSource`;
-  board annotator `refImages: false`), review.py (`build_package` ships the shot; HTML page image source,
-  `savePic` waits for decoding), library.py (`import_annotations` remaps `data.shot`), mobile (`refShots`,
-  `shotIds`, `burn` waits), FORMAT.md, ARCHITECTURE, MANUAL.
-- **Notes:** the shadow is six stacked translucent rounded boxes (no SVG filter: filter ids would clash between the
-  many SVGs on a page and the canvas has no portable blur) — the same in SVG and canvas, PDF included. A picture
-  is stored once per add (a duplicate / copy shares its shot). The crop is in source-picture units, so the picture
-  is never stretched; the box is the visible part. Library files: the file when the browser decodes it, PSD's
-  composite, else the thumbnail. Not done: pasting a picture from the system clipboard; reference images on boards;
-  editing them in the HTML page / phone app (they show there, read-only geometry). Verified with Playwright on an
-  isolated SIGHT_HOME: Tab split (lightbox left at the divider, grid shown, back on close), OS-file drop, grid
-  drop, Add selected on a video (ctx = the frame), crop by the east grip ([0,0,0.607,1], box narrowed), screenshot.
-- Review (fresh agent): the phone repainting forever when a reference image's shot is missing from the package
-  (and leaking object URLs), pictures landing on another frame when the video was scrubbed during the upload, Shift+I
-  picking a hidden tool on a board, a click inside the crop window making an empty undo step, phone reports / note
-  cards burning grey placeholders before the pictures were known, Tab toggling the split behind the stamp popup /
-  dialogs, the grid's touch selection bar under the lightbox, a decoded-picture cache never cleared on a new source,
-  SVGs with only a viewBox failing; fixed (`rv.refAsked` / `refWait`, ctx taken before the uploads, `setTool` gate,
-  2 px threshold, `await refShots` before the report, Tab gate, `--light-l`, cache cleared in `setImageSource`,
-  1024 px fallback). Accepted: no LRU on the cache. Re-review: the same reviewer confirmed all nine fixes.

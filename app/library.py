@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import secrets
 import time
 import unicodedata
 from pathlib import Path
@@ -3413,7 +3414,7 @@ class Library:
         return cols
 
     def add_collection(self, name: str, parent_id: str | None = None) -> dict:
-        cid = asset_id(f"col:{time.time_ns()}:{name}")
+        cid = asset_id(f"col:{time.time_ns()}:{secrets.token_hex(8)}:{name}")
         nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM collections")[0]["n"]
         self.execute(
             "INSERT INTO collections(id, name, parent_id, created_at, sort_order) VALUES (?,?,?,?,?)",
@@ -3503,7 +3504,7 @@ class Library:
         return rows
 
     def add_board(self, name: str) -> dict:
-        bid = asset_id(f"board:{time.time_ns()}:{name}")
+        bid = asset_id(f"board:{time.time_ns()}:{secrets.token_hex(8)}:{name}")
         now = int(time.time() * 1000)
         nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM boards")[0]["n"]
         name = name.strip() or "Untitled"
@@ -3572,7 +3573,7 @@ class Library:
         return {"board": board, "items": items, "groups": groups, "annotations": annotations}
 
     def add_board_item(self, bid: str, body: dict) -> dict:
-        iid = asset_id(f"bitem:{time.time_ns()}:{body.get('asset_id', '')}")
+        iid = asset_id(f"bitem:{time.time_ns()}:{secrets.token_hex(8)}:{body.get('asset_id', '')}")
         now = int(time.time() * 1000)
         playback = body.get("playback_state")
         aid = str(body.get("asset_id") or "")
@@ -3651,7 +3652,7 @@ class Library:
             self.conn.commit()
 
     def add_board_group(self, bid: str, item_ids: list[str], annotation_ids: list[str], name: str = "") -> dict:
-        gid = asset_id(f"bgroup:{time.time_ns()}:{bid}")
+        gid = asset_id(f"bgroup:{time.time_ns()}:{secrets.token_hex(8)}:{bid}")
         now = int(time.time() * 1000)
         self.execute(
             "INSERT INTO board_groups(id, board_id, name, created_at, updated_at, revision) VALUES (?,?,?,?,?,1)",
@@ -3744,7 +3745,7 @@ class Library:
                 return self.update_annotation(want, body) or {}
             aid = want
         else:
-            aid = asset_id(f"anno:{time.time_ns()}:{scope}")
+            aid = asset_id(f"anno:{time.time_ns()}:{secrets.token_hex(8)}:{scope}")
         now = int(time.time() * 1000)
         self.execute(
             "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, target_board_item_id, "
