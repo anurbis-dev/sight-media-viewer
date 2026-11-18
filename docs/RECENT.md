@@ -14,6 +14,35 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.87.3 — 2026-11-18 — Sources: nested folders, clean removal, stale-view reset, connection pool
+- **What:** user report "removing a source misbehaves" (two sources, ЛАЙТИНГ and Desktop: ЛАЙТИНГ → Desktop →
+  × Desktop → ЛАЙТИНГ shows no previews; the source stays in the menu). Cause: ЛАЙТИНГ lies inside Desktop — not
+  the Cyrillic name. Sources may now nest: a file belongs to the innermost source, the outer source shows it too,
+  and removing either keeps the files the other still holds. Removing a source while it scanned / was watched left
+  rows in All forever; no longer, and startup deletes old leftovers. Removal drops collection membership, asks for
+  confirmation (× has no undo on touch), reports a failed DELETE, and resets a filter / cards / selection that
+  pointed into it (also from another window). A hidden window gives up its event stream after 10 s (the browser
+  allows 6 connections per host across windows) and catches up when shown. Paths compare regardless of Unicode
+  form (macOS decomposed "Й").
+- **Where:** library.py — `add_source`, `remove_source`, `_reassign`, `_source_scope`, `_nested*`, `_owner`,
+  `scan_source` (`_src_gen`, `_scans_running`, nested roots skipped, locked flush), `_touch_one` / `on_moved`,
+  `resume_watchers` (ownership fix-up + orphan cleanup), `sources()` (`own`), `normpath` (NFC), `disk_spelling`;
+  server.py `/api/events` now an async generator (polls the queue; still ends on `Bus.CLOSE`); index.html remove
+  confirm, `syncSourcesView`, `connectEvents` with visibilitychange; tests/test_sources.py (14 tests).
+- **Notes:** invariant: a file row's `source_id` is the innermost source holding it — use `_source_scope` for "in
+  source X", never a bare `source_id=`. Asset ids are path hashes (one row per file), which is why the inner scan's
+  INSERT OR IGNORE used to leave rows on the outer source. Scan / watcher inserts are `INSERT … WHERE
+  EXISTS(source)`; the flush checks the per-source generation under `self.lock`; a cancelled scan does not mark
+  unreached files missing. Removal keeps thumbnail files on disk, board cards and annotations. Startup deletes
+  orphan rows (the owner's library had 3 from a removed "Documents" source — found reading a copy of the DB).
+  The old sync events generator held one worker thread per open window. Windows Cyrillic paths were fine
+  everywhere checked. Not done: one shared stream for several visible windows; `_reassign` → `hidden()` reads
+  `.obj` files under the DB lock; a vanished inner root is not re-checked. `test_board_missing` (intermittent
+  UNIQUE id) and `test_splash_win` (path separator) fail on master already.
+- Review (fresh agent, run by the implementing agent, three rounds): two medium nested-source edge cases (a
+  running outer scan, the outer watcher applying its own rules) and a `flush()` race (check outside the lock) —
+  fixed and confirmed; nothing new in round 3.
+
 ## 0.87.2 — 2026-11-18 — macOS: Dock icon back; Sight.app answers the Dock (real Cocoa loop)
 - **What:** macOS: Sight.app keeps its Dock icon again and answers it. Clicking the icon brings the Sight window to
   the front, restores it if minimized, and opens it again if it was closed. Cmd+Tab to Sight focuses the window.
@@ -354,22 +383,3 @@ Add new entries directly below this line.
   SVGs with only a viewBox failing; fixed (`rv.refAsked` / `refWait`, ctx taken before the uploads, `setTool` gate,
   2 px threshold, `await refShots` before the report, Tab gate, `--light-l`, cache cleared in `setImageSource`,
   1024 px fallback). Accepted: no LRU on the cache. Re-review: the same reviewer confirmed all nine fixes.
-
-## 0.78.0 — 2026-11-18 — Phone: review a group as a sequence, clip by clip
-- **What:** owner: reviewing a sequence on the phone meant going back to the list after every clip. Now a tap on
-  a group's picture opens its sequence on the clip last seen there (else the first); the review header of any
-  grouped review has ‹ / › around the title and "group · 2 / 5" in the subtitle; Page Up / Page Down on a
-  keyboard. Back leaves the sequence in one step. Works for pictures and 3D models too.
-- **Where:** mobile/js/app.js (`seqOf`, `openSequence`, `seqRemember`, `seqGo`; `openReview(…, opts.replace)`;
-  `renderReview` header, `paintReview` subtitle `els.seq`; group header `thumb`; keydown table),
-  mobile/index.html (`.seqb:disabled`), tests/pwa_e2e.cjs `bundle` + test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE.
-- **Notes:** the sequence = the review's UI group (`g.keys` order), not `meta.groups`. No wrap at the ends. No
-  swipe on the player for clip switching (it competes with scrub / pinch / drawing) — buttons serve touch. A
-  clip switch flushes edits (openReview) like Back does; an unsent composer draft is dropped as on Back.
-- Review (fresh agent): `pushed` was read from a review still loading (Back out of step after quick ›) → the
-  history entry is settled before any await, an overtaken unshown review hands its entry over, `openingKey` is
-  the base for quick taps; Back during a loading › was undone → `++openSeq` in leaveReview / route; PageDown
-  during an export swapped clips → no switch while `.busy`; hidden reviews were in the sequence → `seqKeys`;
-  a deleted clip was a dead end → dropped from the group and skipped. Nits: `openingKey` cleared on a thrown
-  open (wrapper `openReview` → `openReviewNow`), header refreshed after a drop (`paintSeq`, player untouched).
-  Confirmed by the same reviewer.

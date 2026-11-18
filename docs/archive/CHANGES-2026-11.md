@@ -2,6 +2,25 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.78.0 — 2026-11-18 — Phone: review a group as a sequence, clip by clip
+- **What:** owner: reviewing a sequence on the phone meant going back to the list after every clip. Now a tap on
+  a group's picture opens its sequence on the clip last seen there (else the first); the review header of any
+  grouped review has ‹ / › around the title and "group · 2 / 5" in the subtitle; Page Up / Page Down on a
+  keyboard. Back leaves the sequence in one step. Works for pictures and 3D models too.
+- **Where:** mobile/js/app.js (`seqOf`, `openSequence`, `seqRemember`, `seqGo`; `openReview(…, opts.replace)`;
+  `renderReview` header, `paintReview` subtitle `els.seq`; group header `thumb`; keydown table),
+  mobile/index.html (`.seqb:disabled`), tests/pwa_e2e.cjs `bundle` + test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE.
+- **Notes:** the sequence = the review's UI group (`g.keys` order), not `meta.groups`. No wrap at the ends. No
+  swipe on the player for clip switching (it competes with scrub / pinch / drawing) — buttons serve touch. A
+  clip switch flushes edits (openReview) like Back does; an unsent composer draft is dropped as on Back.
+- Review (fresh agent): `pushed` was read from a review still loading (Back out of step after quick ›) → the
+  history entry is settled before any await, an overtaken unshown review hands its entry over, `openingKey` is
+  the base for quick taps; Back during a loading › was undone → `++openSeq` in leaveReview / route; PageDown
+  during an export swapped clips → no switch while `.busy`; hidden reviews were in the sequence → `seqKeys`;
+  a deleted clip was a dead end → dropped from the group and skipped. Nits: `openingKey` cleared on a thrown
+  open (wrapper `openReview` → `openReviewNow`), header refreshed after a drop (`paintSeq`, player untouched).
+  Confirmed by the same reviewer.
+
 ## 0.77.0 — 2026-11-18 — The phone app opens and answers a sequence's `.srev` bundle (multi-clip plan, stage 3)
 - **What:** opening a bundle on the phone merges every clip into its own review (one summary toast: damaged
   clips / non-media named, the rest land; "same file as clip N" for a duplicate) and puts them in one home

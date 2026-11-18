@@ -1199,19 +1199,28 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     def events():
         q = lib.bus.subscribe()
 
-        def gen():
+        # Async, polling the thread queue: a blocking q.get() in a sync generator kept one worker
+        # thread of the shared pool busy per open window for good, so a few windows could starve
+        # every other (sync) request of threads.
+        async def gen():
             try:
                 if lib.bus.closed:  # opened after Bus.close (an EventSource reconnecting during Quit)
                     return
                 yield f"data: {json.dumps({'type': 'hello'})}\n\n"
+                idle = 0.0
                 while True:
                     try:
-                        ev = q.get(timeout=15)
+                        ev = q.get_nowait()
                     except queue.Empty:
-                        yield ":\n\n"
+                        await asyncio.sleep(0.1)
+                        idle += 0.1
+                        if idle >= 15:
+                            idle = 0.0
+                            yield ":\n\n"
                         continue
                     if ev is Bus.CLOSE:  # server shutting down (Bus.close): end the stream
                         return
+                    idle = 0.0
                     yield f"data: {json.dumps(ev)}\n\n"
             finally:
                 lib.bus.unsubscribe(q)

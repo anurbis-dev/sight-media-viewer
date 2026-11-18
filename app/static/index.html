@@ -3019,11 +3019,25 @@ function renderSources(set){
     };
     b.querySelector('[data-act="remove"]').onclick = async (e) => {
       e.stopPropagation();
-      await api("/api/sources/" + s.id, { method: "DELETE" });
+      // The × sits next to the expand chevron and the tags / ratings / notes of the whole folder
+      // cannot be brought back, so it asks (a touch screen has no undo either).
+      // Sources may nest: an inner one's files stay with the outer one; an outer one keeps the
+      // files of the sources inside it ("own" leaves those out).
+      const outer = (state.meta.sources || []).filter((o) => o.id !== s.id && isUnder(s.path, o.path.replace(/[\\/]$/, "")))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+      const n = s.own ?? s.count ?? 0;
+      const what = outer
+        ? `Its files stay in the library, under "${outer.name}".`
+        : `The library forgets its ${n} file${n === 1 ? "" : "s"} — their tags, ratings, notes and collection membership are lost. Nothing on disk is touched.`;
+      if (!confirm(`Remove "${s.name}" from the library?\n\n${what}`)) return;
+      try {
+        await api("/api/sources/" + s.id, { method: "DELETE" });
+      } catch (err) {
+        alert("Could not remove that folder: " + err.message);
+        return;
+      }
       state.sourceTree.expandedSources.delete(s.id);
-      if (state.filter.source === s.id) applyFilter({});
-      else resetList();
-      await refreshMeta();
+      await refreshMeta(); // syncSourcesView drops the filter / cards / selection of the removed folder
     };
     b.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -8435,6 +8449,28 @@ async function refreshMeta(){
   renderNav();
   renderStatus();
   renderFfmpeg();
+  syncSourcesView();
+}
+
+// After the source list changed — a folder removed here or in another window, or taken over by an
+// added folder that contains it: a filter on a source / folder that is gone falls back to All, and
+// cards and selected ids of files that left the library go (pull(false) only appends, so the grid
+// would keep showing them).
+function syncSourcesView(){
+  const srcs = state.meta.sources || [];
+  const ids = new Set(srcs.map((s) => s.id));
+  const f = state.filter;
+  const goneFilter = (f.source && !ids.has(f.source))
+    || (f.folder && !srcs.some((s) => f.folder === s.path || isUnder(f.folder, s.path)
+      || (/[\\/]$/.test(s.path) && f.folder.startsWith(s.path)))); // a drive root ends with the separator
+  const stale = state.items.some((a) => a.source_id && !ids.has(a.source_id));
+  if (!goneFilter && !stale) return;
+  const byId = new Map(state.items.map((a) => [a.id, a])); // Ctrl+A may select tens of thousands
+  const keep = state.selectedIds.filter((id) => { const a = byId.get(id); return !a || ids.has(a.source_id); });
+  if (keep.length !== state.selectedIds.length) selectSet(keep, keep.includes(state.selected) ? state.selected : null);
+  for (const sid of [...state.sourceTree.expandedSources]) if (!ids.has(sid)) state.sourceTree.expandedSources.delete(sid);
+  if (goneFilter) applyFilter({});
+  else resetList();
 }
 
 function params(){
@@ -8787,11 +8823,21 @@ $("paletteInput").addEventListener("keydown", (e) => {
 });
 $("palette").addEventListener("pointerdown", (e) => { if (e.target === $("palette")) closePalette(); });
 
+// The event stream is one long-lived connection per window, and a browser allows only 6 per host
+// for all its windows together (video streams and thumbnail fetches share them): a hidden window
+// gives its stream up and catches up when it shows again (every "hello" after the first one —
+// also after an automatic reconnect — re-reads the state and the cards on screen).
+let eventSrc = null, eventHellos = 0, eventHideT = 0;
 function connectEvents(){
-  const es = new EventSource("/api/events");
+  if (eventSrc) return;
+  const es = eventSrc = new EventSource("/api/events");
   es.onmessage = (e) => {
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.type === "hello"){
+      if (eventHellos++){ scheduleMeta(); scheduleRefreshItems(); pull(false); canvasCtl?.refreshMissing({ sweep: "all" }); }
+      return;
+    }
     if (ev.type === "thumb" && ev.id) applyThumb(ev.id, ev.hasThumb !== false, ev.animated, ev.v, ev.width, ev.height);
     // A board's placeholder / picture-less cards re-check their files (debounced in canvas.js).
     if (ev.type === "thumb" && ev.id) canvasCtl?.refreshMissing({ id: ev.id });
@@ -8804,6 +8850,15 @@ function connectEvents(){
     }
   };
 }
+document.addEventListener("visibilitychange", () => {
+  clearTimeout(eventHideT);
+  if (!document.hidden){ connectEvents(); return; }
+  eventHideT = setTimeout(() => {  // not on a quick switch away and back
+    if (!document.hidden || !eventSrc) return;
+    eventSrc.close();
+    eventSrc = null;
+  }, 10000);
+});
 
 function clearSearch(){
   $("q").value = "";
