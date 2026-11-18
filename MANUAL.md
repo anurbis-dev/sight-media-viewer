@@ -51,7 +51,7 @@
   list; click a layer to view it alone, "Composite" to return to the full image.
 - **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar
   and the library grid on the left and the lightbox / video player on the right, with a divider to drag
-  (the width is remembered). Double-click a thumbnail to open it, drag pictures from the grid onto the frame
+  (the width is remembered; the sidebar's Canvas section is hidden there). Double-click a thumbnail to open it, drag pictures from the grid onto the frame
   as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
   way you left it. On a board `Tab` shows / hides the library beside it in the same way (◧ now sits at the
   left of the top bar).
@@ -75,8 +75,12 @@
   annotating.
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
-    eraser end erases too) · `L` line · `W` arrow · `R` rectangle · `O` ellipse · `T` text ·
-    `N` numbered pin. `[` / `]` make the brush / width smaller / larger.
+    eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) · `R` / `O` the shape tool as
+    a rectangle / an ellipse (its *Shape* switch ▭ / ◯ in the styles bar does the same by touch) · `T` text ·
+    `N` note pin (a marker with the number of the note it belongs to — before the note is added, the number it
+    will get). `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
+    the brush. The drawing tools and the notes panel are independent: the ✎ button / `Shift+A` shows / hides
+    the tools only, the speech-bubble button / `C` the panel only.
   - **Reference images** (`Shift+I`, the picture button in the toolbar): put pictures on the frame /
     picture as references. Drop picture files from outside onto the frame (any tool — annotating turns on
     by itself), drag pictures from the library beside the player (below), click the frame with the tool to
@@ -89,7 +93,7 @@
     picture within the cut; Enter / Esc / a press elsewhere finishes, *Reset crop* shows it all again.
     Reference images travel with the review (web page, `.srev`, PDF / ZIP pictures, the phone app shows
     them).
-  - Shapes: stroke on/off, width, dash (solid / dashed / dotted), fill on/off, fill colour and
+  - Shapes: width, dash (solid / dashed / dotted), fill on/off (off by default, 50 % when on), fill colour and
     opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
     (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the
     middle handle of a selected line to bend it. Text: font, size, colour, bold / italic / underline,
@@ -118,7 +122,7 @@
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `?` (or the ? button in the toolbar) opens a list of every annotation shortcut; Esc / ? / a click outside closes it, and nothing underneath reacts while it is open. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
-    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text to edit, the clock marks it *In progress* (someone took
+    show; click it again, click empty space in the list, or Esc to see all; hovering a note does nothing to the picture; right after you make a note the picture is clean, and that note's drawings come back when you click its card or a video / 3D preview frame in it), attached screenshots carry a small camera badge and a dashed edge (drawing previews do not); click one to enlarge it, Esc or a click closes it; double-click its text (or the pencil on the card: shown on hover, and on a picked card for touch) to edit, the clock marks it *In progress* (someone took
     it), ✓ resolves it, the bin deletes it with its
     drawings. Alt+click a screenshot in a note removes it.
     **Picture texts** — the note's text is its topic; each of its pictures (the image, a video frame,
@@ -172,7 +176,7 @@
     of those frames, numbered in the top-left corner. Click a marker to go there. `,` / `.`
     step one frame, `Shift+,` / `Shift+.` jump to the previous / next marker (these work outside the
     annotation mode too). *Hold* in the tool settings keeps new drawings visible for 0.5–2 s or the
-    whole clip; onion skin — right-click or long-press the eye in the top bar (a way of viewing, drawing or not; remembered)
+    whole clip; onion skin — right-click or long-press the eye in the top bar (a way of viewing, drawing or not; remembered; picking a note in the panel goes to its frame but keeps every drawing and ghost on show)
     — cross-fades between annotated frames: as the playhead moves on,
     the last frame's drawings fade out and the next annotated frame's fade in (over the last / first second at
     the clip's ends).
@@ -604,15 +608,15 @@
     addition / layer order / path / randomly (press again to reverse); `Ctrl+Alt+S` stack.
   - **Draw and write notes on a board:** the pen button in the top bar, next to ◧ (or
     **Shift+A**; Shift+A or Esc leaves again) switches on the same tools as the full-screen viewer: brush,
-    pencil, highlighter, eraser, line, arrow, rectangle, ellipse, text, numbered pin, select / transform,
-    undo / redo and the styles bar (`B P M E L W R O T N V`, `Ctrl+Z` — press `?` in the mode for the list).
+    pencil, highlighter, eraser, arrow, shape (rectangle / ellipse), text, note pin, select / transform,
+    undo / redo and the styles bar (`B P M E W R O T N V`, `Ctrl+Z` — press `?` in the mode for the list).
     Drawings are **free on the board** (they do not belong to items and do not move with them), at any
     zoom. While the mode is on, a drag draws (items and their frame do not react; one finger draws on a
     touch screen) and the keys go to the tools, so `X` / `Delete` act on the selected drawing, never on
     items. Panning and zooming still work as usual: wheel, middle-drag, Alt+drag, Ctrl+wheel / right-drag
     — and **two fingers** pan and pinch-zoom the board (also with the mode off). `F` / `A` frame the board
     (drawings included). With the mode off the drawings stay visible and the board behaves exactly as
-    before. The panel button in the bar opens the **notes panel** (starts closed on a board): type a note
+    before. The notes button in the top bar opens the **notes panel** (starts closed on a board): type a note
     and press Enter — the drawings made since the last note are attached to it; a note has replies, an
     Open / In progress / Resolved state and a delete button as in the viewer. Clicking a note card shows
     only its drawings and moves the camera to them (click it again to show everything). A board has no

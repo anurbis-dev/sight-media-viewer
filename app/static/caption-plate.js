@@ -73,14 +73,17 @@ function injectStyles(){
 .scp.b .scp-body, .scp.t .scp-body { max-height: calc(1.35em * 5); }
 /* A size set by the grip (.sz; --scp-uw / --scp-uh, shares of the host), never past the host's room: a bottom
    plate at most --scp-bmax wide (the phone / reviewer page keep their pencil / button free) and clear of
-   --scp-t above; a side plate leaves 90 px of the picture. While editing, the plate takes the field's height. */
+   --scp-t above; a side plate leaves 90 px of the picture. */
 .scp.b.sz .scp-plate { width: min(var(--scp-uw), var(--scp-bmax, calc(100% - 24px))); left: max(var(--scp-bxmin, 4px), calc(var(--scp-bx, 10%) + (var(--scp-bw, 80%) - min(var(--scp-uw), var(--scp-bmax, calc(100% - 24px)))) / 2)); height: min(var(--scp-uh), calc(100% - var(--scp-b, 12px) - var(--scp-t, 12px))); }
 .scp.t.sz .scp-plate { width: min(var(--scp-uw), calc(100% - 2 * var(--scp-bxmin, 12px))); left: max(var(--scp-bxmin, 4px), calc(50% - min(var(--scp-uw), calc(100% - 2 * var(--scp-bxmin, 12px))) / 2)); height: min(var(--scp-uh), calc(100% - var(--scp-b, 12px) - var(--scp-t, 12px))); }
 .scp.b.sz .scp-body, .scp.t.sz .scp-body { max-height: none; flex: 1 1 auto; min-height: 0; }
 .scp.l.sz .scp-plate { width: min(var(--scp-uw), calc(100% - var(--scp-l, 12px) - 90px)); min-width: 0; height: min(var(--scp-uh), calc(100% - var(--scp-lt, 10%) - 12px)); }
 .scp.r.sz .scp-plate { width: min(var(--scp-uw), calc(100% - var(--scp-r, 12px) - 90px)); min-width: 0; height: min(var(--scp-uh), calc(100% - var(--scp-rb, 10%) - var(--scp-rt, 12px))); }
-.scp.b.sz.editing .scp-plate, .scp.t.sz.editing .scp-plate { height: auto; }
-.scp.b.sz.editing .scp-body, .scp.t.sz.editing .scp-body { flex: none; }
+/* While editing, the plate keeps the size it has (a sized one its size; an unsized one at least its height, pinned
+   by startEdit) and the field fills it. */
+.scp.editing .scp-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; max-height: none; }
+.scp.editing .scp-ta { flex: 1 1 auto; max-height: none; }
+.scp.sz.editing .scp-ta, .scp.l.editing .scp-ta, .scp.r.editing .scp-ta { min-height: 0; }
 /* The grip: a small bar just outside the middle of the free edge (the head / text under it keep their taps). */
 .scp-grip { position: absolute; touch-action: none; z-index: 1; }
 .scp-grip::after { content: ""; position: absolute; left: 50%; top: 50%; border-radius: 2px; background: rgb(255 255 255 / .55); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); transform: translate(-50%, -50%); }
@@ -217,6 +220,8 @@ export function createPlate(parent, opts = {}){
     if (c.onEdit){ c.onEdit(); return; }
     if (!c.onSave || editor) return;
     if (st.min){ st.min = false; writeState(storeKey, st); paintState(); }
+    // An unsized top / bottom plate fits its text: the field starts no smaller than the plate is now.
+    if (!root.classList.contains("sz") && (st.side === "b" || st.side === "t")) plate.style.minHeight = plate.getBoundingClientRect().height + "px";
     const ta = document.createElement("textarea");
     ta.className = "scp-ta";
     ta.value = c.text || "";
@@ -240,6 +245,7 @@ export function createPlate(parent, opts = {}){
     if (!ed) return;
     editor = null;
     root.classList.remove("editing");
+    plate.style.minHeight = "";
     endedAt = performance.now();
     const v = ed.ta.value.trim();
     sig = null;  // the body was replaced: draw it again whatever the content

@@ -40,7 +40,6 @@ const ICON = {
   pencil: ico(`<path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 6.5l3 3"/>`),
   marker: ico(`<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>`),
   eraser: ico(`<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>`),
-  line: ico(`<path d="M5 19 19 5"/>`),
   arrow: ico(`<path d="M5 19 19 5"/><path d="M10 5h9v9"/>`),
   rect: ico(`<rect x="4" y="6" width="16" height="12" rx="2"/>`),
   ellipse: ico(`<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>`),
@@ -74,12 +73,10 @@ const TOOLS = [
   ["marker", "KeyM", "Highlighter", ICON.marker],
   ["eraser", "KeyE", "Eraser — or hold Ctrl with any tool", ICON.eraser],
   null,
-  ["line", "KeyL", "Line — Shift snaps to 15°", ICON.line],
-  ["arrow", "KeyW", "Arrow — Shift snaps to 15°", ICON.arrow],
-  ["rect", "KeyR", "Rectangle — Shift square", ICON.rect],
-  ["ellipse", "KeyO", "Ellipse — Shift circle", ICON.ellipse],
+  ["arrow", "KeyW", "Arrow — a line with Start / End heads set to none · Shift snaps to 15°", ICON.arrow],
+  ["rect", "KeyR", "Shape — rectangle or ellipse (O) · Shift square / circle", ICON.rect],
   ["text", "KeyT", "Text", ICON.text],
-  ["pin", "KeyN", "Numbered pin", ICON.pin],
+  ["pin", "KeyN", "Note pin — a marker with the number of the note it belongs to", ICON.pin],
   ["image", "Shift+KeyI", "Reference image — click to pick pictures, drop them on the frame, or drag them from the library (Tab)", ICON.image],
 ];
 // The frame stamp (a device preference, not review data): where / how the frame label sits over the video and on
@@ -102,8 +99,8 @@ const DEFAULT_STYLES = {
   eraser: { size: 26, mode: "object" },
   line: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "none", body: "straight", headSize: 1 },
   arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1 },
-  rect: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.2, radius: 0, opacity: 1 },
-  ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.2, opacity: 1 },
+  rect: { shape: "rect", color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, radius: 0, opacity: 1 },
+  ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, opacity: 1 },
   text: { font: "sans", size: 28, color: "#ffffff", bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1 },
   pin: { color: "#ff3b30", size: 30 },
   image: { border: 0, borderColor: "#ffffff", shadow: 0, opacity: 1 },
@@ -125,7 +122,7 @@ const P = {
   head1: { k: "head1", t: "select", label: "End", options: HEADS },
   body: { k: "body", t: "select", label: "Shape", options: BODIES },
   headSize: { k: "headSize", t: "num", label: "Head", min: 0.3, max: 4, exp: true, unit: "×" },
-  strokeOn: { k: "strokeOn", t: "toggle", label: "Stroke" },
+  shape: { k: "shape", t: "seg", label: "Shape", options: [["rect", "▭"], ["ellipse", "◯"]], create: true },
   fillOn: { k: "fillOn", t: "toggle", label: "Fill" },
   fill: { k: "fill", t: "color", label: "Fill colour" },
   fillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true },
@@ -155,8 +152,10 @@ const PROPS = {
   eraser: [P.esize, P.emode],
   line: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
   arrow: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
-  rect: [P.strokeOn, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.radius, P.opacity],
-  ellipse: [P.strokeOn, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.opacity],
+  // The shape tool (id "rect") draws either; a selected shape keeps its kind. No stroke switch: the outline is
+  // always drawn (shapes made with it off keep it off).
+  rect: [P.shape, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.radius, P.opacity],
+  ellipse: [P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.opacity],
   text: [P.font, P.tsize, P.color, P.bold, P.italic, P.underline, P.align, P.bgOn, P.bg, P.bgOpacity, P.outline, P.outlineColor, P.opacity],
   pin: [P.color, P.psize],
   image: [P.border, P.borderColor, P.shadow, P.opacity],
@@ -210,8 +209,8 @@ export function createAnnotator(host){
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
   const panelKey = host.board ? "sight.annotate.panel.board" : "sight.annotate.panel";
-  // The notes panel opens on its own too, for reading (S.readOn): notes, replies, a click on a picture goes there —
-  // no drawing tools, no composer. Drawing (S.on) is the mode that brings the tools (and the panel per S.panelOn).
+  // The notes panel (S.readOn): notes, replies, a click on a picture goes there; the composer shows while drawing.
+  // One switch whether drawing or not (togglePanel); S.panelOn serves only a host without a reading panel.
   const readKey = host.board ? "sight.annotate.read.board" : "sight.annotate.read";
   const S = {
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
@@ -233,6 +232,13 @@ export function createAnnotator(host){
     const saved = readJSON("sight.annotate.styles", {}) || {};
     const out = {};
     for (const [k, v] of Object.entries(DEFAULT_STYLES)) out[k] = { ...v, ...(saved[k] || {}) };
+    // The stroke switch is gone: a tool saved with it off would draw invisible outlines. The old fill default
+    // (20 %) gives way to the new one.
+    const mig = !readJSON("sight.annotate.fill50", false);  // once: a 20 % chosen later stays
+    for (const t of ["rect", "ellipse"]){ out[t].strokeOn = true; if (mig && out[t].fillOpacity === 0.2) out[t].fillOpacity = 0.5; }
+    // The migrated styles are saved with the marker (the other annotators — board, compare — read them back).
+    if (mig){ writeJSON("sight.annotate.styles", out); writeJSON("sight.annotate.fill50", true); }
+    if (out.rect.shape !== "ellipse") out.rect.shape = "rect";
     return out;
   }
   function loadStamp(){
@@ -761,9 +767,13 @@ export function createAnnotator(host){
     const compose = !!(inp && (document.activeElement === inp || inp.value.trim())) || !!(cin && (document.activeElement === cin || cin.value.trim())) || !!(D && (D.stroke || D.shape)) || !!(S.edit && S.edit.isNew)
       || S.pending.length > 0 || [...S.items.values()].some((it) => isDrawing(it) && !it.data.note && ((it.data.created || 0) >= S.composeSince || S.adopt.has(it.id)));
     const note = (id) => (id && S.items.get(id)?.kind === "note" ? id : null);
-    modeCache = { compose, pin: note(S.pinFocus) };
+    // With onion skin on, a picked note does not narrow what shows (its frame is sought, every drawing keeps its
+    // ghost): picking notes in the panel must not break the onion view.
+    const pin = note(S.pinFocus);
+    // (While a new note is in the making the pick still narrows: the picked note's drawings must show then.)
+    modeCache = { compose, pin: onionOn() && !compose ? null : pin };
     // S.cleanPic (set by addNote) lasts until the next compose or pick.
-    if (compose || modeCache.pin) S.cleanPic = false;
+    if (compose || pin) S.cleanPic = false;
     queueMicrotask(() => { modeCache = null; });
     return modeCache;
   }
@@ -799,10 +809,11 @@ export function createAnnotator(host){
   // after the last annotated frame the drawings fade in / out over ONION_EDGE seconds. Returns id → opacity (0..1)
   // for the drawings not on screen by their own frame; null when onion skin is off.
   const ONION_EDGE = 1.0;
+  // (Not in the version compare: no eye there to turn it off — host.showWhileWatching false.)
+  const onionOn = () => S.onion && S.kind === "video" && !!video() && host.showWhileWatching !== false;
   function onionFade(){
     const v = video();
-    // (Not in the version compare: no eye there to turn it off — host.showWhileWatching false.)
-    if (!S.onion || S.kind !== "video" || !v || host.showWhileWatching === false) return null;
+    if (!onionOn()) return null;
     const fd = 1 / (S.fps || 25), t = frameStart(v.currentTime), eps = fd / 2;
     const spans = [];
     for (const it of S.items.values()){
@@ -876,7 +887,9 @@ export function createAnnotator(host){
     return notes;
   }
   function numOf(it){
-    if (!it.data.note) return "";
+    // Not attached yet: the number its note will get (a new note always lands at the end).
+    // (addNote takes every loose drawing, old ones too, so each loose pin is the next note's.)
+    if (!it.data.note) return it.data.reply ? "" : notesSorted().length + 1;
     const i = notesSorted().findIndex((n) => n.id === it.data.note);
     return i >= 0 ? i + 1 : "";
   }
@@ -1342,9 +1355,9 @@ export function createAnnotator(host){
       renderAll();
       return;
     }
-    if (tool === "rect" || tool === "ellipse"){
+    if (tool === "rect"){
       const st = styleDoc(tool);
-      const it = newItem("shape", tool, { color: st.color, strokeOn: st.strokeOn, width: st.width, dash: st.dash, fillOn: st.fillOn, fill: st.fill, fillOpacity: st.fillOpacity, radius: st.radius || 0, opacity: st.opacity, x, y, w: 0, h: 0, rot: 0 });
+      const it = newItem("shape", st.shape === "ellipse" ? "ellipse" : "rect", { color: st.color, strokeOn: st.strokeOn, width: st.width, dash: st.dash, fillOn: st.fillOn, fill: st.fill, fillOpacity: st.fillOpacity, radius: st.shape === "ellipse" ? 0 : st.radius || 0, opacity: st.opacity, x, y, w: 0, h: 0, rot: 0 });
       S.items.set(it.id, it);
       S.drag = { shape: it, x, y };
       renderAll();
@@ -1843,15 +1856,23 @@ export function createAnnotator(host){
     const bar = S.bar;
     if (!bar) return;
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
+    const sb = bar.querySelector("[data-tool=rect]"), sk = S.styles.rect.shape === "ellipse" ? "ellipse" : "rect";
+    if (sb.dataset.shape !== sk){ sb.dataset.shape = sk; sb.innerHTML = ICON[sk]; }
     bar.querySelectorAll("[data-act=shot], [data-act=region]").forEach((b) => { b.hidden = isBoard(); });  // no picture to capture on a board
     bar.querySelector("[data-tool=image]").hidden = isBoard() || host.refImages === false;  // a board places pictures itself
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
     if (S.kind !== "video") closeStampPop();
     paintEye();
-    bar.querySelector("[data-act=panel]").classList.toggle("on", S.panelOn);
+    const pb = bar.querySelector("[data-act=panel]");
+    pb.hidden = readable();  // the lightbox / board have their own notes button
+    pb.classList.toggle("on", S.panelOn);
   }
+  // The shape tool's kind: R / O, the bar's Shape switch. (Old names still arrive: "ellipse".)
+  function setShape(kind){ S.styles.rect.shape = kind; saveStyles(); setTool("rect"); }
   function setTool(t){
+    if (t === "ellipse"){ setShape("ellipse"); return; }
+    if (t === "line") t = "arrow";
     if (!PROPS[t] || (t === "image" && !refsAllowed())) return;  // (Shift+I on a board: no such tool there)
     finishEdit();
     S.crop = null;
@@ -1891,6 +1912,7 @@ export function createAnnotator(host){
     const tg = propsTarget();
     let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
     if (tg.items) list = list.filter((p) => !p.create);
+    else if (tg.type === "rect" && S.styles.rect.shape === "ellipse") list = list.filter((p) => p.k !== "radius");
     let html = "";
     if (tg.items) html += `<span class="an-pl">${tg.items.length > 1 ? tg.items.length + " selected" : (tg.type || "")}</span>`;
     for (const p of list){
@@ -1943,6 +1965,7 @@ export function createAnnotator(host){
     if (!tg.items){
       S.styles[tg.type][p.k] = v;
       saveStyles();
+      if (p.k === "shape") paintBar();  // the tool's icon follows its kind
       return;
     }
     const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
@@ -2185,26 +2208,26 @@ export function createAnnotator(host){
     return el;
   }
   function focusComposer(){
-    if (!S.panelOn) togglePanel(true);
+    if (!panelShown()) togglePanel(true);
     requestAnimationFrame(() => S.ui?.querySelector(".an-input")?.focus());
   }
   function dictateNote(){
-    if (!S.panelOn) togglePanel(true);
+    if (!panelShown()) togglePanel(true);
     requestAnimationFrame(() => { const t = S.dictTa?.isConnected ? S.dictTa : S.ui?.querySelector(".an-input"); if (t) S.dict?.toggle(t); });
   }
-  // The panel of the mode in use: drawing → S.panelOn, just watching → S.readOn.
+  // The notes panel is one switch (S.readOn: the notes button, C), whether drawing or not — the drawing mode
+  // neither opens nor closes it. A host without a reading panel (the version compare, host.readPanel false) shows
+  // it only while drawing, per S.panelOn (the toolbar's panel button, shown there only).
   function togglePanel(force){
-    if (S.on){ S.panelOn = force ?? !S.panelOn; writeJSON(panelKey, S.panelOn); }
-    else if (readable()){
+    if (readable()){
       S.readOn = force ?? !S.readOn; writeJSON(readKey, S.readOn);
-      // Closing the reading panel lets go of the picked note: all the drawings show again.
-      if (!S.readOn && S.pinFocus){ S.pinFocus = null; paintVisibility(); }
-    }
+      // Closing the panel while just watching lets go of the picked note: all the drawings show again.
+      if (!S.readOn && !S.on && S.pinFocus){ S.pinFocus = null; paintVisibility(); }
+    } else if (S.on){ S.panelOn = force ?? !S.panelOn; writeJSON(panelKey, S.panelOn); }
     syncPanel();
   }
-  // (A host without a reading panel — the version compare, host.readPanel false — shows it only while drawing.)
   const readable = () => host.readPanel !== false;
-  const panelShown = () => !!S.ui && supported() && (S.on ? S.panelOn : readable() && S.readOn);
+  const panelShown = () => !!S.ui && supported() && (readable() ? S.readOn : S.on && S.panelOn);
   function syncPanel(){
     const show = panelShown();
     if (S.ui){ S.ui.hidden = !show; S.ui.classList.toggle("an-read", !S.on); }
@@ -2253,6 +2276,7 @@ export function createAnnotator(host){
       const ctx = ctxLabel(noteCtx(n));
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
+          <button type="button" class="an-ib sm an-nedb" data-edit="${n.id}" title="Edit the text (or double-click it)">${ICON.pencil}</button>
           <button type="button" class="an-ib sm" data-reply="${n.id}" title="Reply">${ICON.reply}</button>
           <button type="button" class="an-ib sm${prog ? " on" : ""}" data-prog="${n.id}" title="${prog ? "Not in progress" : "In progress — someone is working on it"}">${ICON.prog}</button>
           <button type="button" class="an-ib sm${done ? " on" : ""}" data-done="${n.id}" title="${done ? "Reopen" : "Resolve"}">${ICON.check}</button>
@@ -2665,7 +2689,7 @@ export function createAnnotator(host){
     });
   }
   function onListClick(e){
-    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-rdel],[data-rdraw],[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
+    const t = e.target.closest?.("[data-cmp],[data-go],[data-done],[data-prog],[data-del],[data-reply],[data-edit],[data-rdel],[data-rdraw],[data-shot],img[data-rshot],.an-rep,.an-cap,.an-note");
     if (!t){
       // A click on the empty list drops the picked note (as Esc does). Not when it ends a text selection
       // dragged out of a card: the click then lands on the list, the common ancestor of the two presses.
@@ -2688,6 +2712,7 @@ export function createAnnotator(host){
     }
     if (t.dataset.cmp){ const n = S.items.get(t.dataset.cmp); if (n?.data.compare) host.openCompareSession?.(n.data.compare, n); return; }
     if (t.dataset.reply){ startReply(t.dataset.reply); return; }
+    if (t.dataset.edit){ editNote(t.dataset.edit); return; }
     if (t.dataset.rdel){ deleteReply(t.closest(".an-note").dataset.id, t.dataset.rdel); return; }
     if (t.dataset.rshot){ showShot(t.dataset.rshot); return; }
     if (t.classList.contains("an-rep")){
@@ -2755,7 +2780,8 @@ export function createAnnotator(host){
       const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(Number(pv.dataset.pt))); }
       return;
     }
-    if (card) goNote(card.dataset.id);
+    // The second click of a double-click (which edits the text) keeps the note picked.
+    if (card && !(e.detail > 1 && S.pinFocus === card.dataset.id)) goNote(card.dataset.id);
   }
   function onListDblClick(e){
     const cp = e.target.closest?.(".an-cap");
@@ -2763,9 +2789,16 @@ export function createAnnotator(host){
     const rt = e.target.closest?.(".an-rt");
     if (rt){ editReply(rt.closest(".an-note").dataset.id, rt.closest(".an-rep").dataset.rid, rt); return; }
     const nt = e.target.closest?.(".an-nt");
-    if (!nt) return;
-    const id = nt.closest(".an-note").dataset.id, it = S.items.get(id);
+    if (nt) editNote(nt.closest(".an-note").dataset.id);
+  }
+  // A note's text edited in place (double-click on it, or the card's pencil): Enter saves, Esc cancels. The card
+  // is looked up afresh — a click before it may have rebuilt the list, leaving the clicked node detached.
+  function editNote(id){
+    const it = S.items.get(id);
     if (!it) return;
+    if (S.pinFocus !== id) goNote(id);
+    const nt = S.ui?.querySelector(`.an-note[data-id="${id}"] .an-nt`);
+    if (!nt) return;
     const ta = document.createElement("textarea");
     ta.className = "an-input an-nedit";
     ta.value = it.data.text || "";
@@ -3409,7 +3442,7 @@ export function createAnnotator(host){
       S.light?.querySelector(".an-flash")?.classList.remove("go");
       const fl = S.light?.querySelector(".an-flash");
       if (fl){ void fl.offsetWidth; fl.classList.add("go"); }
-      if (S.on && !S.panelOn) togglePanel(true);
+      if (S.on && !panelShown()) togglePanel(true);
       renderPending();
       toast("Screenshot added to the note");
     } catch (e){
@@ -3702,6 +3735,7 @@ export function createAnnotator(host){
     if (want && !supported()){ toast("Annotations work on images, video and 3D models"); return false; }
     if (want === S.on) return true;
     S.on = want;
+    if (want){ S.tool = "brush"; S.crop = null; }  // the drawing mode always starts with the brush
     if (!want){
       closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.crop = null; S.drag = null; S.pinFocus = null; flush();
       // A board keeps its drawings on show with the mode off: no hover circle, no "hidden" left over from the bar.
@@ -3815,7 +3849,8 @@ export function createAnnotator(host){
       ["Ctrl+KeyA", () => selectAll(), "Select all drawings on screen", G.edit],
       ["Ctrl+BracketRight", () => reorder(1), "Bring forward", G.edit], ["Ctrl+BracketLeft", () => reorder(-1), "Send backward", G.edit],
       ["BracketLeft", () => resizeTool(1 / 1.2), "Smaller brush / stroke / text", G.tool], ["BracketRight", () => resizeTool(1.2), "Larger brush / stroke / text", G.tool],
-      ...TOOLS.filter(Boolean).map(([id, combo, label]) => [combo, () => setTool(id), label, G.tool]),
+      ...TOOLS.filter(Boolean).map(([id, combo, label]) => [combo, () => (id === "rect" ? setShape("rect") : setTool(id)), id === "rect" ? "Rectangle" : label, G.tool]),
+      ["KeyO", () => setShape("ellipse"), "Ellipse", G.tool],
       ["KeyS", () => { screenshot(false); }, "Screenshot of the view into the note", G.notes], ["Shift+KeyS", () => { screenshot(true); }, "Screenshot of an area", G.notes],
       ["KeyC", () => togglePanel(), "Show / hide the notes panel", G.notes], ["Shift+KeyH", () => toggleHidden(), "Hide / show the drawings", G.notes],
       ["Enter", () => { if (!endCrop()) focusComposer(); }, "Write a note (Enter adds it, Shift+Enter is a new line); finish cropping", G.notes],
@@ -4107,7 +4142,7 @@ function injectStyles(){
   st.textContent = `
 .an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .an-layer[hidden] { display: none; }
-.an-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.an-layer > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .an-active { touch-action: none; }
 .an-ui .an-selbox { fill: none; stroke: #4c9aff; stroke-width: 1; stroke-dasharray: 3 3; }
 .an-ui .an-selall { fill: none; stroke: #4c9aff; stroke-width: 1; }
@@ -4243,6 +4278,9 @@ function injectStyles(){
 .an-note { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; }
 .an-note:hover { border-color: var(--border-strong); }
 .an-note.on { border-color: var(--accent); }
+.an-nedb { visibility: hidden; }
+.an-note:hover .an-nedb, .an-note.on .an-nedb { visibility: visible; }
+@media (hover: none) { .an-note:hover:not(.on) .an-nedb { visibility: hidden; } }
 .an-note.done { opacity: .6; }
 .an-note.done .an-nt { text-decoration: line-through; text-decoration-color: rgb(255 255 255 / .35); }
 .an-nh { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }

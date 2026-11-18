@@ -135,7 +135,7 @@ button:disabled { cursor: default; opacity: .4; }
 /* The library beside the lightbox (Tab, state.lightSplit): the grid keeps its place, the lightbox starts right of
    the divider (placeLightSplit sets its left edge); the inspector steps aside so the grid gets its room. */
 .light-slot:not([hidden]) { flex: 1; min-width: 0; }
-body.light-split .insp, body.light-split #inspHandle { display: none; }
+body.light-split .insp, body.light-split #inspHandle, body.light-split .nav-canvas { display: none; }
 body.light-split .light { border-left: 1px solid var(--border); }
 body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width: calc(var(--light-l, 100vw) - 24px); }
 .insp > .sec:first-child { margin-top: 0; }
@@ -2825,6 +2825,7 @@ async function openBoard(id){
 
 function renderCanvasBoards(){
   const wrap = document.createElement("div");
+  wrap.className = "nav-canvas";  // hidden beside the lightbox (Tab): boards are not a source of pictures there
   const head = sectionHeader("Canvas", "canvas", `<button type="button" aria-label="New board">+</button>`, "pin");
   head.querySelector("button").onclick = async (e) => {
     e.stopPropagation();

@@ -344,7 +344,10 @@ var SightReviewCore = (function(){
       var u = imageUrl(p.img), c = p.crop || [0, 0, 1, 1];
       if (!u) return "<g" + tf + op + '><rect x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + r2(p.w) + '" height="' + r2(p.h) + '" fill="#808080" fill-opacity="0.35"/></g>';
       // A nested viewport clips to the crop window; the picture is 1 × 1 units inside it, so the crop needs no pixel size.
-      return "<g" + tf + op + '><svg x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + r2(Math.max(0, p.w)) + '" height="' + r2(Math.max(0, p.h)) + '" viewBox="' + c.map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" ") + '" preserveAspectRatio="none" overflow="hidden"><image href="' + esc(u) + '" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g>';
+      // The size is also an inline style: host pages size their own <svg>s by CSS (`.x svg { width: 100% }`),
+      // which would hit this nested one too (CSS beats the attribute) and stretch the cropped picture.
+      var iw = r2(Math.max(0, p.w)), ih = r2(Math.max(0, p.h));
+      return "<g" + tf + op + '><svg x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + iw + '" height="' + ih + '" style="width:' + iw + 'px;height:' + ih + 'px;overflow:hidden" viewBox="' + c.map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" ") + '" preserveAspectRatio="none" overflow="hidden"><image href="' + esc(u) + '" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g>';
     }
     if (p.text){
       var anchor = p.align === "center" ? "middle" : p.align === "right" ? "end" : "start";

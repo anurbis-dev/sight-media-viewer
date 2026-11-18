@@ -14,6 +14,34 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.80.0 — 2026-11-18 — Annotation tools cleanup: crop fix, shape tool, note editing, independent panel
+- **What:** owner's list. Reference-image crop now actually clips (it only moved the box). Notes panel: a pencil
+  on each card (hover; on the picked card for touch) and double-click on the text both edit it (double-click
+  did nothing). Picture-text plate keeps its current size while editing. Tab split hides the sidebar's Canvas
+  section. Drawing tools (✎ / Shift+A) and the notes panel (speech bubble / C) are independent; the toolbar's
+  panel button is gone in the lightbox / board. Annotating always starts with the brush. Line tool removed
+  (arrow with heads "none"); rectangle + ellipse are one shape tool (R / O, *Shape* ▭ / ◯ in the bar), no
+  Stroke switch, fill off and 50 % by default. A note pin of the note in the making shows the number the note
+  will get (was "•"). Onion skin no longer collapses to the picked note when a note / its picture is clicked.
+- **Where:** annotate.js (`.an-layer > svg`; `editNote`, `data-edit` / `.an-nedb`, `e.detail > 1` guard;
+  `togglePanel` / `panelShown` on `S.readOn` only; `toggle` brush; TOOLS / `setShape` / P.shape / PROPS.rect;
+  `loadStyles` migration; `numOf`; `onionOn` / `viewMode`), caption-plate.js (`.editing` rules, min-height pin
+  in `startEdit`), review-core.js (image prim's nested svg gets an inline size), index.html (`.nav-canvas`),
+  MANUAL.
+- **Notes:** root cause of the crop: `.an-layer svg {width:100%; overflow:visible}` also hit the nested `<svg>`
+  an image prim clips with; any host CSS `x svg {width:100%}` does the same (note-card previews, HTML page,
+  phone), hence the inline style in review-core — keep it. `S.panelOn` now serves only `readPanel: false`
+  hosts (version compare), whose toolbar panel button stays. Shape tool keeps id "rect" (saved styles); old
+  `line` / `ellipse` items and `setTool("line"|"ellipse")` still work. Onion skin: a pick narrows nothing
+  unless a new note is being composed. The fill 20→50 % migration runs once (`sight.annotate.fill50`).
+  Verified with Playwright (crop, pencil / dblclick edit, plate sizes, Tab split, panel/tools independence,
+  O/R, pin number, onion ghosts after a pick).
+- Review (fresh agent): picked note hidden while composing with onion on, 20 % fill reset on every load,
+  nested-svg stretch in previews / page / phone; fixed. A claimed "old loose pins get a number" was withdrawn
+  by the reviewer (addNote adopts every loose drawing, so the number is right). Re-review: the fill migration
+  must save the migrated styles with its marker (else lost, and the board / compare annotators missed it) —
+  fixed; the other fixes confirmed.
+
 ## 0.79.0 — 2026-11-18 — Reference images on the frame (crop, frame, shadow); library beside the lightbox / player (Tab)
 - **What:** owner: reference pictures in the annotating mode of the lightbox and the video player, a toolbar icon,
   settings crop / frame (width, colour) / shadow (strength); pictures dropped onto the frame from outside or picked;
@@ -354,26 +382,3 @@ Add new entries directly below this line.
   rounds: pause landing a frame late / dimming at a clip's first frame, a step past the end dimming the clip, a
   flash after closing during the fps wait, `reload()` keeping undo and racing its own save — fixed; confirmed by
   the same reviewer.
-
-## 0.67.0 — 2026-11-17 — Sequence: every clip's markers, Shift+, / . across clips, up-front conversion (stage 3)
-- **What:** the sequence bar shows tick marks for every clip's drawings / notes (taller = a note's);
-  `Shift+,` / `Shift+.` continue into the previous / next clips when the current one has no further marker. A
-  clip the browser cannot play is found when the sequence opens and converted ahead of its turn.
-- **Where:** index.html — `seqLoadMarks`, `seqMarksFromAnnot`, `seqRepaintSoon`, `seqMarker`,
-  `seqProbePlayable` / `seqProbe` / `seqConvertAhead`, marks in `paintSeqBar`, `.seq-mk` CSS; annotate.js —
-  `renderMarks` → `host.marksChanged`, `jumpMarker` → `host.seqMarker`, API `marks()` / `loading()`.
-- **Notes:** the clip on screen reports annotate.js's exact marks; the others are an estimate from their rows
-  (drawings' `ctx.t`, a note mark when `data.note` links it; notes' caption frames) fetched once at open. A
-  clip left keeps the marks annotate last reported — a re-read raced the debounced save and dropped new marks.
-  `seqMarker` stays put while a jump is pending or the clip's rows are loading (else a fast double press skips a
-  clip). Conversion: probes load metadata only; `POST /api/video/transcode` goes out only for clips without a
-  picture, **one at a time and only for the next two clips** — the server encodes one job at a time, so queuing
-  all of them held back the clip the user jumps to and kept ffmpeg busy after closing. Deliberately not done:
-  extending the server RAM cache (`SlidingVideoCache`, one file) to prefetch the next clip — the hidden preload
-  `<video>` already pulls the next clip's head; worth it only for slow network drives.
-- Review (fresh agent): conversions queued for every clip at once, the left clip's re-read racing its save, a
-  just-opened clip reporting no marks (Shift+. skipping it), markers past a clip's end, per-clip fetch / repaint
-  cost; fixed (landing at t + 1 ms instead of annotate's quarter-frame kept: correct for stored frame starts).
-  Re-review: a clip left while its rows were loading kept no marks, a jump into a clip whose conversion failed
-  blocked frame / marker keys (pendT never cleared), probes started from clip 0 — fixed; confirmed by the same
-  reviewer.
