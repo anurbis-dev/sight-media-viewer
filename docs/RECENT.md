@@ -14,6 +14,49 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.78.0 — 2026-11-18 — Phone: review a group as a sequence, clip by clip
+- **What:** owner: reviewing a sequence on the phone meant going back to the list after every clip. Now a tap on
+  a group's picture opens its sequence on the clip last seen there (else the first); the review header of any
+  grouped review has ‹ / › around the title and "group · 2 / 5" in the subtitle; Page Up / Page Down on a
+  keyboard. Back leaves the sequence in one step. Works for pictures and 3D models too.
+- **Where:** mobile/js/app.js (`seqOf`, `openSequence`, `seqRemember`, `seqGo`; `openReview(…, opts.replace)`;
+  `renderReview` header, `paintReview` subtitle `els.seq`; group header `thumb`; keydown table),
+  mobile/index.html (`.seqb:disabled`), tests/pwa_e2e.cjs `bundle` + test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE.
+- **Notes:** the sequence = the review's UI group (`g.keys` order), not `meta.groups`. No wrap at the ends. No
+  swipe on the player for clip switching (it competes with scrub / pinch / drawing) — buttons serve touch. A
+  clip switch flushes edits (openReview) like Back does; an unsent composer draft is dropped as on Back.
+- Review (fresh agent): `pushed` was read from a review still loading (Back out of step after quick ›) → the
+  history entry is settled before any await, an overtaken unshown review hands its entry over, `openingKey` is
+  the base for quick taps; Back during a loading › was undone → `++openSeq` in leaveReview / route; PageDown
+  during an export swapped clips → no switch while `.busy`; hidden reviews were in the sequence → `seqKeys`;
+  a deleted clip was a dead end → dropped from the group and skipped. Nits: `openingKey` cleared on a thrown
+  open (wrapper `openReview` → `openReviewNow`), header refreshed after a drop (`paintSeq`, player untouched).
+  Confirmed by the same reviewer.
+
+## 0.77.0 — 2026-11-18 — The phone app opens and answers a sequence's `.srev` bundle (multi-clip plan, stage 3)
+- **What:** opening a bundle on the phone merges every clip into its own review (one summary toast: damaged
+  clips / non-media named, the rest land; "same file as clip N" for a duplicate) and puts them in one home
+  group named by the bundle's title; a review with no media on the phone is greyed ("Media not on this
+  device — notes readable") until its file is picked. The group's menu has *Review file for Sight (.srev)*:
+  one bundle of the clips changed since the last send, with the received bundle id (nothing changed → asks
+  to send all). Works for user-made groups too (their own id). A one-clip bundle behaves like a package.
+- **Where:** mobile/js/model.js (`parseReviewFile`, `buildBundle`, `checkPackage`), mobile/js/app.js
+  (`importReviewFile` split into `reviewKeyFor` / `mergeInto` / `importBundle` / `bundleGroup`;
+  `dirty(user)`, `packageOf`, `isChanged`, `markSent`, `exportBundle`, `offerFile(…, onSent)`, `nomedia`
+  row), mobile/index.html (`.row.nomedia`), tests/pwa_unit.cjs, tests/pwa_e2e.cjs `bundle`,
+  tests/test_pwa.py `test_bundle`, MANUAL, ARCHITECTURE, FORMAT, PLAN-multiclip, PLAN-mobile.
+- **Notes:** no IndexedDB version bump: new meta fields `groups`, `changed`, `nomedia`. `changed` = time of the
+  last user edit; merges never set it (`dirty(false)`); a send clears it only if it is unchanged since the
+  package was built. Missing `changed` (made on the phone / before 0.77) counts as changed — extra clips are
+  harmless under the merge rules. The UI group holds a review at most once; a reply takes the group's keys plus
+  every review whose `meta.groups` has the bundle id. "Merge a review file…" with a bundle imports it as a
+  bundle (not into the open review). Merge code untouched (merge parity).
+- Review (fresh agent): a review opened mid-import could read its rows before the merge and drop it on the next
+  save → busy overlay over the import loop; a lone clip of a later bundle did not join the bundle's existing
+  group → `bundleGroup` for any clip count; bundle `version` parsing now matches Python's `int(v or 0)`. All
+  confirmed by the same reviewer. Left as is: back / forward during the import can still open a review
+  mid-merge (deliberate action, tiny window); `version: []` / `"1_0"` parity quirks.
+
 ## 0.76.0 — 2026-11-17 — One web page for a sequence's review (multi-clip plan, stage 2)
 - **What:** Sequence → Export → *Web page, all clips* writes **one** page (was one per clip). It has a clip strip on
   top (name, notes, open notes; a dot = changed here), ‹ / › buttons, `←` / `→` (not in text fields, the full-screen
@@ -322,52 +365,3 @@ Add new entries directly below this line.
   a missed tap ending the mode, click type taken from the click, pen left out, bar over the board, bar
   covering the inspector, vibrate; fixed (the mode surviving `selectSet` kept as specced). The re-review
   caught that the first fix also blocked pen drag-to-board — restored; confirmed by the same reviewer.
-
-## 0.65.0 — 2026-11-17 — Play in sequence (stage 1 of docs/PLAN-viewer.md "clips in sequence")
-- **What:** 2+ selected videos play back to back in the lightbox (Space over one of the selected videos,
-  top-bar *▶▶ Sequence*, right-click menu, palette), in selection (click) order, cut to cut without a black
-  frame. A sequence bar above the clip's timeline: a segment per clip (alternating accent shades, name),
-  playhead, tap / drag across all clips, ⏮ / ⏭ / ⟲ buttons. Keys: ← / → clip, Home first clip, Shift+L loop,
-  `,` / `.` cross cuts; ↑ / ↓ and arrows with modifiers do nothing (never step out to grid neighbours). Each
-  clip keeps its own notes / drawings (shown through the normal `showInLight` → `annot.setAsset`).
-- **Where:** index.html — `seqCandidates` … `bindSeqBar` (before `toggleLight`), `.seqbar` markup + CSS,
-  `attachViewer` (`opts.adopt`, `ended` listener, `light.vctl`, `seqOnReady`), `showInLight(a, opts)`,
-  `fillStage(…, opts)`, `startVideoCache(…, keep)`, `closeLight`, Space / sequence keys, `paintSelection`
-  (`#seqBtn`), context menu, palette; annotate.js `stepFrame` → `host.seqEdge`. ARCHITECTURE "Sequence".
-- **Notes:** seamless = the next clip is preloaded in a hidden muted `<video class="seq-buf">` and adopted
-  (moved into the stage in the same task, src kept). Measured in headless Chromium: the first frame of the
-  new clip is on screen at once but held ~70 ms before playback moves on (play() start latency); a muted
-  element starts ~30-60 ms sooner, so the adopted clip starts muted and unmutes on its first new frame
-  (`_seqWantMuted` keeps the wanted state across quick adopts). Tried and dropped: a play+pause warm-up and
-  creeping the buffer at rate 1/16 before the cut — neither shortened the start. `ended` cuts only after real
-  playback (`_seqPlayedAt` from `timeupdate` / `playing`), never on a scrub / seek to the end. Not in this
-  stage (PLAN-viewer.md): touch multi-select by long-press + bottom bar, markers of all clips on the sequence
-  bar and Shift+, / . across clips, server RAM-cache prefetch of the next clip, probing / converting clips up
-  front. Known: `#seqBtn` is only refreshed with the selection (may stay shown after a filter change —
-  clicking then just flashes); segment widths settle as clip durations load (assets often have none stored).
-  The title shows "Clip i/n · name" (the planned frame number is not in the title).
-- Review (fresh agent): 12 findings — key repeat running through clips before metadata, modifier+arrows
-  leaving the sequence, `ended` on a scrub to the end, pending landing lost on a converted clip / applied to
-  the wrong clip, O(n²) selection check, Space over a selected non-video, prev / next not reusing the
-  preloaded clip, last-frame landing by the wrong fps, adopted element's autoplay; all fixed except the stale
-  button and segment widths shifting during a drag (accepted). The fixes' re-review found two more (clips
-  staying muted after quick adopts, `ended` ignored after a very short play) — fixed; confirmed by the same reviewer.
-
-## 0.64.2 — 2026-11-17 — macOS: dictation no longer kills Chrome
-- **What:** on a Mac, pressing the dictation mic a second time (after allowing the microphone) made the whole
-  browser quit ("Google Chrome quit unexpectedly", user report on 0.62.1).
-- **Where:** `Sight.py` — new `mac_launch_prefix(browser)` (the Sight window's browser is started as
-  `/usr/bin/open -n -a <Browser>.app --args …` instead of exec'ing the binary), `close_browser(proc, user_data_dir)`
-  (macOS: `pkill -f --user-data-dir=<home>/browser`, since `proc` is the short-lived `open`); `tests/test_mac_launch.py`.
-- **Notes:** root cause (by analysis, not reproduced — no Mac here): a browser exec'd by Sight is its child, and macOS
-  privacy protection (TCC) makes the parent — Sight.app or the Python behind Sight.command — the "responsible" app
-  for the microphone. Neither declares `NSMicrophoneUsageDescription`, so the first real capture gets the browser
-  process killed by the system. Through `open`, launchd starts the browser as its own app, which asks for the
-  microphone under its own name. Rejected: adding `NSMicrophoneUsageDescription` to Sight.app's Info.plist — it covers
-  only the packaged build, not Sight.command (Python / Terminal), and makes Sight, not the browser, the app listed in
-  Privacy settings. `-n` keeps a separate instance next to the user's own Chrome (the separate `--user-data-dir`
-  needs its own process anyway). Verify on a Mac: dictation twice in a row, window position / size restore, quitting
-  Sight when its window is closed, and a failed start closing the window.
-- Review (fresh agent): the `pkill -f` pattern was a raw regex (odd characters, `.../browser` also matching
-  `.../browser2`) and could run before the browser started — now ERE-escaped, anchored at the path's end, run twice
-  1 s apart; confirmed by the same reviewer.

@@ -173,6 +173,32 @@ const moovPayload = (...traks) => Buffer.concat(traks);
     assert.throws(() => M.parsePackage(JSON.stringify({ format: "sight-review", version: 99, asset: {}, annotations: [] })), /newer Sight/);
   });
 
+  t("bundle: parse plain / bundle / damaged clip / empty / newer, build", () => {
+    const asset = { id: "a1", name: "x.png", kind: "image", size: 10 };
+    const pkg = M.buildPackage({ asset, rows: [M.newNote({ text: "One" }, now)], author: "Ann", app: "t" }, now);
+    const plain = M.parseReviewFile(JSON.stringify(pkg));
+    assert.strictEqual(plain.bundle, null);
+    assert.strictEqual(plain.entries[0].asset.name, "x.png");
+    assert.throws(() => M.parseReviewFile("{}"), /Not a Sight review file/);
+    const bad = { format: "sight-review", version: 1, asset: { name: "broken.mov" } };  // no annotations
+    const b = M.buildBundle({ packages: [pkg, bad, 7], id: "b0b0b0b0b0b0b0b0", title: "Seq", author: "Ann", app: "t" }, now);
+    assert.deepStrictEqual([b.format, b.version, b.id, b.title, b.exported_at], ["sight-review-bundle", 1, "b0b0b0b0b0b0b0b0", "Seq", now]);
+    const r = M.parseReviewFile("\ufeff" + JSON.stringify(b));
+    assert.strictEqual(r.bundle.id, "b0b0b0b0b0b0b0b0");
+    assert.ok(!("packages" in r.bundle));
+    assert.strictEqual(r.entries[0].asset.name, "x.png");
+    assert.ok(r.entries[1] instanceof Error && /incomplete/.test(r.entries[1].message) && r.entries[1].clipName === "broken.mov");
+    assert.ok(r.entries[2] instanceof Error && r.entries[2].clipName === "");
+    assert.throws(() => M.parseReviewFile(JSON.stringify(Object.assign({}, b, { packages: [] }))), /holds no clips/);
+    assert.throws(() => M.parseReviewFile(JSON.stringify(Object.assign({}, b, { version: 2 }))), /newer Sight/);
+    assert.strictEqual(M.parseReviewFile(JSON.stringify(Object.assign({}, b, { version: 1.5 }))).entries.length, 3);  // int(1.5) = 1
+    assert.strictEqual(M.parseReviewFile(JSON.stringify(Object.assign({}, b, { version: " 1 " }))).entries.length, 3);
+    ["1.0", "0x1", " ", [1]].forEach((v) => assert.throws(() => M.parseReviewFile(JSON.stringify(Object.assign({}, b, { version: v }))), /incomplete/));
+    assert.throws(() => M.parseReviewFile(JSON.stringify(Object.assign({}, b, { packages: null }))), /incomplete/);
+    assert.match(M.buildBundle({ packages: [pkg], app: "t" }).id, /^[0-9a-f]{16}$/);
+    assert.ok(!("title" in M.buildBundle({ packages: [pkg], app: "t" })));
+  });
+
   // ---- picture texts (FORMAT.md captions) ----
   t("captions: keys, frame match, set / remove, content stamp", () => {
     const RC = globalThis.SightReviewCore;

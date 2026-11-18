@@ -2,6 +2,55 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.65.0 — 2026-11-17 — Play in sequence (stage 1 of docs/PLAN-viewer.md "clips in sequence")
+- **What:** 2+ selected videos play back to back in the lightbox (Space over one of the selected videos,
+  top-bar *▶▶ Sequence*, right-click menu, palette), in selection (click) order, cut to cut without a black
+  frame. A sequence bar above the clip's timeline: a segment per clip (alternating accent shades, name),
+  playhead, tap / drag across all clips, ⏮ / ⏭ / ⟲ buttons. Keys: ← / → clip, Home first clip, Shift+L loop,
+  `,` / `.` cross cuts; ↑ / ↓ and arrows with modifiers do nothing (never step out to grid neighbours). Each
+  clip keeps its own notes / drawings (shown through the normal `showInLight` → `annot.setAsset`).
+- **Where:** index.html — `seqCandidates` … `bindSeqBar` (before `toggleLight`), `.seqbar` markup + CSS,
+  `attachViewer` (`opts.adopt`, `ended` listener, `light.vctl`, `seqOnReady`), `showInLight(a, opts)`,
+  `fillStage(…, opts)`, `startVideoCache(…, keep)`, `closeLight`, Space / sequence keys, `paintSelection`
+  (`#seqBtn`), context menu, palette; annotate.js `stepFrame` → `host.seqEdge`. ARCHITECTURE "Sequence".
+- **Notes:** seamless = the next clip is preloaded in a hidden muted `<video class="seq-buf">` and adopted
+  (moved into the stage in the same task, src kept). Measured in headless Chromium: the first frame of the
+  new clip is on screen at once but held ~70 ms before playback moves on (play() start latency); a muted
+  element starts ~30-60 ms sooner, so the adopted clip starts muted and unmutes on its first new frame
+  (`_seqWantMuted` keeps the wanted state across quick adopts). Tried and dropped: a play+pause warm-up and
+  creeping the buffer at rate 1/16 before the cut — neither shortened the start. `ended` cuts only after real
+  playback (`_seqPlayedAt` from `timeupdate` / `playing`), never on a scrub / seek to the end. Not in this
+  stage (PLAN-viewer.md): touch multi-select by long-press + bottom bar, markers of all clips on the sequence
+  bar and Shift+, / . across clips, server RAM-cache prefetch of the next clip, probing / converting clips up
+  front. Known: `#seqBtn` is only refreshed with the selection (may stay shown after a filter change —
+  clicking then just flashes); segment widths settle as clip durations load (assets often have none stored).
+  The title shows "Clip i/n · name" (the planned frame number is not in the title).
+- Review (fresh agent): 12 findings — key repeat running through clips before metadata, modifier+arrows
+  leaving the sequence, `ended` on a scrub to the end, pending landing lost on a converted clip / applied to
+  the wrong clip, O(n²) selection check, Space over a selected non-video, prev / next not reusing the
+  preloaded clip, last-frame landing by the wrong fps, adopted element's autoplay; all fixed except the stale
+  button and segment widths shifting during a drag (accepted). The fixes' re-review found two more (clips
+  staying muted after quick adopts, `ended` ignored after a very short play) — fixed; confirmed by the same reviewer.
+
+## 0.64.2 — 2026-11-17 — macOS: dictation no longer kills Chrome
+- **What:** on a Mac, pressing the dictation mic a second time (after allowing the microphone) made the whole
+  browser quit ("Google Chrome quit unexpectedly", user report on 0.62.1).
+- **Where:** `Sight.py` — new `mac_launch_prefix(browser)` (the Sight window's browser is started as
+  `/usr/bin/open -n -a <Browser>.app --args …` instead of exec'ing the binary), `close_browser(proc, user_data_dir)`
+  (macOS: `pkill -f --user-data-dir=<home>/browser`, since `proc` is the short-lived `open`); `tests/test_mac_launch.py`.
+- **Notes:** root cause (by analysis, not reproduced — no Mac here): a browser exec'd by Sight is its child, and macOS
+  privacy protection (TCC) makes the parent — Sight.app or the Python behind Sight.command — the "responsible" app
+  for the microphone. Neither declares `NSMicrophoneUsageDescription`, so the first real capture gets the browser
+  process killed by the system. Through `open`, launchd starts the browser as its own app, which asks for the
+  microphone under its own name. Rejected: adding `NSMicrophoneUsageDescription` to Sight.app's Info.plist — it covers
+  only the packaged build, not Sight.command (Python / Terminal), and makes Sight, not the browser, the app listed in
+  Privacy settings. `-n` keeps a separate instance next to the user's own Chrome (the separate `--user-data-dir`
+  needs its own process anyway). Verify on a Mac: dictation twice in a row, window position / size restore, quitting
+  Sight when its window is closed, and a failed start closing the window.
+- Review (fresh agent): the `pkill -f` pattern was a raw regex (odd characters, `.../browser` also matching
+  `.../browser2`) and could run before the browser started — now ERE-escaped, anchored at the path's end, run twice
+  1 s apart; confirmed by the same reviewer.
+
 ## 0.64.1 — 2026-11-17 — Instant native launch splash (Windows)
 - **What:** the launch splash (the Sight logo) shows at once and closes when the page is ready. It was a PowerShell
   window started only after 1 s (PowerShell costs ~0.7 s of CPU to start), so it appeared ~1.7 s in or never.

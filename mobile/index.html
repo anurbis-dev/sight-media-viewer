@@ -76,6 +76,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .item { touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; position: relative; z-index: 1; margin: 0; }
 /* A review's row: the card over its two swipe actions (eye on the left, bin on the right). */
 .list .row { position: relative; margin-bottom: 8px; border-radius: 14px; overflow: hidden; }
+.list .row.nomedia .th { opacity: .45; filter: grayscale(1); }
+.list .row.nomedia .tx > span:last-child { font-style: italic; }
 .list .row .sw { position: absolute; top: 0; bottom: 0; width: 84px; border: 0; border-radius: 14px; display: grid; place-items: center; cursor: pointer; color: #fff; visibility: hidden; }
 .list .row .sw.hide { left: 0; background: var(--muted); }
 .list .row .sw.del { right: 0; background: var(--red); }
@@ -162,6 +164,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
    review-draw.js: one look for both screens), half see-through. */
 .hdr { position: absolute; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); top: calc(8px + var(--st)); z-index: 3; padding: 2px 4px; }
 .hdr .row { display: flex; align-items: center; gap: 2px; }
+.hdr .seqb:disabled { opacity: .3; }
 .hdr .row + .row { justify-content: center; position: relative; }  /* the view's icons, in the middle of the bar */
 .hdr .row + .row .fitb { position: absolute; right: 0; top: 0; }  /* Fit comes and goes: the others stay put */
 .hdr .row + .row .uib { position: absolute; left: 0; top: 0; }

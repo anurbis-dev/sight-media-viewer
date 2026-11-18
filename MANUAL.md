@@ -372,7 +372,18 @@
   gets no lasting access to a picked file) and opens the review with it next time; ⋯ → *Forget the
   file on this device* frees the room. When there is no copy (it was forgotten, the device was
   short of room, or the review came from a `.srev`), the review shows *Pick the file*. Notes and
-  their frames stay readable without the file. For a round trip with Sight, open the
+  their frames stay readable without the file.
+  A `.srev` of a whole sequence (Sight's *Review file, all clips*, or the reply of the all-clips web page)
+  opens every clip at once: one toast sums them up (a damaged clip or one that is not a picture, video
+  or 3D model is named, the rest still land), and the clips become one group on the home screen
+  (named by the file's title). A clip whose media is not on the phone is greyed (“Media not on this
+  device — notes readable”) until you open it and pick its file. Hold the group for *Review file for
+  Sight (.srev)*: one file with every clip you changed since the last send (notes, replies, states,
+  drawings, deletions) — Sight 0.75+ merges each into its clip. With nothing changed it asks whether to
+  send all. Any group you made yourself sends the same way.
+  Tap a group's picture to review it as a sequence: it opens on the clip you saw last there (the first one
+  at first); the header shows ‹ / › around the clip's name and “group · 2 / 5” under it (keyboard: Page Up /
+  Page Down). Back leaves the sequence in one step. Pictures and 3D models in a group work the same way. For a round trip with Sight, open the
   original from Files (*Open a file…*): the Photos picker hands over a converted copy (HEIC becomes
   JPEG, video may be re-encoded), whose name / size Sight does not know. Press and hold a review in
   the list to delete it. When a new version of the app is out, a bar offers *Reload*.

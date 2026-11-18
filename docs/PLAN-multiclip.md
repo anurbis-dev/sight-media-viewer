@@ -95,6 +95,13 @@ on a clip switch, the header and the list cleared and redrawn, listeners bound o
 
 ## Stage 3 — the phone app
 
+**Done in 0.77.0** (see RECENT). Deviations: the group is the phone's existing home-screen group
+(localStorage, `bundle: <id>`) — a review sits in one UI group at most, so `meta.groups` (all bundle ids)
+decides what a reply holds; the reply is in the group's menu (any user-made group sends one too, with the
+group's own id); a review with no `changed` mark (never sent) counts as changed; greyed = `meta.nomedia`
+(made by an import, cleared when its file is picked). A one-clip bundle opens like a plain package and
+makes no group.
+
 - **Open**: `mobile/js/model.js` `parsePackage` accepts a bundle; `importReviewFile` already opens a review without
   its media (`openReview(key, null)`) — refactor it into a per-package import that does not toast, ask (`intoKey`
   "Another file?") or open by itself, and loop it. "Import into the open review" does not apply to a bundle.

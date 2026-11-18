@@ -804,7 +804,21 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   review), a click with no pointer (keyboard) acts on the click. A tap on a card toggles
   `homeSel` (`.sel`), on its picture (`.th`) opens the review; `.selbar` (Move to… / Hide /
   Delete) acts on all picked.
-- **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?}]` (localStorage;
+- **Bundles on the phone** (multi-clip stage 3): `importReviewFile` → `M.parseReviewFile`; a bundle goes
+  to `importBundle` (per package `reviewKeyFor` + `mergeInto(key, pkg, bundleId)` — no toast / question /
+  open; a duplicate key = "same file as clip N"), then `bundleGroup` (a UI group with `bundle: <id>`, made
+  of the clips in no group yet). Review meta fields: `groups: [bundleId]` (every bundle the review came
+  in), `changed` (time of the last user edit, `false` after a send; missing = never sent → counts as
+  changed), `nomedia` (made by an import, cleared when the file is bound). `dirty(user = true)` sets
+  `changed`; merges call `dirty(false)`. Group menu → `exportBundle(g)`: the group's keys plus every review
+  whose `groups` has `g.bundle`, changed ones only (else asks), id = `g.bundle || g.id`; `offerFile`'s
+  `onSent` (Download / successful Share) → `markSent` clears `changed` only if it still equals the value
+  packed (`packageOf`). The single-review `.srev` export clears it too.
+- **Sequences** (0.78): the group header's `.th` → `openSequence(g)` (opens `g.cur` or the first key; every
+  `openReview` of a grouped review stores `cur`, `seqRemember`). In a review whose key is in a group the header
+  has `.seqb` ‹ › (`seqGo(±1)`, also Page Up / Down, no wrap); the switch is `openReview(k, …, {replace: true})`
+  — `history.replaceState` and the previous review's `pushed` carried over, so Back leaves the sequence.
+- **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?, bundle?, cur?}]` (localStorage;
   `thumb` = `{url}` a ≤ 200 px data URL or `{color}`); the order list holds a group as
   `"g:<id>"`. Any review (on its own or a member) held over the middle of another visible row's
   `.item` (`st.targets`: not its own group / siblings / the picked ones) and let go →

@@ -76,6 +76,8 @@ exactly a package as above (its own `asset`, `annotations`, `deleted`, `shots`) 
   reported as "same file as clip N".
 - Clips are in the bundle when they have notes **or** tombstones (deletes since the last send must still travel).
   Board rows are never in a bundle.
+- The phone app (0.77+) opens a bundle as one group of reviews and replies with a bundle of the clips
+  changed there, keeping the bundle's `id`.
 - Older Sight (< 0.75) and older phone apps reject a bundle as "Not a Sight review file". A one-clip reply from
   the HTML page stays a plain package for that reason.
 
