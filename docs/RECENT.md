@@ -14,6 +14,35 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.81.0 — 2026-11-18 — Arrows along a stroke; brush lasso close with pattern fill
+- **What:** owner's ask. Arrow tool: a *Stroke* on / off icon button in its bar (the tool icon follows); *Stroke* draws a freehand stroke with
+  arrows spread along it, turned to its normal — *Every* (spacing), *Length*, *Tip*, *Away / Toward*,
+  *Left / Right / Both*, *Guide* (stroke drawn or not) + its dash. Brush: *Close* (lasso: end joins start) with
+  *Fill* none / solid / 8 patterns / *Random*, fill colour, *Fill α*, *Spacing*.
+- **Where:** review-core.js (`STROKE_TOOLS` + "arrows"; `PATTERNS`, `hatchPath` / `dotsPath` / `fillPrims`;
+  `arrowsGeom` / `arrowsPrims` / `arrowsReach`; `strokeOutline` closes `data.close`; bounds / hit / transform),
+  annotate.js (DEFAULT_STYLES brush / arrow new keys, LEN_KEYS gap / step / len, P.close / pattern / ipattern /
+  bfill / gap / amode / ahead / step / alen / adir / aside / guide, `ARROWS_PROPS`, PROPS.arrows, props `when` /
+  `edit` filters in `renderProps`, `t: "cycle"` props (one icon button stepping through options; `fixed` = an
+  on / off button for a string value), `ico` on toggles, paintBar arrow icon by mode, onDown "arrows" branch, `RANDOM_PATTERNS`, onUp drops a < 3 px arrows
+  stroke, partial eraser opens a cut lasso), FORMAT.md, MANUAL.
+- **Notes:** new drawing type `kind stroke / shape_kind "arrows"` (not a mode flag on `arrow`: its geometry is
+  a polyline, and older clients skip it cleanly instead of drawing a wrong straight arrow). "Random" is resolved
+  when the stroke starts — the item stores the real pattern (the selection's Fill list has no Random:
+  `P.ipattern`, `edit: true`). Patterns are geometry clipped to the polygon (no SVG `<pattern>` / clipPath ids:
+  ids differ between clients, same reason as the image shadow) — so SVG, canvas exports, the HTML page and the
+  phone draw them identically; nonzero fill everywhere (solid, hatch scanlines with winding counts, dots / hit `inPoly`), so a lasso drawn round
+  twice stays filled; capped at 300 lines per direction and ≈ 4k dots (re-rendered on every pointer move) —
+  line width / dot radius / dashes follow the capped spacing.
+- Review (fresh agent): 7 findings — even-odd vs nonzero mismatch (double-wound lasso hollow, solid not
+  clickable), empty undo steps / server updates from the partial eraser, slow dense dots, unhittable lasso seam,
+  a cut lasso split at its seam, arrows hit on their empty side, old brushes closed later with no fill settings;
+  all fixed. Re-review confirmed them; then: widths not following the capped spacing, a cycle button's first
+  click with a missing value, the arrow tool's icon — fixed; the reviewer confirmed all, nothing open.. Props `when(get)`
+  hides keys that do not apply (Stroke-only keys, fill keys while Close is off). A mirror swaps an arrows
+  drawing's left / right. Not done: the HTML page's / phone's own drawing toolbar (review-draw.js) has no
+  Stroke-arrows / Close tool yet — they render and transform such drawings, but cannot make them.
+
 ## 0.80.0 — 2026-11-18 — Annotation tools cleanup: crop fix, shape tool, note editing, independent panel
 - **What:** owner's list. Reference-image crop now actually clips (it only moved the box). Notes panel: a pencil
   on each card (hover; on the picked card for touch) and double-click on the text both edit it (double-click
@@ -353,32 +382,3 @@ Add new entries directly below this line.
 - Review (fresh agent): a resting palm's split drag following the pen (no pointer id on the drag), Alt duplicate-
   drag lost with the select tool, area capture / text edit / pen eraser presses taken near a split, drawings not
   clipped to their tile, label size; fixed (black hole for a seeking video left).
-
-## 0.68.0 — 2026-11-17 — Annotating in the version compare; notes remember the comparison
-- **What:** compare (K) has *✎ Annotate* / `A`: the notes panel and drawing tools on the **selected layer**
-  (owner's choice) — notes / drawings go to that file at its own frame. A note made there stores the
-  comparison (files, order, reference, selected layer, layout, blend, split direction, clip offsets); its card in
-  the viewer gets *⧉ Compare · N files* (opens it again on the note's frame, annotating on) and `K` on that file
-  opens the newest stored comparison instead of the file's versions.
-- **Where:** compare.js — `host.onOpen / onView / onPlaced / onClose / onAnnotButton`, `reportView`, `session()`,
-  `pause()`, `seekLayer()`, `ready()`, session look (`C.pBase` / `C.userSet` / `prefsToSave`), ResizeObserver;
-  annotate.js — `vidPause` / `vidSeek` (host clock), `host.noteExtra`, note card button (`data-cmp`,
-  `host.openCompareSession`), API `reload()`; index.html — `cmpAnnot` (second annotator), `cmpBind` /
-  `cmpToggleAnnot`, `openCompareSession`, `latestCompareSession`, `compareFromContext`, compare key routing.
-  FORMAT.md — note `compare` (0.68+, Sight only, ignored and kept by other readers). MANUAL, ARCHITECTURE.
-- **Notes:** the "session" is stored in the note (owner's choice) — no server table. The compare runs every clip
-  on one clock, so the annotator never drives its element there: pause / seek go through the host (`cmp.pause`
-  stops on the frame the selected clip shows; `seekLayer` is not snapped to compare's fps, which can differ from
-  the clip's). Binding is lazy (a file's notes are fetched once annotating is on). A session opened from a note
-  shows its look without overwriting the saved preferences (only what is changed there is saved). Known /
-  deliberately left: while annotating the tools own left drag / touch and keys `[ ] R V L Shift+, .` (leave
-  annotating to move splits by touch or use those compare keys); the screenshot tool captures the selected layer,
-  not the composite; with the playhead before the selected clip's start a new note takes the clip's frame 0;
-  the notes panel open / closed setting is shared with the viewer's.
-- Review (fresh agent): 12 findings — report export fighting the shared clock, annotating a hidden layer, two fps
-  grids, landing before the fps was known, pause moving the frame after the stroke's ctx, session look leaking
-  into saved prefs, one-file sessions, heavy lightbox reload, missing host hooks (versions row, review badges),
-  no re-place on panel toggle, key / touch conflicts, wasted fetches; fixed or documented as above. Re-review
-  rounds: pause landing a frame late / dimming at a clip's first frame, a step past the end dimming the clip, a
-  flash after closing during the fps wait, `reload()` keeping undo and racing its own save — fixed; confirmed by
-  the same reviewer.

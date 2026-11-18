@@ -106,7 +106,7 @@ One row per object; the same shape in the package and (plus Sight-only columns) 
 |-----|--|
 | `id` | row id |
 | `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `image` · `status` |
-| `shape_kind` | `stroke`: `brush` · `pencil` · `marker`; `shape`: `rect` · `ellipse` · `line` · `arrow`; else null |
+| `shape_kind` | `stroke`: `brush` · `pencil` · `marker` · `arrows` (0.81+); `shape`: `rect` · `ellipse` · `line` · `arrow`; else null |
 | `x` `y` `w` `h` | the drawing's bounding box in doc units — for queries only, the geometry is in `data`; null for notes / status |
 | `rotation`, `z_index` | `z_index` = paint order (higher on top); `rotation` stays 0 (rotation lives in `data.rot`) |
 | `color` | the drawing's main colour (copy of `data.color`), or null |
@@ -197,7 +197,20 @@ Per type (all lengths in doc units):
   mouse input), `color`, `size` (full width at pressure 1), `pen` (true = pressure was recorded),
   `pressure` (false = draw at constant width even with a pen). Rendered as a filled outline from
   per-point radii: pen → `size/2 · (lo + (1 − lo)·p)` with lo = 0.12 brush, 0.45 pencil; mouse
-  brush → a short taper at both ends; mouse pencil → constant.
+  brush → a short taper at both ends; mouse pencil → constant. **0.81+ closed strokes** (Sight's brush
+  *Close*): `close` (true = the outline runs back to the first point; a mouse brush then has no taper),
+  `pattern` `none` | `solid` | `diag` (╱) | `diag2` (╲) | `horiz` | `vert` | `grid` | `cross` | `dots` |
+  `dashes` (the fill inside the centre-line polygon, nonzero winding), `fill` (colour), `fillOpacity` (default 0.5,
+  times `opacity`), `gap` (pattern spacing; lines are 0.18·gap wide, dots 0.2·gap in radius, staggered rows).
+  Patterns are plain geometry clipped to the polygon (no SVG pattern / clip ids). Older clients draw the open
+  stroke only.
+- **`stroke` arrows** (0.81+, Sight's arrow tool in *Stroke* mode): `pts` as above (pressure unused, 0.5),
+  `color`, `width`, `opacity`, `dash` (the guide), `guide` (false = the stroke itself is not drawn), `head1`
+  (the arrows' heads, kinds as for line / arrow), `headSize`, `step` (spacing along the stroke: the count is
+  round(length / step), at least 1, spread evenly, centred), `len` (each arrow's length), `dir` `out` (away
+  from the stroke) | `in` (at it), `side` `left` | `right` | `both` (left = the tangent turned a quarter
+  anticlockwise on screen, y down — the left of the drawing direction). Arrows start 1.2·width (+ width / 2
+  with the guide) off the stroke. Older clients skip it (`validItem` false).
 - **`stroke` marker** (highlighter): same `pts`, `color`, `size` = stroke width; a round-capped
   stroked path, default opacity 0.4.
 - **`shape` rect / ellipse**: `x, y, w, h` (box, may be negative before normalising), `rot`

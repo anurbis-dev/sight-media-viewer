@@ -96,7 +96,15 @@
   - Shapes: width, dash (solid / dashed / dotted), fill on/off (off by default, 50 % when on), fill colour and
     opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
     (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the
-    middle handle of a selected line to bend it. Text: font, size, colour, bold / italic / underline,
+    middle handle of a selected line to bend it. The arrow tool's *Stroke* button (wave with arrows; the
+    tool's icon follows it) draws a freehand stroke with arrows along it, each turned to the stroke's normal —
+    *Every* (distance between them), *Length*, *Tip* (head) and three icon buttons that step through their
+    states on each click / tap: direction (away from the stroke / toward it), side (left / right / both,
+    relative to the direction you drew in), guide (draw the stroke itself; its dash). Brush: *Close* (lasso icon)
+    joins the stroke's end to its start like a lasso and fills it — *Fill* none / solid / a pattern (lines in
+    four directions, grid, cross-hatch, dots, dashes) or *Random* (a different pattern each stroke), fill
+    colour, *Fill α*, *Spacing* (pattern density). A selected closed stroke changes them too; erasing a piece
+    out of it opens it. Text: font, size, colour, bold / italic / underline,
     alignment, background box (colour, opacity), outline; double-click a text to edit it again
     (`Ctrl+Enter` or Esc finishes).
   - While drawing: `Shift` snaps lines, arrows and straight brush strokes to 15° steps (0/45/90…),

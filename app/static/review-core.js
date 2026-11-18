@@ -21,7 +21,7 @@ var SightReviewCore = (function(){
   var FORMAT = "sight-review";
   var FORMAT_VERSION = 1;
 
-  var STROKE_TOOLS = new Set(["brush", "pencil", "marker"]);
+  var STROKE_TOOLS = new Set(["brush", "pencil", "marker", "arrows"]);
   var SHAPE_TOOLS = new Set(["rect", "ellipse", "line", "arrow"]);
   // [id, label, CSS font stack] — text drawings store the id (data.font).
   var FONTS = [
@@ -92,7 +92,7 @@ var SightReviewCore = (function(){
       if (i) acc += hyp(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
       var r = base;
       if (pen) r = base * (lo + (1 - lo) * clamp(pts[i * 3 + 2], 0, 1));
-      else if (typeOf(it) === "brush"){
+      else if (typeOf(it) === "brush" && !d.close){
         // Mouse strokes have no pressure — taper the ends a little so they still read as a brush.
         var t = Math.min(1, acc / (base * 4 + 1e-6), (total - acc) / (base * 4 + 1e-6));
         r = base * (0.4 + 0.6 * Math.sqrt(clamp(t, 0, 1)));
@@ -104,6 +104,11 @@ var SightReviewCore = (function(){
 
   // The filled outline of a brush / pencil stroke from its per-point radii.
   function strokeOutline(it){
+    // A closed stroke (data.close, the brush's lasso) runs back to its first point.
+    if (it.data.close && it.data.pts.length >= 9 && !it._closed){
+      var cd = Object.assign({}, it.data, { pts: it.data.pts.concat(it.data.pts.slice(0, 3)) });
+      return strokeOutline({ sub: typeOf(it), data: cd, _closed: true });
+    }
     var pts = it.data.pts, n = pts.length / 3;
     var rs = strokeRadii(it);
     if (n === 1 || (n === 2 && hyp(pts[3] - pts[0], pts[4] - pts[1]) < 0.01)){
@@ -267,10 +272,160 @@ var SightReviewCore = (function(){
     return c;
   }
 
+  // ---- closed strokes: pattern fill (brush data.close, FORMAT.md) ---------------------------------
+  // Patterns are plain geometry clipped to the stroke's polygon (no SVG <pattern> / clip ids, which differ
+  // between clients), so the SVG overlay and the canvas compositor draw the same thing.
+  var PATTERNS = ["none", "solid", "diag", "diag2", "horiz", "vert", "grid", "cross", "dots", "dashes"];
+  var PATTERN_ANGLES = { diag: [-45], diag2: [45], horiz: [0], vert: [90], grid: [0, 90], cross: [45, -45], dashes: [0] };
+  function polyOf(pts){
+    var out = [];
+    for (var i = 0; i + 1 < pts.length; i += 3) out.push([pts[i], pts[i + 1]]);
+    return out;
+  }
+  // Nonzero winding (as SVG / canvas fill a path by default): a lasso drawn round twice stays filled.
+  function inPoly(poly, x, y){
+    var wn = 0;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++){
+      var a = poly[j], b = poly[i];
+      if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) wn += b[1] > a[1] ? 1 : -1;
+    }
+    return wn !== 0;
+  }
+  // Parallel lines at `deg`, `gap` apart, clipped to the polygon (nonzero): "M x y L x y" segments.
+  function hatchPath(poly, deg, gap){
+    var a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    // Rotate by -deg: the lines become horizontal (y' = const).
+    var rp = poly.map(function(p){ return [p[0] * c + p[1] * s, -p[0] * s + p[1] * c]; });
+    var y0 = Infinity, y1 = -Infinity, i;
+    for (i = 0; i < rp.length; i++){ y0 = Math.min(y0, rp[i][1]); y1 = Math.max(y1, rp[i][1]); }
+    if (!(y1 > y0)) return "";
+    var g = Math.max(gap, (y1 - y0) / 300), d = "";
+    var seg = function(xa, xb, y){ d += "M" + r2(xa * c - y * s) + " " + r2(xa * s + y * c) + "L" + r2(xb * c - y * s) + " " + r2(xb * s + y * c); };
+    for (var y = y0 + g / 2; y < y1; y += g){
+      var xs = [];
+      for (i = 0; i < rp.length; i++){
+        var p = rp[i], q = rp[(i + 1) % rp.length];
+        if ((p[1] > y) !== (q[1] > y)) xs.push([p[0] + (y - p[1]) * (q[0] - p[0]) / (q[1] - p[1]), q[1] > p[1] ? 1 : -1]);
+      }
+      xs.sort(function(u, v){ return u[0] - v[0]; });
+      var wn = 0, from = 0;
+      for (i = 0; i < xs.length; i++){
+        var was = wn;
+        wn += xs[i][1];
+        if (!was && wn) from = xs[i][0];
+        else if (was && !wn && xs[i][0] - from > 1e-6) seg(from, xs[i][0], y);
+      }
+    }
+    return d;
+  }
+  // Staggered dots inside the polygon, `gap` apart.
+  function dotsPath(poly, gap, rad){
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, i;
+    for (i = 0; i < poly.length; i++){ x0 = Math.min(x0, poly[i][0]); y0 = Math.min(y0, poly[i][1]); x1 = Math.max(x1, poly[i][0]); y1 = Math.max(y1, poly[i][1]); }
+    var g = Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0), d = "", row = 0;
+    if (!(g > 0)) return "";
+    for (var y = y0 + g / 2; y < y1; y += g * 0.866, row++){
+      for (var x = x0 + (row % 2 ? g : g / 2); x < x1; x += g){
+        if (inPoly(poly, x, y)) d += "M" + r2(x - rad) + " " + r2(y) + "a" + r2(rad) + " " + r2(rad) + " 0 1 0 " + r2(rad * 2) + " 0a" + r2(rad) + " " + r2(rad) + " 0 1 0 " + r2(-rad * 2) + " 0Z";
+      }
+    }
+    return d;
+  }
+  // The fill of a closed stroke: solid (the smoothed centre line) or a pattern; [] when there is none.
+  function fillPrims(d){
+    var pat = d.pattern || "none";
+    if (!d.close || pat === "none" || !Array.isArray(d.pts) || d.pts.length < 9) return [];
+    var poly = polyOf(d.pts), color = d.fill || d.color;
+    var op = (d.opacity != null ? d.opacity : 1) * (d.fillOpacity != null ? d.fillOpacity : 0.5);
+    if (pat === "solid") return [{ d: smoothPath(poly, true), fill: color, op: op }];
+    // The spacing actually used (capped for huge areas, as hatchPath / dotsPath do), so widths / dots follow it.
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    poly.forEach(function(p){ x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); });
+    var gap = Math.max(0.5, Number(d.gap) || d.size || 8);
+    if (pat === "dots"){
+      gap = Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0);
+      var dp = dotsPath(poly, gap, gap * 0.2);
+      return dp ? [{ d: dp, fill: color, op: op }] : [];
+    }
+    var angles = PATTERN_ANGLES[pat];
+    if (!angles) return [];
+    gap = Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);  // (the diagonal ≥ the extent across any line direction)
+    var lw = Math.max(0.3, gap * 0.18);
+    var path = angles.map(function(a){ return hatchPath(poly, a, gap); }).join("");
+    return path ? [{ d: path, stroke: color, sw: lw, op: op, cap: "butt", dash: pat === "dashes" ? [gap * 0.9, gap * 0.6] : null }] : [];
+  }
+
+  // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
+  // Arrows spread evenly along the stroke (about data.step apart), each data.len long along the stroke's
+  // normal, pointing away from it (dir "out") or at it ("in"), on one side ("left" / "right" of the
+  // direction it was drawn in) or both.
+  function arrowsGeom(d){
+    var poly = polyOf(d.pts), n = poly.length, cum = [0], i;
+    for (i = 1; i < n; i++) cum.push(cum[i - 1] + hyp(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]));
+    var total = cum[n - 1] || 0, out = [];
+    if (total < 1e-6) return out;
+    var step = Math.max(Number(d.step) || 0, total / 400, 1e-3), cnt = Math.max(1, Math.round(total / step));
+    var w = d.width || 2, len = Math.max(Number(d.len) || w * 6, w), gap0 = w * 1.2 + (d.guide !== false ? w / 2 : 0);
+    var at = function(s){
+      // Point at arc length s; the tangent from a window around it (steadier than one segment of a shaky stroke).
+      var j = 1;
+      while (j < n - 1 && cum[j] < s) j++;
+      var t = (s - cum[j - 1]) / ((cum[j] - cum[j - 1]) || 1);
+      var p = [poly[j - 1][0] + (poly[j][0] - poly[j - 1][0]) * t, poly[j - 1][1] + (poly[j][1] - poly[j - 1][1]) * t];
+      var win = Math.min(step / 2, total / 2, len), a = ptAt(Math.max(0, s - win)), b = ptAt(Math.min(total, s + win));
+      var tx = b[0] - a[0], ty = b[1] - a[1], l = hyp(tx, ty);
+      if (l < 1e-9){ tx = poly[j][0] - poly[j - 1][0]; ty = poly[j][1] - poly[j - 1][1]; l = hyp(tx, ty) || 1; }
+      return { p: p, t: [tx / l, ty / l] };
+    };
+    var ptAt = function(s){
+      var j = 1;
+      while (j < n - 1 && cum[j] < s) j++;
+      var t = (s - cum[j - 1]) / ((cum[j] - cum[j - 1]) || 1);
+      return [poly[j - 1][0] + (poly[j][0] - poly[j - 1][0]) * t, poly[j - 1][1] + (poly[j][1] - poly[j - 1][1]) * t];
+    };
+    var sides = d.side === "right" ? [-1] : d.side === "both" ? [1, -1] : [1];
+    for (i = 0; i < cnt; i++){
+      var g = at((i + 0.5) * total / cnt);
+      // "left" of the drawing direction on screen (y down): the tangent turned a quarter anticlockwise.
+      var nx = g.t[1], ny = -g.t[0];
+      sides.forEach(function(sg){
+        var near = [g.p[0] + nx * sg * gap0, g.p[1] + ny * sg * gap0], far = [g.p[0] + nx * sg * (gap0 + len), g.p[1] + ny * sg * (gap0 + len)];
+        out.push(d.dir === "in" ? { tail: far, tip: near } : { tail: near, tip: far });
+      });
+    }
+    return out;
+  }
+  function arrowsPrims(d){
+    var w = d.width || 2, op = d.opacity != null ? d.opacity : 1, out = [], body = "", heads = {};
+    if (d.guide !== false){
+      var gp = polyOf(d.pts);
+      if (gp.length === 1) gp.push([gp[0][0] + 0.01, gp[0][1]]);
+      out.push({ d: smoothPath(gp, false), stroke: d.color, sw: w, op: op, dash: dashArray(d.dash, w), cap: "round", join: "round" });
+    }
+    arrowsGeom(d).forEach(function(a){
+      var h = headPrims(d.head1 || "triangle", a.tip, a.tail, w, d.headSize, d.color, op);
+      var b = trimPolyline([a.tail, a.tip], false, h.trim);
+      body += "M" + r2(b[0][0]) + " " + r2(b[0][1]) + "L" + r2(b[1][0]) + " " + r2(b[1][1]);
+      // Heads of one kind share a path (one element per kind, not per arrow).
+      h.prims.forEach(function(p, k){
+        var key = k + "|" + (p.fill ? "f" : "") + (p.stroke ? "s" : "");
+        if (heads[key]) heads[key].d += p.d; else heads[key] = Object.assign({}, p);
+      });
+    });
+    if (body) out.push({ d: body, stroke: d.color, sw: w, op: op, cap: "round", join: "round" });
+    return out.concat(Object.keys(heads).map(function(k){ return heads[k]; }));
+  }
+  // How far an arrows drawing reaches from its stroke (bounds, hit tests).
+  function arrowsReach(d){
+    var w = d.width || 2;
+    return w * 1.7 + Math.max(Number(d.len) || w * 6, w) + Math.max(w * 4.5, w + 9) * (d.headSize || 1) * 0.6;
+  }
+
   // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known.
   function primsOf(it, numOf){
     var d = it.data, t = typeOf(it), op, rot, out, path;
-    if (t === "brush" || t === "pencil") return [{ d: strokeOutline(it), fill: d.color, op: d.opacity != null ? d.opacity : 1 }];
+    if (t === "brush" || t === "pencil") return fillPrims(d).concat([{ d: strokeOutline(it), fill: d.color, op: d.opacity != null ? d.opacity : 1 }]);
+    if (t === "arrows") return arrowsPrims(d);
     if (t === "marker"){
       var mp = [];
       for (var i = 0; i < d.pts.length; i += 3) mp.push([d.pts[i], d.pts[i + 1]]);
@@ -426,7 +581,7 @@ var SightReviewCore = (function(){
     if (STROKE_TOOLS.has(t)){
       var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (i = 0; i < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
-      var rr = d.size / 2;
+      var rr = t === "arrows" ? arrowsReach(d) : d.size / 2;
       return [x0 - rr, y0 - rr, x1 + rr, y1 + rr];
     }
     if (t === "line" || t === "arrow"){
@@ -450,7 +605,23 @@ var SightReviewCore = (function(){
     var d = it.data, t = typeOf(it), i;
     var b = boundsOf(it);
     if (x < b[0] - tol || y < b[1] - tol || x > b[2] + tol || y > b[3] + tol) return false;
+    if (t === "arrows"){
+      // The guide's width all along; the arrows' reach only on their side(s) of the stroke.
+      var reach = arrowsReach(d), np = d.pts.length / 3, near = (d.width || 2) / 2 + tol;
+      if (np === 1) return hyp(x - d.pts[0], y - d.pts[1]) <= near;
+      for (i = 1; i < np; i++){
+        var ax = d.pts[i * 3 - 3], ay = d.pts[i * 3 - 2], bx2 = d.pts[i * 3], by2 = d.pts[i * 3 + 1];
+        var dd = segDist(x, y, ax, ay, bx2, by2);
+        if (dd <= near) return true;
+        if (dd > reach + tol) continue;
+        // Left of the drawing direction (screen, y down): a negative cross product of the segment and the point.
+        var left = (bx2 - ax) * (y - ay) - (by2 - ay) * (x - ax) < 0;
+        if (d.side === "both" || (d.side === "right" ? !left : left)) return true;
+      }
+      return false;
+    }
     if (STROKE_TOOLS.has(t)){
+      if (d.close && d.pattern && d.pattern !== "none" && d.pts.length >= 9 && inPoly(polyOf(d.pts), x, y)) return true;
       var rs = t === "marker" ? null : strokeRadii(it);
       var n = d.pts.length / 3;
       if (n === 1) return hyp(x - d.pts[0], y - d.pts[1]) <= (rs ? rs[0] : d.size / 2) + tol;
@@ -458,6 +629,8 @@ var SightReviewCore = (function(){
         var r = rs ? Math.max(rs[i], rs[i - 1]) : d.size / 2;
         if (segDist(x, y, d.pts[i * 3 - 3], d.pts[i * 3 - 2], d.pts[i * 3], d.pts[i * 3 + 1]) <= r + tol) return true;
       }
+      // A closed stroke's seam: from its last point back to the first.
+      if (d.close && n >= 3 && segDist(x, y, d.pts[n * 3 - 3], d.pts[n * 3 - 2], d.pts[0], d.pts[1]) <= (rs ? Math.max(rs[n - 1], rs[0]) : d.size / 2) + tol) return true;
       return false;
     }
     if (t === "line" || t === "arrow"){
@@ -493,7 +666,13 @@ var SightReviewCore = (function(){
     var d = it.data, s = src.data, t = typeOf(it), c;
     if (STROKE_TOOLS.has(t)){
       for (var i = 0; i < s.pts.length; i += 3){ c = map(s.pts[i], s.pts[i + 1]); d.pts[i] = c[0]; d.pts[i + 1] = c[1]; }
-      d.size = s.size * k;
+      if (s.size != null) d.size = s.size * k;
+      if (s.width != null) d.width = s.width * k;
+      if (s.gap != null) d.gap = s.gap * k;
+      if (s.step != null) d.step = s.step * k;
+      if (s.len != null) d.len = s.len * k;
+      // A mirror (one negative axis) swaps an arrows drawing's left and right.
+      if (t === "arrows" && sx * sy < 0 && (s.side === "left" || s.side === "right")) d.side = s.side === "left" ? "right" : "left";
     } else if (t === "line" || t === "arrow"){
       var a = map(s.pts[0], s.pts[1]), b = map(s.pts[2], s.pts[3]);
       d.pts = [a[0], a[1], b[0], b[1]];
@@ -971,7 +1150,7 @@ var SightReviewCore = (function(){
 
   return {
     FORMAT: FORMAT, FORMAT_VERSION: FORMAT_VERSION,
-    STROKE_TOOLS: STROKE_TOOLS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
+    STROKE_TOOLS: STROKE_TOOLS, PATTERNS: PATTERNS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
     uid: uid, clamp: clamp, r2: r2, hyp: hyp, typeOf: typeOf, esc: esc, fontStack: fontStack, segDist: segDist, rotPt: rotPt,
     smoothPath: smoothPath, strokeRadii: strokeRadii, strokeOutline: strokeOutline, dashArray: dashArray,
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,

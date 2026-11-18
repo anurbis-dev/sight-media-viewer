@@ -93,12 +93,12 @@ const HOLDS = [[0, "1 frame"], [0.5, "0.5 s"], [1, "1 s"], [2, "2 s"], [-1, "Who
 // Sizes in tool styles are screen pixels at the moment of drawing (what you see is what you get);
 // they are converted to doc units when an object is created.
 const DEFAULT_STYLES = {
-  brush: { color: "#ff3b30", size: 8, opacity: 1, pressure: true, smooth: 0.5 },
+  brush: { color: "#ff3b30", size: 8, opacity: 1, pressure: true, smooth: 0.5, close: false, pattern: "diag", fill: "#ff3b30", fillOpacity: 0.5, gap: 10 },
   pencil: { color: "#ff3b30", size: 2.5, opacity: 1, pressure: true, smooth: 0.15 },
   marker: { color: "#ffd60a", size: 26, opacity: 0.4, smooth: 0.5 },
   eraser: { size: 26, mode: "object" },
   line: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "none", body: "straight", headSize: 1 },
-  arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1 },
+  arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, mode: "line", step: 40, len: 24, dir: "out", side: "left", guide: true },
   rect: { shape: "rect", color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, radius: 0, opacity: 1 },
   ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, opacity: 1 },
   text: { font: "sans", size: 28, color: "#ffffff", bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1 },
@@ -106,10 +106,14 @@ const DEFAULT_STYLES = {
   image: { border: 0, borderColor: "#ffffff", shadow: 0, opacity: 1 },
 };
 // Keys whose value is a length (converted between screen px and doc units).
-const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border"]);
+const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border", "gap", "step", "len"]);
+// Fill patterns of a closed brush stroke (review-core PATTERNS); "random" (the tool only) picks one per stroke.
+const PATTERN_OPTS = [["none", "None"], ["solid", "Solid"], ["diag", "╱ Lines"], ["diag2", "╲ Lines"], ["horiz", "─ Lines"], ["vert", "│ Lines"], ["grid", "┼ Grid"], ["cross", "╳ Cross-hatch"], ["dots", "• Dots"], ["dashes", "┄ Dashes"]];
+const RANDOM_PATTERNS = PATTERN_OPTS.map(([id]) => id).filter((id) => id !== "none" && id !== "solid");
 
 // Props bar descriptors per object type.
 //   t: color | num | toggle | select | seg   create: only while drawing (hidden for a selection)
+//   edit: only for a selection   when(get): shown while true (get(key) reads the tool's / selection's value)
 const P = {
   color: { k: "color", t: "color", label: "Colour" },
   size: { k: "size", t: "num", label: "Size", min: 0.5, max: 400, exp: true, unit: "px" },
@@ -144,14 +148,43 @@ const P = {
   border: { k: "border", t: "num", label: "Frame", min: 0, max: 200, exp: false, unit: "px" },
   borderColor: { k: "borderColor", t: "color", label: "Frame colour" },
   shadow: { k: "shadow", t: "num", label: "Shadow", min: 0, max: 1, pct: true },
+  // Brush: close like a lasso and fill (solid or a pattern).
+  close: { k: "close", t: "toggle", label: "Close", title: "Close the stroke like a lasso and fill it", ico: ico(`<path d="M12 4c4.7 0 8 2.4 8 5.6s-3.3 5.6-8 5.6-8-2.4-8-5.6S7.3 4 12 4z"/><path d="M6.5 13.5C5 15.5 5.5 18.5 9 20"/>`) },
+  pattern: { k: "pattern", t: "select", label: "Fill", options: [...PATTERN_OPTS, ["random", "Random"]], create: true, when: (g) => g("close") },
+  ipattern: { k: "pattern", t: "select", label: "Fill", options: PATTERN_OPTS, edit: true, when: (g) => g("close") },
+  bfill: { k: "fill", t: "color", label: "Fill colour", when: (g) => g("close") && g("pattern") !== "none" },
+  bfillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true, when: (g) => g("close") && g("pattern") !== "none" },
+  gap: { k: "gap", t: "num", label: "Spacing", title: "Pattern density: the distance between lines / dots", min: 2, max: 200, exp: true, unit: "px", when: (g) => g("close") && !["none", "solid"].includes(g("pattern")) },
+  // Arrow tool: one arrow (Line) or arrows along a freehand stroke (Stroke), turned to its normal.
+  // A plain on / off button (fixed: always the Stroke icon, lit while on).
+  amode: { k: "mode", t: "cycle", label: "Stroke", fixed: true, create: true, options: [
+    ["line", "One arrow", ICON.arrow],
+    ["stroke", "Arrows along a stroke", ico(`<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>`)]] },
+  ahead: { k: "head1", t: "select", label: "Tip", options: HEADS },
+  step: { k: "step", t: "num", label: "Every", title: "Distance between the arrows along the stroke", min: 4, max: 1000, exp: true, unit: "px" },
+  alen: { k: "len", t: "num", label: "Length", title: "Length of each arrow", min: 2, max: 600, exp: true, unit: "px" },
+  adir: { k: "dir", t: "cycle", label: "Direction", options: [
+    ["out", "Away from the stroke", ico(`<path d="M3 20h18"/><path d="M12 16V4M8 8l4-4 4 4"/>`)],
+    ["in", "Toward the stroke", ico(`<path d="M3 20h18"/><path d="M12 4v12M8 12l4 4 4-4"/>`)]] },
+  // Sides are relative to the direction the stroke was drawn in (the icons draw it left → right).
+  aside: { k: "side", t: "cycle", label: "Side", options: [
+    ["left", "Left of the stroke", ico(`<path d="M3 16h17M17 13l3 3-3 3"/><path d="M8 12V5M14 12V5"/>`)],
+    ["right", "Right of the stroke", ico(`<path d="M3 8h17M17 5l3 3-3 3"/><path d="M8 12v7M14 12v7"/>`)],
+    ["both", "Both sides", ico(`<path d="M3 12h17M17 9l3 3-3 3"/><path d="M8 9V3M14 9V3M8 15v6M14 15v6"/>`)]] },
+  guide: { k: "guide", t: "toggle", label: "Guide", title: "Guide — draw the stroke itself under the arrows", ico: ico(`<path d="M3 15c3-6 6 6 9 0s6-6 9 0"/>`) },
 };
+const lineMode = (g) => g("mode") !== "stroke", strokeMode = (g) => g("mode") === "stroke";
+const ARROWS_PROPS = [P.color, P.width, P.opacity, P.ahead, P.headSize, P.step, P.alen, P.adir, P.aside, P.guide, { ...P.dash, when: (g) => g("guide") !== false }];
 const PROPS = {
-  brush: [P.color, P.size, P.opacity, P.pressure, P.smooth],
+  brush: [P.color, P.size, P.opacity, P.pressure, P.smooth, P.close, P.pattern, P.ipattern, P.bfill, P.bfillOpacity, P.gap],
   pencil: [P.color, P.size, P.opacity, P.pressure, P.smooth],
   marker: [P.color, P.size, P.opacity, P.smooth],
   eraser: [P.esize, P.emode],
   line: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
-  arrow: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
+  // The arrow tool in Stroke mode shows the arrows' props; a selected arrow is always a line arrow.
+  arrow: [P.amode, ...[P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize].map((p) => ({ ...p, when: lineMode })),
+    ...ARROWS_PROPS.map((p) => ({ ...p, when: p.when ? (g) => strokeMode(g) && p.when(g) : strokeMode }))],
+  arrows: ARROWS_PROPS,
   // The shape tool (id "rect") draws either; a selected shape keeps its kind. No stroke switch: the outline is
   // always drawn (shapes made with it off keep it off).
   rect: [P.shape, P.color, P.width, P.dash, P.fillOn, P.fill, P.fillOpacity, P.radius, P.opacity],
@@ -1338,10 +1371,20 @@ export function createAnnotator(host){
     }
     // Drawing starts a new note: a note picked in the panel lets go (the media shows the new one).
     if (S.pinFocus){ S.pinFocus = null; renderPanel(); }
+    if (tool === "arrow" && S.styles.arrow.mode === "stroke"){
+      // Arrows along a freehand stroke: drawn like a brush stroke, the arrows follow it (review-core arrowsPrims).
+      const st = styleDoc(tool);
+      const it = newItem("stroke", "arrows", { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head1: st.head1, headSize: st.headSize, step: st.step, len: st.len, dir: st.dir, side: st.side, guide: st.guide !== false, pts: [r2(x), r2(y), 0.5] });
+      S.items.set(it.id, it);
+      S.drag = { stroke: it, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k() };
+      renderAll();
+      return;
+    }
     if (STROKE_TOOLS.has(tool)){
       const st = styleDoc(tool);
       const p = pen ? clamp(e.pressure || 0.5, 0, 1) : 0.5;
-      const it = newItem("stroke", tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, pts: [r2(x), r2(y), r2(p)] });
+      const fillKeys = tool === "brush" ? { close: !!st.close, pattern: st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern, fill: st.fill, fillOpacity: st.fillOpacity, gap: st.gap } : {};
+      const it = newItem("stroke", tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, ...fillKeys, pts: [r2(x), r2(y), r2(p)] });
       S.items.set(it.id, it);
       S.drag = { stroke: it, sm: [x, y], smooth: st.smooth ?? 0, start: [x, y], minStep: 0.75 * k() };
       renderAll();
@@ -1416,7 +1459,7 @@ export function createAnnotator(host){
       if (e.shiftKey){
         // Shift: straight stroke from where it started, snapped to 15°.
         const [ex, ey] = snapAngle(D.start[0], D.start[1], x, y);
-        const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, d.size / 3)));
+        const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, (d.size || d.width * 2) / 3)));
         d.pts = [];
         for (let i = 0; i <= n; i++) d.pts.push(r2(D.start[0] + (ex - D.start[0]) * i / n), r2(D.start[1] + (ey - D.start[1]) * i / n), 1);
         D.straight = true;
@@ -1492,6 +1535,13 @@ export function createAnnotator(host){
         if (hyp(D.last[0] - d.pts[n - 3], D.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(r2(D.last[0]), r2(D.last[1]), r2(D.last[2]));
       }
       S.items.delete(it.id);
+      if (typeOf(it) === "arrows"){
+        // An arrows stroke needs some length (a click would leave a dot with no arrows).
+        let len = 0;
+        const d = it.data;
+        for (let i = 3; i < d.pts.length; i += 3) len += hyp(d.pts[i] - d.pts[i - 3], d.pts[i + 1] - d.pts[i - 2]);
+        if (len / k() < 3){ renderAll(); return; }
+      }
       commit([it.id], () => S.items.set(it.id, it));
       return;
     }
@@ -1554,14 +1604,20 @@ export function createAnnotator(host){
       const t = typeOf(it);
       // A baked drawing is removed whole (a deletion) but never cut into pieces (an edit).
       if (D.partial && STROKE_TOOLS.has(t) && !baked(it)){
-        if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
         const pts = it.data.pts, keep = [];
-        let cur = [];
+        let cur = [], cut = false;
         for (let i = 0; i < pts.length; i += 3){
-          if (hyp(pts[i] - x, pts[i + 1] - y) <= rad + it.data.size * 0.25){ if (cur.length) keep.push(cur); cur = []; }
+          if (hyp(pts[i] - x, pts[i + 1] - y) <= rad + (it.data.size || it.data.width || 0) * 0.25){ if (cur.length) keep.push(cur); cur = []; cut = true; }
           else cur.push(pts[i], pts[i + 1], pts[i + 2]);
         }
-        if (cur.length) keep.push(cur);
+        if (!cut) continue;  // (within reach as a whole — the arrows, the fill — but no point of the stroke was hit)
+        // A cut lasso is open (its pieces lose the fill); its first and last runs met at the seam — one piece.
+        if (it.data.close){
+          if (keep.length && cur.length && keep[0][0] === pts[0] && keep[0][1] === pts[1]) keep[0] = cur.concat(keep[0]);
+          else if (cur.length) keep.push(cur);
+        } else if (cur.length) keep.push(cur);
+        if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
+        if (it.data.close) it.data.close = false;
         if (!keep.length){ S.items.delete(it.id); S.layer?.els.get(it.id)?.remove(); S.layer?.els.delete(it.id); continue; }
         it.data.pts = keep[0];
         renderItem(it);
@@ -1858,6 +1914,9 @@ export function createAnnotator(host){
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
     const sb = bar.querySelector("[data-tool=rect]"), sk = S.styles.rect.shape === "ellipse" ? "ellipse" : "rect";
     if (sb.dataset.shape !== sk){ sb.dataset.shape = sk; sb.innerHTML = ICON[sk]; }
+    // The arrow tool's icon follows its Line / Stroke mode.
+    const ab = bar.querySelector("[data-tool=arrow]"), am = S.styles.arrow.mode === "stroke" ? "stroke" : "line";
+    if (ab && ab.dataset.mode !== am){ ab.dataset.mode = am; ab.innerHTML = P.amode.options.find(([id]) => id === am)[2]; }
     bar.querySelectorAll("[data-act=shot], [data-act=region]").forEach((b) => { b.hidden = isBoard(); });  // no picture to capture on a board
     bar.querySelector("[data-tool=image]").hidden = isBoard() || host.refImages === false;  // a board places pictures itself
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
@@ -1912,7 +1971,9 @@ export function createAnnotator(host){
     const tg = propsTarget();
     let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
     if (tg.items) list = list.filter((p) => !p.create);
-    else if (tg.type === "rect" && S.styles.rect.shape === "ellipse") list = list.filter((p) => p.k !== "radius");
+    else list = list.filter((p) => !p.edit);
+    list = list.filter((p) => !p.when || p.when((key) => propValue(tg, { k: key })));
+    if (!tg.items && tg.type === "rect" && S.styles.rect.shape === "ellipse") list = list.filter((p) => p.k !== "radius");
     let html = "";
     if (tg.items) html += `<span class="an-pl">${tg.items.length > 1 ? tg.items.length + " selected" : (tg.type || "")}</span>`;
     for (const p of list){
@@ -1923,7 +1984,12 @@ export function createAnnotator(host){
       } else if (p.t === "num"){
         html += `<span class="an-num" data-k="${p.k}" data-p="${list.indexOf(p)}" title="Drag, scroll or click to type"><b>${esc(p.label)}</b><em>${fmtNum(p, v)}</em></span>`;
       } else if (p.t === "toggle"){
-        html += `<button type="button" class="an-tg${p.cls ? " " + p.cls : ""}${v ? " on" : ""}" data-k="${p.k}" title="${esc(p.title || p.label)}">${esc(p.label)}</button>`;
+        html += `<button type="button" class="an-tg${p.cls ? " " + p.cls : ""}${v ? " on" : ""}" data-k="${p.k}" title="${esc(p.title || p.label)}">${p.ico || esc(p.label)}</button>`;
+      } else if (p.t === "cycle"){
+        // One button for a few choices: it shows the current one's icon, a click / tap moves to the next.
+        const i = Math.max(0, p.options.findIndex(([id]) => id === v)), nx = p.options[(i + 1) % p.options.length];
+        if (p.fixed) html += `<button type="button" class="an-tg${i ? " on" : ""}" data-k="${p.k}" data-cyc title="${esc(p.options[1][1])} (${i ? "on" : "off"})">${p.options[1][2]}</button>`;
+        else html += `<button type="button" class="an-tg" data-k="${p.k}" data-cyc title="${esc(p.label)}: ${esc(p.options[i][1])} — click for ${esc(nx[1].toLowerCase())}">${p.options[i][2]}</button>`;
       } else if (p.t === "select"){
         html += `<label class="an-psel" title="${esc(p.label)}"><span>${esc(p.label)}</span><select data-k="${p.k}">${p.options.map(([id, n]) => `<option value="${id}"${id === v ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
       } else if (p.t === "seg"){
@@ -1965,14 +2031,22 @@ export function createAnnotator(host){
     if (!tg.items){
       S.styles[tg.type][p.k] = v;
       saveStyles();
-      if (p.k === "shape") paintBar();  // the tool's icon follows its kind
+      if (p.k === "shape" || (tg.type === "arrow" && p.k === "mode")) paintBar();  // the tool's icon follows its kind / mode
       return;
     }
     const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
     const dv = LEN_KEYS.has(p.k) && typeof v === "number" ? v * k() : v;
     if (S.edit){ S.edit.it.data[p.k] = dv; S.edit.place(); if (p.t !== "color") S.edit.ta.focus(); return; }
     if (!ids.length) return;
-    commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[typeOf(it)]?.some((q) => q.k === p.k)) it.data[p.k] = dv; } }, merge ? "prop:" + p.k : null);
+    commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[typeOf(it)]?.some((q) => q.k === p.k)){ it.data[p.k] = dv; if (p.k === "close" && dv) fillDefaults(it.data); } } }, merge ? "prop:" + p.k : null);
+  }
+  // A brush closed after it was drawn (or one from before 0.81) takes the brush tool's fill settings.
+  function fillDefaults(d){
+    const st = styleDoc("brush");
+    if (!RC.PATTERNS.includes(d.pattern)) d.pattern = st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern;
+    if (!d.fill) d.fill = st.fill;
+    if (d.fillOpacity == null) d.fillOpacity = st.fillOpacity;
+    if (!(d.gap > 0)) d.gap = st.gap;
   }
   function bindProps(el, tg, list){
     el.querySelectorAll("input[type=color][data-k]").forEach((inp) => {
@@ -1982,7 +2056,15 @@ export function createAnnotator(host){
     el.querySelectorAll("[data-sw]").forEach((sw) => {
       sw.onclick = () => { setProp(P.color, sw.dataset.sw, false); renderProps(); };
     });
-    el.querySelectorAll("button[data-k]:not([data-v])").forEach((b) => {
+    el.querySelectorAll("button[data-cyc]").forEach((b) => {
+      const p = list.find((q) => q.k === b.dataset.k);
+      b.onclick = () => {
+        const i = Math.max(0, p.options.findIndex(([id]) => id === propValue(propsTarget(), p)));
+        setProp(p, p.options[(i + 1) % p.options.length][0], false);
+        renderProps();
+      };
+    });
+    el.querySelectorAll("button[data-k]:not([data-v]):not([data-cyc])").forEach((b) => {
       const p = list.find((q) => q.k === b.dataset.k);
       b.onclick = () => { setProp(p, !propValue(propsTarget(), p), false); renderProps(); };
     });
@@ -2057,7 +2139,7 @@ export function createAnnotator(host){
       el.addEventListener("lostpointercapture", up);  // whatever ends the capture ends the drag (numDrag never sticks)
     });
     el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(get(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const dflt = (DEFAULT_STYLES[propsTarget().type] || {})[p.k]; if (dflt != null) set(dflt, false); });
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const t = propsTarget().type, dflt = (DEFAULT_STYLES[t === "arrows" ? "arrow" : t] || {})[p.k]; if (dflt != null) set(dflt, false); });
   }
   function typeNum(el, p, v, done){
     const em = el.querySelector("em");
@@ -4182,6 +4264,7 @@ function injectStyles(){
 .an-numedit { width: 44px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 0 3px; outline: none; }
 .an-tg { height: 24px; min-width: 24px; padding: 0 7px; border-radius: 6px; color: var(--muted); background: var(--surface-2); font-size: 11px; display: inline-grid; place-items: center; }
 .an-tg svg { width: 14px; height: 14px; }
+.an-tg[data-cyc] svg, .an-tg[data-k] svg { width: 16px; height: 16px; }
 .an-tg:hover { color: var(--fg); }
 .an-tg.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .an-tg.b { font-weight: 700; } .an-tg.i { font-style: italic; font-family: Georgia, serif; } .an-tg.u { text-decoration: underline; }
