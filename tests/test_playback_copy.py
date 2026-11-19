@@ -209,6 +209,71 @@ class PlaybackCopyTest(unittest.TestCase):
         self.assertIsNone(got.get("scrub", "unset"), "a stopped scrub encode returns None (start over)")
         self.assertIsNone(self.lib._scrub_proc)
         self.assertEqual(self.lib._play_waiting, 0)
+        self.assertEqual(self.lib._play_active, 0)
+
+    def test_scrub_encodes_of_several_clips_overlap(self) -> None:
+        # A compare asks for every clip's scrub copy at once. Two encodes must be inside ffmpeg
+        # together — a single slot would make the second wait until the first finished.
+        lavfi = lambda secs: [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "lavfi",
+                              "-i", f"testsrc=size=320x180:rate=25:duration={secs}", "-f", "null", "-"]
+        log_dir = self.tmp / "logs"
+        log_dir.mkdir()
+        overlapped = threading.Event()
+
+        def watch() -> None:
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                if len(self.lib._scrub_procs) >= 2:
+                    overlapped.set()
+                    return
+                time.sleep(0.02)
+
+        threading.Thread(target=watch, daemon=True).start()
+        done: dict[str, int | None] = {}
+
+        def run(name: str) -> None:
+            done[name] = self.lib._encode_copy(lavfi(3), log_dir / f"{name}.log", 0.0, {"progress": 0}, True)
+
+        threads = [threading.Thread(target=run, args=(n,)) for n in ("a", "b")]
+        for t in threads:
+            t.start()
+        self.assertTrue(overlapped.wait(20), "the two scrub encodes never ran together")
+        for t in threads:
+            t.join(30)
+        self.assertEqual(done.get("a"), 0)
+        self.assertEqual(done.get("b"), 0)
+        self.assertEqual(len(self.lib._scrub_procs), 0)
+        self.assertIsNone(self.lib._scrub_proc)
+
+    def test_a_playback_copy_stops_every_running_scrub_encode(self) -> None:
+        lavfi = lambda secs: [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "lavfi",
+                              "-i", f"testsrc=size=320x180:rate=25:duration={secs}", "-f", "null", "-"]
+        log_dir = self.tmp / "logs2"
+        log_dir.mkdir()
+        got: dict[str, int | None] = {}
+
+        def run(name: str) -> None:
+            got[name] = self.lib._encode_copy(lavfi(3600), log_dir / f"{name}.log", 0.0, {"progress": 0}, True)
+
+        threads = [threading.Thread(target=run, args=(n,)) for n in ("a", "b")]
+        for t in threads:
+            t.start()
+        deadline = time.time() + 20
+        while len(self.lib._scrub_procs) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertGreaterEqual(len(self.lib._scrub_procs), 2, "both scrub encodes did not start")
+        t0 = time.time()
+        rc = self.lib._encode_copy(lavfi(1), log_dir / "p.log", 0.0, {"progress": 0}, False)
+        took = time.time() - t0
+        for t in threads:
+            t.join(20)
+        self.assertEqual(rc, 0)
+        self.assertLess(took, 15, "the playback copy waited for a scrub encode")
+        self.assertIsNone(got.get("a", "unset"))
+        self.assertIsNone(got.get("b", "unset"))
+        self.assertEqual(len(self.lib._scrub_procs), 0)
+        self.assertEqual(self.lib._play_waiting, 0)
+        self.assertEqual(self.lib._play_active, 0)
 
     def test_a_stopped_scrub_encode_starts_over_and_finishes(self) -> None:
         src = self._make_mpeg1("clip.mpg")

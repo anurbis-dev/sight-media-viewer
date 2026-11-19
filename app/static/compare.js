@@ -11,7 +11,11 @@
 // (every clip pauses on its frame) until all can play, then they start together; small drift is
 // nudged with playbackRate. One decoder per clip: the reference's copies under Difference tiles are
 // canvases painted from its video. The server keeps a RAM window around each clip's playhead
-// (/api/video/focus items — the budget split between the clips).
+// (/api/video/focus items — the budget split between the clips). A drag scrubs a short-GOP proxy
+// per clip (made when the compare opens, up to a few at once): one seek in flight, the latest time
+// waits for it, and the full file is sought once when the drag ends. Until that proxy exists the
+// same one-seek rule applies to the clip itself, so a slow clip keeps its last frame instead of
+// restarting a seek on every pointer move.
 //
 // createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
 // onView(view) — the selected layer's viewer after every rebuild / selection (view: {asset, wrap, media, isVid,
@@ -129,6 +133,7 @@ export function createCompare(host){
     }
     bindUi();
     build();
+    ensureScrubs();
     requestAnimationFrame(() => el.classList.add("on"));
     C.raf = requestAnimationFrame(tick);
     C.fpsReady = loadFps();
@@ -145,7 +150,7 @@ export function createCompare(host){
     if (C.pBase) P = prefsToSave();
     cancelAnimationFrame(C.raf);
     if (C.onResize) window.removeEventListener("resize", C.onResize);
-    for (const l of C.layers) for (const m of l.media) releaseMedia(m);
+    for (const l of C.layers){ dropScrub(l); for (const m of l.media) releaseMedia(m); }
     C.el.remove();
     C = null;
   }
@@ -216,6 +221,10 @@ export function createCompare(host){
       };
       m.addEventListener("error", fallback);
       m.addEventListener("loadedmetadata", () => { if (!m.videoWidth) fallback(); });
+      m.addEventListener("seeked", () => {
+        pumpTime(m);
+        if (m._primary && m._want == null && !m.seeking) settleScrub(m._layer, m);
+      });
     } else {
       m = document.createElement("img");
       m.decoding = "async";
@@ -228,6 +237,121 @@ export function createCompare(host){
     m._primary = primary;
     l.media.push(m);
     return m;
+  }
+  // One seek in flight per element. A drag that moves again before "seeked" keeps the latest time
+  // and sends it when the seek lands — it never restarts a seek, so the last painted frame stays.
+  function pumpTime(m){
+    if (!m || m._want == null || m.seeking || m.readyState < 1) return;
+    const t = m._want;
+    m._want = null;
+    m._seekGen = m._wantGen;
+    if (Math.abs(m.currentTime - t) > 0.001) m.currentTime = t;
+    else if (m.classList.contains("cmp-scrub")) revealScrub(m);
+    else if (m._primary) settleScrub(m._layer, m);
+  }
+  function wantTime(m, t, gen){
+    const dur = m.duration;
+    if (Number.isFinite(dur)) t = Math.min(Math.max(0, dur - 1e-3), Math.max(0, t));
+    else t = Math.max(0, t);
+    m._want = t;
+    if (gen != null) m._wantGen = gen;
+    pumpTime(m);
+  }
+  function revealScrub(v){
+    if (!C?.scrub || v.seeking || v._want != null || v._seekGen !== C.scrubGen) return;
+    v.hidden = false;
+  }
+  // True when the element is on the shared playhead (the 0.1 frame syncVideos adds is the same point).
+  function atPlayhead(l, m){
+    const local = C.T - l.start / C.fps;
+    const tol = 0.5 / C.fps;
+    return Math.abs(m.currentTime - local) <= tol || Math.abs(m.currentTime - (local + 0.1 / C.fps)) <= tol;
+  }
+  // The proxy stays up until the full file has presented the frame the drag ended on.
+  // A seek that was already in flight (queued before the proxy existed) must not count:
+  // its "seeked" is an older frame, and hiding on it uncovers that frame for the real seek.
+  function settleScrub(l, m){
+    const sc = l?.scrub;
+    if (!C || C.scrub || !sc || sc.hidden || sc._settle) return;
+    if (m.seeking || m._want != null || !atPlayhead(l, m)) return;
+    // A newer drag bumps the token, so this hand-off cannot hide the proxy the next drag is showing.
+    const token = ++sc._settleToken;
+    const armed = m.currentTime;
+    sc._settle = true;
+    let done = false;
+    const hide = () => {
+      if (done) return;
+      done = true;
+      if (sc._settleToken !== token) return;
+      sc._settle = false;
+      if (!C || C.scrub || m.seeking || m._want != null) return;
+      // Playback may have moved a few frames. A paused jump to a different frame is another seek.
+      const jumped = Math.abs(m.currentTime - armed) > Math.max(0.35, 8 / C.fps);
+      if (jumped && m.paused) return;
+      sc.hidden = true;
+    };
+    if (m.requestVideoFrameCallback) m.requestVideoFrameCallback(hide);
+    setTimeout(hide, 250);
+  }
+  // Pointer-up: every clip remembers the release time, even if a seek is already in flight.
+  // The playing path used to drop that time while `seeking`, then treat the old "seeked" as the hand-off.
+  function queueRelease(){
+    if (!C) return;
+    for (const l of C.layers){
+      if (!isVideo(l.a)) continue;
+      const local = C.T - l.start / C.fps;
+      if (!(local >= -1e-4 && (!l.dur || local < l.dur))) continue;
+      const want = local + 0.1 / C.fps;
+      for (const m of l.media){
+        if (m.tagName !== "VIDEO" || m.readyState < 1 || m.error) continue;
+        wantTime(m, want);
+      }
+    }
+  }
+  function dropScrub(l){
+    const v = l?.scrub;
+    if (!v) return;
+    try { v.pause(); v.removeAttribute("src"); v.load(); } catch {}
+    v.remove();
+    l.scrub = null;
+  }
+  function mountScrubs(){
+    if (!C) return;
+    for (const l of C.layers){
+      const sc = l.scrub;
+      if (!sc) continue;
+      const host = l.media.find((m) => m.tagName === "VIDEO" && m._primary);
+      if (!host?.parentElement){ sc.remove(); continue; }
+      if (sc.previousElementSibling !== host) host.after(sc);
+    }
+  }
+  // A short-GOP proxy per clip, asked as soon as the compare opens (the server encodes a few at once).
+  // Clips under 3 s seek from their own keyframes, as in the viewer.
+  function ensureScrubs(){
+    if (!C) return;
+    for (const l of C.layers){
+      if (!isVideo(l.a) || l.scrubAsked) continue;
+      const known = l.a.duration || l.dur || 0;
+      if (known > 0 && known < 3) continue;
+      l.scrubAsked = true;
+      const id = l.id;
+      convertForPlayback(id, null, () => !!C && C.layers.some((x) => x.id === id), "scrub").then((res) => {
+        if (!res.ok || !C) return;
+        const layer = C.layers.find((x) => x.id === id);
+        if (!layer || layer.scrub) return;
+        const v = document.createElement("video");
+        v.className = "cmp-m cmp-scrub";
+        v.muted = true; v.playsInline = true; v.preload = "auto"; v.hidden = true;
+        v.draggable = false;
+        v._layer = layer;
+        v.src = `/api/video/scrub/${id}`;
+        v.addEventListener("seeked", () => { pumpTime(v); revealScrub(v); });
+        v.addEventListener("error", () => { v.hidden = true; if (layer.scrub === v) layer.scrub = null; });
+        layer.scrub = v;
+        mountScrubs();
+        place();
+      });
+    }
   }
   // Rebuilds the stage DOM (layout, visibility, reference or blend changed). Media elements are
   // recreated, so video positions are restored from the shared clock on the next tick.
@@ -303,6 +427,7 @@ export function createCompare(host){
         st.appendChild(cell);
       }
     }
+    mountScrubs();
     C.syncNow = true;
     place();
     paintAll();
@@ -426,7 +551,9 @@ export function createCompare(host){
   // which does not move meanwhile, so the seek lands where the others wait. (Seeking towards a clock that
   // ran on was the desync: a 4K / long-GOP clip took longer to seek than the 0.25 s it was allowed to lag,
   // landed behind again and was seeked again, forever.) When every clip can play they start together;
-  // small drift is corrected with playbackRate. Paused or scrubbing: each shows exactly the playhead's frame.
+  // small drift is corrected with playbackRate. Paused or scrubbing: one seek per clip at a time, the
+  // latest time queued behind it. A drag uses the short-GOP proxy when it is ready and leaves the full
+  // file on its last frame until the pointer goes up.
   function canGo(m, l, local){
     if (m.readyState >= 3) return true; // HAVE_FUTURE_DATA
     if (m.readyState < 2 || !m.paused) return false;
@@ -444,6 +571,10 @@ export function createCompare(host){
       if (!isVideo(l.a)) continue;
       const local = C.T - l.start / C.fps;
       const inside = local >= -1e-4 && (!l.dur || local < l.dur);
+      // Keep a visible proxy paused. Playback does not hide it here: settleScrub does, once the
+      // full file has presented the frame the drag ended on. Hiding at once would flash the old frame.
+      if (l.scrub && !l.scrub.paused) l.scrub.pause();
+      if (!inside && l.scrub) l.scrub.hidden = true;
       for (const m of l.media){
         m.parentElement?.classList.toggle("out", !inside);
         if (m.tagName !== "VIDEO") continue;
@@ -454,8 +585,18 @@ export function createCompare(host){
         if (!run){
           m._low = 0;
           if (!m.paused) m.pause();
+          const sc = l.scrub;
           const want = local + 0.1 / C.fps;
-          if ((force || Math.abs(m.currentTime - want) > 0.45 / C.fps) && !m.seeking) m.currentTime = want;
+          // The proxy follows the pointer. The full file is not seeked until the drag ends, so two
+          // clips do not fight over the decoder on every move.
+          if (C.scrub && sc && sc.readyState >= 1 && !sc.error){
+            m._want = null;
+            if (!sc.paused) sc.pause();
+            wantTime(sc, want, C.scrubGen);
+            continue;
+          }
+          if (sc && C.scrub){ sc.hidden = true; sc._want = null; }
+          if (force || Math.abs(m.currentTime - want) > 0.45 / C.fps) wantTime(m, want);
           continue;
         }
         // A seek in flight: wait for it to land, never restart it — unless it has hung for 8 s (an overloaded
@@ -497,6 +638,15 @@ export function createCompare(host){
         if (m.paused) m.play().catch(() => {});
       }
     }
+    if (run){
+      // After the seeks above: a proxy still showing the drag, and a clip already on that frame
+      // (no "seeked" will fire), hands back now. A seek still in flight hands back from "seeked".
+      for (const l of C.layers){
+        if (!l.scrub || l.scrub.hidden) continue;
+        const m = l.media.find((x) => x._primary && x.tagName === "VIDEO");
+        if (m) settleScrub(l, m);
+      }
+    }
     const was = !!C.wait;
     if (!run) C.wait = false;
     else if (waiting && !was){
@@ -513,9 +663,12 @@ export function createCompare(host){
     for (const l of C.layers){
       if (!isVideo(l.a)) continue;
       let src = null;
+      const sc = l.scrub;
+      // Difference tiles paint from the proxy element while it is the picture on screen.
+      const proxy = sc && !sc.hidden && sc.readyState >= 2 && sc.videoWidth ? sc : null;
       for (const m of l.media){
         if (m.tagName !== "CANVAS") continue;
-        src = src || l.media.find((x) => x.tagName === "VIDEO" && x.readyState >= 2 && x.videoWidth);
+        if (!src) src = proxy || l.media.find((x) => x.tagName === "VIDEO" && x.readyState >= 2 && x.videoWidth);
         if (!src || src.seeking) continue; // (mid-seek, currentTime already reads the target over the old frame)
         const k = `${src.currentTime}|${src.videoWidth}x${src.videoHeight}`;
         if (m._k === k) continue;
@@ -624,7 +777,9 @@ export function createCompare(host){
   }
   function remove(id){
     if (C.layers.length <= 1){ close(); return; }
-    for (const m of layer(id)?.media || []) releaseMedia(m);
+    const gone = layer(id);
+    dropScrub(gone);
+    for (const m of gone?.media || []) releaseMedia(m);
     C.layers = C.layers.filter((l) => l.id !== id);
     if (C.ref === id) C.ref = C.layers[0].id;
     if (C.sel === id) C.sel = C.ref;
@@ -729,6 +884,12 @@ export function createCompare(host){
     track.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || C.scrub) return;
       track.setPointerCapture(e.pointerId);
+      C.scrubGen = (C.scrubGen || 0) + 1;
+      for (const l of C.layers) if (l.scrub){
+        l.scrub.hidden = true;
+        l.scrub._settle = false;
+        l.scrub._settleToken = (l.scrub._settleToken || 0) + 1; // drops a hand-off still waiting to hide it
+      }
       C.scrub = { pid: e.pointerId };
       const scrub = (ev) => {
         if (!C || ev.pointerId !== C.scrub?.pid) return;
@@ -740,7 +901,12 @@ export function createCompare(host){
         if (!C || ev.pointerId !== C.scrub?.pid) return;
         C.scrub = null;
         track.onpointermove = track.onpointerup = track.onpointercancel = track.onlostpointercapture = null;
+        queueRelease();
+        // Hold the clock while a clip still has the release time queued behind a seek already in flight.
         C.wait = false;
+        for (const l of C.layers) for (const m of l.media){
+          if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
+        }
         C.last = performance.now();
         C.syncNow = true;
         paintTime();
@@ -853,6 +1019,7 @@ export function createCompare(host){
       addLayer(a);
       resetSplits();
       build();
+      ensureScrubs();
       loadFps();
     });
     el.addEventListener("pointerdown", (e) => { if (!menu.hidden && !e.target.closest(".cmp-menu, [data-a=add]")) menu.hidden = true; }, true);
@@ -1028,7 +1195,7 @@ export function createCompare(host){
       cx.save();
       cx.beginPath(); cx.rect(B.x * dpr, B.y * dpr, B.w * dpr, B.h * dpr); cx.clip();
       for (const ly of box.querySelectorAll(".cmp-ly")){
-        const m = ly.querySelector(".cmp-m");
+        const m = ly.querySelector(".cmp-scrub:not([hidden])") || ly.querySelector(".cmp-m:not(.cmp-scrub)");
         if (!m) continue;
         cx.save();
         const cp = /inset\(([^)]*)\)/.exec(ly.style.clipPath || "");
@@ -1104,6 +1271,7 @@ function injectStyles(){
 .cmp-ly { position: absolute; inset: 0; pointer-events: none; }
 .cmp-ly.out .cmp-m { opacity: .12; }
 .cmp-m { position: absolute; object-fit: contain; max-width: none; image-rendering: auto; }
+.cmp-scrub { z-index: 2; pointer-events: none; }
 .cmp-lbl { position: absolute; left: 10px; top: 10px; z-index: 4; display: flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: rgb(0 0 0 / .62); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .cmp-lbl[hidden] { display: none; }
 .cmp-lbl i, .cmp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }

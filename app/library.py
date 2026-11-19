@@ -17,6 +17,7 @@ import threading
 import secrets
 import time
 import unicodedata
+from contextlib import nullcontext
 from pathlib import Path
 
 from .fileinfo import NO_WINDOW, _ffprobe_text, file_info, obj_is_binary
@@ -1086,11 +1087,15 @@ class Library:
         self.video_cache = SlidingVideoCache()
         self._play_lock = threading.Lock()
         self._play_jobs: dict[str, dict] = {}  # asset id -> state of its playback copy (see start_play_copy)
-        self._play_slot = threading.Semaphore(1)  # one conversion at a time: they take every core
+        self._play_slot = threading.Semaphore(1)  # one playback copy at a time: it takes every core
         # Playback copies (someone waits on "Converting…") go before scrub copies: see _encode_copy.
+        # Several scrub copies may encode at once (a compare of N clips); a playback copy stops all of them.
         self._play_cv = threading.Condition()
         self._play_waiting = 0  # playback copies waiting for the slot
-        self._scrub_proc: subprocess.Popen | None = None  # the scrub encode holding the slot
+        self._play_active = 0  # playback copies holding the slot
+        self._scrub_slots = threading.Semaphore(self.SCRUB_PARALLEL)
+        self._scrub_procs: set[subprocess.Popen] = set()
+        self._scrub_proc: subprocess.Popen | None = None  # one of them (tests, and "is a scrub running")
         self._scrub_audio_slot = threading.Semaphore(1)  # one scrub-audio extract at a time, beside the video slot
         self._play_enc: dict[str, tuple[str, list[str], str] | None] = {}
         workers = max(2, min(4, os.cpu_count() or 2))
@@ -2605,18 +2610,20 @@ class Library:
     # Scrub copies: a clip with a long GOP (a keyframe every few seconds) seeks slowly in the browser,
     # since every seek decodes from the keyframe before it — ~0.9 ms a frame for 416x960 H.264, so
     # ~230 ms just before the next keyframe of a 250-frame GOP. The lightbox asks for this small copy
-    # (≤ 960 px, no audio, a keyframe every 4 frames, no B-frames) once a seek of the clip is slow
-    # and shows it over the player while a drag scrubs; the player itself keeps the original.
+    # (≤ 960 px, no audio, a keyframe every 4 frames, no B-frames) once a seek of the clip is slow,
+    # and the compare view asks for one per clip as soon as it opens. Shown over the picture while a
+    # drag scrubs; the player itself keeps the original.
     # Named "<aid>_<stamp>.scrub<ext>" next to the playback copies, so the rename / delete / stale
     # cleanups of "<aid>_*" cover it too.
     SCRUB_TAG = ".scrub"
     SCRUB_VF = "scale=w='min(960,iw)':h='min(960,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
     SCRUB_ENC = {
         "mp4": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "fastdecode", "-crf", "26", "-g", "4",
-                "-bf", "0", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+                "-bf", "0", "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart"],
         "webm": ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40", "-deadline", "realtime", "-cpu-used", "8",
-                 "-g", "4", "-pix_fmt", "yuv420p"],
+                 "-g", "4", "-pix_fmt", "yuv420p", "-threads", "2"],
     }
+    SCRUB_PARALLEL = 3  # scrub encodes at once (a compare asks for every clip together)
 
     def _play_copy(self, aid: str, stamp: str | None, tag: str = "") -> Path | None:
         if not stamp:
@@ -2943,9 +2950,12 @@ class Library:
         tmp = d / f"{stem}.part"  # no media extension, so no lookup ever picks it up
         log = d / f"{stem}.log"
         # A scrub copy's enc_args carry their own -an / -vf (start_playback_copy).
+        # -threads before -i caps the decoder; -filter_threads caps scale. The encoder's own
+        # -threads (SCRUB_ENC) does not cover either, and three compares would otherwise take every core.
         streams = ["-map", "0:v:0"] if tag else ["-map", "0:v:0", "-map", "0:a:0?", "-vf", self.PLAY_VF]
+        scrub_in = ["-threads", "2", "-filter_threads", "2"] if tag else []
         cmd = [
-            ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src,
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *scrub_in, "-i", src,
             *streams, *enc_args, *([] if tag else ["-ac", "2"]),
             "-progress", "pipe:1", "-nostats", "-f", container, str(tmp),
         ]
@@ -2989,70 +2999,95 @@ class Library:
                 if state == "ready" and self._play_jobs.get(aid + tag) is job:
                     del self._play_jobs[aid + tag]  # the copy itself answers from now on
 
+    def _stop_scrub_procs(self) -> None:
+        """Caller holds ``_play_cv``. Stops every running scrub encode; each returns None and starts over."""
+        for proc in list(self._scrub_procs):
+            proc.sight_stopped = True
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
     def _encode_copy(self, cmd: list[str], log: Path, duration: float, job: dict, scrub: bool) -> int | None:
-        """Runs one copy's ffmpeg under the one-at-a-time slot and returns its exit code. A playback
-        copy has priority: while one waits, scrub jobs hold back, and its arrival stops a running scrub
-        encode, which then returns None (the caller runs it again once the slot is free). So a playback
-        copy never waits for a scrub copy of a long clip."""
+        """Runs one copy's ffmpeg and returns its exit code. Up to ``SCRUB_PARALLEL`` scrub encodes run
+        at once. A playback copy is alone: while one waits or runs, scrub jobs hold back, and its arrival
+        stops every running scrub encode. A stopped scrub returns None; the caller runs it again once
+        playback is done, so a playback copy never waits out a long scrub encode."""
         counted = False
+        held = False
+        active = False
         with self._play_cv:
             if scrub:
-                while self._play_waiting:
+                while self._play_waiting or self._play_active:
                     self._play_cv.wait()
             else:
                 self._play_waiting += 1
                 counted = True
-                running = self._scrub_proc
-                if running is not None:
-                    running.sight_stopped = True
-                    try:
-                        running.terminate()
-                    except OSError:
-                        pass
+                self._stop_scrub_procs()
         try:
-            with self._play_slot:
+            if scrub:
+                self._scrub_slots.acquire()
+                held = True
                 with self._play_cv:
-                    if counted:
-                        self._play_waiting -= 1
-                        counted = False
+                    if self._play_waiting or self._play_active:
+                        return None  # a playback copy arrived while this scrub job waited for a slot
+            with self._play_slot if not scrub else nullcontext():
+                with self._play_cv:
+                    if scrub:
+                        if self._play_waiting or self._play_active:
+                            return None
+                    else:
+                        if counted:
+                            self._play_waiting -= 1
+                            counted = False
+                        self._play_active += 1
+                        active = True
                         self._play_cv.notify_all()
-                    elif self._play_waiting:
-                        return None  # a playback copy arrived while this scrub job waited for the slot
                 # stderr goes to a file: a damaged stream can print more than a pipe buffer holds, and
                 # nothing reads the pipe while the progress lines are read.
-                with open(log, "w", encoding="utf-8", errors="replace") as errf:
-                    proc = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
-                        errors="replace", creationflags=NO_WINDOW,
-                    )
-                    if scrub:
-                        with self._play_cv:
-                            self._scrub_proc = proc
-                            if self._play_waiting:  # arrived between the check above and here
-                                proc.sight_stopped = True
-                                try:
-                                    proc.terminate()
-                                except OSError:  # died on its own already
-                                    pass
-                    try:
-                        for line in proc.stdout:
-                            if line.startswith("out_time_us=") and duration > 0:
-                                try:
-                                    done = int(line.split("=", 1)[1]) / 1e6 / duration
-                                except ValueError:
-                                    continue
-                                with self._play_lock:
-                                    job["progress"] = round(min(0.99, max(0.0, done)), 3)
-                        proc.stdout.close()
-                        rc = proc.wait()
-                    finally:
+                try:
+                    with open(log, "w", encoding="utf-8", errors="replace") as errf:
+                        proc = subprocess.Popen(
+                            cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
+                            errors="replace", creationflags=NO_WINDOW,
+                        )
                         if scrub:
                             with self._play_cv:
-                                if self._scrub_proc is proc:
-                                    self._scrub_proc = None
-                return None if getattr(proc, "sight_stopped", False) else rc
+                                self._scrub_procs.add(proc)
+                                self._scrub_proc = proc
+                                if self._play_waiting or self._play_active:  # arrived between the check and here
+                                    proc.sight_stopped = True
+                                    try:
+                                        proc.terminate()
+                                    except OSError:  # died on its own already
+                                        pass
+                        try:
+                            for line in proc.stdout:
+                                if line.startswith("out_time_us=") and duration > 0:
+                                    try:
+                                        done = int(line.split("=", 1)[1]) / 1e6 / duration
+                                    except ValueError:
+                                        continue
+                                    with self._play_lock:
+                                        job["progress"] = round(min(0.99, max(0.0, done)), 3)
+                            proc.stdout.close()
+                            rc = proc.wait()
+                        finally:
+                            if scrub:
+                                with self._play_cv:
+                                    self._scrub_procs.discard(proc)
+                                    if self._scrub_proc is proc:
+                                        self._scrub_proc = next(iter(self._scrub_procs), None)
+                    return None if getattr(proc, "sight_stopped", False) else rc
+                finally:
+                    if active:
+                        with self._play_cv:
+                            self._play_active -= 1
+                            self._play_cv.notify_all()
         finally:
-            if counted:  # only when taking the slot failed
+            if held:
+                self._scrub_slots.release()
+            if counted:  # only when taking the playback slot failed
                 with self._play_cv:
                     self._play_waiting -= 1
                     self._play_cv.notify_all()

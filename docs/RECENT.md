@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.92.0 — 2026-11-19 — Compare scrubs every clip from a short-GOP proxy
+- **What:** dragging the compare timeline seeks each clip's small scrub copy (a keyframe every few frames), made as soon as the comparison opens, so several clips follow the pointer together. Until a copy is ready, that clip is still seeked, but only one seek at a time, so a slow clip keeps its last frame. Letting go seeks the full file once and the proxy stays up until that frame is on screen.
+- **Where:** compare.js `ensureScrubs` / `pumpTime` / `wantTime` / `settleScrub`; library.py `SCRUB_PARALLEL` / `_encode_copy` / `_stop_scrub_procs`; tests/test_playback_copy.py; MANUAL, ARCHITECTURE.
+- **Notes:** up to 3 scrub encodes at once (decode, scale and encode each capped at 2 threads). A playback copy still goes first and stops every running scrub encode; those jobs start over. Letting go queues the release time even when a seek is already in flight, so an older `seeked` cannot take the proxy down. Clips under 3 s are skipped, same as the lightbox. The proxy is shown only during the drag, after it has landed on that drag. Difference tiles paint from the proxy while it is the picture on screen. The RAM byte cache is unchanged. The phone scrub cache is unchanged.
+- Review (fresh agent): while playing, a full-file seek still in flight when the proxy became ready hid the proxy on that older frame. Fixed (`queueRelease`, `settleScrub` only once the primary is on the playhead). The same reviewer confirmed the fix and found nothing new.
+
 ## 0.91.1 — 2026-11-19 — Scrub audio plays from a PCM cache
 - **What:** sound while scrubbing no longer stutters. A drag used to `play()` the video for 90 ms at each position, so every move waited on that seek (the scrub copy has no audio). Sight now extracts the clip's audio once to a mono 16-bit PCM cache and plays slices of it while the picture scrubs; a slow drag hears the sound continuously, a jump starts at the pointer.
 - **Where:** library.py `start_scrub_audio` / `scrub_audio_path` (file `thumbs/video/<aid>_<stamp>.scruba.pcm`, 22050 Hz mono s16le); server.py `POST/GET /api/video/scrub-audio`; index.html `scrubHear` / `saPlay` (replaces `scrubBlip`); tests/test_playback_copy.py; MANUAL, ARCHITECTURE.
@@ -341,31 +347,3 @@ Add new entries directly below this line.
   on a pin flashed the field); the circle showed a different number than the field until confirmed; a short drag
   ending inside a pin stacked a duplicate; a stale comment — all fixed; compare-mode copy not applicable. The same
   reviewer confirmed all fixes, nothing new.
-
-## 0.85.0 — 2026-11-18 — Lightbox video bar: sound, scrub audio, loop, typed frame jump, Shift+arrows
-- **What:** the lightbox video bar gets a sound icon (click = mute, press-and-drag up or the wheel = volume with a
-  pop-up slider, right-click or long press = sound while scrubbing, shown by an accent dot), a loop button, and a
-  clickable position field (type a frame / time + Enter to jump, Esc cancels; right-click or long press = display
-  Frame / Time / Frame+time and Local / Global counting — Global only in a sequence of 2+ clips).
-  Shift+← / Shift+→ jump to the first / last frame (of the whole sequence when one plays).
-- **Where:** index.html (CSS `.vib` / `.vpop` / `.vtime-in` / `.vctx`; vbar markup; block before `bindVBar`:
-  `vgesture`, `vApplySnd`, `vApplyLoop`, `vposPaint`, `vposJump`, `vposEdit`, `vposMenu`, `vClips` / `vPos`,
-  `vClipFps` / `vFpsMap`, `bindVBarUi`, `lightEdgeJump`; `paintVBar`, `attachViewer`, `seekVideo` /
-  `scrubBlip`, `endScrub` / `endBlip`, `seqAdopt` unmute, `closeLight`, keydown Shift+Arrow); annotate.js
-  (`fps()` accessor, `followOff` ignores `_blip`); MANUAL.
-- **Notes:** prefs in localStorage `sight.vsnd`, `sight.vpos`, `sight.vloop` (type-checked on read; the phone app
-  has its own keys). The mobile code has no volume popup — only its gesture logic and icons are reused. The loop
-  button hides in a sequence (its bar has its own loop; `el.loop` stays off there because `ended` drives
-  `seqAdvance`). Scrub audio was a 90 ms play blip per seek (superseded by 0.91.1, which plays a PCM cache); `el._blip` kept blips out of `_seqPlayedAt` / the
-  annotator's follow tick, and the scrub end re-seeks to the pointer time (the blip ran past it). Frames are 0-based,
-  floor-based (as annotate's `stepFrame`); fps comes from the annotator when known, else from
-  `/api/assets/{id}/info` (cached per id); "≈" until known. Global frames sum each clip's own
-  round(duration × fps). In frame modes a bare number (also decimal) is a frame; `12s`, `1:05` are times; `f120`
-  a frame. The position input closes on any outside pointerdown. Not done: the sound icon does not grey out for
-  clips without audio (mobile does).
-- Review (fresh agent): 8 findings — blips left the paused frame ~90 ms past the release, the loop button never
-  hid (`.vib` display overrode `[hidden]`), a TypeError closing the lightbox with the field open, the field staying
-  focused after a track click (swallowing keys), global frames using one clip's fps, fps unknown outside annotate,
-  inconsistent decimal parsing, the sequence-cut unmute timer overriding a user's mute. All fixed; the same
-  reviewer confirmed them and noted two leftovers (board-opened video got no fps, Shift+→ used the current clip's
-  fps for the last clip), fixed.
