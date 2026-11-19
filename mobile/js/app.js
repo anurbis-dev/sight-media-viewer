@@ -2374,8 +2374,11 @@ function buildStage(){
         const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
         if (!rv.scrub && d && rv.url && v.src === rv.url && rv.file){  // not a player whose file was just swapped (rebind)
           // A clip reached through the sequence takes its cache over from scrubPool (filled as a neighbour).
-          const sc = scrubPool.get(rv.meta.key) || new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true });
+          // A neighbour's cache that gave up (its player never opened) is not taken over: a fresh one tries again.
+          let sc = scrubPool.get(rv.meta.key);
           scrubPool.delete(rv.meta.key);
+          if (sc && sc.broken){ sc.close(); sc = null; }
+          if (!sc) sc = new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true });
           sc.prio = 0; sc.fps = () => rv.fps;
           sc.onProgress = () => { if (R === rv) TPS.forEach(paintCache); };
           rv.scrub = sc;

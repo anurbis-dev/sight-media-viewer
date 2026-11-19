@@ -2,6 +2,22 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.83.1 — 2026-11-18 — Reference shadows follow the picture's alpha
+- **What:** a reference image with transparency (PNG / WebP) now casts a drop shadow of its alpha shape instead
+  of its rectangle — in Sight, the HTML page, the phone app and canvas exports (screenshots / PDF).
+- **Where:** review-core.js — `primsOf` image branch (a shadow-only image prim `p.shadow = {dx, dy, blur, a}`
+  before the picture), `primSvg` (black `feColorMatrix` + `feGaussianBlur`, `filterUnits="userSpaceOnUse"`
+  with an explicit region, unique `rcshN` ids), `primCanvas`.
+- **Notes:** canvas path avoids `ctx.filter` (no Safari): it uses `shadowBlur` with the image drawn off-canvas in
+  device space (`setTransform` shift by D past the image's device bbox, `shadowOffsetX += D`), skips the shadow
+  when its box misses the canvas, and falls back to an offset rect without `getTransform`. Canvas shadows ignore
+  the transform, so offset / blur are converted with `getTransform()`. Bordered refs keep the old stacked-box
+  shadow (opaque frame). An unloaded picture has no shadow. Needs an on-device iOS check (very large shadow
+  offsets).
+- Review (fresh agent): 4 findings — a ghost copy of the picture when it sat off the right edge in canvas exports,
+  flipped (negative size) refs getting a 1 px shadow, no fallback without `getTransform`, a filter region
+  rebuilt on the unclipped image every drag frame. All fixed; the same reviewer confirmed the fixes, nothing new.
+
 ## 0.83.0 — 2026-11-18 — Importing a review file offers to restore notes / drawings deleted here
 - **What:** owner's report "the review file does not restore notes and drawings". Not a bug in the merge: rule 5
   (FORMAT.md) keeps a row deleted here when the delete is later than the file's copy. Now the import counts

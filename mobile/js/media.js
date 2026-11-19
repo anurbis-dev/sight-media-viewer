@@ -104,7 +104,7 @@ export async function scaled(src, max = 1600, q = 0.86){
 // A second, hidden <video> on the same file for taking frames (card pictures, drawing on a note's
 // frame, reports) without moving the player. One seek at a time.
 export class Grabber {
-  constructor(url){ this.url = url; this.v = null; this.q = Promise.resolve(); }
+  constructor(url){ this.url = url; this.v = null; this.q = Promise.resolve(); this.n = 0; this.idleT = 0; }
   async ready(){
     if (this.v) return this.v;
     const v = document.createElement("video");
@@ -121,16 +121,18 @@ export class Grabber {
     this.v = v;
     return v;
   }
+  // Its player is given back 3 s after the last grab: phones have few hardware decoders (ScrubCache needs one).
   grab(t, max = 1600){
+    clearTimeout(this.idleT); this.n++;
     const job = this.q.then(async () => {
       const v = await this.ready();
       await seek(v, t);
       return scaled(v, max);
     });
-    this.q = job.catch(() => {});
+    this.q = job.catch(() => {}).then(() => { if (--this.n === 0) this.idleT = setTimeout(() => { if (!this.n) this.close(); }, 3000); });
     return job;
   }
-  close(){ if (this.v){ this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } }
+  close(){ clearTimeout(this.idleT); if (this.v){ this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } }
 }
 
 export function seek(v, t){
@@ -172,14 +174,21 @@ export function fmtBytes(n){
 // (a busy device) are sought one frame at a time. near(t): the closest frame; exact(t, fd, n): frame n
 // or nothing; span(t): the cached run around t.
 // Several caches (the open clip, its neighbours in a sequence) take turns on the decoder, the lowest
-// `prio` first; an idle cache gives its hidden player back.
+// `prio` first; an idle cache gives its hidden player back. Only the cache holding the turn keeps a hidden
+// player: the others' are released as the turn passes on — phones have few hardware decoders, and a
+// neighbour's idle player (plus the visible one) made the open clip's player fail to open.
 const turnQ = new Set();
+const openCaches = new Set();  // caches with a hidden player
 let turnOwner = null;
 function turnPick(){
   if (turnOwner) return;
   let best = null;
   turnQ.forEach((c) => { if (!best || c.prio < best.prio) best = c; });
-  if (best){ turnQ.delete(best); turnOwner = best; best._turn(); }
+  if (best){
+    turnQ.delete(best); turnOwner = best;
+    openCaches.forEach((c) => { if (c !== best) c.release(); });  // used only within a turn: safe to drop
+    best._turn();
+  }
 }
 const turnTake = (c) => new Promise((ok) => { c._turn = ok; turnQ.add(c); turnPick(); });
 function turnGive(c){ turnQ.delete(c); if (turnOwner === c) turnOwner = null; turnPick(); }
@@ -197,7 +206,7 @@ export class ScrubCache {
     this.urls = new Map();     // ms of the media time → blob URL (null while it is being encoded)
     this.ranges = []; this.spec = null; this.gen = 0; this.dead = new Map();
     this.v = null; this.c = null; this.closed = false; this.broken = false; this.running = false;
-    this.wake = null; this.idleT = 0; this.progT = 0; this.retryT = 0;
+    this.wake = null; this.idleT = 0; this.progT = 0; this.retryT = 0; this.openFails = 0; this.openAt = 0; this.openT = 0; this.openOk = null;
   }
   fd(){ const f = typeof this.fps === "function" ? this.fps() : this.fps; return 1 / (f > 0 ? f : 30); }
   // Seconds a full window holds.
@@ -308,6 +317,12 @@ export class ScrubCache {
             if (turnWanted(this)) break;
           }
         } finally { turnGive(this); }
+        // A hidden player that failed to open (decoder busy): tried again a little later, given up after 3.
+        // A deadline, not a wake: a re-plan (resolve) on every scrub must not cut the wait short.
+        while (!this.closed && !this.broken && performance.now() < this.openAt){
+          await new Promise((ok) => { this.openOk = ok; this.openT = setTimeout(ok, Math.max(20, this.openAt - performance.now())); });
+          this.openOk = null;
+        }
       }
     } finally { this.running = false; }
   }
@@ -319,7 +334,7 @@ export class ScrubCache {
     v.muted = true; v.playsInline = true; v.preload = "auto"; v.setAttribute("playsinline", "");
     v.style.cssText = "position:fixed;left:-10px;top:-10px;width:2px;height:2px;opacity:0;pointer-events:none";
     document.body.appendChild(v);
-    this.v = v;
+    this.v = v; openCaches.add(this);
     v.src = this.url;
     const ok = await new Promise((res) => {
       const tm = setTimeout(() => fin(false), 8000);
@@ -329,7 +344,12 @@ export class ScrubCache {
       v.addEventListener("error", () => fin(false), { once: true });
     });
     if (this.closed || this.v !== v) return false;
-    if (!ok){ this.broken = true; this.release(); return false; }
+    if (!ok){
+      this.release();
+      if (++this.openFails >= 3) this.broken = true; else this.openAt = performance.now() + 1500 * this.openFails;
+      return false;
+    }
+    this.openFails = 0;
     this.fresh = true;
     if (Number.isFinite(v.duration) && v.duration > 0 && Math.abs(v.duration - this.d) > 1e-3){ this.d = v.duration; this.resolve(); }
     return true;
@@ -453,10 +473,11 @@ export class ScrubCache {
     while (b + 1 < m.length && m[b + 1] - m[b] <= tol) b++;
     return [a === 0 && m[0] <= tol ? 0 : m[a], Math.min(this.d || Infinity, m[b] + st)];
   }
-  release(){ if (this.v){ this.v.pause(); this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } if (this.c){ dropCanvas(this.c); this.c = null; } }
+  release(){ openCaches.delete(this); if (this.v){ this.v.pause(); this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } if (this.c){ dropCanvas(this.c); this.c = null; } }
   close(){
     this.closed = true;
     clearTimeout(this.idleT); clearTimeout(this.progT); clearTimeout(this.retryT);
+    clearTimeout(this.openT); if (this.openOk){ const o = this.openOk; this.openOk = null; o(); }
     if (this.wake){ const w = this.wake; this.wake = null; w(); }
     if (this._openEnd) this._openEnd(false);
     if (this._turn && turnQ.has(this)){ turnQ.delete(this); this._turn(); }  // its loop wakes, sees `closed`, gives the turn back
