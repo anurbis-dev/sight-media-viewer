@@ -309,6 +309,14 @@ async function seqbar(){
   await ready("seq_a.webm");
   await p.waitForSelector(".sqb:not([hidden]) .sqs + .sqs");
   res.segs = await p.$$eval(".sqb .sqs", (xs) => xs.map((x) => [x.textContent, x.classList.contains("cur")]));
+  // The scrub cache: the playhead near clip a's end → the window runs on into clip b's start (b's own
+  // cache, from its first frame), and the cut below takes that cache over.
+  await p.evaluate(() => { window.__sightReview.R.video.currentTime = 1.8; });
+  await p.waitForFunction((kb) => { const c = window.__sightReview.scrubPool.get(kb), s = window.__sightReview.R.scrub.span(1.8); return !!c && c.mts.length > 5 && c.mts[0] === 0 && !!s && s[0] <= 1.2 && s[1] >= 1.9; }, keys[1], { timeout: 15000 }).catch(() => {});
+  res.cacheDbg = await p.evaluate(() => { const sc = window.__sightReview.R.scrub; return { mts: sc.mts.slice(-12).map((x) => Math.round(x * 1000)), d: sc.d, ranges: sc.ranges, dead: [...sc.dead.entries()], next: sc.next(), v: !!sc.v, running: sc.running, broken: sc.broken }; });
+  res.cacheSpan = await p.evaluate(() => window.__sightReview.R.scrub.span(1.8));
+  await p.evaluate(() => { window.__sightReview.R.video.currentTime = 0; });
+  await ready("seq_a.webm");
   const hist0 = await p.evaluate(() => history.length);
   const bar = async () => p.locator(".sqb").boundingBox();
   // A tap at 3/4 of the bar (two 2 s clips): the second clip, 1 s in.
@@ -316,6 +324,7 @@ async function seqbar(){
   await p.mouse.click(bb.x + bb.width * 0.75, bb.y + bb.height / 2);
   await ready("seq_b.webm");
   res.tap = await p.evaluate(() => [window.__sightReview.R.video.currentTime, document.querySelector(".sqb .sqs.cur").textContent]);
+  res.adopted = await p.evaluate((kb) => !window.__sightReview.scrubPool.has(kb) && window.__sightReview.R.scrub.mts[0] === 0, keys[1]);
   // A drag back across the cut to 1/4: the first clip, 1 s in.
   bb = await bar();
   await p.mouse.move(bb.x + bb.width * 0.75, bb.y + bb.height / 2);

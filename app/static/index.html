@@ -817,7 +817,7 @@ const SORT_OPTIONS = [
 // saveable as a named preset. FONT_CHOICES backs the font <select> in renderOptions(). These
 // must be defined before `state` below, since state.theme = loadTheme() reads DEFAULT_THEME.
 const DEFAULT_THEME = {
-  name: true, kind: true, created: false, res: false, size: false, videoCache: 128,
+  name: true, kind: true, created: false, res: false, size: false, videoCache: 128, videoAhead: 70,
   // Graphite (0.54.0): Inter 13 px, compact rows, one blue accent, frameless cards captioned underneath.
   bg: "#17181b", fg: "#e9eaec", border: "#e9eaec", button: "#5b8cff", accent: "#5b8cff",
   font: "Inter", textSize: 13,
@@ -1236,6 +1236,7 @@ const cmp = createCompare({
   putSetting: (k, v) => putSetting(k, v),
   getZoomSettings: () => state.theme,
   cacheMb: () => clampCache(state.theme.videoCache), // the RAM window budget, split between the clips
+  cacheAhead: () => clampAhead(state.theme.videoAhead), // its share ahead of the playheads, percent
   assetById: (id) => assetById(id),
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
   openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
@@ -1367,6 +1368,8 @@ let currentAssetIsSplat = false;
 
 function clampTile(n){ return Math.min(TILE_MAX, Math.max(TILE_MIN, n)); }
 function clampCache(n){ return Math.min(2048, Math.max(32, Math.round(Number(n) || 128))); }
+// Percent of the video RAM window kept ahead of the playhead (the rest behind it), Settings → Video.
+function clampAhead(n){ return Math.min(90, Math.max(50, Math.round(Number(n) || 70))); }
 
 function loadTheme(){
   let saved = {};
@@ -1377,6 +1380,7 @@ function loadTheme(){
   // A saved theme without the section-title keys keeps the old look; no saved theme keeps the runtime default.
   if (Object.keys(mig).length && (mig.secColor === undefined || mig.secSize === undefined)) Object.assign(t, secFallback({ ...t, secColor: mig.secColor, secSize: mig.secSize }));
   t.videoCache = clampCache(t.videoCache);
+  t.videoAhead = clampAhead(t.videoAhead);
   return t;
 }
 // 0.54.0 changed the default look (Graphite). A theme saved before it holds every key, so the new
@@ -5316,10 +5320,16 @@ function pushVideoFocus(el, a, minGap){
   if (wait > 0){ light.focusTimer = setTimeout(() => pushVideoFocus(el, a, 0), wait); return; }
   light.focusAt = performance.now();
   const t = light.scrubT != null ? light.scrubT : el.currentTime;
+  // A sequence: the window runs on past the clip's end into the next clip, before its start into the previous
+  // one (loop on: around), so a cut either way reads from RAM.
+  const s = light.seq, n = s ? s.list.length : 0;
+  const nb = (k) => (s && k !== s.i && s.list[k] ? s.list[k].id : undefined);
+  const next = s ? nb(s.i + 1 < n ? s.i + 1 : s.loop ? 0 : -1) : undefined;
+  const prev = s ? nb(s.i > 0 ? s.i - 1 : s.loop ? n - 1 : -1) : undefined;
   fetch("/api/video/focus", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id: a.id, t: t || 0, duration: Number.isFinite(el.duration) ? el.duration : 0, mb: clampCache(state.theme.videoCache) }),
+    body: JSON.stringify({ id: a.id, t: t || 0, duration: Number.isFinite(el.duration) ? el.duration : 0, mb: clampCache(state.theme.videoCache), ahead: clampAhead(state.theme.videoAhead), next, prev }),
   }).then((r) => r.json()).then((snap) => { if (light && light.video === el) applyCacheSnap(snap); }).catch(() => {});
 }
 // keep: the element already streams the file (a preloaded sequence clip) — don't reload it.
@@ -6585,6 +6595,7 @@ function seqToggleLoop(){
   s.loop = !s.loop;
   paintSeqBar(true);
   seqPreload(); // the last clip now preloads the first one
+  if (light.video && s.list[s.i]) pushVideoFocus(light.video, s.list[s.i], 0); // the RAM window wraps (or stops) at the ends
 }
 // annotate.js: a frame step past the clip's end / start lands on the next clip's first / the previous clip's last frame.
 function seqEdge(n, fd){
@@ -9018,6 +9029,7 @@ function bindThemeSliders(root){
       trimModelCache(); // the model cache shares this budget
       fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mb: v }) }).catch(() => {});
     }
+    if (key === "videoAhead") fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ahead: clampAhead(v) }) }).catch(() => {});
   });
 }
 
@@ -9162,6 +9174,7 @@ function renderOptions(){
 
       <div class="settings-sub">Video</div>
       ${sliderRow("RAM cache", "videoCache", 32, 2048, 32, " MB")}
+      ${sliderRow("Cache ahead", "videoAhead", 50, 90, 5, " %")}
 
       <div class="settings-sub">Dictation</div>
       <label class="field" title="Browser: built in, nothing to set up, words appear as you speak. The chip next to the mic (RU / EN…) switches the language in one tap; right-click or long-press it for all languages.&#10;My service: any speech-to-text service you like that speaks the OpenAI-compatible /audio/transcriptions API — a local whisper server, OpenAI, Groq and others. The audio of each phrase goes there; the text comes after each pause.">Engine

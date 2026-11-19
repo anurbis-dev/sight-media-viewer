@@ -155,6 +155,14 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   `fileinfo.py`); the app has no console, so each would otherwise flash a console window.
 - ffmpeg is found in a background thread at startup: read it through `lib.ffmpeg_exe()` (waits for
   the search, retries when none was found), not `lib.ffmpeg`.
+- RAM window (`library.py SlidingVideoCache`, fed by `POST /api/video/focus`): 1 MiB blocks; `_plan` turns
+  playheads (`heads`), budget, `ahead` (body `ahead`, percent 50-90, Settings → Cache ahead `videoAhead`, default
+  70) and the lightbox sequence's neighbours (body `next` / `prev` asset ids, sent by `pushVideoFocus`; loop on
+  wraps) into `_Window.ranges` (lo, hi, head, base). Past the clip's last block the rest goes to the next file's
+  start, before its first to the previous file's end, else to the other side. Blocks load cheapest first: ahead
+  cost = distance, behind = distance × ahead / (1 − ahead), neighbours continue the cost from the clip's edge.
+  Neighbours only with one playing file (the compare splits the budget, no neighbours). Not a byte-to-time map:
+  the playhead's byte is `size · t / duration`.
 - Video playback: `/api/file/{id}` (and the focus / cache endpoints) serve `lib.playback_path(a)`, which is
   the source or its converted copy in `thumbs/video/<aid>_<size>_<mtime_ns>.<ext>`. The copy is made
   only when the browser fails on the source: the player calls `POST /api/video/transcode` (see
@@ -936,18 +944,26 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   median averaged, snapped to a common rate within 1.5 %), 25 until then (shown as "≈25 fps").
   Frames for cards, reply drawings and reports come from a second hidden `<video>` (`Grabber`,
   one seek at a time) and are cached in `frames`.
-- **Scrub cache** (`media.js ScrubCache`): after the video opens, a hidden muted player runs
-  through the clip (rate max(1, min(4, duration / 20))) and keeps a ≤ 640 px JPEG of every frame it
-  presents (`requestVideoFrameCallback`), keyed by the frame's own media time (`mts` sorted, `urls`
-  by ms) — never on a grid of a guessed rate (a WebM's rate is unknown until played; a 25 fps grid
-  lost every sixth frame of a 29.97 clip). Long clips keep frames at least `d / 1500` apart. After
-  the pass, `fill()` seeks into every gap wider than 1.5× the usual step (≤ 600 seeks). In memory
-  only, blob URLs. Shown in `.scrubimg` over the player while a seek is on its way: a drag shows
-  `near(t)` (the closest), a step / jump only `exact(t, fd, n)` (that very frame, by
-  `round(mt / fd)`) — a neighbour would look like a jump back. It is hidden only once the player has
-  *presented* a frame of the new position (`hideWhenShown`: rVFC after `seeked`, ≤ 250 ms) —
-  `seeked` comes before the paint (Safari), and hiding then flashed the old frame. Closed (URLs
-  revoked) with the review / on re-pick. No rVFC (old WebKit): no cache.
+- **Scrub cache** (`media.js ScrubCache`): ≤ 640 px JPEGs of the frames around the playhead, keyed by
+  each frame's own media time (`mts` sorted, `urls` by ms) from `requestVideoFrameCallback` — never on a
+  grid of a guessed rate (a WebM's rate is unknown until played; a 25 fps grid lost every sixth frame of a
+  29.97 clip). The host calls `want([{lo, hi, from, end}])`: frames outside every range are dropped, missing
+  parts are fetched nearest a range's `from` first (behind it counted 1.5×), forward parts played through by
+  a hidden muted player (rate 1.5–4, `CHUNK` 2 s per turn), parts ≤ 6 frames sought frame by frame; a part
+  that yields nothing is not asked again until the ranges change (`dead`). Small moves (< 0.5 s or 5 % of the
+  window) are ignored, so a playing clip re-plans every few seconds, not per frame. Several caches take turns
+  on the decoder (`turnTake` / `turnGive`, lowest `prio` first, a running chunk yields when a lower prio
+  waits); an idle cache gives its hidden player back after 3 s. `span(t)` = the unbroken run around t (the
+  green strip). App side (`cacheFocus`, called from `paintTime`): window = `MAX` (1500) frames, `AHEAD`
+  (Settings → Cache ahead, `sight-review:cacheAhead`, 50-90 %, default 70) ahead, the rest behind; past the clip's end / start the rest goes to the next / previous clip of the
+  sequence (`seqGeom`, loop on wraps) as a cache of its own in `scrubPool` (file from the `files` store), else
+  to the other side. A move along the sequence parks the current cache in the pool (`closeReview(park)`)
+  and the clip opened adopts its pooled cache (prio 0); any other close empties the pool. Shown in
+  `.scrubimg` over the player while a seek is on its way: a drag shows `near(t)` (the closest), a step /
+  jump only `exact(t, fd, n)` (that very frame, by `round(mt / fd)`) — a neighbour would look like a jump
+  back. It is hidden only once the player has *presented* a frame of the new position (`hideWhenShown`:
+  rVFC after `seeked`, ≤ 250 ms) — `seeked` comes before the paint (Safari), and hiding then flashed the old
+  frame. No rVFC (old WebKit): no cache.
 - **Drawing on a video** (`drawVideo`): the canvas opens multi-frame over the paused player with a
   second transport (`makeTransport`) as its footer; `R.drawS {times, moved, settled}` ties it to
   `seekTo` — `moved(t)` shows that frame's drawings over the cached frame (not dimmed; dimmed only when no cached picture exists and the old one stays), `settled()`

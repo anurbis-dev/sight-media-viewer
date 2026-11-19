@@ -256,6 +256,9 @@ class RoundTrip(unittest.TestCase):
                             "-c:v", "libvpx-vp9", "-b:v", "100k", str(d / name)], check=True)
         res = self.e2e("seqbar", self.base, str(d))
         self.assertEqual(res["segs"], [["seq_a.webm", True], ["seq_b.webm", False]])
+        self.assertLessEqual(res["cacheSpan"][0], 1.2)  # the open clip's cache runs around the playhead...
+        self.assertGreaterEqual(res["cacheSpan"][1], 1.9, res.get("cacheDbg"))
+        self.assertTrue(res["adopted"])  # ...and clip b's (filled as the neighbour) is taken over at the cut
         self.assertAlmostEqual(res["tap"][0], 1.0, delta=0.1)
         self.assertEqual(res["tap"][1], "seq_b.webm")
         self.assertAlmostEqual(res["drag"][0], 1.0, delta=0.1)

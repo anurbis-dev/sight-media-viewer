@@ -14,6 +14,58 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.90.0 — 2026-11-19 — Desktop RAM cache like the phone's: outwards from the playhead, across cuts; ahead share in Settings
+- **What:** owner: the desktop cache should work like the phone's, with 70 / 30 instead of 60 / 40, and the share
+  in Settings on both. Desktop: the RAM window now loads outwards from the playhead (behind blocks interleaved,
+  not after all of the ahead part), and in a lightbox sequence the part past a clip's end goes to the next clip's
+  start, before its start to the previous clip's end (loop on wraps) — a cut either way reads from RAM, and the
+  hidden preload `<video>` of the next clip is served from it. Settings → Video → *Cache ahead* (50–90 %, default
+  70) on the desktop, Settings → *Cache ahead* (50–90 %) in the phone app; the phone default is now 70 too.
+- **Where:** app/library.py `SlidingVideoCache` (`_Window.ranges` / `wants`, `_plan`, `configure(mb, ahead)`,
+  `focus(path, pos, next, prev)`, `focus_many`, `_missing` costs), app/server.py `/api/video/focus` (`ahead`,
+  `next`, `prev`), app/static/index.html (`clampAhead`, `videoAhead` theme key + slider, `pushVideoFocus`
+  neighbours, `seqToggleLoop` re-push, host `cacheAhead`), app/static/compare.js (sends `ahead`),
+  defaults.json; mobile/js/app.js (`AHEADS`, `setCacheAhead`, settings sheet), mobile/js/media.js `AHEAD` 0.7,
+  mobile/index.html; tests/test_video_cache.py (new); MANUAL, ARCHITECTURE.
+- **Notes:** the ahead share is server-wide state (like the budget): every focus post carries it, so the saved
+  value applies from the first video after a restart. The compare keeps one window per clip and no neighbours.
+  The playhead's byte is still `size · t / duration` (no byte↔time index), so the windows are approximate in
+  time on VBR files, as before. The phone setting is per device (`localStorage`), not synced with Sight.
+- Review (fresh agent): no correctness bugs; three minor ones fixed — a neighbour shorter than the overflow
+  wasted the rest of the window (now it goes to the other side of the playhead, desktop and phone); a short
+  2-clip loop partner listed blocks twice (`_missing` dedupes, the two ends share one cap); the phone's fill
+  weighted behind by a fixed 1.5 (now `AHEAD / (1 − AHEAD)`, like the desktop). Confirmed by the same reviewer
+  (20,000 random plans: every range inside its file, no block twice, budget fully used, playhead inside).
+
+## 0.89.0 — 2026-11-19 — Phone: the scrub cache follows the playhead, 60 / 40, across sequence cuts
+- **What:** owner: on the phone the cache always started at the clip's start, not at the playhead; near a clip's
+  end it must run on into the next clip so the cut is seamless both ways; 60 % ahead / 40 % behind. Now the
+  scrub cache is a window of ~1,500 frames around the playhead, filled outwards from it (forward first, a
+  second behind weighted 1.5×) and sliding with it; in a group's sequence the overflow past the end goes to
+  the next clip's start, past the start to the previous clip's end (loop on wraps), each as that clip's own
+  cache, taken over at the cut. The green strip shows the cached run around the playhead (no longer 0 → x).
+- **Where:** mobile/js/media.js `ScrubCache` (rewritten: `want`, `next`, `run`, `open`, `fetch`, `span`, turn
+  queue `turnTake` / `turnGive`); mobile/js/app.js `cacheFocus`, `scrubPool`, `closeReview(park)`, adoption in
+  the video `loadedmetadata`, `paintCache`; tests/pwa_e2e.cjs `seqbar` + test_pwa.py `test_seq_bar`; MANUAL,
+  ARCHITECTURE.
+- **Notes:** budget is frames (`MAX` × the clip's frame length), not bytes; one hidden player per cache, but they
+  take turns on the decoder (current clip first) and an idle one gives its player back after 3 s. The cut
+  itself is still one `openReview` (the player is not preloaded, as Sight's adopt does) — the held frame plus
+  the adopted cache cover it. Desktop checked, not changed: `SlidingVideoCache` (library.py) is a byte window
+  around the playhead, 72 % ahead (`AHEAD`), loading all of the ahead part before any of the behind part, for the
+  open clip only; a lightbox sequence preloads the next clip's start through a hidden `<video>`
+  (`seqPreload`, the browser's own buffer, not the RAM window) and nothing of the previous clip.
+  `tests.test_pwa` `test_touch` fails before this change too (a `.click` on an undefined element).
+- Review (fresh agent): a one-frame hole next to the playhead was split at `from` into two halves too short
+  to seek into, both marked dead for good (the clip's last frames never cached; flaky test) → holes ≤ 6 frames
+  are fetched whole, dead parts are retried after 1.5 s / 3 s, play stops at the last frame; a neighbour got
+  the decoder after every chunk of the open clip → the turn is kept while there is work; 60 fps clips at
+  1.5× lost every other frame → rate capped at 60 presented fps; an evicted-and-retaken frame leaked a blob
+  URL → per-take token; a neighbour with no kept file re-read IndexedDB on every repaint → `scrubPoolMiss`;
+  parked caches kept decoding after a cut to a clip without its file → pool cleared. Re-review found the
+  retry timer re-arming every 50 ms on past entries → only future entries count, a successful retry
+  clears its mark. All confirmed by the same reviewer.
+
 ## 0.88.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
 - **What:** owner: the drawing tools sat under the video transport, and on a narrow phone some icons went off the
   edge. Now the tools row is the bottom bar's top row (over the host's footer / transport), in one line; when it
@@ -308,48 +360,3 @@ Add new entries directly below this line.
 - Review (fresh agent): 4 findings — a ghost copy of the picture when it sat off the right edge in canvas exports,
   flipped (negative size) refs getting a 1 px shadow, no fallback without `getTransform`, a filter region
   rebuilt on the unclipped image every drag frame. All fixed; the same reviewer confirmed the fixes, nothing new.
-
-## 0.83.0 — 2026-11-18 — Importing a review file offers to restore notes / drawings deleted here
-- **What:** owner's report "the review file does not restore notes and drawings". Not a bug in the merge: rule 5
-  (FORMAT.md) keeps a row deleted here when the delete is later than the file's copy. Now the import counts
-  such rows and asks *Restore them?*; yes merges the same file again with restore on and they come back.
-- **Where:** library.py `import_annotations(restore=, kept_deleted=)`; review.py `import_package` /
-  `import_review_file` (`restore`, result key `deleted_here`, per clip in a bundle); server.py
-  `/api/review/import?restore=1`; annotate.js `importFile` (two POSTs, counts of both passes summed for the toast);
-  tests (test_merge_parity `test_restore_deleted_here`, test_review_bundle `test_restore_rows_deleted_here`);
-  FORMAT.md rule 5, MANUAL.
-- **Notes:** Sight only — the JS `mergeRows` has no restore (default path unchanged, parity holds; stats keys
-  unchanged, the ids go to the `kept_deleted` out-list). A restored row is stamped as edited now (note
-  `data.edited_at`, drawing `updated_at`) so the file's / a later package's old tombstones do not delete it
-  again and other copies revive it on merge. A restore *undeletes*: when the local copy was edited after
-  the file was made (then deleted), the local copy comes back, not the file's older one. The question is the
-  native `confirm()` (works on touch too) and says "deleted in this library" (a reviewer's tombstone counts too).
-- Review (fresh agent): 3 findings — a failed restore pass hidden by the success toast (now reported after the
-  normal reload), a bundle clip merged in pass 1 shown as damaged when pass 2 failed (keeps its pass-1 result),
-  restore overwriting a newer local copy with the file's older one (fixed as above, test added); prompt wording
-  changed. The same reviewer confirmed all fixes, nothing new.
-
-## 0.82.0 — 2026-11-18 — Phone / HTML page drawing: arrows along a stroke and lasso brush
-- **What:** owner's ask. The shared drawing canvas (review-draw.js: the HTML page, the phone app) can now make
-  0.81's new drawings. *Arrows and lines* row: a sixth kind, *Arrows along a stroke*; with it in hand the row
-  ends with three tap-to-cycle icon switches (side left / right / both, away / toward, guide on / off). The brush
-  slot became a two-kind slot (brush / lasso); the lasso's row ends with a pattern button opening a second row
-  (none, solid, 8 patterns, random).
-- **Where:** review-draw.js — `ARROWS` + `stroke` entry, `ASTROKE_OPTS` / `ASTROKE0`, `BRUSHES`, `PATTERNS` /
-  `LASSO_PATS` / `RANDOM_PATS` / `patIco`, `astrokeButtons`, `patternButton`, pen keys `brush` / `lasso` /
-  `astroke` (saved with the pen), `begin` (lasso keys on the brush; `stroke.t = "astroke"` makes a
-  `stroke / arrows` item), `extend` / `finish` treat "astroke" like a brush stroke (dropped under 3 px),
-  `roundItem` rounds gap / step / len. MANUAL.
-- **Notes:** no new controls for spacing / length / density / fill colour / fill opacity on the phone (the bar
-  stays small): arrows `step` = 10 × size, `len` = 6 × size (min 12 / 8 px); lasso `gap` = 1.7 × brush size (min
-  5 px), fill = line colour at 0.5 — Sight's panel edits them afterwards. `PATTERNS` is a copy of review-core's
-  (RC is looked up only on open, after this script's top level runs). The cycle switches set the pen only — they
-  do not restyle selected arrows strokes; picking the stroke kind with arrows / lines selected takes the tool
-  instead of converting them. Picking the stroke / lasso kind reopens the row so its switches show. Supersedes
-  0.81's "Not done" about review-draw.js. Hold-to-resize on a selection: an arrows stroke resizes its `width`
-  (`wkey`), and `gap` / `step` / `len` follow the thickness by the same factor (as RC.transformItem).
-- Review (fresh agent): 2 findings — the brush slot (now a group) fell into `groupSel`'s shapes branch, so with
-  the transform tool and a shape selected, tapping Brush / Lasso turned the shape into a rectangle instead of
-  taking the brush (`groupSel` now returns [] for slots other than arrows / shapes); hold-to-resize did nothing
-  on a selected arrows stroke (no `size`) — fixed as above.
-  The same reviewer confirmed both fixes; its one edge note (a hand-made 0 thickness → Infinity) is guarded.

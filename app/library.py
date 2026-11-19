@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import heapq
 import logging
+import math
 import json
 import os
 import queue
@@ -513,38 +514,56 @@ class Bus:
 
 
 class _Window:
-    """One file's part of the sliding cache: its blocks and the block under its playhead."""
+    """One file's part of the sliding cache: its blocks, the block under its playhead and the block ranges planned
+    for it (``ranges``: (lo, hi, head, base) — blocks from ``head`` on cost ``base + distance``, blocks before it
+    ``(base + distance) * behind_weight``, so the part behind a playhead fills alongside the part ahead)."""
 
-    __slots__ = ("size", "stamp", "head", "blocks")
+    __slots__ = ("size", "stamp", "head", "blocks", "ranges")
 
     def __init__(self, size: int, stamp: tuple[int, int]) -> None:
         self.size = size
         self.stamp = stamp  # (size, mtime_ns) the blocks were read at
         self.head = 0
         self.blocks: dict[int, bytes] = {}
+        self.ranges: list[tuple[int, int, int, int]] = []
+
+    @property
+    def last(self) -> int:
+        return (self.size - 1) // SlidingVideoCache.CHUNK if self.size > 0 else -1
+
+    def wants(self, k: int) -> bool:
+        return any(lo <= k <= hi for lo, hi, _, _ in self.ranges)
 
 
 class SlidingVideoCache:
     """RAM windows over the playing video files that follow their playheads.
 
-    Each file is held as fixed 1 MiB blocks. ``focus`` (the lightbox: one file) / ``focus_many`` (the version
-    compare: every clip on screen) decide which blocks belong in RAM — the budget is split evenly between the
-    files, so the more clips play, the smaller each one's window; inside a window most of it lies ahead of the
-    playhead, the rest behind it for scrubbing backwards. A background thread evicts what fell out and loads
-    what is missing, nearest to a playhead first, taking the files in turn. Blocks that stay inside their window
-    are never re-read, so the windows slide instead of being rebuilt. ``stream`` serves HTTP range requests from
-    the blocks and falls back to disk for anything outside the windows: always correct, only ever faster.
+    Each file is held as fixed 1 MiB blocks. ``focus`` (the lightbox: one file, plus the sequence's neighbours) /
+    ``focus_many`` (the version compare: every clip on screen) decide which blocks belong in RAM — the budget is
+    split evenly between the playing files, so the more clips play, the smaller each one's window; inside a window
+    the share ``ahead`` (Settings, 70 % by default) lies ahead of the playhead, the rest behind it. Missing blocks
+    load outwards from the playhead, a block behind it costing ``ahead / (1 - ahead)`` blocks ahead, so both ends
+    of the window are reached at the same time. In a sequence the part of the window past the clip's end goes to
+    the next clip's start, the part before its start to the previous clip's end (a cut, either way, finds its blocks
+    in RAM); with no neighbour it goes to the other side of the playhead. A background thread evicts what fell out
+    and loads what is missing, cheapest first, taking the files in turn. Blocks that stay inside their window are
+    never re-read, so the windows slide instead of being rebuilt. ``stream`` serves HTTP range requests from the
+    blocks and falls back to disk for anything outside the windows: always correct, only ever faster.
     """
 
     CHUNK = 1024 * 1024
-    AHEAD = 0.72  # share of a window kept in front of its playhead
+    AHEAD = 0.7  # default share of a window kept in front of its playhead
 
     def __init__(self, budget_mb: int = 128) -> None:
         self.lock = threading.Lock()
         self.cv = threading.Condition(self.lock)
         self.budget = self._clamp(budget_mb) * 1024 * 1024
+        self.ahead = self.AHEAD
         self.wins: dict[str, _Window] = {}  # path -> window, in focus order
+        self.heads: list[str] = []  # the files whose playheads the windows follow (the rest: sequence neighbours)
+        self.seq: tuple[str, str] = ("", "")  # (next, previous) file of the lightbox's sequence
         self.pending = 0  # blocks the loader still has to fetch
+        self._weight = 1.0  # cost of a block behind a playhead, in blocks ahead (_plan)
         self._gen = 0  # bumped whenever a window moves; the loader re-plans when it changes
         self._stop = False
         self._thread = threading.Thread(target=self._loop, name="video-cache", daemon=True)
@@ -554,32 +573,73 @@ class SlidingVideoCache:
     def _clamp(mb: int) -> int:
         return max(32, min(2048, int(mb)))
 
+    @staticmethod
+    def clamp_ahead(pct) -> float:
+        """Settings' percent (50-90) as a share; anything unreadable gives the default."""
+        try:
+            v = float(pct)
+        except (TypeError, ValueError):
+            return SlidingVideoCache.AHEAD
+        if not math.isfinite(v):
+            return SlidingVideoCache.AHEAD
+        return max(0.5, min(0.9, v / 100.0))
+
     @property
     def budget_mb(self) -> int:
         return max(1, self.budget // (1024 * 1024))
 
     @property
     def path(self) -> str:
-        """The first (lightbox: the only) file with a window, "" when none."""
-        return next(iter(self.wins), "")
+        """The first (lightbox: the playing) file with a window, "" when none."""
+        return self.heads[0] if self.heads else next(iter(self.wins), "")
 
-    def _window(self, w: _Window | None) -> tuple[int, int]:
-        """Inclusive block range of ``w`` that belongs in RAM around its playhead (caller holds the lock)."""
-        if w is None or w.size <= 0:
-            return 0, -1
-        last = (w.size - 1) // self.CHUNK
-        n = max(1, self.budget // self.CHUNK // max(1, len(self.wins)))
-        head = min(w.head, last)
-        ahead = min(max(1, int(n * self.AHEAD)), last - head + 1)
-        behind = min(n - ahead, head)
-        ahead = min(n - behind, last - head + 1)  # little behind (start of file) -> read further ahead
-        return head - behind, head + ahead - 1
+    def _plan(self) -> None:
+        """Block ranges of every window from the playheads, the budget, ``ahead`` and the sequence (caller holds
+        the lock)."""
+        n = max(1, self.budget // self.CHUNK // max(1, len(self.heads)))
+        weight = self.ahead / max(1e-6, 1.0 - self.ahead)
+        nxt, prv = self.seq
+        for w in self.wins.values():
+            w.ranges = []
+        for path in self.heads:
+            w = self.wins[path]
+            last = w.last
+            if last < 0:
+                continue
+            head = min(w.head, last)
+            ahead = max(1, int(round(n * self.ahead)))
+            behind = n - ahead
+            lo, hi = head - behind, head + ahead - 1
+            nw = self.wins.get(nxt) if len(self.heads) == 1 and nxt else None
+            pw = self.wins.get(prv) if len(self.heads) == 1 and prv else None
+            cap_n = nw.last + 1 if nw is not None else 0
+            cap_p = pw.last + 1 if pw is not None else 0
+            over, under = max(0, hi - last), max(0, -lo)
+            take_n = min(over, cap_n)
+            take_p = min(under, cap_p - take_n if pw is nw else cap_p)  # a 2-clip loop: one file for both ends
+            left_o, left_u = over - take_n, under - take_p
+            lo, hi = max(0, lo), min(last, hi)
+            # What a neighbour cannot hold (none there, or a short one) goes to the other side of the playhead,
+            # then to the neighbours' spare room.
+            g = min(left_o, lo); lo -= g; left_o -= g
+            g = min(left_u, last - hi); hi += g; left_u -= g
+            left = left_o + left_u
+            g = min(left, lo); lo -= g; left -= g
+            g = min(left, last - hi); hi += g; left -= g
+            g = min(left, cap_n - take_n - (take_p if pw is nw else 0)); take_n += max(0, g); left -= max(0, g)
+            g = min(left, cap_p - take_p - (take_n if pw is nw else 0)); take_p += max(0, g)
+            w.ranges.append((lo, hi, head, 0))
+            if take_n > 0:
+                nw.ranges.append((0, take_n - 1, 0, last - head + 1))
+            if take_p > 0:
+                pw.ranges.append((pw.last + 1 - take_p, pw.last, pw.last + 1, head))
+        self._weight = weight
 
     def _replan(self) -> None:
-        """Evict everything outside the windows and wake the loader (caller holds the lock)."""
+        """Plan, evict everything outside the windows and wake the loader (caller holds the lock)."""
+        self._plan()
         for w in self.wins.values():
-            lo, hi = self._window(w)
-            for k in [k for k in w.blocks if k < lo or k > hi]:
+            for k in [k for k in w.blocks if not w.wants(k)]:
                 del w.blocks[k]
         self.pending = len(self._missing())  # set here, not by the loader, so "busy" is true from the first instant
         self._gen += 1
@@ -611,18 +671,22 @@ class SlidingVideoCache:
                 "busy": self.pending > 0,
             }
 
-    def configure(self, mb: int) -> None:
-        nxt = self._clamp(mb) * 1024 * 1024
+    def configure(self, mb: int | None = None, ahead=None) -> None:
+        """Budget in MB and / or the ahead share (percent, 50-90); a change re-plans the windows at once."""
         with self.cv:
-            if nxt == self.budget:
+            nxt = self.budget if mb is None else self._clamp(mb) * 1024 * 1024
+            share = self.ahead if ahead is None else self.clamp_ahead(ahead)
+            if nxt == self.budget and abs(share - self.ahead) < 1e-9:
                 return
-            self.budget = nxt
+            self.budget, self.ahead = nxt, share
             self._replan()  # shrinking evicts right away, growing starts filling the extra room
 
     def release(self) -> None:
         """Drop every window (the player closed) so a 2 GB budget doesn't stay resident."""
         with self.cv:
             self.wins = {}
+            self.heads = []
+            self.seq = ("", "")
             self.pending = 0
             self._gen += 1
             self.cv.notify_all()
@@ -631,15 +695,19 @@ class SlidingVideoCache:
         with self.cv:
             self._stop = True
             self.wins = {}
+            self.heads = []
             self.cv.notify_all()
 
-    def focus(self, path: str, pos: int) -> None:
-        """One window: move it so byte ``pos`` of ``path`` (the playhead) sits inside it; other files' windows go."""
-        self.focus_many([(path, pos)])
+    def focus(self, path: str, pos: int, next_path: str = "", prev_path: str = "") -> None:
+        """One playing file: move its window so byte ``pos`` (the playhead) sits inside it; ``next_path`` /
+        ``prev_path``: the sequence's neighbours, which take the part of the window past the clip's end / start.
+        Other files' windows go."""
+        self.focus_many([(path, pos)], str(next_path or ""), str(prev_path or ""))
 
-    def focus_many(self, items: list[tuple[str, int]]) -> None:
+    def focus_many(self, items: list[tuple[str, int]], next_path: str = "", prev_path: str = "") -> None:
         """Windows for exactly these files, each with its playhead at byte ``pos``; the budget is split between
-        them. A file already held keeps the blocks that stay inside its (possibly smaller) window."""
+        them. A file already held keeps the blocks that stay inside its (possibly smaller) window. Neighbours are
+        used with one file only (the lightbox)."""
         stats = []
         for path, pos in items:
             path = str(path)
@@ -648,30 +716,50 @@ class SlidingVideoCache:
             except OSError:
                 continue
             stats.append((path, int(pos), (st.st_size, st.st_mtime_ns)))
+        extra = []
+        if len(stats) == 1:
+            for p in dict.fromkeys(x for x in (next_path, prev_path) if x and x != stats[0][0]):
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                extra.append((p, (st.st_size, st.st_mtime_ns)))
         with self.cv:
             wins: dict[str, _Window] = {}
-            for path, pos, stamp in stats:
+            for path, stamp in [(p, s) for p, _, s in stats] + extra:
                 w = wins.get(path) or self.wins.get(path)
                 if w is None or w.stamp != stamp:  # new file, or the file changed underneath us
                     w = _Window(stamp[0], stamp)
-                w.head = max(0, min(w.size, pos)) // self.CHUNK
                 wins[path] = w
+            for path, pos, _ in stats:
+                wins[path].head = max(0, min(wins[path].size, pos)) // self.CHUNK
             self.wins = wins
+            self.heads = list(dict.fromkeys(p for p, _, _ in stats))
+            have = {p for p, _ in extra}
+            self.seq = (next_path if next_path in have else "", prev_path if prev_path in have else "")
             self._replan()
 
     def _missing(self) -> list[tuple[str, int]]:
-        """(path, block) still to load, ordered so ``pop()`` yields the one nearest a playhead first (forward
-        before backward within a file, the files taken in turn). Caller holds the lock."""
+        """(path, block) still to load, ordered so ``pop()`` yields the cheapest first: outwards from a playhead,
+        a block behind it costing ``ahead / (1 - ahead)`` ahead (see ``_plan``), the files taken in turn on a tie.
+        Caller holds the lock."""
+        weight = self._weight
         ranked = []
         for i, (path, w) in enumerate(self.wins.items()):
-            lo, hi = self._window(w)
-            if hi < lo:
-                continue
-            head = min(max(w.head, lo), hi)
-            order = list(range(head, hi + 1)) + list(range(head - 1, lo - 1, -1))
-            ranked += [(r, i, path, k) for r, k in enumerate(order) if k not in w.blocks]
+            for lo, hi, head, base in w.ranges:
+                for k in range(lo, hi + 1):
+                    if k in w.blocks:
+                        continue
+                    cost = base + (k - head) if k >= head else (base + (head - k)) * weight
+                    ranked.append((cost, i, path, k))
         ranked.sort()
-        return [(path, k) for _, _, path, k in reversed(ranked)]
+        seen: set[tuple[str, int]] = set()  # a block in two ranges (a 2-clip loop) is listed once, at its lowest cost
+        out = []
+        for _, _, path, k in ranked:
+            if (path, k) not in seen:
+                seen.add((path, k))
+                out.append((path, k))
+        return out[::-1]
 
     def _loop(self) -> None:
         gen, todo = -1, []
@@ -702,8 +790,7 @@ class SlidingVideoCache:
                 data = b""
             with self.lock:
                 w = self.wins.get(path)
-                lo, hi = self._window(w)
-                if data and w is not None and w.stamp == stamp and lo <= k <= hi:
+                if data and w is not None and w.stamp == stamp and w.wants(k):
                     w.blocks[k] = data
                 if self._gen == gen:  # otherwise a window moved and _replan already counted afresh
                     self.pending = len(todo)
@@ -720,16 +807,16 @@ class SlidingVideoCache:
                 with self.lock:
                     w = self.wins.get(path)
                     block = w.blocks.get(k) if w is not None else None
-                    lo, hi = self._window(w)
+                    wanted = w is not None and w.wants(k)
                 if block is None:
                     if fh is None:
                         fh = open(path, "rb")
-                    if lo <= k <= hi:
+                    if wanted:
                         fh.seek(k * self.CHUNK)
                         block = fh.read(self.CHUNK)
                         if block:
                             with self.lock:
-                                if self.wins.get(path) is w and w is not None:
+                                if self.wins.get(path) is w and w is not None and w.wants(k):
                                     w.blocks[k] = block
                     else:
                         fh.seek(pos)

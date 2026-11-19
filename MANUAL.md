@@ -331,8 +331,12 @@
   (iPhone / iPad Safari only mutes / unmutes). The canvas' transport has both too. The timeline (tap / drag anywhere; near a marker it lands on it). Drag left / right
   across the picture to scrub from where the clip is (a frame per few pixels, faster when you move
   faster; Shift with a mouse = finer) — the clip's length no longer spreads over the screen's
-  width; after opening, the app runs through the clip once and keeps small frames in memory (the
-  green line in the timeline), so the picture follows at once. Tap the picture to play / pause
+  width; the app keeps small frames around the playhead in memory (the green strip in the timeline:
+  about 1,500 frames, 70 % ahead and 30 % behind by default — Settings → *Cache ahead* — filled outwards
+  from the playhead and following it),
+  so the picture follows at once. In a group's sequence, near a clip's end the window runs on into the
+  next clip's start (near its start: into the previous clip's end), so playing or scrubbing across the
+  cut finds frames both ways. Tap the picture to play / pause
   (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for markers); play starts from the frame on
   screen, also right after a scrub. Notes are listed and numbered in
   the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
@@ -686,7 +690,10 @@
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
   The green strip on the timeline is the RAM cache: a window around the playhead whose size is
-  set in Settings → RAM cache (32–2048 MB) and which slides as you play or scrub.
+  set in Settings → RAM cache (32–2048 MB) and which slides as you play or scrub. Settings → Cache ahead
+  (50–90 %, 70 % by default) is the part of it ahead of the playhead; the rest stays behind it, and both
+  fill outwards from the playhead. In a sequence the window runs on into the next clip's start near a
+  clip's end (and into the previous clip's end near its start), so a cut either way reads from memory.
 - Video the browser cannot play (old `.mpg` / `.mpeg` / `.vob`, DivX / Xvid, WMV, FLV and similar)
   is converted once to an H.264 copy: the viewer shows "Converting for playback… N%" and then plays
   it. The copy is kept in the library's `thumbs/video` folder (about the size of the original), so

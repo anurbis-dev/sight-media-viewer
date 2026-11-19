@@ -165,6 +165,16 @@ applyTheme();
 // ---- reviewer name -----------------------------------------------------------------------------
 let who = "";
 try { who = localStorage.getItem("sight-review:name") || ""; } catch {}
+// Settings → "Cache ahead": percent of the scrub cache's window in front of the playhead (the rest behind it).
+const AHEADS = [50, 60, 70, 80, 90];
+let cacheAhead = 70;
+try { const n = Number(localStorage.getItem("sight-review:cacheAhead")); if (AHEADS.includes(n)) cacheAhead = n; } catch {}
+ScrubCache.AHEAD = cacheAhead / 100;
+function setCacheAhead(n){
+  cacheAhead = n; ScrubCache.AHEAD = n / 100;
+  try { localStorage.setItem("sight-review:cacheAhead", String(n)); } catch {}
+  cacheFocus();
+}
 async function setName(){
   const v = await askText({ title: "Who is reviewing?", text: "Your name goes on every note, reply, drawing and state change you make.", value: who, ok: "Continue", placeholder: "Your name" });
   if (v == null || !v.trim()) return false;
@@ -1212,6 +1222,12 @@ async function settings(){
     const paintTr = () => tr.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === thumbsRow));
     THUMBS.forEach((n) => { const b = btn("", String(n), () => { setThumbs(n); paintTr(); }); b.dataset.n = String(n); tr.appendChild(b); });
     sh.appendChild(tr); paintTr();
+    sh.appendChild(el("b", "lab", "Cache ahead"));
+    const ca = el("div", "seg ahead");
+    const paintCa = () => ca.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === cacheAhead));
+    AHEADS.forEach((n) => { const b = btn("", n + "%", () => { setCacheAhead(n); paintCa(); }); b.dataset.n = String(n); ca.appendChild(b); });
+    sh.appendChild(ca); paintCa();
+    sh.appendChild(el("p", "", "Share of the video frames kept in memory ahead of the playhead; the rest stays behind it for scrubbing back."));
     sh.appendChild(el("b", "lab", "Full screen"));
     if (fsCan()){
       const fs = el("div", "seg fs");
@@ -1229,12 +1245,15 @@ async function settings(){
   });
 }
 
-function closeReview(){
+// park: a move along a sequence — the clip's scrub cache waits in scrubPool (the next clip may be its neighbour).
+function closeReview(park){
   if (!R) return;
   flush();
   if (R.video){ R.video.pause(); R.video.removeAttribute("src"); R.video.load(); }
   if (R.grab) R.grab.close();
-  if (R.scrub) R.scrub.close();
+  if (R.scrub && park){ R.scrub.prio = 1; R.scrub.onProgress = null; scrubPool.set(R.meta.key, R.scrub); }
+  else if (R.scrub) R.scrub.close();
+  if (!park) scrubPoolClear();
   if (R.v3d) R.v3d.dispose();
   if (R.url) URL.revokeObjectURL(R.url);
   R.frames.forEach((f) => URL.revokeObjectURL(f.url));
@@ -1285,9 +1304,9 @@ async function openReviewNow(key, file, fromRoute, extras, opts){
   // The history entry is settled now, before any await, so a later open reads a settled `pushed`. A review
   // still loading when this one takes over (never shown) leaves its entry to this one.
   const prev = R, wasPushed = !!(prev && prev.pushed), replace = !!(opts && opts.replace) || !!(prev && !prev.shown && wasPushed);
-  closeReview();
+  closeReview(!!(opts && (opts.seq || opts.replace)) && meta.asset.kind === "video");
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
-    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
+    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
     views: meta.asset.kind === "model3d" ? M.views3d(rr ? rr.rows : []) : new Map(), curVk: null, v3d: null, v3dReady: null, extras: extras || [] };
   // A move along the sequence keeps the speed and the hidden controls.
   if (opts && opts.replace && prev){ rv.rate = prev.rate; rv.clean = prev.clean; }
@@ -1296,6 +1315,7 @@ async function openReviewNow(key, file, fromRoute, extras, opts){
   else if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
   if (file) await bindFile(rv, file);
   if (R !== rv) return;
+  if (!rv.file) scrubPoolClear();  // a clip without its file builds no cache: the parked ones would only go on decoding
   meta.opened = now();
   if (rv.file) delete meta.nomedia;
   DB.put("reviews", meta).catch(() => {});
@@ -2352,13 +2372,20 @@ function buildStage(){
         else if (typeof v.mozHasAudio === "boolean") setAudio(v.mozHasAudio);
         paintTime(); paintMarkers(); paintOverlay(); applyStageView();
         const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
-        if (!rv.scrub && d && rv.url && v.src === rv.url){  // not a player whose file was just swapped (rebind)
-          rv.scrub = new ScrubCache(rv.url, d, rv.fps, (f) => { if (R === rv){ rv.cacheF = f; TPS.forEach(paintCache); } });
-          // After the player's own first frame, so the two do not race for the decoder.
-          setTimeout(() => { if (R === rv && rv.scrub) rv.scrub.start(); }, 600);
+        if (!rv.scrub && d && rv.url && v.src === rv.url && rv.file){  // not a player whose file was just swapped (rebind)
+          // A clip reached through the sequence takes its cache over from scrubPool (filled as a neighbour).
+          const sc = scrubPool.get(rv.meta.key) || new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true });
+          scrubPool.delete(rv.meta.key);
+          sc.prio = 0; sc.fps = () => rv.fps;
+          sc.onProgress = () => { if (R === rv) TPS.forEach(paintCache); };
+          rv.scrub = sc;
+          TPS.forEach(paintCache);
+          // After the player's own first frame, so the two do not race for the decoder (an adopted cache at once).
+          rv.scrubAt = performance.now() + (sc.spec ? 0 : 600);
+          if (sc.spec) cacheFocus(); else setTimeout(() => { if (R === rv && rv.scrub === sc) cacheFocus(); }, 650);
         }
       });
-      v.addEventListener("error", () => { if (R && R.video === v) seqDropHold(); toast("This device cannot play this video (format or codec).", 5000); });
+      v.addEventListener("error", () => { if (R && R.video === v){ seqDropHold(); scrubPoolClear(); } toast("This device cannot play this video (format or codec).", 5000); });
       // Only a clip played to its end goes on (a seek to the very end fires "ended" too, paused).
       v.addEventListener("ended", () => { if (R && R.video === v && R.playOn && !seqDrag) seqEnded(); });
       ["timeupdate", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (composing() && els.where) els.where(); }));
@@ -2463,7 +2490,8 @@ async function rebind(file, extras){
   rv.url = null;
   if (rv.grab) rv.grab.close();
   if (rv.scrub) rv.scrub.close();
-  rv.grab = null; rv.scrub = null; rv.cacheF = 0; rv.want = null; rv.scrubT = null;
+  rv.grab = null; rv.scrub = null; rv.want = null; rv.scrubT = null;
+  scrubPoolClear();
   if (rv.v3d) rv.v3d.dispose();
   rv.v3d = null; rv.v3dReady = null; rv.v3dError = null; rv.curVk = null; rv.extras = extras || [];
   // Another file: whether it has sound is learnt again.
@@ -2816,8 +2844,70 @@ function paintMarks(T){
     T.marks.appendChild(i);
   });
 }
-function paintCache(T){ T.cache.style.width = ((R && R.cacheF || 0) * 100).toFixed(1) + "%"; }
-function paintTime(){ if (R && R.video){ TPS.forEach(paintTransport); paintSeqPh(); } }
+// The cache strip: the unbroken run of cached frames around the playhead.
+function paintCache(T){
+  const d = durOf(), s = R && R.video && R.scrub && d ? R.scrub.span(posNow()) : null;
+  T.cache.style.left = s ? (s[0] / d * 100).toFixed(2) + "%" : "0";
+  T.cache.style.width = s ? (Math.max(0, s[1] - s[0]) / d * 100).toFixed(2) + "%" : "0";
+}
+function paintTime(){ if (R && R.video){ TPS.forEach(paintTransport); TPS.forEach(paintCache); paintSeqPh(); cacheFocus(); } }
+// The scrub caches follow the playhead (as Sight's RAM window): ScrubCache.MAX frames, 60 % ahead of it
+// and 40 % behind, filled outwards from it. Past the clip's end / start the rest goes to the next /
+// previous clip of the sequence (loop on: the first after the last) — its own cache in scrubPool, taken
+// over at the cut, so a play or scrub across the cut finds frames both ways; with no neighbour there, the
+// rest goes to the other side of the playhead.
+const scrubPool = new Map();   // review key → ScrubCache of a neighbouring clip
+const scrubPoolPend = new Set(), scrubPoolMiss = new Set();  // a file being read / not kept on the device
+function scrubPoolClear(){ scrubPool.forEach((sc) => sc.close()); scrubPool.clear(); scrubPoolPend.clear(); scrubPoolMiss.clear(); }
+function cacheFocus(){
+  const rv = R, sc = rv && rv.scrub, v = rv && rv.video;
+  if (!sc || !v || openingKey || performance.now() < (rv.scrubAt || 0)) return;
+  const d = durOf();
+  if (!d) return;
+  const W = sc.winLen(), t = RC.clamp(posNow(), 0, d), G = seqGeom(), n = G ? G.items.length : 0;
+  const nb = (j) => { const it = G && G.items[j]; return it && !it.nomedia && it.key !== rv.meta.key ? it : null; };
+  const prev = G ? nb(G.i > 0 ? G.i - 1 : loopOn ? n - 1 : -1) : null, next = G ? nb(G.i + 1 < n ? G.i + 1 : loopOn ? 0 : -1) : null;
+  let lo = t - W * (1 - ScrubCache.AHEAD), hi = t + W * ScrubCache.AHEAD;
+  // A neighbour holds at most its own length (unknown: no limit); a 2-clip loop shares one clip for both ends.
+  // What it cannot hold goes to the other side of the playhead, then to the neighbours' spare room.
+  const same = next && prev && next.key === prev.key;
+  const capN = next ? next.dur || Infinity : 0, capP = prev ? prev.dur || Infinity : 0;
+  const o0 = Math.max(0, hi - d), u0 = Math.max(0, -lo);
+  let over = Math.min(o0, capN), under = Math.min(u0, same ? capP - over : capP);
+  let leftO = o0 - over, leftU = u0 - under, g;
+  lo = Math.max(0, lo); hi = Math.min(d, hi);
+  g = Math.min(leftO, lo); lo -= g; leftO -= g;
+  g = Math.min(leftU, d - hi); hi += g; leftU -= g;
+  let left = leftO + leftU;
+  g = Math.min(left, lo); lo -= g; left -= g;
+  g = Math.min(left, d - hi); hi += g; left -= g;
+  g = Math.max(0, Math.min(left, capN - over - (same ? under : 0))); over += g; left -= g;
+  g = Math.max(0, Math.min(left, capP - under - (same ? over : 0))); under += g;
+  sc.want([{ lo, hi, from: t }]);
+  const wants = new Map();
+  if (over) wants.set(next.key, { it: next, ranges: [{ lo: 0, hi: over, from: 0 }] });
+  if (under){
+    const w = wants.get(prev.key) || { it: prev, ranges: [] };
+    w.ranges.push({ lo: -under, hi: 0, from: 0, end: true });
+    wants.set(prev.key, w);
+  }
+  scrubPool.forEach((c, k) => { if (!wants.has(k)){ c.close(); scrubPool.delete(k); } });
+  wants.forEach((w, k) => {
+    const c = scrubPool.get(k);
+    if (c){ c.want(w.ranges); return; }
+    if (scrubPoolPend.has(k) || scrubPoolMiss.has(k)) return;
+    scrubPoolPend.add(k);
+    DB.get("files", k).catch(() => null).then((kept) => {
+      if (!scrubPoolPend.delete(k)) return;
+      if (!kept || !kept.blob){ scrubPoolMiss.add(k); return; }
+      if (R !== rv){ if (R) cacheFocus(); return; }  // a cut meanwhile: the new clip asks again
+      if (scrubPool.has(k)) return;
+      const c2 = new ScrubCache(URL.createObjectURL(kept.blob), w.it.dur || 0, () => rv.fps, null, { own: true, prio: 1 });
+      scrubPool.set(k, c2);
+      cacheFocus();
+    });
+  });
+}
 function paintMarkers(){ if (R && R.video){ TPS.forEach(paintMarks); renderSeqBar(); } }
 // The scrub cache (ScrubCache) puts the frame wanted up at once; the player's own picture takes
 // over when its last seek has landed.
@@ -4543,4 +4633,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote, exportBundle, loadGroups };
+window.__sightReview = { get R(){ return R; }, scrubPool, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote, exportBundle, loadGroups };

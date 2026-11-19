@@ -537,8 +537,9 @@ export function createCompare(host){
     C.focusAt = now;
     C.focusDirty = false;
     const body = { items: v.map((l) => ({ id: l.id, t: clamp(C.T - l.start / C.fps, 0, l.dur), duration: l.dur })) };
-    const mb = host.cacheMb?.();
+    const mb = host.cacheMb?.(), ahead = host.cacheAhead?.();
     if (mb) body.mb = mb;
+    if (ahead) body.ahead = ahead;
     fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => {});
   }
 

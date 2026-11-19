@@ -672,11 +672,12 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     @app.post("/api/video/focus")
     async def video_focus(request: Request) -> dict:
         body = await json_body(request)
-        if body.get("mb") is not None:
+        if body.get("mb") is not None or body.get("ahead") is not None:
             try:
-                lib.video_cache.configure(int(body["mb"]))
+                mb = int(body["mb"]) if body.get("mb") is not None else None
             except (TypeError, ValueError):
-                pass
+                mb = None
+            lib.video_cache.configure(mb, body.get("ahead"))  # ahead: percent of the window ahead of the playhead
         if body.get("release"):
             lib.video_cache.release()
             return {"ok": True, "mb": lib.video_cache.budget_mb}
@@ -713,7 +714,16 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         size = os.path.getsize(play)
         pos = int(size * (t / duration)) if duration > 0 else 0
         pos = max(0, min(size, pos))
-        lib.video_cache.focus(play, pos)
+
+        # A sequence's neighbours: the part of the window past the clip's end / start goes to them.
+        def neighbour(key: str) -> str:
+            nid = str(body.get(key) or "")
+            n = lib.get_asset(nid) if nid and nid != aid else None
+            if not n or n.get("kind") != "video" or not Path(n["path"]).exists():
+                return ""
+            return str(lib.playback_path(n))
+
+        lib.video_cache.focus(play, pos, neighbour("next"), neighbour("prev"))
         snap = lib.video_cache.snapshot(play)
         snap.update({"ok": True, "pos": pos, "mb": lib.video_cache.budget_mb})
         return snap

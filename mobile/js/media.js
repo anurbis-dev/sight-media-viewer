@@ -161,49 +161,239 @@ export function fmtBytes(n){
   return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i];
 }
 
-// The scrub cache: small JPEG frames of the whole clip, kept in memory while the review is open, so
+// The scrub cache: small JPEG frames around the playhead, kept in memory while the review is open, so
 // a scrub or a frame step on the phone shows the frame at once (like Sight's RAM cache) while the
-// player is still decoding its seek. A hidden player runs through the clip muted (faster than real
-// time for long clips) and keeps every frame it presents (requestVideoFrameCallback), by the frame's
-// own media time — not on a grid of a guessed frame rate (a WebM's rate is unknown until played).
-// At most MAX frames: a long clip keeps one every d / MAX s. Frames the pass skipped are sought one
-// by one afterwards (fill). near(t): the closest frame; exact(t, fd, n): frame n or nothing.
+// player is still decoding its seek. The host says which parts of the clip it wants (`want`: ranges,
+// each filled outwards from its `from` point — forward first, then backward, a backward second
+// counting AHEAD / (1 − AHEAD) forward ones, so both ends of the window fill together); frames that fall out of every range
+// are dropped. A hidden player plays through each missing part muted (faster than real time) and
+// keeps every frame it presents (requestVideoFrameCallback), by the frame's own media time — not on
+// a grid of a guessed frame rate (a WebM's rate is unknown until played). Short holes it skipped
+// (a busy device) are sought one frame at a time. near(t): the closest frame; exact(t, fd, n): frame n
+// or nothing; span(t): the cached run around t.
+// Several caches (the open clip, its neighbours in a sequence) take turns on the decoder, the lowest
+// `prio` first; an idle cache gives its hidden player back.
+const turnQ = new Set();
+let turnOwner = null;
+function turnPick(){
+  if (turnOwner) return;
+  let best = null;
+  turnQ.forEach((c) => { if (!best || c.prio < best.prio) best = c; });
+  if (best){ turnQ.delete(best); turnOwner = best; best._turn(); }
+}
+const turnTake = (c) => new Promise((ok) => { c._turn = ok; turnQ.add(c); turnPick(); });
+function turnGive(c){ turnQ.delete(c); if (turnOwner === c) turnOwner = null; turnPick(); }
+const turnWanted = (c) => { for (const o of turnQ) if (o.prio < c.prio) return true; return false; };
+
 export class ScrubCache {
-  static MAX = 1500;
-  constructor(url, duration, fps, onProgress){
-    this.url = url; this.d = duration || 0; this.onProgress = onProgress || (() => {});
-    this.gap = this.d / ScrubCache.MAX;  // the closest two kept frames may be
+  static MAX = 1500;     // frames in all the ranges of one window (≈ 50 MB of 640 px JPEGs)
+  static AHEAD = 0.7;    // share of the window in front of the playhead (the app's Settings: 50-90 %)
+  static CHUNK = 2;      // seconds played per turn
+  // url: the clip (revoked by close when `own`); fps: a number or a function (the host's estimate).
+  constructor(url, duration, fps, onProgress, opts){
+    this.url = url; this.own = !!(opts && opts.own); this.prio = (opts && opts.prio) || 0;
+    this.d = duration || 0; this.fps = fps; this.onProgress = onProgress || null;
     this.mts = [];             // media times of the frames taken, sorted
     this.urls = new Map();     // ms of the media time → blob URL (null while it is being encoded)
-    this.v = null; this.c = null; this.closed = false; this.done = false; this.filling = false; this.prog = 0;
+    this.ranges = []; this.spec = null; this.gen = 0; this.dead = new Map();
+    this.v = null; this.c = null; this.closed = false; this.broken = false; this.running = false;
+    this.wake = null; this.idleT = 0; this.progT = 0; this.retryT = 0;
   }
-  start(){
-    if (this.v || this.closed || !this.d) return;
+  fd(){ const f = typeof this.fps === "function" ? this.fps() : this.fps; return 1 / (f > 0 ? f : 30); }
+  // Seconds a full window holds.
+  winLen(){ return ScrubCache.MAX * this.fd(); }
+  // The usual step between kept frames: their median gap (a frame), the guessed frame length until then.
+  step(){
+    const m = this.mts, n = Math.min(m.length, 400);
+    if (n < 10) return this.fd();
+    const g = [];
+    for (let i = 1; i < n; i++) g.push(m[i] - m[i - 1]);
+    g.sort((a, b) => a - b);
+    return Math.max(1e-3, g[g.length >> 1]);
+  }
+  // spec: [{lo, hi, from, end}] in seconds (end: counted back from the clip's end, lo / hi / from ≤ 0).
+  // Small moves are ignored (no re-plan while a clip plays on): a range edge or `from` must move by
+  // more than 0.5 s or 5 % of the window.
+  want(spec){
+    if (this.closed) return;
+    const tol = Math.max(0.5, this.winLen() * 0.05), old = this.spec;
+    const same = old && old.length === spec.length && spec.every((r, i) => { const o = old[i]; return !!o.end === !!r.end && Math.abs(o.lo - r.lo) <= tol && Math.abs(o.hi - r.hi) <= tol && Math.abs(o.from - r.from) <= tol; });
+    if (same) return;
+    this.spec = spec.map((r) => ({ lo: r.lo, hi: r.hi, from: r.from, end: !!r.end }));
+    this.resolve();
+  }
+  resolve(){
+    const d = this.d;
+    this.gen++; this.dead.clear();
+    this.ranges = !this.spec ? [] : this.spec.map((r) => {
+      const b = r.end ? d : 0;
+      if (r.end && !d) return null;  // the clip's length is learnt when its player opens
+      const lo = Math.max(0, b + r.lo), hi = d ? Math.min(d, b + r.hi) : b + r.hi;
+      return hi > lo ? { lo, hi, from: Math.max(lo, Math.min(hi, b + r.from)) } : null;
+    }).filter(Boolean);
+    this.evict();
+    if (this.spec && this.spec.some((r) => r.end) && !d) this.ranges.push({ meta: true });
+    if (this.wake){ const w = this.wake; this.wake = null; w(); }
+    else this.run();
+  }
+  evict(){
+    const m = this.mts, fd = this.fd(), keep = [];
+    if (!this.ranges.length && !m.length) return;
+    for (const t of m){
+      if (this.ranges.some((r) => !r.meta && t >= r.lo - fd && t <= r.hi + fd)) keep.push(t);
+      else { const k = Math.round(t * 1000), u = this.urls.get(k); if (typeof u === "string") URL.revokeObjectURL(u); this.urls.delete(k); }
+    }
+    if (keep.length !== m.length){ this.mts = keep; this.report(); }
+  }
+  // The next part to fetch: [a, b], nearest a range's `from` first (behind it weighted, see above), or null.
+  next(){
+    if (!this.d && this.ranges.length) return { meta: true };
+    const st = this.step(), tol = st * 1.6, m = this.mts, CH = ScrubCache.CHUNK;
+    const wb = ScrubCache.AHEAD / Math.max(0.05, 1 - ScrubCache.AHEAD);  // a second behind costs this many ahead
+    let best = null;
+    const offer = (a, b, pr) => {
+      const dd = this.dead.get(Math.round(a * 1000));
+      if (b - a <= st * 0.5 || (dd && performance.now() < dd.until)) return;
+      if (!best || pr < best.pr) best = { a, b, pr };
+    };
+    const hole = (a, b, from) => {
+      // A short hole is fetched whole (sought frame by frame): split at `from`, a one-frame hole would give two
+      // halves too short to seek into, and neither would ever be filled.
+      if (b - a <= st * 6){ offer(a, b, b <= from ? (from - b) * wb : a >= from ? a - from : 0); return; }
+      if (b <= from) offer(Math.max(a, b - CH), b, (from - b) * wb);
+      else if (a >= from) offer(a, Math.min(b, a + CH), a - from);
+      else { offer(from, Math.min(b, from + CH), 0); offer(Math.max(a, from - CH), from, 0.001); }
+    };
+    for (const r of this.ranges){
+      if (r.meta) continue;
+      let i = this.at(r.lo), prev = null;
+      if (i > 0 && r.lo - m[i - 1] < tol) prev = m[i - 1];
+      if (prev == null){
+        if (i >= m.length || m[i] > r.hi){ hole(r.lo, r.hi, r.from); continue; }
+        if (m[i] - r.lo > tol) hole(r.lo, m[i], r.from);
+        prev = m[i]; i++;
+      }
+      for (; i < m.length && m[i] <= r.hi; i++){
+        if (m[i] - prev > tol) hole(prev, m[i], r.from);
+        prev = m[i];
+      }
+      if (r.hi - prev > tol) hole(prev, r.hi, r.from);
+    }
+    return best;
+  }
+  async run(){
+    if (this.running || this.closed || this.broken) return;
+    this.running = true;
+    try {
+      while (!this.closed && !this.broken){
+        if (!this.next()){
+          clearTimeout(this.idleT); clearTimeout(this.retryT);
+          this.idleT = setTimeout(() => { if (!this.wake || this.closed) return; this.release(); }, 3000);
+          // A part that gave nothing is tried again later (deadUntil): wake for it.
+          const nowT = performance.now(), due = Math.min(Infinity, ...[...this.dead.values()].map((x) => x.until).filter((u) => u > nowT));
+          if (Number.isFinite(due)) this.retryT = setTimeout(() => { if (this.wake){ const w = this.wake; this.wake = null; w(); } }, Math.max(50, due - performance.now()));
+          await new Promise((ok) => { this.wake = ok; });
+          continue;
+        }
+        await turnTake(this);
+        // The turn is kept while there is work, given up only to a cache of a lower prio waiting.
+        try {
+          while (!this.closed && !this.broken){
+            clearTimeout(this.idleT);
+            if (!await this.open()) break;
+            const job = this.next();
+            if (!job) break;
+            if (job.meta){ this.broken = true; break; }  // no length even from its player: nothing to plan
+            await this.fetch(job);
+            if (turnWanted(this)) break;
+          }
+        } finally { turnGive(this); }
+      }
+    } finally { this.running = false; }
+  }
+  // The hidden player, opened when needed (given back after 3 s idle). False: none can be had.
+  async open(){
+    if (this.v) return true;
     const v = document.createElement("video");
-    if (!v.requestVideoFrameCallback) return;  // old WebKit: no cache, the player alone
+    if (!v.requestVideoFrameCallback){ this.broken = true; return false; }  // old WebKit: no cache, the player alone
     v.muted = true; v.playsInline = true; v.preload = "auto"; v.setAttribute("playsinline", "");
     v.style.cssText = "position:fixed;left:-10px;top:-10px;width:2px;height:2px;opacity:0;pointer-events:none";
     document.body.appendChild(v);
     this.v = v;
     v.src = this.url;
-    const tick = (_, meta) => {
-      if (this.closed) return;
-      this.keep(meta.mediaTime);
-      if (!v.ended) v.requestVideoFrameCallback(tick);
-    };
-    v.addEventListener("loadeddata", () => {
-      if (this.closed) return;
-      // A pass of at most ~20 s; a short clip plays at its own speed and gives (nearly) every frame.
-      v.playbackRate = Math.min(4, Math.max(1, this.d / 20));
-      v.requestVideoFrameCallback(tick);
-      v.play().catch(() => {});
-    }, { once: true });
-    // Once: fill() may seek near the end, and a seek there can fire "ended" again.
-    v.addEventListener("ended", () => {
-      if (this.filling || this.done) return;
-      this.filling = true;
-      this.fill().finally(() => { if (this.closed) return; this.done = true; this.report(1); this.release(); });
+    const ok = await new Promise((res) => {
+      const tm = setTimeout(() => fin(false), 8000);
+      const fin = (x) => { clearTimeout(tm); this._openEnd = null; res(x); };
+      this._openEnd = fin;  // close() ends the wait at once (the turn is held meanwhile)
+      v.addEventListener("loadeddata", () => fin(true), { once: true });
+      v.addEventListener("error", () => fin(false), { once: true });
     });
+    if (this.closed || this.v !== v) return false;
+    if (!ok){ this.broken = true; this.release(); return false; }
+    this.fresh = true;
+    if (Number.isFinite(v.duration) && v.duration > 0 && Math.abs(v.duration - this.d) > 1e-3){ this.d = v.duration; this.resolve(); }
+    return true;
+  }
+  seekTo(t){
+    const v = this.v;
+    return new Promise((ok) => {
+      let tm = 0;
+      const done = (_, meta) => { clearTimeout(tm); ok(meta ? meta.mediaTime : null); };
+      v.requestVideoFrameCallback(done);
+      tm = setTimeout(() => done(0, null), 800);
+      v.currentTime = t;
+    });
+  }
+  // One part: played through (or sought frame by frame when short); a part that gives no new frame is
+  // not asked for again until the ranges change (the end of a clip, a stall).
+  async fetch(job){
+    const v = this.v, gen = this.gen, st = this.step(), n0 = this.mts.length;
+    const fresh = this.fresh;
+    this.fresh = false;
+    let got = false;
+    const keepAt = (mt) => { if (mt != null && this.keep(mt)) got = true; };  // (keep checks the ranges)
+    if (job.b - job.a <= st * 6){
+      let prev = job.a;
+      while (job.b - prev > st * 1.5 && !this.closed && this.v === v && this.gen === gen){
+        const mt = await this.seekTo(Math.max(0, Math.min(this.d - st * 0.5, prev + st * 1.25)));
+        if (mt == null || mt <= prev + st * 0.5) break;
+        keepAt(mt);
+        prev = mt;
+      }
+    } else {
+      if (!v.paused) v.pause();
+      if (Math.abs(v.currentTime - job.a) > st * 2 || v.ended){ const mt = await this.seekTo(job.a); keepAt(mt); }
+      else if (fresh && v.readyState >= 2 && !v.seeking) keepAt(v.currentTime);  // a player just opened stands on its first frame (no rVFC for it)
+      if (!this.closed && this.v === v && this.gen === gen){
+        const len = this.ranges.reduce((s, r) => s + (r.meta ? 0 : r.hi - r.lo), 0);
+        // Faster than real time, but not past ~60 presented frames a second (a 60 fps clip at 1.5× drops every other one).
+        v.playbackRate = Math.max(1, Math.min(4, Math.max(1.5, len / 20), 60 * this.fd()));
+        await new Promise((ok) => {
+          let wd = 0, fin = false;
+          const end = () => { if (fin) return; fin = true; clearTimeout(wd); v.removeEventListener("ended", end); v.pause(); ok(); };
+          const arm = () => { clearTimeout(wd); wd = setTimeout(end, 1500); };
+          const tick = (_, meta) => {
+            if (fin) return;
+            if (this.closed || this.v !== v){ end(); return; }
+            keepAt(meta.mediaTime);
+            if (meta.mediaTime >= job.b - st * 0.5 || meta.mediaTime + st * 1.5 >= this.d || v.ended || this.gen !== gen || turnWanted(this)){ end(); return; }
+            arm();
+            v.requestVideoFrameCallback(tick);
+          };
+          v.requestVideoFrameCallback(tick);
+          arm();
+          v.play().catch(end);
+          v.addEventListener("ended", end);
+        });
+      }
+    }
+    // A part that gave nothing waits 1.5 s, 3 s, then for good (until the ranges change).
+    if (got) this.dead.delete(Math.round(job.a * 1000));  // a retry that worked
+    else if (this.gen === gen && this.mts.length === n0){
+      const k = Math.round(job.a * 1000), dd = this.dead.get(k) || { n: 0, until: 0 };
+      dd.n++; dd.until = dd.n >= 3 ? Infinity : performance.now() + 1500 * dd.n;
+      this.dead.set(k, dd);
+    }
   }
   at(t){  // index of the first frame at or after t
     const m = this.mts;
@@ -213,26 +403,28 @@ export class ScrubCache {
   }
   keep(t){
     const key = Math.round(t * 1000), v = this.v;
-    if (this.urls.has(key) || !v || !v.videoWidth) return;
-    const i = this.at(t), m = this.mts;
-    if (this.gap > 0 && ((i < m.length && m[i] - t < this.gap) || (i > 0 && t - m[i - 1] < this.gap))) return;
+    if (this.urls.has(key) || !v || !v.videoWidth) return false;
+    if (!this.ranges.some((r) => !r.meta && t >= r.lo - this.fd() && t <= r.hi + this.fd())) return false;
     const w = Math.min(640, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
     if (!this.c){ this.c = document.createElement("canvas"); this.c.width = w; this.c.height = h; }
     this.c.getContext("2d").drawImage(v, 0, 0, w, h);
-    this.urls.set(key, null);  // taken; the JPEG follows
-    m.splice(i, 0, t);
+    const tok = {};
+    this.urls.set(key, tok);  // taken; the JPEG follows (tok: this take, not a later one of the same frame)
+    this.mts.splice(this.at(t), 0, t);
     this.c.toBlob((b) => {
       if (this.closed) return;
+      if (this.urls.get(key) !== tok) return;  // dropped meanwhile (out of the ranges), maybe taken again
       if (!b){ this.urls.delete(key); const j = this.mts.indexOf(t); if (j >= 0) this.mts.splice(j, 1); return; }
       this.urls.set(key, URL.createObjectURL(b));
-      this.report(t / this.d);
+      this.report();
     }, "image/jpeg", 0.75);
+    return true;
   }
-  report(f){ f = Math.min(1, f); if (f > this.prog){ this.prog = f; this.onProgress(f); } }  // only forward (fill adds early frames)
-  pic(i){ return i >= 0 && i < this.mts.length ? this.urls.get(Math.round(this.mts[i] * 1000)) || null : null; }
+  report(){ if (this.progT || this.closed) return; this.progT = setTimeout(() => { this.progT = 0; if (!this.closed && this.onProgress) this.onProgress(); }, 120); }
+  pic(i){ const u = i >= 0 && i < this.mts.length ? this.urls.get(Math.round(this.mts[i] * 1000)) : null; return typeof u === "string" ? u : null; }
   // The cached frame closest to t, if one is close (a part not cached yet shows the player instead).
   near(t){
-    const i = this.at(t), tol = Math.max(0.1, this.gap * 2.5);
+    const i = this.at(t), tol = Math.max(0.1, this.step() * 2.5);
     let best = null, bd = Infinity;
     for (const j of [i - 1, i, i - 2, i + 1]){
       const u = this.pic(j);
@@ -249,43 +441,28 @@ export class ScrubCache {
     if (i < 0) return null;
     return b - this.mts[i] <= fd + 2e-4 ? this.pic(i) : null;
   }
-  // The pass skips frames when the device is busy: each gap wider than the usual step is sought
-  // afterwards, one frame at a time (at most 600 seeks).
-  async fill(){
-    const v = this.v, m = this.mts;
-    if (!v || m.length < 3) return;
-    const gaps = [];
-    for (let i = 1; i < Math.min(m.length, 400); i++) gaps.push(m[i] - m[i - 1]);
-    const st = gaps.sort((a, b) => a - b)[gaps.length >> 1];  // the usual step: a frame, or `gap`
-    if (!(st > 0)) return;
-    let left = 600;
-    const holes = [];
-    if (m[0] > st * 0.5) holes.push([-st, m[0]]);  // the first frame(s): on screen before the pass began
-    for (let i = 0; i < m.length; i++){
-      const next = i + 1 < m.length ? m[i + 1] : this.d;
-      if (next - m[i] > st * 1.5) holes.push([m[i], next]);
-    }
-    for (const [from, to] of holes){
-      let prev = from;
-      while (to - prev > st * 1.5 && left-- > 0 && !this.closed && this.v === v){
-        const mt = await new Promise((ok) => {
-          let tm = 0;
-          const done = (_, meta) => { clearTimeout(tm); ok(meta ? meta.mediaTime : null); };
-          v.requestVideoFrameCallback(done);
-          tm = setTimeout(() => done(0, null), 600);
-          v.currentTime = Math.max(0, Math.min(this.d - st * 0.5, prev + st * 1.25));
-        });
-        if (mt == null || mt <= prev + st * 0.5) break;  // no frame there (end of the clip, a stall)
-        this.keep(mt);
-        prev = mt;
-      }
-    }
+  // [from, to] seconds: the unbroken run of cached frames around t (null when t is not in one).
+  span(t){
+    const m = this.mts, st = this.step(), tol = st * 1.6;
+    if (!m.length) return null;
+    let i = this.at(t + 1e-6) - 1;  // the last frame at or before t
+    if (i < 0){ if (m[0] - t > tol) return null; i = 0; }
+    else if (t - m[i] > tol) return null;
+    let a = i, b = i;
+    while (a > 0 && m[a] - m[a - 1] <= tol) a--;
+    while (b + 1 < m.length && m[b + 1] - m[b] <= tol) b++;
+    return [a === 0 && m[0] <= tol ? 0 : m[a], Math.min(this.d || Infinity, m[b] + st)];
   }
   release(){ if (this.v){ this.v.pause(); this.v.removeAttribute("src"); this.v.load(); this.v.remove(); this.v = null; } if (this.c){ dropCanvas(this.c); this.c = null; } }
   close(){
     this.closed = true;
+    clearTimeout(this.idleT); clearTimeout(this.progT); clearTimeout(this.retryT);
+    if (this.wake){ const w = this.wake; this.wake = null; w(); }
+    if (this._openEnd) this._openEnd(false);
+    if (this._turn && turnQ.has(this)){ turnQ.delete(this); this._turn(); }  // its loop wakes, sees `closed`, gives the turn back
     this.release();
-    this.urls.forEach((u) => { if (u) URL.revokeObjectURL(u); });
+    this.urls.forEach((u) => { if (typeof u === "string") URL.revokeObjectURL(u); });
     this.urls.clear(); this.mts = [];
+    if (this.own && this.url) URL.revokeObjectURL(this.url);
   }
 }
