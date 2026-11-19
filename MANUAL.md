@@ -510,8 +510,8 @@
     the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
     goes on from where you let go. Each clip gets a small scrub copy (a keyframe every few frames) as soon as
     the comparison opens, and a drag shows those, so several clips follow the pointer together. Until a copy
-    is ready, a drag still moves that clip, but only one seek at a time, so a slow clip keeps its last frame
-    instead of stuttering. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (− / + on its chip, click the number to
+    is ready, the picture stays where it was; letting go jumps every clip to that frame together. A clip
+    you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (− / + on its chip, click the number to
     type it, or `[` / `]` for the selected clip, `Shift` ×10): where its first frame sits on the
     timeline, to line up clips that start or run differently. The coloured bars on the timeline show
     each clip's span; 🔈 picks whose sound plays.

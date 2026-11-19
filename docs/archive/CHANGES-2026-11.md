@@ -2,6 +2,34 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.86.0 — 2026-11-18 — Number pins with a leader line; note icons on hover; Ctrl+C copies hovered note text; Shift = H/V
+- **What:** owner's asks.
+  - The note pin tool is now a *number pin*: a click puts a numbered circle, a drag draws a line from the press
+    point with the circle where it is let go. A small field then takes the number (Enter / tap elsewhere; empty =
+    the next free number; Esc drops a new pin). A click with the tool on a pin, or a double-click with another
+    tool, edits its number. The tool no longer focuses the note composer, which had swallowed every hotkey.
+  - Shift while drawing (straight stroke, line / arrow, pin line, dragging a line's end) keeps the line horizontal
+    or vertical instead of snapping to 15° (rotation still uses 15° steps).
+  - A note card's action icons show on hover only; on touch, on the picked card.
+  - Ctrl+C with the pointer over a note's / reply's / picture's text (the panel or the text plate) copies that
+    text, with a "Copied" toast.
+- **Where:** review-core.js: `primsOf` pin (`label`, leader `ax, ay`), `pinLeader` / `pinLineW`, `boundsOf`,
+  `hitTest`, `transformItem`, `snapHV` (exported; used by `xfDrag` line ends). annotate.js: pin branch in
+  `onDown` / `onMove` / `onUp` / `abortGesture`, `editPin` / `finishPinEdit` / `nextPinNumber` (`S.pinEdit`,
+  `.an-pinedit`), `copyHoveredText` (onKey, composer / caption fields), `snapAngle = RC.snapHV`, CSS
+  `.an-nh .an-ib`. FORMAT.md pin; MANUAL.
+- **Notes:** `label` is a string set when the pin is created (the next free number among this media's pins; older
+  pins count with their note number). Pins without `label` / `ax, ay` render as before (the note's number, no
+  line); older clients show new pins that way too. The leader is drawn only when its start lies outside the circle.
+  The phone / HTML drawing canvas (review-draw.js) has no pin tool; it draws, moves and hit-tests pins through
+  review-core, so leaders follow there too. The hovered-text copy steps aside for a real text selection, also
+  inside a focused field. On touch there is no Shift, so no H/V constraint there.
+- Review (fresh agent, run by the implementing agent): 6 findings — Ctrl+C dead while the composer kept focus; a
+  press while the number field was open only confirmed it (every other quick click placed a pin, a double-click
+  on a pin flashed the field); the circle showed a different number than the field until confirmed; a short drag
+  ending inside a pin stacked a duplicate; a stale comment — all fixed; compare-mode copy not applicable. The same
+  reviewer confirmed all fixes, nothing new.
+
 ## 0.85.0 — 2026-11-18 — Lightbox video bar: sound, scrub audio, loop, typed frame jump, Shift+arrows
 - **What:** the lightbox video bar gets a sound icon (click = mute, press-and-drag up or the wheel = volume with a
   pop-up slider, right-click or long press = sound while scrubbing, shown by an accent dot), a loop button, and a

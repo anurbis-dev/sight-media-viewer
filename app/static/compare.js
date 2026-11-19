@@ -10,12 +10,17 @@
 // runs on one clock that waits for the slowest clip: a clip still seeking / buffering holds the clock
 // (every clip pauses on its frame) until all can play, then they start together; small drift is
 // nudged with playbackRate. One decoder per clip: the reference's copies under Difference tiles are
-// canvases painted from its video. The server keeps a RAM window around each clip's playhead
-// (/api/video/focus items — the budget split between the clips). A drag scrubs a short-GOP proxy
-// per clip (made when the compare opens, up to a few at once): one seek in flight, the latest time
-// waits for it, and the full file is sought once when the drag ends. Until that proxy exists the
-// same one-seek rule applies to the clip itself, so a slow clip keeps its last frame instead of
-// restarting a seek on every pointer move.
+// canvases painted from its video. A scrub proxy is decoded only while a drag is showing it, so it
+// does not take a hardware decoder away from playback. The server keeps a RAM window around each
+// clip's playhead (/api/video/focus items — the budget split between the clips). A drag scrubs a
+// short-GOP proxy per clip (made when the compare opens, up to a few at once): one seek in flight,
+// the latest time
+// waits for it, and the full file is sought once when the drag ends. Until that proxy can show a
+// frame, the full file is not seeked while the pointer is down: a long-GOP seek per move lands the
+// clips on different frames and can fail a decoder (the blocked-media mark), so the compare sticks.
+// The picture stays put and every clip jumps to that frame together when the pointer goes up.
+// One the playhead has not reached jumps to its first frame, and one it has left jumps to its last.
+// The proxy stays over the full file until that frame is presented, then its decoder is dropped.
 //
 // createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
 // onView(view) — the selected layer's viewer after every rebuild / selection (view: {asset, wrap, media, isVid,
@@ -145,6 +150,10 @@ export function createCompare(host){
   }
   function close(){
     if (!C) return;
+    // A drag registers window listeners that finish it. Drop them before C goes away, or the
+    // release after a mid-drag close keeps the detached compare, and the next drag's listener leaks.
+    C.dropScrubListeners?.();
+    C.scrub = null;
     host.onClose?.();
     C.ro?.disconnect();
     if (C.pBase) P = prefsToSave();
@@ -219,7 +228,7 @@ export function createCompare(host){
         const res = await convertForPlayback(a.id, null, () => !!C);
         if (res.ok && C) m.src = `/api/file/${a.id}?copy=${Date.now()}`;
       };
-      m.addEventListener("error", fallback);
+      m.addEventListener("error", () => { if (m.getAttribute("src")) fallback(); });
       m.addEventListener("loadedmetadata", () => { if (!m.videoWidth) fallback(); });
       m.addEventListener("seeked", () => {
         pumpTime(m);
@@ -261,11 +270,27 @@ export function createCompare(host){
     if (!C?.scrub || v.seeking || v._want != null || v._seekGen !== C.scrubGen) return;
     v.hidden = false;
   }
-  // True when the element is on the shared playhead (the 0.1 frame syncVideos adds is the same point).
-  function atPlayhead(l, m){
+  // Where this clip sits on the shared playhead: frame 0 before it starts, its last frame after it
+  // ends, otherwise the playhead itself.
+  function clipLocal(l){
     const local = C.T - l.start / C.fps;
+    if (local < -1e-4) return 0;
+    if (l.dur && local >= l.dur) return Math.max(0, l.dur - 1e-3);
+    return local;
+  }
+  // True when the element is on the shared playhead (the 0.1 frame syncVideos adds is the same point).
+  // Outside the span, the release parks on the same edge wantTime will clamp to, not the raw playhead.
+  function atPlayhead(l, m){
     const tol = 0.5 / C.fps;
-    return Math.abs(m.currentTime - local) <= tol || Math.abs(m.currentTime - (local + 0.1 / C.fps)) <= tol;
+    const local = C.T - l.start / C.fps;
+    const inside = local >= -1e-4 && (!l.dur || local < l.dur);
+    if (inside){
+      return Math.abs(m.currentTime - local) <= tol || Math.abs(m.currentTime - (local + 0.1 / C.fps)) <= tol;
+    }
+    let edge = clipLocal(l) + 0.1 / C.fps;
+    const dur = m.duration;
+    if (Number.isFinite(dur)) edge = Math.min(Math.max(0, dur - 1e-3), Math.max(0, edge));
+    return Math.abs(m.currentTime - edge) <= tol;
   }
   // The proxy stays up until the full file has presented the frame the drag ended on.
   // A seek that was already in flight (queued before the proxy existed) must not count:
@@ -289,6 +314,7 @@ export function createCompare(host){
       const jumped = Math.abs(m.currentTime - armed) > Math.max(0.35, 8 / C.fps);
       if (jumped && m.paused) return;
       sc.hidden = true;
+      releaseScrubDecoder(sc);
     };
     if (m.requestVideoFrameCallback) m.requestVideoFrameCallback(hide);
     setTimeout(hide, 250);
@@ -299,9 +325,8 @@ export function createCompare(host){
     if (!C) return;
     for (const l of C.layers){
       if (!isVideo(l.a)) continue;
-      const local = C.T - l.start / C.fps;
-      if (!(local >= -1e-4 && (!l.dur || local < l.dur))) continue;
-      const want = local + 0.1 / C.fps;
+      // Before this clip: frame 0. Past it: the last frame. The drag already showed that edge.
+      const want = clipLocal(l) + 0.1 / C.fps;
       for (const m of l.media){
         if (m.tagName !== "VIDEO" || m.readyState < 1 || m.error) continue;
         wantTime(m, want);
@@ -344,14 +369,37 @@ export function createCompare(host){
         v.muted = true; v.playsInline = true; v.preload = "auto"; v.hidden = true;
         v.draggable = false;
         v._layer = layer;
-        v.src = `/api/video/scrub/${id}`;
+        // No src yet. A hidden proxy that is already decoding holds a hardware decoder, and Windows
+        // then stops painting one of the clips that are actually on screen (or fails that seek).
         v.addEventListener("seeked", () => { pumpTime(v); revealScrub(v); });
-        v.addEventListener("error", () => { v.hidden = true; if (layer.scrub === v) layer.scrub = null; });
+        v.addEventListener("error", () => {
+          if (!v.getAttribute("src")) return; // dropping the decoder fires error too
+          v.hidden = true;
+          releaseScrubDecoder(v);
+          if (layer.scrub === v) layer.scrub = null;
+        });
+        layer.scrubReady = true;
         layer.scrub = v;
         mountScrubs();
         place();
+        if (C.scrub) armScrubs();
       });
     }
+  }
+  // Point the proxies at their files. Called when a drag starts (and when a copy finishes mid-drag).
+  function armScrubs(){
+    if (!C) return;
+    for (const l of C.layers){
+      const v = l.scrub;
+      if (!v || !l.scrubReady || v.getAttribute("src")) continue;
+      v.src = `/api/video/scrub/${l.id}`;
+    }
+  }
+  // Playback needs those decoders. Drop the proxy's src once it is no longer the picture.
+  function releaseScrubDecoder(v){
+    if (!v || !v.getAttribute("src")) return;
+    v._want = null;
+    try { v.pause(); v.removeAttribute("src"); v.load(); } catch {}
   }
   // Rebuilds the stage DOM (layout, visibility, reference or blend changed). Media elements are
   // recreated, so video positions are restored from the shared clock on the next tick.
@@ -571,14 +619,28 @@ export function createCompare(host){
       if (!isVideo(l.a)) continue;
       const local = C.T - l.start / C.fps;
       const inside = local >= -1e-4 && (!l.dur || local < l.dur);
-      // Keep a visible proxy paused. Playback does not hide it here: settleScrub does, once the
-      // full file has presented the frame the drag ended on. Hiding at once would flash the old frame.
+      // Keep a visible proxy paused. Do not hide it here once the drag has ended, including when
+      // the playhead has left the clip. settleScrub hides it after the full file has presented the
+      // edge (frame 0, the playhead, or the last frame) and then drops the decoder. Hiding first
+      // uncovers the pre-drag picture and leaves that decoder running.
       if (l.scrub && !l.scrub.paused) l.scrub.pause();
-      if (!inside && l.scrub) l.scrub.hidden = true;
       for (const m of l.media){
-        m.parentElement?.classList.toggle("out", !inside);
+        // Leave the dim alone while the pointer is down. Dropping it (opacity back to 1) promotes
+        // the clip to a hardware overlay, and Windows then cancels the drag.
+        if (!C.scrub) m.parentElement?.classList.toggle("out", !inside);
         if (m.tagName !== "VIDEO") continue;
-        if (!inside){ if (!m.paused) m.pause(); continue; }
+        if (!inside){
+          if (!m.paused) m.pause();
+          if (C.scrub){
+            const sc = l.scrub;
+            const edge = local < 0 ? 0 : Math.max(0, (l.dur || 0) - 1e-3);
+            if (sc && sc.readyState >= 1 && !sc.error){
+              m._want = null;
+              wantTime(sc, edge + 0.1 / C.fps, C.scrubGen);
+            } else m._want = null;
+          }
+          continue;
+        }
         // (no metadata yet — still loading, converting for playback or broken: nothing to wait for; it joins
         // with a seek once it can)
         if (m.readyState < 1 || m.error) continue;
@@ -596,6 +658,10 @@ export function createCompare(host){
             continue;
           }
           if (sc && C.scrub){ sc.hidden = true; sc._want = null; }
+          // No proxy yet. Seeking every full file on the way down lands them on different frames
+          // (a long GOP cannot keep up) and can fail a decoder, which leaves the blocked-media
+          // mark up and the compare stuck. Hold the current picture; the release seeks them once.
+          if (C.scrub){ m._want = null; continue; }
           if (force || Math.abs(m.currentTime - want) > 0.45 / C.fps) wantTime(m, want);
           continue;
         }
@@ -885,6 +951,7 @@ export function createCompare(host){
       if (e.button !== 0 || C.scrub) return;
       track.setPointerCapture(e.pointerId);
       C.scrubGen = (C.scrubGen || 0) + 1;
+      armScrubs();
       for (const l of C.layers) if (l.scrub){
         l.scrub.hidden = true;
         l.scrub._settle = false;
@@ -897,15 +964,29 @@ export function createCompare(host){
         setT(lo + clamp((ev.clientX - r.left) / r.width, 0, 1) * (hi - lo), true);
         C.T = snapT(C.T);
       };
+      let onWin = null;
+      const dropWin = () => {
+        if (!onWin) return;
+        window.removeEventListener("pointerup", onWin);
+        window.removeEventListener("pointercancel", onWin);
+        onWin = null;
+        if (C && C.dropScrubListeners === dropWin) C.dropScrubListeners = null;
+      };
       const end = (ev) => {
-        if (!C || ev.pointerId !== C.scrub?.pid) return;
+        // Compare already closed: the listeners must still come off (close() usually did this).
+        if (!C){ dropWin(); return; }
+        if (ev.pointerId !== C.scrub?.pid) return;
         C.scrub = null;
         track.onpointermove = track.onpointerup = track.onpointercancel = track.onlostpointercapture = null;
+        dropWin();
         queueRelease();
         // Hold the clock while a clip still has the release time queued behind a seek already in flight.
         C.wait = false;
-        for (const l of C.layers) for (const m of l.media){
-          if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
+        for (const l of C.layers){
+          if (l.scrub && l.scrub.hidden) releaseScrubDecoder(l.scrub);
+          for (const m of l.media){
+            if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
+          }
         }
         C.last = performance.now();
         C.syncNow = true;
@@ -913,7 +994,19 @@ export function createCompare(host){
       };
       scrub(e);
       track.onpointermove = scrub;
-      track.onpointerup = track.onpointercancel = track.onlostpointercapture = end;
+      track.onpointerup = track.onpointercancel = end;
+      onWin = (ev) => end(ev);
+      C.dropScrubListeners = dropWin;
+      window.addEventListener("pointerup", onWin);
+      window.addEventListener("pointercancel", onWin);
+      // A hardware overlay drops capture while the button is still down (and reports no buttons).
+      // That is not a release — the pointerup still comes. Take capture back so the drag follows.
+      let took = 0;
+      track.onlostpointercapture = (ev) => {
+        if (!C?.scrub || ev.pointerId !== C.scrub.pid || took > 3) return;
+        took++;
+        try { track.setPointerCapture(ev.pointerId); } catch {}
+      };
     });
     const layers = el.querySelector(".cmp-layers");
     layers.addEventListener("click", (e) => {
@@ -1270,7 +1363,12 @@ function injectStyles(){
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
 .cmp-ly { position: absolute; inset: 0; pointer-events: none; }
 .cmp-ly.out .cmp-m { opacity: .12; }
-.cmp-m { position: absolute; object-fit: contain; max-width: none; image-rendering: auto; }
+.cmp-m { position: absolute; object-fit: contain; max-width: none; image-rendering: auto;
+  /* Windows promotes a plain <video> to a hardware overlay. Only a couple of those exist, so the
+     clips that do not get one keep their old picture until playback stops. The overlay is also a
+     window of its own: in Column it lands on the timeline and the drag is cancelled. A clip on the
+     element keeps every clip on the normal compositor. */
+  clip-path: inset(0); }
 .cmp-scrub { z-index: 2; pointer-events: none; }
 .cmp-lbl { position: absolute; left: 10px; top: 10px; z-index: 4; display: flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: rgb(0 0 0 / .62); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .cmp-lbl[hidden] { display: none; }

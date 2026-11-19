@@ -185,11 +185,20 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   caps decode, scale and encode at 2 threads (`-threads` before `-i`, `-filter_threads 2`, encoder `-threads 2`). A playback copy still goes first: while one waits or runs, scrub jobs
   hold back, and its arrival terminates every running scrub ffmpeg (`_stop_scrub_procs`), whose jobs
   then start over. Compare (`compare.js` `ensureScrubs`) asks for a scrub copy per video layer as
-  soon as it opens (clips under 3 s are skipped, as in the lightbox). A drag seeks that proxy, one
-  seek in flight, latest time queued (`pumpTime` / `wantTime`); the full file stays on its last
-  frame until the pointer goes up, then is seeked once and the proxy hides after it presents
-  (`settleScrub`, rVFC or 250 ms). Until the proxy is ready the same one-seek rule applies to the
-  clip itself. After each scrub copy, `_prune_scrub_copies` keeps the newest 20 / 1 GB in all
+  soon as it opens (clips under 3 s are skipped, as in the lightbox). The proxy element is created
+  with no `src` (`armScrubs` sets it when a drag starts, `releaseScrubDecoder` clears it once the
+  proxy is hidden) so a hidden copy does not hold a hardware decoder during playback. A drag seeks
+  that proxy, one seek in flight, latest time queued (`pumpTime` / `wantTime`); the full file stays
+  on its last frame until the pointer goes up, then is seeked once and the proxy hides after it
+  presents (`settleScrub`, rVFC or 250 ms). Until the proxy can show a frame the full file is not
+  seeked while the pointer is down — a long-GOP seek per move lands the clips apart and can fail a
+  decoder — and the release seeks every clip once: one the playhead has left goes to its last
+  frame, one it has not reached goes to its first. The proxy stays up until that frame is presented
+  (`atPlayhead` uses the same edge), then `releaseScrubDecoder` runs. Closing Compare during a drag
+  removes the window listeners that finish it. `.cmp-m` is `clip-path: inset(0)` so Windows does not promote the compare videos to hardware
+  overlays (a clip without one stays on its old picture until playback stops, and the overlay cancels
+  a drag whose timeline it covers). Losing pointer capture mid-drag does not end it. The dim
+  (`.out`) is not toggled while the pointer is down. After each scrub copy, `_prune_scrub_copies` keeps the newest 20 / 1 GB in all
   (`SCRUB_KEEP_FILES` / `SCRUB_KEEP_BYTES`), never the one just made. The playback-copy cleanup removes stale files of its own kind only
   (scrub vs playback); the asset rename / delete globs `<aid>_*` cover both.
 - Scrub audio (lightbox, speaker right-click / long press, `vsnd.scrub`): not a blip of the `<video>`.
@@ -777,7 +786,10 @@ to visible layer i — with `mix-blend-mode: difference` in Difference mode; til
 of the reference under each cell for the same effect. Video: `C.T` is a wall-clock timeline;
 layer local time = T − start/fps; `syncVideos()` holds the clock
 (`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
-never seek towards a running clock. Clips outside their span pause (dimmed). Reference copies under Difference tiles are
+never seek towards a running clock. Clips outside their span pause (dimmed). Compare `<video>` elements
+use `clip-path: inset(0)` so Windows does not promote them to hardware overlays. A timeline drag shows
+each clip's scrub proxy when that copy can; until then the picture holds and the release seeks every
+clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. Reference copies under Difference tiles are
 canvases painted from its one `<video>`. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.

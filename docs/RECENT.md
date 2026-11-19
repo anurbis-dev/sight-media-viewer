@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.92.1 — 2026-11-19 — Compare keeps every clip on screen, and a scrub no longer sticks
+- **What:** in Compare, every clip's picture keeps moving while they play, and a timeline drag no longer drops a red blocked-media mark and freezes. Until a scrub copy can show a frame, the picture stays where it was and every clip jumps to that frame together when you let go (a clip you have dragged past shows its last frame, and one the playhead has not reached shows its first). Once the copy is ready, the drag follows it, and that decoder is closed again when the full file takes over.
+- **Where:** compare.js (`armScrubs`, `releaseScrubDecoder`, `syncVideos`, `queueRelease`, the timeline pointer handlers, `.cmp-m`).
+- **Notes:** a plain `<video>` on Windows is promoted to a hardware overlay. Only a couple of those exist, so the clips that do not get one keep their old picture until playback stops, and in Column the overlay lands on the timeline and cancels the drag. `.cmp-m` uses `clip-path: inset(0)` so every compare clip stays on the normal compositor. The dim on a clip outside its span is not changed while the pointer is down (putting opacity back to 1 promotes it and cancels the drag). Losing pointer capture mid-drag is not a release — capture is taken back, and the drag ends on pointerup. The scrub element has no `src` until the drag starts, and the src is removed when the proxy is hidden, so those decoders are not held during playback. While the proxy cannot show a frame, the full file is not seeked on the way down. Letting go seeks every clip once: one the playhead has left goes to its last frame, one it has not reached goes to its first. The proxy stays up until that frame is presented (hiding it on pointer-up flashed the pre-drag picture and kept the decoder). Closing Compare during a drag removes the window listeners that finish it. The RAM byte cache, the scrub mp4 and scrub audio are unchanged.
+- Review (fresh agent): an out-of-span proxy was hidden before the full file presented the edge, a clip the playhead had not reached snapped back to its old frame, and closing Compare mid-drag leaked the window listeners. Fixed (`clipLocal`, `atPlayhead`, `queueRelease`, `close`). The same reviewer confirmed the fix and found nothing new.
+
 ## 0.92.0 — 2026-11-19 — Compare scrubs every clip from a short-GOP proxy
 - **What:** dragging the compare timeline seeks each clip's small scrub copy (a keyframe every few frames), made as soon as the comparison opens, so several clips follow the pointer together. Until a copy is ready, that clip is still seeked, but only one seek at a time, so a slow clip keeps its last frame. Letting go seeks the full file once and the proxy stays up until that frame is on screen.
 - **Where:** compare.js `ensureScrubs` / `pumpTime` / `wantTime` / `settleScrub`; library.py `SCRUB_PARALLEL` / `_encode_copy` / `_stop_scrub_procs`; tests/test_playback_copy.py; MANUAL, ARCHITECTURE.
@@ -319,31 +325,3 @@ Add new entries directly below this line.
 - Review (fresh agent, run by the implementing agent): 8 findings (end-of-clip play() restart, re-seek timer
   counting the seek, lightbox focus wiping compare's windows, hidden reference without a window, stack edge cases,
   mirrors painting mid-seek, stuck scrub, Windows press-and-hold menu). All fixed; same reviewer confirmed.
-
-## 0.86.0 — 2026-11-18 — Number pins with a leader line; note icons on hover; Ctrl+C copies hovered note text; Shift = H/V
-- **What:** owner's asks.
-  - The note pin tool is now a *number pin*: a click puts a numbered circle, a drag draws a line from the press
-    point with the circle where it is let go. A small field then takes the number (Enter / tap elsewhere; empty =
-    the next free number; Esc drops a new pin). A click with the tool on a pin, or a double-click with another
-    tool, edits its number. The tool no longer focuses the note composer, which had swallowed every hotkey.
-  - Shift while drawing (straight stroke, line / arrow, pin line, dragging a line's end) keeps the line horizontal
-    or vertical instead of snapping to 15° (rotation still uses 15° steps).
-  - A note card's action icons show on hover only; on touch, on the picked card.
-  - Ctrl+C with the pointer over a note's / reply's / picture's text (the panel or the text plate) copies that
-    text, with a "Copied" toast.
-- **Where:** review-core.js: `primsOf` pin (`label`, leader `ax, ay`), `pinLeader` / `pinLineW`, `boundsOf`,
-  `hitTest`, `transformItem`, `snapHV` (exported; used by `xfDrag` line ends). annotate.js: pin branch in
-  `onDown` / `onMove` / `onUp` / `abortGesture`, `editPin` / `finishPinEdit` / `nextPinNumber` (`S.pinEdit`,
-  `.an-pinedit`), `copyHoveredText` (onKey, composer / caption fields), `snapAngle = RC.snapHV`, CSS
-  `.an-nh .an-ib`. FORMAT.md pin; MANUAL.
-- **Notes:** `label` is a string set when the pin is created (the next free number among this media's pins; older
-  pins count with their note number). Pins without `label` / `ax, ay` render as before (the note's number, no
-  line); older clients show new pins that way too. The leader is drawn only when its start lies outside the circle.
-  The phone / HTML drawing canvas (review-draw.js) has no pin tool; it draws, moves and hit-tests pins through
-  review-core, so leaders follow there too. The hovered-text copy steps aside for a real text selection, also
-  inside a focused field. On touch there is no Shift, so no H/V constraint there.
-- Review (fresh agent, run by the implementing agent): 6 findings — Ctrl+C dead while the composer kept focus; a
-  press while the number field was open only confirmed it (every other quick click placed a pin, a double-click
-  on a pin flashed the field); the circle showed a different number than the field until confirmed; a short drag
-  ending inside a pin stacked a duplicate; a stale comment — all fixed; compare-mode copy not applicable. The same
-  reviewer confirmed all fixes, nothing new.
