@@ -1217,9 +1217,14 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         # in the library, 400 for a damaged file. A bundle: always 200, per clip in `results`.
         # ?restore=1: also bring back rows deleted here (`deleted_here` in the first answer).
         raw = await request.body()
+        # &before=<ms>: only rows deleted at or before it (the first answer's `at`).
         restore = request.query_params.get("restore") == "1"
         try:
-            res = await asyncio.to_thread(review.import_review_file, lib, raw, restore)
+            before = int(request.query_params.get("before") or 0) or None
+        except ValueError:
+            before = None
+        try:
+            res = await asyncio.to_thread(review.import_review_file, lib, raw, restore, before)
         except ValueError as e:
             raise HTTPException(400, str(e))
         if not res.get("ok"):

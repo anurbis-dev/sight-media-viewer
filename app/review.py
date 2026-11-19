@@ -583,7 +583,8 @@ def find_review_asset(lib, pkg: dict) -> dict | None:
     return a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
 
 
-def import_package(lib, pkg: dict, asset: dict | None = None, restore: bool = False) -> dict:
+def import_package(lib, pkg: dict, asset: dict | None = None, restore: bool = False,
+                   restore_before: int | None = None) -> dict:
     """Merges one checked package into the library (synchronous; the server runs it in a thread).
     -> {ok: True, asset_id, added, updated, deleted, author, deleted_here} | {ok: False, missing, asset}.
     `deleted_here` = rows of the package that stayed deleted because they were deleted here after
@@ -603,23 +604,27 @@ def import_package(lib, pkg: dict, asset: dict | None = None, restore: bool = Fa
     deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
     kept: list[str] = []
     try:
-        stats = lib.import_annotations(a["id"], rows, deleted, shot_map, restore, kept)
+        stats = lib.import_annotations(a["id"], rows, deleted, shot_map, restore, kept, restore_before)
     # (a value sqlite cannot bind, such as an object for shape_kind, is the file's fault too)
     except (TypeError, ValueError, AttributeError, sqlite3.InterfaceError, sqlite3.ProgrammingError) as e:
         raise ValueError(f"Review file is damaged ({e})") from e
     return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or "", "deleted_here": len(kept)}
 
 
-def import_review_file(lib, raw: bytes, restore: bool = False) -> dict:
+def import_review_file(lib, raw: bytes, restore: bool = False, restore_before: int | None = None) -> dict:
     """POST /api/review/import: a plain package -> import_package's result (raises ValueError for an
     unreadable / damaged file). A bundle -> {ok: True, bundle: True, id, author, results: [one per
     package, in order]}, each result import_package's or {ok: False, error} (damaged) or
     {ok: False, duplicate: n} (matched the same local file as entry n, 0-based); every entry carries
     `name`. Packages are committed one by one: one failing never undoes or blocks the others.
-    `restore` is passed to import_package (bring back rows deleted here)."""
+    `restore` / `restore_before` are passed to import_package (bring back rows deleted here, up to that
+    time). Every answer carries `at`: the server time (ms) before this merge — a later restore pass sends it
+    back as `restore_before`, so rows deleted after the first pass are not revived."""
+    at = int(time.time() * 1000)
     head, entries = parse_review_file(raw)
     if head is None:
-        return import_package(lib, entries[0], restore=restore)
+        res = import_package(lib, entries[0], restore=restore, restore_before=restore_before)
+        return {**res, "at": at} if res.get("ok") else res
     results: list[dict] = []
     seen: dict[str, int] = {}
     for i, e in enumerate(entries):
@@ -634,12 +639,12 @@ def import_review_file(lib, raw: bytes, restore: bool = False) -> dict:
                 continue
             if a:  # (taken even if this one turns out damaged: a second copy of the clip is still not merged)
                 seen[a["id"]] = i
-            res = import_package(lib, e, a, restore)
+            res = import_package(lib, e, a, restore, restore_before)
         except Exception as x:  # this clip only: a damaged row, a picture that would not save
             res = {"ok": False, "error": str(x) or x.__class__.__name__}
         results.append({**res, "name": name})
     return {"ok": True, "bundle": True, "id": str(head.get("id") or ""), "author": str(head.get("author") or ""),
-            "results": results}
+            "results": results, "at": at}
 
 
 # ---- HTML page for reviewers without Sight ------------------------------------------------------

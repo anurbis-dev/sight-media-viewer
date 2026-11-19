@@ -4135,9 +4135,12 @@ class Library:
             "SELECT id, size, kind FROM assets WHERE lower(name)=? AND status='ready' ORDER BY added_at DESC",
             (name,),
         )
-        size = meta.get("size")
+        try:  # (the file's value may be anything; a library row may have no size)
+            size = int(meta.get("size"))
+        except (TypeError, ValueError):
+            size = None
         for r in rows:
-            if size is not None and int(r["size"]) == int(size):
+            if size is not None and r["size"] is not None and int(r["size"]) == size:
                 return self.get_asset(r["id"])
         for r in rows:
             if r["kind"] == meta.get("kind"):
@@ -4258,7 +4261,7 @@ class Library:
 
     def import_annotations(self, target: str, rows: list[dict], deleted: list[dict] | None = None,
                            shot_map: dict[str, str] | None = None, restore: bool = False,
-                           kept_deleted: list[str] | None = None) -> dict:
+                           kept_deleted: list[str] | None = None, restore_before: int | None = None) -> dict:
         """Merges the annotation rows of a review package into asset `target`.
 
         Rows keep their ids, so importing the same file twice — or a file that went to a reviewer
@@ -4275,7 +4278,8 @@ class Library:
         Sight only (not in the JS port): `restore=True` brings back rows deleted here that the
         package holds even when the delete is later than their content (the user asked to restore
         them from the file); `kept_deleted`, when given, collects the ids of such rows that stayed
-        deleted, so the caller can offer that restore."""
+        deleted, so the caller can offer that restore. `restore_before` (ms): restore only rows deleted
+        at or before it — the time of the first pass, so a row deleted here after the offer stays deleted."""
         stats = {"added": 0, "updated": 0, "deleted": 0, "unchanged": 0}
         id_re = re.compile(r"[0-9a-f]{16}")
         shot_map = shot_map or {}
@@ -4354,7 +4358,7 @@ class Library:
                     if cur["deleted_at"] is not None:
                         # Deleted here: only content edited after the delete brings it back.
                         if inc_at <= st(cur["deleted_at"]):
-                            if not restore:
+                            if not restore or (restore_before is not None and st(cur["deleted_at"]) > restore_before):
                                 if kept_deleted is not None:
                                     kept_deleted.append(rid)
                                 stats["unchanged"] += 1

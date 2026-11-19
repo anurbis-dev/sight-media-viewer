@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.92.2 — 2026-11-19 — Review import: no blocking dialog, no lightbox hidden under Compare
+- **What:** owner: after dropping a review file onto the desktop app, thumbnails stopped appearing and clicks in the sidebar did nothing. Not reproduced in Playwright (single file / bundle / re-import / filtered grid / Tab split / Sequence / Compare / large videos — the server stayed responsive), but two causes in the import path fit. (1) The "Restore deleted notes?" question was a native `confirm()`: it blocks the whole page, and after a drop from the file manager the app window has no focus, so the dialog can sit unseen. It is now a non-blocking bar at the top of the window (*Restore* / ✕, closes itself after 15 s, a hover keeps it); the first merge is reported and the file opens before it shows. (2) A review dropped while Compare was open opened the lightbox hidden under Compare, with drawing mode on, and its video took the compare's RAM windows. The lightbox annotator's `openAsset` now closes Compare first, as the compare annotator's already did.
+- **Where:** annotate.js `importFile` / `importedResult` (new, the toast + open of one pass) / `offerRestore` (new, `.an-offer` CSS) / `importedBundle(r, restored)`; index.html `annot` host `openAsset` (`cmp.close()`); library.py `match_review_asset` (a size the file gives as a non-number, or a library row without a size, no longer raises: was a 500 for a plain package); MANUAL.
+- **Notes:** every import answer carries `at` (server ms before the merge); Restore flushes pending edits and posts `?restore=1&before=<at>`, so only rows deleted up to the first pass come back — one deleted here while the bar was up stays deleted (`Library.import_annotations(restore_before=)`, Sight only, not in the JS port). Do not build that query with `| 0`: a ms timestamp overflows int32. The restore pass calls `host.openAsset(id, {keep: true})`: Compare closes, but the file already showing is not opened again (that would restart its viewer); from the compare's annotator the lightbox re-reads its notes. Its toast says *Restored from the review file*. The two passes are reported in two toasts now, not summed into one. The bar lives on `document.body` (z-index 130, above the lightbox 50 and Compare 60) and stops pointer / key events from reaching the page under it. Other native `confirm()` calls (remove a folder, remove missing files, reset settings, restore shipped filters, the HTML page's discard-drawing) are left: they come from a click inside the window, which has focus.
+- Review (fresh agent): Restore could revive a row deleted after the first pass (the bar stays up, no flush); Restore with Compare open over the lightbox switched drawing on under the overlay and left Compare's view stale; Restore after an import from the compare's annotator restarted the lightbox viewer. Fixed (`restore_before` / `at`, `flush()`, `openAsset` `keep`); test `test_restore_only_rows_deleted_before_the_first_pass`. The same reviewer confirmed all three fixes and found nothing new.
+
 ## 0.92.1 — 2026-11-19 — Compare keeps every clip on screen, and a scrub no longer sticks
 - **What:** in Compare, every clip's picture keeps moving while they play, and a timeline drag no longer drops a red blocked-media mark and freezes. Until a scrub copy can show a frame, the picture stays where it was and every clip jumps to that frame together when you let go (a clip you have dragged past shows its last frame, and one the playhead has not reached shows its first). Once the copy is ready, the drag follows it, and that decoder is closed again when the full file takes over.
 - **Where:** compare.js (`armScrubs`, `releaseScrubDecoder`, `syncVideos`, `queueRelease`, the timeline pointer handlers, `.cmp-m`).
@@ -300,28 +306,3 @@ Add new entries directly below this line.
   `landedAt`, frozen-window self-drop (`obHandedOff` before any write / send; handed rows' next write is an upsert).
   All fixed; the same reviewer confirmed every fix (5 rounds). Known limitation it accepted: after a frozen window's
   queue is adopted by another window, the two windows' writes of the same row may land in either order.
-
-## 0.87.0 — 2026-11-18 — Compare: synced video on one clock, toolbar button, drop-to-compare, layer reorder
-- **What:** compare clips play on one clock that waits for the slowest clip ("· loading" while held); scrubbing
-  (mouse / finger) moves every clip; the video RAM cache is split between the clips around their playheads. The
-  compare button moved from the notes panel to the viewer's top bar (greyed out with nothing to compare, badge =
-  dropped files). Files dragged from the library beside the viewer (Tab) join a comparison with the open file;
-  a drop no longer turns annotating on (only while annotating does a picture become a reference). Touch: select
-  files in the library beside the viewer and tap the button. Layer chips reorder by mouse drag or touch hold+drag;
-  the order is the split / tile order and is kept in a note's comparison (`session().ids`).
-- **Where:** compare.js (`syncVideos` / `canGo`, `paintMirrors`, `pushFocus`, `mkMedia` / `refCopy`, `C.scrub`,
-  touch reorder in `bindUi`, `captureView`); library.py `SlidingVideoCache` (`_Window`, `focus_many`); server.py
-  `/api/video/focus` `items`; index.html (`#cmpBtn`, `lightCompareIds`, `addToCompareStack`, `paintCmpBtn`,
-  `compareFromContext`, focus handling); annotate.js (`onRefDrop` → `host.dropForCompare`, `host.onVersions`,
-  versions-row Compare removed); MANUAL, ARCHITECTURE.
-- **Notes:** root cause of the desync: the clock ran on while a clip seeked; a 4K / long-GOP seek took longer than
-  the 0.25 s tolerance, so the clip was re-seeked forever (6 × 4K60: up to 7.9 s apart → < 0.3 s). Invariant: never
-  seek towards a running clock. Paused-clip "ready" = frame + 0.4 s buffered (Chromium keeps paused elements at
-  HAVE_CURRENT_DATA). Hung seek > 8 s re-issued; a clip at its end is never play()ed. The lightbox `focus()` is one
-  cache window; closing compare re-focuses it. `light.cmpStack` survives moving between its own files. Not done:
-  6-connections-per-host with 6+ clips on slow storage; reorder not written back to the drop stack; the button
-  ignores note-stored comparisons on files without versions. `tests.test_board_missing` fails on master already
-  (UNIQUE board_items.id) — unrelated.
-- Review (fresh agent, run by the implementing agent): 8 findings (end-of-clip play() restart, re-seek timer
-  counting the seek, lightbox focus wiping compare's windows, hidden reference without a window, stack edge cases,
-  mirrors painting mid-seek, stuck scrub, Windows press-and-hold menu). All fixed; same reviewer confirmed.

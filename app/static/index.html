@@ -1153,10 +1153,15 @@ const annot = createAnnotator({
     renderV3DPanel();
     light?.explodeSlider?.set(state.v3d.explode);
   },
-  openAsset: async (id) => {
+  // `keep` (a restore pass of an import): the file already showing is not opened again (that restarts its viewer).
+  openAsset: async (id, opts) => {
     let a = assetById(id) || canvasCtl?.assetOf?.(id);
     if (!a){ try { a = await api(`/api/assets/${id}`); } catch { a = null; } }
     if (!a) return;
+    // (an imported review on the grid while Compare is open: the lightbox would open hidden underneath it, and its
+    // video would take the compare's RAM windows — the compare's own annotator closes it the same way)
+    cmp.close();
+    if (opts?.keep && light?.id === a.id) return;
     if (light) showInLight(a); else toggleLight(a);
   },
   onModeChange: () => syncLightHint(),
@@ -1216,7 +1221,8 @@ const cmpAnnot = createAnnotator({
   },
   onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
   // The panel's versions row: open a version in the viewer / compare those versions.
-  openAsset: async (id) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (light) showInLight(a); else toggleLight(a); },
+  // (`keep`: as the lightbox annotator's — the file already showing re-reads its notes instead of opening again)
+  openAsset: async (id, opts) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (opts?.keep && light?.id === a.id){ annot.reload(); return; } if (light) showInLight(a); else toggleLight(a); },
 });
 // The annotator follows the selected layer lazily: a file's notes are fetched once annotating is on.
 function cmpBind(){

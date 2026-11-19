@@ -132,6 +132,7 @@ class ImportExportTest(unittest.TestCase):
     def test_plain_package_response_unchanged(self):
         st, res = self.route("/api/review/import", raw(package(self.a, [note("a1" * 8, "hi")])))
         self.assertEqual(st, 200)
+        self.assertIsInstance(res.pop("at"), int)  # (0.92.2: the time of this merge, for a later restore pass)
         self.assertEqual(res, {"ok": True, "asset_id": self.a["id"], "added": 1, "updated": 0, "deleted": 0, "unchanged": 0,
                                "author": "Ann", "deleted_here": 0})
         gone = {**self.a, "id": "9" * 16, "name": "gone.mp4"}
@@ -155,6 +156,21 @@ class ImportExportTest(unittest.TestCase):
         st, res = self.route("/api/review/import", file, b"restore=1")
         self.assertEqual((res["results"][0]["deleted_here"], res["results"][0]["updated"]), (0, 1))
         self.assertEqual([r["id"] for r in self.lib.annotations_for_asset(self.a["id"])], [rid])
+
+    def test_restore_only_rows_deleted_before_the_first_pass(self):
+        # The restore offer stays up a while: a row deleted here after the first pass must stay deleted.
+        r1, r2 = "c2" * 8, "c3" * 8
+        file = raw(package(self.a, [note(r1, "one"), note(r2, "two")]))
+        self.route("/api/review/import", file)
+        self.lib.delete_annotation(r1)
+        time.sleep(0.01)
+        st, first = self.route("/api/review/import", file)
+        self.assertEqual(first["deleted_here"], 1)
+        time.sleep(0.01)
+        self.lib.delete_annotation(r2)  # while the bar is up
+        st, res = self.route("/api/review/import", file, f"restore=1&before={first['at']}".encode())
+        self.assertEqual((st, res["updated"], res["deleted_here"]), (200, 1, 1))
+        self.assertEqual([r["id"] for r in self.lib.annotations_for_asset(self.a["id"])], [r1])
 
     def test_bundle_with_missing_damaged_and_duplicate(self):
         gone = {**self.a, "id": "9" * 16, "name": "gone.mp4", "size": 99}

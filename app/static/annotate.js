@@ -4157,9 +4157,9 @@ export function createAnnotator(host){
     let r;
     await flush();
     const body = await file.arrayBuffer();
-    const post = async (restore) => {
+    const post = async (restore, before) => {
       try {
-        const res = await fetch("/api/review/import" + (restore ? "?restore=1" : ""), { method: "POST", body });
+        const res = await fetch("/api/review/import" + (restore ? `?restore=1&before=${Number.isFinite(before) ? before : ""}` : ""), { method: "POST", body });
         const r = await res.json().catch(() => ({}));
         if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return null; }
         if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return null; }
@@ -4171,28 +4171,28 @@ export function createAnnotator(host){
       }
     };
     if (!(r = await post(false))) return;
-    let restoreFailed = false;  // pass 1 is committed either way: report it, then say the restore failed
+    await importedResult(r, false);
     // Rows of the file that were deleted here after their last edit stay deleted by the merge rules
-    // (FORMAT.md rule 5); the user may be importing the file precisely to get them back — ask.
+    // (FORMAT.md rule 5); the user may be importing the file precisely to get them back — offer it. On a bar,
+    // not confirm(): a native dialog blocks the whole page, and after a file is dropped from the file manager
+    // the window has no focus, so the dialog could sit unseen while thumbnails and clicks stopped working.
     const gone = r.bundle ? (r.results || []).reduce((s, x) => s + ((x.ok && x.deleted_here) | 0), 0) : r.deleted_here | 0;
-    if (gone && confirm(`This review file holds ${gone} note${gone === 1 ? "" : "s"} / drawing${gone === 1 ? "" : "s"} deleted in this library.\n\nRestore ${gone === 1 ? "it" : "them"}?`)){
-      const again = await post(true);
-      if (!again) restoreFailed = true;
-      else {
-        // The second pass only revives rows (everything else merged already): report both passes as one.
-        // A clip whose second pass failed keeps its first result (that merge is committed).
-        const sum = (a, b) => ({ ...b, added: (a.added | 0) + (b.added | 0), updated: (a.updated | 0) + (b.updated | 0), deleted: (a.deleted | 0) + (b.deleted | 0) });
-        if (r.bundle){
-          const first = r.results || [];
-          r = { ...again, results: first.map((x, i) => { const y = again.results?.[i]; return x.ok ? (y?.ok ? sum(x, y) : x) : (y || x); }) };
-        } else r = sum(r, again);
-      }
-    }
-    const failMsg = "The review merged, but restoring the deleted notes / drawings failed";
-    if (r.bundle){ await importedBundle(r); if (restoreFailed) toast(failMsg, 5000); return; }
+    if (gone) offerRestore(gone, async () => {
+      // Only rows deleted up to pass 1 (its `at`): one deleted here while the bar was up stays deleted.
+      await flush();
+      const again = await post(true, r.at);  // (pass 1 is committed either way)
+      if (!again){ toast("The review merged, but restoring the deleted notes / drawings failed", 5000); return; }
+      await importedResult(again, true);
+    });
+  }
+  // The answer of one import pass: a toast, and the file opens (or reloads) with its notes. `restored`: the second
+  // pass (?restore=1), which only revives rows deleted here — the file is already open from the first one.
+  async function importedResult(r, restored){
+    if (r.bundle){ await importedBundle(r, restored); return; }
     const parts = [["new", r.added], ["updated", r.updated], ["deleted", r.deleted]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`);
-    toast(restoreFailed ? failMsg : parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", restoreFailed ? 5000 : 3500);
-    await host.openAsset?.(r.asset_id);
+    toast(restored ? `Restored from the review file: ${parts.join(" · ") || "nothing"}`
+      : parts.length ? `Merged review${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 3500);
+    await host.openAsset?.(r.asset_id, { keep: restored });
     if (S.asset?.id === r.asset_id){
       // The rows changed underneath the undo history; it would restore pre-merge states.
       S.undo = []; S.redo = [];
@@ -4200,10 +4200,33 @@ export function createAnnotator(host){
     }
     host.onReviewChanged?.(r.asset_id);
   }
+  // A non-blocking question at the bottom of the window (above the lightbox and the compare): a button for the
+  // mouse and touch alike; it goes away by itself, on ✕, or when the next offer replaces it.
+  let offerEl = null;
+  function offerRestore(n, run){
+    offerEl?._close();
+    const el = document.createElement("div");
+    el.className = "an-offer";
+    el.setAttribute("role", "alertdialog");
+    el.innerHTML = `<span>This review file holds ${n} note${n === 1 ? "" : "s"} / drawing${n === 1 ? "" : "s"} deleted in this library.</span>
+      <button type="button" class="an-offer-go">Restore</button><button type="button" class="an-offer-x" title="Keep them deleted" aria-label="Keep them deleted">${ICON.close}</button>`;
+    let timer = 0;
+    el._close = () => { clearTimeout(timer); el.remove(); if (offerEl === el) offerEl = null; };
+    for (const t of ["pointerdown", "mousedown", "dblclick", "contextmenu", "wheel", "keydown"]) el.addEventListener(t, (e) => e.stopPropagation());
+    el.querySelector(".an-offer-go").addEventListener("click", (e) => { e.stopPropagation(); el._close(); run(); });
+    el.querySelector(".an-offer-x").addEventListener("click", (e) => { e.stopPropagation(); el._close(); });
+    // Hovering (or touching) keeps it: the timer starts again when the pointer leaves.
+    const arm = () => { clearTimeout(timer); timer = setTimeout(el._close, 15000); };
+    el.addEventListener("pointerenter", () => clearTimeout(timer));
+    el.addEventListener("pointerleave", arm);
+    document.body.appendChild(el);
+    offerEl = el;
+    arm();
+  }
   // A bundle (several clips' packages in one .srev, docs/FORMAT.md "Bundle"): one summary toast; an affected clip
   // that is open reloads (its undo history would restore pre-merge states); nothing new opens unless exactly one
   // clip was updated — then it opens as for a single package.
-  async function importedBundle(r){
+  async function importedBundle(r, restored = false){
     const res = Array.isArray(r.results) ? r.results : [];
     const ok = res.filter((x) => x.ok), changed = ok.filter((x) => x.added || x.updated || x.deleted);
     const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -4216,11 +4239,11 @@ export function createAnnotator(host){
     if (missing.length) parts.push(`${missing.length} not in your library: <b>${names(missing)}</b>`);
     if (bad.length) parts.push(`${bad.length} damaged${bad.some((x) => x.name) ? ": " + names(bad.filter((x) => x.name)) : ""}`);
     if (dup.length) parts.push(dup.map((x) => `${esc(x.name || "?")}: same file as clip ${x.duplicate + 1}`).join(" · "));
-    const head = `Review of ${plural(res.length, "clip")}${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}`;
+    const head = `${restored ? "Restored from the review" : "Review"} of ${plural(res.length, "clip")}${r.author ? " from <b>" + esc(r.author) + "</b>" : ""}`;
     toast(`${head}: ${parts.join(" · ") || "nothing imported"}`, missing.length || bad.length || dup.length ? 7000 : 4000);
     if (changed.length === 1){
       const aid = changed[0].asset_id;
-      await host.openAsset?.(aid);
+      await host.openAsset?.(aid, { keep: restored });
       if (S.asset?.id === aid){ S.undo = []; S.redo = []; obForget(S.asset.id); await load(S.asset); toggle(true); togglePanel(true); }
       host.onReviewChanged?.(aid);
       return;
@@ -4798,6 +4821,11 @@ function injectStyles(){
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-nprev .an-fno { position: absolute; left: 3px; top: 3px; z-index: 1; padding: 0 4px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; font: 600 10px/15px system-ui, sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+.an-offer { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: max-content; z-index: 130; display: flex; align-items: center; gap: 10px; box-sizing: border-box; max-width: calc(100% - 32px); padding: 8px 8px 8px 14px; border-radius: 12px; font-size: 13px; color: var(--fg); background: rgb(10 10 11 / .92); border: 1px solid var(--border); box-shadow: 0 6px 24px rgb(0 0 0 / .45); }
+.an-offer span { flex: 1 1 auto; min-width: 0; }
+.an-offer button { flex: none; display: inline-grid; place-items: center; min-height: 32px; border-radius: 8px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
+.an-offer .an-offer-go { padding: 0 14px; color: var(--accent); }
+.an-offer .an-offer-x { width: 32px; padding: 0; color: var(--muted); }
 .an-help { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: rgb(0 0 0 / .62); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); cursor: default; touch-action: none; }
 .an-hcard { width: min(640px, 100%); max-height: 100%; display: flex; flex-direction: column; border-radius: 12px; background: var(--surface, #1b1c20); border: 1px solid var(--border-strong, var(--border)); box-shadow: 0 24px 70px rgb(0 0 0 / .6); color: var(--fg); font-size: 12px; overflow: hidden; }
 .an-hh { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px 16px; border-bottom: 1px solid var(--border); }

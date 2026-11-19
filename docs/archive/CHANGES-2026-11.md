@@ -2,6 +2,31 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.87.0 — 2026-11-18 — Compare: synced video on one clock, toolbar button, drop-to-compare, layer reorder
+- **What:** compare clips play on one clock that waits for the slowest clip ("· loading" while held); scrubbing
+  (mouse / finger) moves every clip; the video RAM cache is split between the clips around their playheads. The
+  compare button moved from the notes panel to the viewer's top bar (greyed out with nothing to compare, badge =
+  dropped files). Files dragged from the library beside the viewer (Tab) join a comparison with the open file;
+  a drop no longer turns annotating on (only while annotating does a picture become a reference). Touch: select
+  files in the library beside the viewer and tap the button. Layer chips reorder by mouse drag or touch hold+drag;
+  the order is the split / tile order and is kept in a note's comparison (`session().ids`).
+- **Where:** compare.js (`syncVideos` / `canGo`, `paintMirrors`, `pushFocus`, `mkMedia` / `refCopy`, `C.scrub`,
+  touch reorder in `bindUi`, `captureView`); library.py `SlidingVideoCache` (`_Window`, `focus_many`); server.py
+  `/api/video/focus` `items`; index.html (`#cmpBtn`, `lightCompareIds`, `addToCompareStack`, `paintCmpBtn`,
+  `compareFromContext`, focus handling); annotate.js (`onRefDrop` → `host.dropForCompare`, `host.onVersions`,
+  versions-row Compare removed); MANUAL, ARCHITECTURE.
+- **Notes:** root cause of the desync: the clock ran on while a clip seeked; a 4K / long-GOP seek took longer than
+  the 0.25 s tolerance, so the clip was re-seeked forever (6 × 4K60: up to 7.9 s apart → < 0.3 s). Invariant: never
+  seek towards a running clock. Paused-clip "ready" = frame + 0.4 s buffered (Chromium keeps paused elements at
+  HAVE_CURRENT_DATA). Hung seek > 8 s re-issued; a clip at its end is never play()ed. The lightbox `focus()` is one
+  cache window; closing compare re-focuses it. `light.cmpStack` survives moving between its own files. Not done:
+  6-connections-per-host with 6+ clips on slow storage; reorder not written back to the drop stack; the button
+  ignores note-stored comparisons on files without versions. `tests.test_board_missing` fails on master already
+  (UNIQUE board_items.id) — unrelated.
+- Review (fresh agent, run by the implementing agent): 8 findings (end-of-clip play() restart, re-seek timer
+  counting the seek, lightbox focus wiping compare's windows, hidden reference without a window, stack edge cases,
+  mirrors painting mid-seek, stuck scrub, Windows press-and-hold menu). All fixed; same reviewer confirmed.
+
 ## 0.86.0 — 2026-11-18 — Number pins with a leader line; note icons on hover; Ctrl+C copies hovered note text; Shift = H/V
 - **What:** owner's asks.
   - The note pin tool is now a *number pin*: a click puts a numbered circle, a drag draws a line from the press
