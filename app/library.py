@@ -1091,6 +1091,7 @@ class Library:
         self._play_cv = threading.Condition()
         self._play_waiting = 0  # playback copies waiting for the slot
         self._scrub_proc: subprocess.Popen | None = None  # the scrub encode holding the slot
+        self._scrub_audio_slot = threading.Semaphore(1)  # one scrub-audio extract at a time, beside the video slot
         self._play_enc: dict[str, tuple[str, list[str], str] | None] = {}
         workers = max(2, min(4, os.cpu_count() or 2))
         for _ in range(workers):
@@ -2716,6 +2717,191 @@ class Library:
     def start_scrub_copy(self, aid: str) -> dict:
         return self.start_playback_copy(aid, self.SCRUB_TAG)
 
+    # Scrub audio: the picture scrub seeks the <video>, and a play() blip at each position waits on that
+    # seek, so the sound stutters. This is a separate mono s16le PCM of the first audio track (no video
+    # decode), named "<aid>_<stamp>.scruba.pcm" next to the scrub copy. The lightbox plays slices from it
+    # with Web Audio, so a drag does not seek the player for sound. The name contains ".scruba.", which
+    # playback-copy cleanup treats as its own kind (not a playback file). Rename / delete of "<aid>_*" cover them.
+    SCRUB_AUDIO_SR = 22050
+    SCRUB_AUDIO_TAG = ".scruba"
+    SCRUB_AUDIO_KEEP_FILES = 20
+    SCRUB_AUDIO_KEEP_BYTES = 1 << 30
+
+    @classmethod
+    def _video_cache_kind(cls, name: str) -> str:
+        """Which cache a file in thumbs/video is: 'audio' (.scruba), 'scrub' (.scrub.) or 'play'."""
+        if (cls.SCRUB_AUDIO_TAG + ".") in name:
+            return "audio"
+        if (cls.SCRUB_TAG + ".") in name:
+            return "scrub"
+        return "play"
+
+    @staticmethod
+    def _scrub_audio_banner(text: str) -> str:
+        """'audio' / 'silent' when ffmpeg listed the file, 'failed' when it did not (missing, locked, junk)."""
+        if "Input #" not in text:
+            return "failed"
+        return "silent" if "Audio:" not in text else "audio"
+
+    def _scrub_audio_file(self, aid: str, stamp: str | None) -> Path | None:
+        if not stamp:
+            return None
+        return self.thumbs / "video" / f"{aid}_{stamp}{self.SCRUB_AUDIO_TAG}.pcm"
+
+    def scrub_audio_path(self, aid: str) -> Path | None:
+        """Asset ``aid``'s current scrub-audio PCM, or None."""
+        a = self.get_asset(aid)
+        if not a or a.get("kind") != "video":
+            return None
+        p = self._scrub_audio_file(aid, self._play_stamp(a["path"]))
+        try:
+            if p and p.stat().st_size >= 2:
+                return p
+        except OSError:
+            return None
+        return None
+
+    def _scrub_audio_view(self, state: str, *, progress: float = 0, error: str = "",
+                          samples: int = 0, rev: str = "") -> dict:
+        sr = self.SCRUB_AUDIO_SR
+        return {
+            "state": state, "progress": progress, "error": error, "sr": sr,
+            "samples": samples, "duration": (samples / sr) if samples else 0, "rev": rev,
+        }
+
+    def scrub_audio_status(self, aid: str) -> dict:
+        """{state, progress, error, sr, samples, duration, rev} of asset ``aid``'s scrub audio.
+        state is ready / working / silent (no audio track) / failed / missing / none (not started)."""
+        a = self.get_asset(aid)
+        if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+            return self._scrub_audio_view("missing")
+        stamp = self._play_stamp(a["path"]) or ""
+        p = self._scrub_audio_file(aid, stamp)
+        try:
+            size = p.stat().st_size if p else 0
+        except OSError:
+            size = 0
+        if p and size >= 2:
+            return self._scrub_audio_view("ready", progress=1, samples=size // 2, rev=stamp)
+        with self._play_lock:
+            job = self._play_jobs.get(aid + self.SCRUB_AUDIO_TAG)
+            if job and job["stamp"] == stamp:
+                return self._scrub_audio_view(
+                    job["state"], progress=job["progress"], error=job["error"],
+                    samples=job.get("samples") or 0, rev=stamp,
+                )
+        return self._scrub_audio_view("none")
+
+    def start_scrub_audio(self, aid: str) -> dict:
+        """Starts extracting asset ``aid``'s scrub audio unless it is current, running, or already known
+        silent. A failed attempt is tried again when asked."""
+        a = self.get_asset(aid)
+        if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+            return self._scrub_audio_view("missing")
+        stamp = self._play_stamp(a["path"]) or ""
+        p = self._scrub_audio_file(aid, stamp)
+        try:
+            size = p.stat().st_size if p else 0
+        except OSError:
+            size = 0
+        if p and size >= 2:
+            return self._scrub_audio_view("ready", progress=1, samples=size // 2, rev=stamp)
+        ffmpeg = self.ffmpeg_exe()
+        key = aid + self.SCRUB_AUDIO_TAG
+        with self._play_lock:
+            job = self._play_jobs.get(key)
+            if job and job["stamp"] == stamp and job["state"] in ("working", "silent"):
+                return self._scrub_audio_view(
+                    job["state"], progress=job["progress"], error=job["error"],
+                    samples=job.get("samples") or 0, rev=stamp,
+                )
+            if not ffmpeg:
+                self._play_jobs[key] = {
+                    "stamp": stamp, "state": "failed", "progress": 0, "error": "ffmpeg not found", "samples": 0,
+                }
+                return self._scrub_audio_view("failed", error="ffmpeg not found", rev=stamp)
+            job = {"stamp": stamp, "state": "working", "progress": 0.0, "error": "", "samples": 0}
+            self._play_jobs[key] = job
+        threading.Thread(
+            target=self._run_scrub_audio, args=(aid, a["path"], stamp, ffmpeg, job),
+            name=f"scrub-audio-{aid}", daemon=True,
+        ).start()
+        return self._scrub_audio_view("working", rev=stamp)
+
+    def _prune_scrub_audio(self, keep: Path) -> None:
+        """Deletes the oldest scrub-audio files beyond SCRUB_AUDIO_KEEP_FILES / _BYTES, never ``keep``."""
+        found = []
+        for p in (self.thumbs / "video").glob(f"*{self.SCRUB_AUDIO_TAG}.pcm"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            found.append((p == keep, st.st_mtime, st.st_size, p))
+        found.sort(key=lambda f: (f[0], f[1]), reverse=True)
+        total = 0
+        for n, (is_keep, _mtime, size, p) in enumerate(found):
+            total += size
+            if not is_keep and (n >= self.SCRUB_AUDIO_KEEP_FILES or total > self.SCRUB_AUDIO_KEEP_BYTES):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _run_scrub_audio(self, aid: str, src: str, stamp: str, ffmpeg: str, job: dict) -> None:
+        state, error, samples = "failed", "", 0
+        d = self.thumbs / "video"
+        d.mkdir(parents=True, exist_ok=True)
+        final = d / f"{aid}_{stamp}{self.SCRUB_AUDIO_TAG}.pcm"
+        tmp = d / f"{aid}_{stamp}{self.SCRUB_AUDIO_TAG}.part"
+        try:
+            heard = self._scrub_audio_banner(_ffprobe_text(ffmpeg, Path(src)))
+            if heard == "failed":
+                error = "could not read the file"
+            elif heard == "silent":
+                state = "silent"
+            else:
+                cmd = [
+                    ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                    "-i", src, "-vn", "-map", "0:a:0", "-ac", "1", "-ar", str(self.SCRUB_AUDIO_SR),
+                    "-f", "s16le", str(tmp),
+                ]
+                with self._scrub_audio_slot:
+                    proc = subprocess.run(
+                        cmd, capture_output=True, timeout=900, creationflags=NO_WINDOW,
+                    )
+                err = proc.stderr.decode("utf-8", "replace")
+                size = tmp.stat().st_size if tmp.exists() else 0
+                if proc.returncode == 0 and size >= 2:
+                    for old in d.glob(f"{aid}_*{self.SCRUB_AUDIO_TAG}.pcm"):
+                        if old != final:
+                            try:
+                                old.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    tmp.replace(final)
+                    self._prune_scrub_audio(final)
+                    samples = final.stat().st_size // 2
+                    state = "ready"
+                elif "matches no streams" in err or "Stream map" in err or "does not contain any stream" in err:
+                    state = "silent"
+                else:
+                    lines = [ln for ln in err.splitlines() if ln.strip()]
+                    error = lines[-1][:300] if lines else f"ffmpeg exited with code {proc.returncode}"
+        except Exception as e:
+            error = str(e)[:300] or type(e).__name__
+        finally:
+            tmp.unlink(missing_ok=True)
+            with self._play_lock:
+                job["state"] = state
+                job["progress"] = 1.0 if state in ("ready", "silent") else job["progress"]
+                job["error"] = error
+                job["samples"] = samples
+                # A ready file answers from disk; a silent job stays, so the next ask does not probe again
+                # until the source's stamp changes. A failure stays too and is replaced when asked again
+                # (start_scrub_audio only keeps working / silent).
+                if state == "ready" and self._play_jobs.get(aid + self.SCRUB_AUDIO_TAG) is job:
+                    del self._play_jobs[aid + self.SCRUB_AUDIO_TAG]
+
     def start_playback_copy(self, aid: str, tag: str = "") -> dict:
         """Starts converting asset ``aid`` for playback (``tag`` SCRUB_TAG: its scrub copy) unless the
         copy is current or running. A failed attempt is tried again when asked; the caller polls
@@ -2774,11 +2960,16 @@ class Library:
                 rc = self._encode_copy(cmd, log, duration, job, bool(tag))
             if rc == 0 and tmp.exists() and tmp.stat().st_size > 0:
                 final = d / f"{stem}{ext}"
-                for old in d.glob(f"{aid}_*"):  # copies of earlier versions of this file, of this kind only
-                    # a playback copy leaves the scrub copy (and its .part / .log) alone, and the other way round
-                    same_kind = ((self.SCRUB_TAG + ".") in old.name) == bool(tag)
-                    if same_kind and old.name not in (final.name, log.name, tmp.name):
+                for old in d.glob(f"{aid}_*"):  # earlier copies of this file, of this kind only
+                    # playback, scrub-video and scrub-audio are three kinds; a locked file must not fail the job
+                    if self._video_cache_kind(old.name) != ("scrub" if tag else "play"):
+                        continue
+                    if old.name in (final.name, log.name, tmp.name):
+                        continue
+                    try:
                         old.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 tmp.replace(final)
                 if tag:
                     self._prune_scrub_copies(final)

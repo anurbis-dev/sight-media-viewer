@@ -765,6 +765,27 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             raise HTTPException(404)
         return serve_video(request, str(p), lib.video_cache)  # not the window's file: read from disk
 
+    # Scrub audio (Library.start_scrub_audio): mono s16le PCM, played by the lightbox while a drag
+    # scrubs. The file URL is stable per asset; `rev` (the source stamp) is only a cache-buster.
+    @app.post("/api/video/scrub-audio")
+    async def video_scrub_audio_start(request: Request) -> dict:
+        body = await json_body(request)
+        return await asyncio.to_thread(lib.start_scrub_audio, str(body.get("id") or ""))
+
+    @app.get("/api/video/scrub-audio")
+    def video_scrub_audio_state(aid: str = "") -> dict:
+        return lib.scrub_audio_status(aid)
+
+    @app.get("/api/video/scrub-audio/{aid}")
+    def video_scrub_audio_file(aid: str):
+        p = lib.scrub_audio_path(aid)
+        if not p:
+            raise HTTPException(404)
+        return FileResponse(
+            p, media_type="application/octet-stream",
+            headers={"X-Audio-Rate": str(lib.SCRUB_AUDIO_SR), "Cache-Control": "private"},
+        )
+
     @app.get("/api/psd/{aid}/layers")
     def psd_layers(aid: str):
         layers = lib.psd_layers(aid)

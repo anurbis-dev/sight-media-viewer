@@ -187,7 +187,8 @@
     Shift to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
   - **Video bar** — right of the timeline: the *sound* icon (click = mute / unmute; press and drag up / down,
     or the mouse wheel = volume, with a slider above the icon; right-click or long press = *sound while
-    scrubbing* on / off, shown by a dot on the icon) and the *loop* button (replay at the end; inside a
+    scrubbing* on / off, shown by a dot on the icon — the clip's sound is cached once, then a drag
+    plays it from that cache, following the playhead) and the *loop* button (replay at the end; inside a
     sequence the sequence bar's loop applies). The position field left of the timeline: click and type a
     frame number (or a time such as 1:05) + Enter to jump, Esc cancels; right-click or long press picks
     *Frame / Time / Frame + time* and, with a sequence of 2+ clips, *local* or *global* counting.

@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.91.1 — 2026-11-19 — Scrub audio plays from a PCM cache
+- **What:** sound while scrubbing no longer stutters. A drag used to `play()` the video for 90 ms at each position, so every move waited on that seek (the scrub copy has no audio). Sight now extracts the clip's audio once to a mono 16-bit PCM cache and plays slices of it while the picture scrubs; a slow drag hears the sound continuously, a jump starts at the pointer.
+- **Where:** library.py `start_scrub_audio` / `scrub_audio_path` (file `thumbs/video/<aid>_<stamp>.scruba.pcm`, 22050 Hz mono s16le); server.py `POST/GET /api/video/scrub-audio`; index.html `scrubHear` / `saPlay` (replaces `scrubBlip`); tests/test_playback_copy.py; MANUAL, ARCHITECTURE.
+- **Notes:** the cache is built when scrub-audio is turned on or a clip opens with it already on (`Caching sound for scrubbing…` only while an extract is actually running). A clip with no audio track is remembered as `silent` until the file changes. The player stays paused during the drag — nothing sets `_blip` anymore. The PCM is not in the scrub mp4 and not in the RAM byte window: those seeks were the stutter. Playback copies still go first on the video encode slot; this extract has its own one-at-a-time slot and may run beside a scrub-copy encode. Kept like scrub copies: newest 20 files / 1 GB, and the one just made. The phone app has no scrub-audio toggle, so it is unchanged. Windows Int16 is little-endian, matching `s16le`.
+- Review (fresh agent): playback-copy cleanup treated `.scruba` as a playback file and deleted it (a locked `.part` could also fail the transcode); a probe with no stream list was stored as `silent` and never retried. Both fixed (`_video_cache_kind`, banner needs `Input #`); the same reviewer confirmed them and found nothing new.
+
 ## 0.91.0 — 2026-11-19 — Phone: Settings → Debug log, sent as a file
 - **What:** owner: a debug option in Settings that collects data to send as a file, not a screenshot. Settings →
   *Debug log* On / Off; *Send debug log…* shares / downloads `sight-debug-YYYYMMDD-HHMM.txt` (a header with the
@@ -350,7 +356,7 @@ Add new entries directly below this line.
 - **Notes:** prefs in localStorage `sight.vsnd`, `sight.vpos`, `sight.vloop` (type-checked on read; the phone app
   has its own keys). The mobile code has no volume popup — only its gesture logic and icons are reused. The loop
   button hides in a sequence (its bar has its own loop; `el.loop` stays off there because `ended` drives
-  `seqAdvance`). Scrub audio = a 90 ms play blip per seek; `el._blip` keeps blips out of `_seqPlayedAt` / the
+  `seqAdvance`). Scrub audio was a 90 ms play blip per seek (superseded by 0.91.1, which plays a PCM cache); `el._blip` kept blips out of `_seqPlayedAt` / the
   annotator's follow tick, and the scrub end re-seeks to the pointer time (the blip ran past it). Frames are 0-based,
   floor-based (as annotate's `stepFrame`); fps comes from the annotator when known, else from
   `/api/assets/{id}/info` (cached per id); "≈" until known. Global frames sum each clip's own
@@ -363,20 +369,3 @@ Add new entries directly below this line.
   inconsistent decimal parsing, the sequence-cut unmute timer overriding a user's mute. All fixed; the same
   reviewer confirmed them and noted two leftovers (board-opened video got no fps, Shift+→ used the current clip's
   fps for the last clip), fixed.
-
-## 0.84.2 — 2026-11-18 — macOS: restoring a minimized window no longer shows "not responding"
-- **What:** macOS: restoring a minimized Sight window no longer makes macOS report "Sight not responding", and a
-  window left minimized for long no longer comes back to a dead page. Sight.app is now an agent with no Dock
-  icon: the window lives under the browser's own icon.
-- **Where:** build_app_macos.sh (sets `LSUIElement` and `NSAppSleepDisabled` in Info.plist with PlistBuddy, then
-  re-signs ad hoc); Sight.py (`_open()` passes the anti-throttling Chromium flags on every platform; new
-  `mac_agent_note()` logs whether the bundle is an agent; the watchdog logs why it quits).
-- **Notes:** root cause (read from code, ~75% sure, not run on a Mac): Sight.app's main thread is uvicorn and never
-  runs a Cocoa event loop, so as a regular Dock app it could not answer the reopen Apple Event sent by a click on
-  its Dock icon. Do not give Sight.app a Dock icon / tray again without a real NSApplication loop on the main
-  thread (pyobjc) and uvicorn moved to a thread. Second cause: on macOS / Linux Chromium throttled a minimized
-  window's 3 s heartbeat to once a minute, so the 10 s watchdog quit the server; the flags were Windows-only
-  (Windows command line unchanged). Editing Info.plist after PyInstaller needs the ad-hoc re-sign. Gap: an agent
-  app still cannot answer the logout / shutdown quit event (true before too). Needs a check on a Mac build:
-  minimize 1 min and 6+ min, restore, log has no "no heartbeat … quitting".
-- Review (fresh agent run by the fixing agent): no correctness bugs; Windows command line confirmed unchanged.

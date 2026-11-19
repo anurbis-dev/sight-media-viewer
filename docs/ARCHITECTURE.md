@@ -185,6 +185,17 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   arrival terminates a running scrub ffmpeg (`_scrub_proc`), whose job then starts over after it. After each scrub copy, `_prune_scrub_copies` keeps the newest 20 / 1 GB in all
   (`SCRUB_KEEP_FILES` / `SCRUB_KEEP_BYTES`), never the one just made. The playback-copy cleanup removes stale files of its own kind only
   (scrub vs playback); the asset rename / delete globs `<aid>_*` cover both.
+- Scrub audio (lightbox, speaker right-click / long press, `vsnd.scrub`): not a blip of the `<video>`.
+  `POST /api/video/scrub-audio` (`Library.start_scrub_audio`) writes mono s16le 22050 Hz PCM to
+  `thumbs/video/<aid>_<stamp>.scruba.pcm` (no video decode, own slot `_scrub_audio_slot`, not the
+  playback-copy slot). `GET /api/video/scrub-audio?aid=` is `ready` / `working` / `silent` (no audio
+  track; the job stays so it is not probed again until the source stamp changes) / `failed` / `none`.
+  `GET /api/video/scrub-audio/{id}` is the file (range requests; `?rev=` is only a cache-buster).
+  The page keeps one ~48 s window and plays a 0.4 s slice with Web Audio (`scrubHear` / `saPlay`);
+  the slice runs on while the playhead stays inside it. The video scrub copy stays mute. Newest 20
+  pcm files / 1 GB (`SCRUB_AUDIO_KEEP_*`). `_video_cache_kind` keeps playback cleanup from deleting
+  `.scruba` files (they do not contain `.scrub.`, so the old scrub-vs-play test treated them as playback
+  copies). A banner with no `Input #` is `failed` and retried, not `silent`. Rename / delete of `<aid>_*` still remove the pcm.
 - `thumb_version()` is cached in memory, a missing file as 0 too (re-checked after 30 s;
   `prioritize` regenerates a has_thumb asset whose file is gone). Code that writes a thumbnail calls
   `thumb_version(aid, fresh=True)`; code that finds or writes one marks it with `_mark_thumb(aid)`

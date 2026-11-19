@@ -8,6 +8,7 @@ temporary folder; skipped when no ffmpeg is found.
 """
 from __future__ import annotations
 
+import array
 import json
 import os
 import re
@@ -232,6 +233,110 @@ class PlaybackCopyTest(unittest.TestCase):
         self.assertEqual(self.lib.playback_path(a), str(junk))
         leftovers = [p.name for p in (self.lib.thumbs / "video").iterdir()] if (self.lib.thumbs / "video").exists() else []
         self.assertEqual(leftovers, [], "partial output and logs are cleaned up")
+
+    def _add_video(self, aid: str, path: Path) -> None:
+        st = path.stat()
+        self.lib.execute(
+            "INSERT INTO assets(id, source_id, path, name, ext, kind, size, mtime, added_at, status) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (aid, "src", str(path), path.name, path.suffix, "video", st.st_size, st.st_mtime, 1, "ready"),
+        )
+
+    def _wait_audio(self, aid: str) -> dict:
+        last = None
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            last = self.lib.scrub_audio_status(aid)
+            if last["state"] not in ("working", "none"):
+                return last
+            time.sleep(0.05)
+        self.fail(f"scrub audio did not finish: {last}")
+
+    def test_scrub_audio_is_a_pcm_cache_and_a_silent_clip_is_not(self) -> None:
+        tone = self.media / "tone.mp4"
+        subprocess.run(
+            [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:duration=2",
+             "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(tone)],
+            check=True, timeout=120,
+        )
+        self._add_video("eeeeeeeeeeeeeeee", tone)
+        self.assertEqual(self.lib.start_scrub_audio("eeeeeeeeeeeeeeee")["state"], "working")
+        st = self._wait_audio("eeeeeeeeeeeeeeee")
+        self.assertEqual(st["state"], "ready", st.get("error"))
+        self.assertEqual(st["sr"], self.lib.SCRUB_AUDIO_SR)
+        self.assertGreater(st["duration"], 1.2)
+        self.assertLess(st["duration"], 2.8)
+        pcm = self.lib.scrub_audio_path("eeeeeeeeeeeeeeee")
+        self.assertIsNotNone(pcm)
+        self.assertTrue(pcm.name.endswith(".scruba.pcm"))
+        samples = array.array("h")
+        raw = pcm.read_bytes()
+        samples.frombytes(raw[: len(raw) - (len(raw) % 2)])
+        step = samples[::40]
+        energy = sum(abs(s) for s in step) / len(step)
+        self.assertGreater(energy, 200, "the cached sound is silence")
+        self.assertEqual(self.lib.start_scrub_audio("eeeeeeeeeeeeeeee")["state"], "ready")
+
+        # A changed source drops the previous pcm (the stamp is in the name).
+        time.sleep(0.02)
+        os.utime(tone, None)
+        self.lib.execute("UPDATE assets SET mtime=? WHERE id=?", (tone.stat().st_mtime, "eeeeeeeeeeeeeeee"))
+        self.assertEqual(self.lib.start_scrub_audio("eeeeeeeeeeeeeeee")["state"], "working")
+        st = self._wait_audio("eeeeeeeeeeeeeeee")
+        self.assertEqual(st["state"], "ready", st.get("error"))
+        left = [p.name for p in (self.lib.thumbs / "video").glob("eeeeeeeeeeeeeeee_*.scruba.pcm")]
+        self.assertEqual(len(left), 1, left)
+
+        silent = self.media / "silent.mp4"
+        subprocess.run(
+            [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:duration=1",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(silent)],
+            check=True, timeout=120,
+        )
+        self._add_video("ffffffffffffffff", silent)
+        self.assertEqual(self.lib.start_scrub_audio("ffffffffffffffff")["state"], "working")
+        st = self._wait_audio("ffffffffffffffff")
+        self.assertEqual(st["state"], "silent", st)
+        self.assertIsNone(self.lib.scrub_audio_path("ffffffffffffffff"))
+        self.assertEqual(self.lib.start_scrub_audio("ffffffffffffffff")["state"], "silent")
+
+    def test_playback_copy_does_not_delete_scrub_audio(self) -> None:
+        src = self._make_mpeg1("with_pcm.mpg")
+        aid = "abcdabcdabcdabcd"
+        a = self._asset(aid, src)
+        d = self.lib.thumbs / "video"
+        d.mkdir(parents=True, exist_ok=True)
+        pcm = d / f"{aid}_9_9.scruba.pcm"
+        part = d / f"{aid}_9_9.scruba.part"
+        pcm.write_bytes(b"\x01\x02" * 30)
+        part.write_bytes(b"\x03\x04")
+        self.assertEqual(self._convert(a)["state"], "ready")
+        self.assertTrue(pcm.exists() and part.exists(), "a playback copy must leave scrub audio alone")
+        self.assertTrue(self.lib.playback_path(a) != str(src))
+
+    def test_scrub_audio_banner_without_a_listing_is_not_silent(self) -> None:
+        kind = self.lib._scrub_audio_banner
+        self.assertEqual(kind("x.mp4: Permission denied\n"), "failed")
+        self.assertEqual(kind("Invalid data found when processing input\n"), "failed")
+        self.assertEqual(kind("Input #0, mov, from 'a.mp4':\n  Stream #0:0: Video: h264\n"), "silent")
+        self.assertEqual(kind("Input #0, mov, from 'a.mp4':\n  Stream #0:1: Audio: aac\n"), "audio")
+
+    def test_scrub_audio_prune_keeps_the_newest(self) -> None:
+        d = self.lib.thumbs / "video"
+        d.mkdir(parents=True, exist_ok=True)
+        keep = d / "keep_1.scruba.pcm"
+        keep.write_bytes(b"\x00\x01" * 10)
+        for i in range(24):
+            p = d / f"old{i:02d}_1.scruba.pcm"
+            p.write_bytes(b"\x00\x02" * 10)
+            os.utime(p, (1, 1_000 + i))
+        os.utime(keep, None)
+        self.lib._prune_scrub_audio(keep)
+        left = list(d.glob("*.scruba.pcm"))
+        self.assertTrue(keep.exists())
+        self.assertEqual(len(left), self.lib.SCRUB_AUDIO_KEEP_FILES)
 
 
 if __name__ == "__main__":

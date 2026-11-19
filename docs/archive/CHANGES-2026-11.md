@@ -2,6 +2,23 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.84.2 — 2026-11-18 — macOS: restoring a minimized window no longer shows "not responding"
+- **What:** macOS: restoring a minimized Sight window no longer makes macOS report "Sight not responding", and a
+  window left minimized for long no longer comes back to a dead page. Sight.app is now an agent with no Dock
+  icon: the window lives under the browser's own icon.
+- **Where:** build_app_macos.sh (sets `LSUIElement` and `NSAppSleepDisabled` in Info.plist with PlistBuddy, then
+  re-signs ad hoc); Sight.py (`_open()` passes the anti-throttling Chromium flags on every platform; new
+  `mac_agent_note()` logs whether the bundle is an agent; the watchdog logs why it quits).
+- **Notes:** root cause (read from code, ~75% sure, not run on a Mac): Sight.app's main thread is uvicorn and never
+  runs a Cocoa event loop, so as a regular Dock app it could not answer the reopen Apple Event sent by a click on
+  its Dock icon. Do not give Sight.app a Dock icon / tray again without a real NSApplication loop on the main
+  thread (pyobjc) and uvicorn moved to a thread. Second cause: on macOS / Linux Chromium throttled a minimized
+  window's 3 s heartbeat to once a minute, so the 10 s watchdog quit the server; the flags were Windows-only
+  (Windows command line unchanged). Editing Info.plist after PyInstaller needs the ad-hoc re-sign. Gap: an agent
+  app still cannot answer the logout / shutdown quit event (true before too). Needs a check on a Mac build:
+  minimize 1 min and 6+ min, restore, log has no "no heartbeat … quitting".
+- Review (fresh agent run by the fixing agent): no correctness bugs; Windows command line confirmed unchanged.
+
 ## 0.84.1 — 2026-11-18 — 3D: notes panel shows the drawings right away
 - **What:** opening the notes panel on a 3D model now shows its annotation drawings at once (before, only after
   clicking a note — and in fact not even then). With annotation mode off they show, not editable, and follow the
