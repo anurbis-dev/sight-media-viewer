@@ -14,6 +14,13 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.93.0 — 2026-11-19 — Compare: viewer-style picture input, Row fixed, viewer's top bar, Compare from the selection
+- **What:** owner's list. (1) On the compare picture a click plays / pauses, a left drag scrubs every clip, a right drag zooms, a middle drag pans — as in the viewer; a swipe split is grabbed only by a press right on it (10 px, finger 24 px), so it no longer eats every click / drag. Touch: tap, one-finger scrub, two-finger pinch-zoom / pan. (2) **Row was black**: the stage got the class `row`, which is the sidebar's menu-row class (`display:flex; height: var(--menu-row-h)`), so every cell had 0 height. The layout class is now `lay-<layout>`. (3) The right end of the compare bar is the lightbox's: notes button (`C`, badge), eye (while drawing), the compare icon (on; closes), annotate as an icon, ✕. (4) Layer chips: click shows / hides (a layer brought back is selected), middle-click removes, the ◉ button is gone. (5) The offset's − / + buttons are gone: drag the number sideways to slide the clip live (6 px per frame), click it to type. (6) **Shift slows every drag** (scrub, timeline, zoom, pan, split, offset) and can change mid-drag without a jump. (7) A chip drag shows the whole chip (mouse: `setDragImage` of a clone; touch: a clone follows the finger). (8) With 2+ images / videos selected, *Compare* sits next to *▶▶ Sequence* in the top bar and the touch selection bar, and the right-click menu has *Compare (N)*.
+- **Where:** compare.js (`startScrub` — the timeline's scrub, now shared with the stage —, `splitNear`, `layerAt`, `onDown` / `onMove` / `onUp`, `startPinch`, `zoomAt`, `hoverCursor`, `chipGhost`, offset drag in `bindUi`, the bar markup, CSS `lay-*`, `.cmp-ghost`); index.html (`cmpAnnot` host `notesBtn` / `eyeBtn` / `notesBtnShown`, no `readPanel: false`, `onView` always `cmpBind`, `C` routed to `cmpAnnot` while not drawing, `bindAnnoReset` on the compare's annotate button; `cmpCandidates` / `compareIds`, `#cmpSelBtn`, `#tsCmp`, ctx `cmp`); MANUAL, ARCHITECTURE.
+- **Notes:** the scrub click detection is on pointerup (no move ≥ 4 px) — not the `click` event — so the annotator's own click suppression is not involved; while annotating, the annotator's capture `onDown` keeps the press unless `wantsPress` (Alt+left: the nearest split at any distance; a finger on a split). Images only: a left drag pans (nothing to scrub). A second finger cancels a running scrub by dispatching `pointercancel` for its pointer on window (startScrub's own end path). The compare annotator now fetches the selected layer's notes on every selection (for the badge / reading panel), not only while drawing; `showWhileWatching` stays false, so drawings and the eye still show only while drawing. The notes panel state is the lightbox's (`sight.annotate.read`). `[` / `]` keep `Shift` ×10 (keys, not a drag). Selecting a layer: a press on its tile / swipe region, `↑` / `↓`, or a chip click that shows it.
+- Review (fresh agent): the touch map outlived a closed comparison (a finger down while it closed made every later tap a pinch and froze the stage); while annotating a chip click hid the layer instead of picking it (no other way to switch layer there); letting go of Shift during a timeline drag jumped to the pointer; a rebuild mid-drag (layout / H / D key) left zoom / pan / pinch on a detached box (NaN view); a chip repaint mid offset-drag killed it and let the closing click toggle the chip; offset padding click toggled; split cursor stuck while annotating. All fixed (`touches.clear()` in open / close and before the `!C` guard, annotating chip click selects, track stays relative after Shift, `d.box` re-queried, offset drag on window listeners). Left as is: a double-click on the picture toggles play twice then fits (net state unchanged, as in the viewer).
+- The same reviewer confirmed all fixes; its one optional nit (a mouse released outside the window mid offset-drag kept sliding) is fixed too.
+
 ## 0.92.2 — 2026-11-19 — Review import: no blocking dialog, no lightbox hidden under Compare
 - **What:** owner: after dropping a review file onto the desktop app, thumbnails stopped appearing and clicks in the sidebar did nothing. Not reproduced in Playwright (single file / bundle / re-import / filtered grid / Tab split / Sequence / Compare / large videos — the server stayed responsive), but two causes in the import path fit. (1) The "Restore deleted notes?" question was a native `confirm()`: it blocks the whole page, and after a drop from the file manager the app window has no focus, so the dialog can sit unseen. It is now a non-blocking bar at the top of the window (*Restore* / ✕, closes itself after 15 s, a hover keeps it); the first merge is reported and the file opens before it shows. (2) A review dropped while Compare was open opened the lightbox hidden under Compare, with drawing mode on, and its video took the compare's RAM windows. The lightbox annotator's `openAsset` now closes Compare first, as the compare annotator's already did.
 - **Where:** annotate.js `importFile` / `importedResult` (new, the toast + open of one pass) / `offerRestore` (new, `.an-offer` CSS) / `importedBundle(r, restored)`; index.html `annot` host `openAsset` (`cmp.close()`); library.py `match_review_asset` (a size the file gives as a non-number, or a library row without a size, no longer raises: was a 500 for a plain package); MANUAL.
@@ -278,31 +285,3 @@ Add new entries directly below this line.
   reopen after close, duplicate tabs without a Chromium browser, Automation consent text, watchdog / reopen race),
   fixed; second pass: 5 confirmed, 2 follow-ups (reopen still blank within 10 s of closing, Quit ending on the
   force timer without `lib.close()`) fixed; the same reviewer confirmed both, nothing new beyond the two gaps above.
-
-## 0.87.1 — 2026-11-18 — Notes no longer lost when switching clips; durable annotation write queue
-- **What:** user report (macOS desktop): comments written on a sequence's clips were gone after switching clips.
-  Root cause: `setAsset()` / `unmount()` called the async `flush()` and then cleared `S.items` synchronously; after
-  flush's first `await` the dirty rows were gone, so a debounced (300 ms) update — e.g. a reply / note edit
-  committed by the blur when clicking towards the next clip — was silently dropped (reproduced; old code kept
-  "original"). Failed writes were only `console.warn`ed. Now every row write goes through one durable queue: kept in
-  localStorage until the server has it, retried, a red "unsaved annotation changes — retrying" badge (click / tap =
-  retry) while it fails, sent with keepalive on close and at the next start.
-- **Where:** annotate.js: module-level `OB` (`obPut` / `obDel` / `obDrain` / `obFlush` / `obOverlay` / `obForget` /
-  `obAdopt` / `obBeacon` / `obPaint`), `serverCreate` / `stage` / `flush` / `serverDelete` / `settle`, `load()`
-  overlay, `obForget` before the import / reload loads, CSS `.an-outbox`. ARCHITECTURE ("Saving"), MANUAL.
-- **Notes:** invariants are in ARCHITECTURE ("Saving (the write queue)"): never write rows outside the queue; leave an
-  asset only via `settle()` while `S.asset` is the old one. Landed writes stay 30 s in `OB.recent` and are laid over
-  a GET row only if that row is older than the request (`updated_at < sentAt`, same-machine clock — a LAN client
-  with clock skew would weaken this; comparing against the server-returned `updated_at` would be the fix). Storage
-  key per window; adoption skips entries older than this window's landed write (`at` vs `landedAt`). Not done:
-  queued rows carry no library identity (another SIGHT_HOME on the same port would get them as orphan rows); the
-  HTML review page's localStorage quota problem (separate track). The browser logins reset the user also reported
-  cannot come from Sight (own `--user-data-dir`, no access to the main profile) — not investigated further.
-- Review (fresh agent, run by the implementing agent): round 1 — 10 findings (load/GET race, close dropping debounced
-  edits and open editors, keepalive sending one request, no timeout, one bad row blocking the queue, silent refusals,
-  windows overwriting each other's stored queue, stale storage after a failed setItem, unvalidated restore, live
-  references in queued bodies). Round 2 — the recent-overlay hid server-side changes (import) → `sentAt` check +
-  `obForget`. Round 3 — refused create showing as a phantom; periodic adoption overwriting a newer write → `at` /
-  `landedAt`, frozen-window self-drop (`obHandedOff` before any write / send; handed rows' next write is an upsert).
-  All fixed; the same reviewer confirmed every fix (5 rounds). Known limitation it accepted: after a frozen window's
-  queue is adopted by another window, the two windows' writes of the same row may land in either order.

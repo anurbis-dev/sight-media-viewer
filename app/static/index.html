@@ -705,6 +705,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
   <div class="touch-selbar" id="touchSelBar" hidden>
     <span class="ts-count" id="tsCount"></span>
     <button class="btn" id="tsSeq" type="button" hidden>▶▶ Play in sequence</button>
+    <button class="btn" id="tsCmp" type="button" hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg>Compare</button>
     <button class="btn ghost" id="tsClose" type="button" style="width:40px;padding:0" aria-label="Leave selection mode" title="Leave selection mode">✕</button>
   </div>
   <div id="colorPop" class="color-pop" hidden></div>
@@ -763,6 +764,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
         <div class="top-pop" id="viewOptPop" hidden></div>
         <button class="btn ghost" id="seqBtn" type="button" title="Play the selected videos one after another, in the order they were selected (Space over a selected one)" hidden>▶▶ Sequence</button>
+        <button class="btn ghost" id="cmpSelBtn" type="button" title="Compare the selected images / videos side by side (K)" hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg>Compare</button>
         <button class="btn ghost icon an-btn" id="boardNotesBtn" type="button" title="The board's notes — read them, click a picture to go there (C)" aria-label="Board notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost icon" id="boardEyeBtn" type="button" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost icon an-btn" id="boardAnnoBtn" type="button" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
@@ -1201,8 +1203,11 @@ let cmpAnnotUsed = new Set(); // files annotated in this compare (the lightbox r
 let cmpView = null;           // the selected layer's viewer as compare last reported it (null: none visible)
 const cmpAnnot = createAnnotator({
   api: (path, opts) => api(path, opts),
-  showWhileWatching: false,   // drawings only while annotating here: the compare has no eye button
-  readPanel: false,           // nor a notes button: its panel comes with the drawing mode only
+  showWhileWatching: false,   // drawings only while annotating here (its eye shows while drawing)
+  // The compare's own top bar has the lightbox's notes button and eye (compare.js), so the notes read the same way.
+  notesBtn: () => document.querySelector(".cmp .cmp-notesb"),
+  eyeBtn: () => document.querySelector(".cmp .cmp-eyeb"),
+  notesBtnShown: () => cmp.isOpen(),
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   toast: (text) => flash(text),
@@ -1224,7 +1229,7 @@ const cmpAnnot = createAnnotator({
   // (`keep`: as the lightbox annotator's — the file already showing re-reads its notes instead of opening again)
   openAsset: async (id, opts) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (opts?.keep && light?.id === a.id){ annot.reload(); return; } if (light) showInLight(a); else toggleLight(a); },
 });
-// The annotator follows the selected layer lazily: a file's notes are fetched once annotating is on.
+// The annotator follows the selected layer: its notes are fetched for the notes button / panel, drawing or not.
 function cmpBind(){
   if (!cmpView) return false;
   if (cmpAnnotAsset !== cmpView.asset.id){ cmpAnnotAsset = cmpView.asset.id; cmpAnnot.setAsset(cmpView.asset); }
@@ -1246,12 +1251,12 @@ const cmp = createCompare({
   assetById: (id) => assetById(id),
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
   openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
-  onOpen: (el) => { cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); },
+  onOpen: (el) => { cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); bindAnnoReset(el.querySelector(".cmp-annb"), [annot, boardAnnot, cmpAnnot]); },
   onView: (view) => {
     cmpView = view;
     // The selected layer hidden: annotating stops (a later A / ✎ refuses until a layer is shown again).
     if (!view){ cmpAnnot.toggle(false); return; }
-    if (cmpAnnot.isOn() || cmpAnnotAsset === view.asset.id) cmpBind();
+    cmpBind(); // (the selected layer's notes: the notes button counts them and opens them for reading)
   },
   onPlaced: () => cmpAnnot.viewChanged(),
   onAnnotButton: () => cmpToggleAnnot(),
@@ -1317,6 +1322,14 @@ function paintCmpBtn(){
   b.disabled = !ids && (light.cmpVers || 0) < 2;
   b.title = ids ? `Compare these ${ids.length} files (K)` : b.disabled ? "Compare — drop files from the library here (Tab shows it), or open a file with versions" : "Compare versions (K)";
   if (light.cmpStack?.length) b.dataset.n = String(light.cmpStack.length + 1); else delete b.dataset.n;
+}
+// The selected files Compare can show (images / videos / PSD), and opening them: in name order, as K does.
+function cmpCandidates(ids){ return ids.map((id) => assetById(id)).filter(comparable); }
+function compareIds(ids){
+  const sel = cmpCandidates(ids);
+  if (sel.length < 2){ flash("Compare: select 2 or more images / videos"); return; }
+  sel.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  openCompare(sel.map((a) => a.id), sel[0].id);
 }
 async function compareFromContext(){
   let ids = null, focus = null;
@@ -2239,6 +2252,8 @@ function paintSelection(){
   const nSeq = seqSelection().length;
   const sb = document.getElementById("seqBtn");
   if (sb) sb.hidden = nSeq < 2;
+  const cb = document.getElementById("cmpSelBtn");
+  if (cb) cb.hidden = cmpCandidates(state.selectedIds).length < 2;
   syncTouchSel(nSeq);
   if (light) paintCmpBtn(); // (the files selected in the library beside the lightbox can be compared)
 }
@@ -2257,6 +2272,7 @@ function syncTouchSel(nSeq){
   const n = state.selectedIds.length;
   document.getElementById("tsCount").textContent = `${n} selected`;
   document.getElementById("tsSeq").hidden = (nSeq ?? seqSelection().length) < 2;
+  document.getElementById("tsCmp").hidden = cmpCandidates(state.selectedIds).length < 2;
 }
 const LONG_PRESS_MS = 500;
 // Long-press (mouse or finger) on an annotate button resets the whole annotation toolbar; the click that ends
@@ -8128,6 +8144,7 @@ function showCtx(x, y, id){
   menu.innerHTML = `
     <button type="button" data-act="open">Open</button>
     ${seqCandidates(ids).length >= 2 ? `<button type="button" data-act="seq">▶▶ Play in sequence (${seqCandidates(ids).length})</button>` : ""}
+    ${cmpCandidates(ids).length >= 2 ? `<button type="button" data-act="cmp">Compare (${cmpCandidates(ids).length})</button>` : ""}
     <button type="button" data-act="reveal">Reveal in File System</button>
     <button type="button" data-act="find">Find in Folder</button>
     <button type="button" data-act="native">Open Natively</button>
@@ -8160,6 +8177,9 @@ function showCtx(x, y, id){
     } else if (act === "seq"){
       hideCtx();
       openSequence(seqCandidates(ids));
+    } else if (act === "cmp"){
+      hideCtx();
+      compareIds(ids);
     } else if (act === "reveal"){
       hideCtx();
       revealAssets(ids);
@@ -9531,6 +9551,8 @@ function renderViewOptPop(){
 $("viewOptBtn").onclick = () => toggleTopPop("viewOptPop", renderViewOptPop);
 splitBtn.onclick = toggleCanvasSplit;
 $("seqBtn").onclick = () => openSequence(seqSelection());
+$("cmpSelBtn").onclick = () => compareIds(state.selectedIds);
+$("tsCmp").onclick = () => compareIds(state.selectedIds);
 $("tsSeq").onclick = () => openSequence(seqSelection());
 $("tsClose").onclick = () => selectOnly(null);
 
@@ -9855,6 +9877,7 @@ document.addEventListener("keydown", (e) => {
     if (cmpAnnot.helpOpen()){ cmpAnnot.onKey(e); return; }
     if (cmpAnnot.isOn() && cmpAnnot.onKey(e)) return;
     if (!typing && !e.repeat && hotkey(e, "KeyA")){ e.preventDefault(); cmpToggleAnnot(); return; }
+    if (!typing && !cmpAnnot.isOn() && hotkey(e, "KeyC")){ e.preventDefault(); cmpAnnot.onKey(e); return; } // the notes panel, as in the lightbox
     if (cmp.onKey(e)) return;
     if (hotkey(e, "Shift+KeyH") || hotkey(e, "KeyC")) return;   // never the lightbox's eye / notes panel behind the compare
   }

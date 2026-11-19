@@ -791,7 +791,14 @@ use `clip-path: inset(0)` so Windows does not promote them to hardware overlays.
 each clip's scrub proxy when that copy can; until then the picture holds and the release seeks every
 clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. Reference copies under Difference tiles are
 canvases painted from its one `<video>`. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
-open and do not reach the library / lightbox.
+open and do not reach the library / lightbox. The stage's layout class is `lay-<layout>` (a bare `row` is the
+sidebar's menu-row class and collapses the stage). Stage input (`onDown` / `onMove` / `onUp`): a left press is
+`press` → click = `togglePlay`, a move ≥ 4 px = `startScrub(e, stage, timeAt)` (the same scrub path as the timeline:
+`C.scrub`, proxies, `queueRelease`); a split is grabbed only within 10 px (finger / pen 24 px, `splitNear`);
+right = zoom (`zoomAt`, the viewer's zoom settings), middle / Alt = pan, two touches = pinch. Shift rebases a drag
+and slows it (scrub / track ×0.1, zoom / pan ×0.2, offset 6 px → 30 px per frame; once Shift has been used, the timeline drag stays relative). The compare annotator has
+`readPanel` on, with `notesBtn` / `eyeBtn` pointing at the compare bar's own buttons; it binds the selected layer
+on every `onView`, drawing or not.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
 
 ## Phone app (mobile/, PWA)

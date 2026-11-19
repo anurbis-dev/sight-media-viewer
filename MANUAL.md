@@ -489,7 +489,9 @@
   `.srev` goes back to Sight with every view in place. PDF / web page: each view as a picture, "View N".
 - **Compare versions** — `K`: in the grid with two or more images / videos selected, compares
   those; with one selected or under the cursor (or in the lightbox), compares the versions of that
-  file (see *Versions* above). Also the palette and the compare button in the viewer's top bar.
+  file (see *Versions* above). Also the palette and the compare button in the viewer's top bar. With two or
+  more images / videos selected, *Compare* appears in the top bar next to *▶▶ Sequence* (and in the touch
+  selection bar), and the right-click menu has *Compare (N)* beside *Play in sequence*.
   - **Any files from the viewer**: with the library beside the viewer (`Tab`), drag images / videos from the
     grid onto the picture — they join a comparison with the open file (the compare button shows how many
     files; it is greyed out while there is nothing to compare). The button or `K` opens it. Moving the viewer
@@ -497,28 +499,38 @@
     select the files in the library beside the viewer (long-press a tile) and tap the compare button. A picture
     dropped while annotating is still added as a reference image instead; a drop no longer turns annotating on.
   - Layouts (`1`–`4`): **Swipe** — all layers stacked in one view and cut by split lines, one
-    region per layer; drag anywhere to move the nearest split (Alt+drag pans), `V` switches between
+    region per layer; press right on a split line to move it (anywhere else the press is the picture's, see
+    below), `V` switches between
     side-by-side and top / bottom splits. **Tile**, **Row** (horizontal strip), **Column** (vertical
     strip) — one cell per layer.
   - Blend: **Over** shows the layers as they are; **Difference** (`D`) draws each layer as the
     difference to the reference layer (★, `R` makes the selected layer the reference) — identical
     pixels turn black, so any change stands out. Works in every layout.
-  - Layers bar at the bottom: click selects (`↑` / `↓`), ☆ reference, ◉ show / hide (`H`), drag a
-    chip to reorder (touch: hold it, then drag) — the order is the order of the splits and tiles and is kept
-    with a note written in the comparison, ⤢ opens the file in the viewer, × removes, *+ Add* brings in another version.
+  - On the picture, as in the viewer: **click** plays / pauses, **left drag** scrubs every clip (the width of the
+    view is the whole timeline), **right drag** zooms, **middle drag** (or `Alt`+drag) pans. A press selects the
+    layer under it. Touch: tap plays / pauses, one finger scrubs, two fingers pinch-zoom and pan. With pictures
+    only (no video), a left drag pans. **`Shift` slows every drag down** — scrub, zoom, pan, a split, a clip's
+    offset — and can be pressed or let go mid-drag without a jump.
+  - Layers bar at the bottom: **click a chip** shows / hides that layer (`H`; one brought back becomes the
+    selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), ☆ reference, drag a
+    chip to reorder (touch: hold it, then drag; the whole chip follows) — the order is the order of the splits and tiles and is kept
+    with a note written in the comparison, ⤢ opens the file in the viewer, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
     `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
     the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
     goes on from where you let go. Each clip gets a small scrub copy (a keyframe every few frames) as soon as
     the comparison opens, and a drag shows those, so several clips follow the pointer together. Until a copy
     is ready, the picture stays where it was; letting go jumps every clip to that frame together. A clip
-    you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (− / + on its chip, click the number to
-    type it, or `[` / `]` for the selected clip, `Shift` ×10): where its first frame sits on the
+    you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (drag the number on its chip sideways to
+    slide the clip frame by frame and line it up by eye, `Shift` slower; click it to type a number; or `[` / `]`
+    for the selected clip, `Shift` ×10): where its first frame sits on the
     timeline, to line up clips that start or run differently. The coloured bars on the timeline show
     each clip's span; 🔈 picks whose sound plays.
+  - The right end of the top bar is the viewer's: the notes button (`C`, reads the selected layer's notes),
+    the eye (while drawing), the compare button (closes the comparison), annotate and ✕.
   - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
     **selected layer** — notes and drawings go to that file, at its own frame (a video layer's local
-    time). Click a layer chip (or a tile) to annotate another file. A note written here remembers the
+    time). While annotating, a click on a layer chip picks that layer (showing it if hidden) instead of hiding it — that is how you annotate another file. A note written here remembers the
     comparison — the files, their order, reference, layout and offsets: its card in the viewer has
     *⧉ Compare · N files*, which opens it again on the note's frame, and `K` on that file brings the same
     files back (the newest such note wins) instead of its versions. While annotating, the left button draws: `Alt`+drag
@@ -527,8 +539,7 @@
     markers) win over the compare's; leave annotating (`A` / Esc) to shift layers or change the reference by
     key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
     layer in its split or tile, Difference, the split lines and names — with the drawings on top.
-  - Wheel zooms around the cursor, right / middle drag pans (left drag in the tile layouts),
-    double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
+  - Wheel zooms around the cursor (`Shift` slower), double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
   is kept; a Shift-range or a marquee adds them in grid order) and press Space over one of them, or
   click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back

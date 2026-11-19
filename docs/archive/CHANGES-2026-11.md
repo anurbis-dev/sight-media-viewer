@@ -2,6 +2,34 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.87.1 — 2026-11-18 — Notes no longer lost when switching clips; durable annotation write queue
+- **What:** user report (macOS desktop): comments written on a sequence's clips were gone after switching clips.
+  Root cause: `setAsset()` / `unmount()` called the async `flush()` and then cleared `S.items` synchronously; after
+  flush's first `await` the dirty rows were gone, so a debounced (300 ms) update — e.g. a reply / note edit
+  committed by the blur when clicking towards the next clip — was silently dropped (reproduced; old code kept
+  "original"). Failed writes were only `console.warn`ed. Now every row write goes through one durable queue: kept in
+  localStorage until the server has it, retried, a red "unsaved annotation changes — retrying" badge (click / tap =
+  retry) while it fails, sent with keepalive on close and at the next start.
+- **Where:** annotate.js: module-level `OB` (`obPut` / `obDel` / `obDrain` / `obFlush` / `obOverlay` / `obForget` /
+  `obAdopt` / `obBeacon` / `obPaint`), `serverCreate` / `stage` / `flush` / `serverDelete` / `settle`, `load()`
+  overlay, `obForget` before the import / reload loads, CSS `.an-outbox`. ARCHITECTURE ("Saving"), MANUAL.
+- **Notes:** invariants are in ARCHITECTURE ("Saving (the write queue)"): never write rows outside the queue; leave an
+  asset only via `settle()` while `S.asset` is the old one. Landed writes stay 30 s in `OB.recent` and are laid over
+  a GET row only if that row is older than the request (`updated_at < sentAt`, same-machine clock — a LAN client
+  with clock skew would weaken this; comparing against the server-returned `updated_at` would be the fix). Storage
+  key per window; adoption skips entries older than this window's landed write (`at` vs `landedAt`). Not done:
+  queued rows carry no library identity (another SIGHT_HOME on the same port would get them as orphan rows); the
+  HTML review page's localStorage quota problem (separate track). The browser logins reset the user also reported
+  cannot come from Sight (own `--user-data-dir`, no access to the main profile) — not investigated further.
+- Review (fresh agent, run by the implementing agent): round 1 — 10 findings (load/GET race, close dropping debounced
+  edits and open editors, keepalive sending one request, no timeout, one bad row blocking the queue, silent refusals,
+  windows overwriting each other's stored queue, stale storage after a failed setItem, unvalidated restore, live
+  references in queued bodies). Round 2 — the recent-overlay hid server-side changes (import) → `sentAt` check +
+  `obForget`. Round 3 — refused create showing as a phantom; periodic adoption overwriting a newer write → `at` /
+  `landedAt`, frozen-window self-drop (`obHandedOff` before any write / send; handed rows' next write is an upsert).
+  All fixed; the same reviewer confirmed every fix (5 rounds). Known limitation it accepted: after a frozen window's
+  queue is adopted by another window, the two windows' writes of the same row may land in either order.
+
 ## 0.87.0 — 2026-11-18 — Compare: synced video on one clock, toolbar button, drop-to-compare, layer reorder
 - **What:** compare clips play on one clock that waits for the slowest clip ("· loading" while held); scrubbing
   (mouse / finger) moves every clip; the video RAM cache is split between the clips around their playheads. The

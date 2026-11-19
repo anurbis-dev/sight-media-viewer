@@ -22,6 +22,11 @@
 // One the playhead has not reached jumps to its first frame, and one it has left jumps to its last.
 // The proxy stays over the full file until that frame is presented, then its decoder is dropped.
 //
+// Input on the picture is the viewer's: click plays / pauses, left drag scrubs (Shift a tenth), right drag zooms,
+// middle drag pans; a swipe split is grabbed only by a press right on it. Shift slows every drag (scrub, zoom,
+// pan, split, a clip's offset). Layer chips: click shows / hides, middle-click removes, drag reorders; the offset
+// field is dragged sideways (or clicked to type).
+//
 // createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
 // onView(view) — the selected layer's viewer after every rebuild / selection (view: {asset, wrap, media, isVid,
 // geom, unturn} or null), onPlaced() — pan / zoom / splits moved, onClose(), onAnnotButton() }.
@@ -89,18 +94,23 @@ export function createCompare(host){
     if (assets.length < 1) return false;
     if (session && assets.length < 2) return false; // a stored comparison with one file left is no comparison
     if (C) close();
+    touches.clear();
     const el = document.createElement("div");
     el.className = "cmp";
+    // The right end of the bar is the lightbox's (notes, eye, compare, annotate, close), so every viewer looks alike.
     el.innerHTML = `
       <div class="cmp-bar">
         <b>Compare</b>
         <div class="cmp-seg" data-g="layout">${LAYOUTS.map(([k, n], i) => `<button type="button" data-v="${k}" title="${n} (${i + 1})">${n}</button>`).join("")}</div>
         <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are (D toggles)">Over</button><button type="button" data-v="difference" title="Difference against the reference ★ — equal pixels go black (D)">Difference</button></div>
         <button type="button" class="cmp-b" data-a="dir" title="Split direction (V)"></button>
-        <button type="button" class="cmp-b" data-a="fit" title="Fit (F) · wheel zooms · right / middle drag pans">Fit</button>
-        <button type="button" class="cmp-b cmp-annb" data-a="annot" title="Annotate the selected layer (A) — notes go to its file and remember this comparison">✎ Annotate</button>
-        <span class="cmp-hint">Drag splits · [ ] shift layer · ↑↓ layer · R reference · H hide · A annotate · Space play · , . frame · Esc</span>
-        <button type="button" class="cmp-b" data-a="close" title="Close (Esc)">✕</button>
+        <button type="button" class="cmp-b" data-a="fit" title="Fit (F) · wheel / right-drag zooms · middle-drag pans">Fit</button>
+        <span class="cmp-hint">Click play · drag scrub (Shift fine) · right-drag zoom · middle-drag pan · [ ] shift layer · ↑↓ layer · R reference · H hide · Esc</span>
+        <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
+        <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
+        <button class="btn ghost cmp-lbtn on" data-a="close" type="button" style="width:40px;padding:0" title="Close the comparison (K)" aria-label="Close the comparison" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
+        <button class="btn ghost an-btn cmp-annb" data-a="annot" type="button" style="width:40px;padding:0" title="Draw &amp; write notes on the selected layer (A) — notes go to its file and remember this comparison" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
+        <button class="btn ghost" data-a="close" type="button" style="width:40px;padding:0" title="Close (Esc)" aria-label="Close">✕</button>
       </div>
       <div class="cmp-stage"></div>
       <div class="cmp-foot">
@@ -154,6 +164,7 @@ export function createCompare(host){
     // release after a mid-drag close keeps the detached compare, and the next drag's listener leaks.
     C.dropScrubListeners?.();
     C.scrub = null;
+    touches.clear(); // (a finger still down when it closes never sends its pointerup to the removed stage)
     host.onClose?.();
     C.ro?.disconnect();
     if (C.pBase) P = prefsToSave();
@@ -407,7 +418,8 @@ export function createCompare(host){
     for (const l of C.layers){ for (const m of l.media) releaseMedia(m); l.media = []; }
     const st = C.stage;
     st.innerHTML = "";
-    st.className = "cmp-stage " + P.layout;
+    // (prefixed: a bare "row" is the sidebar's menu-row class, whose fixed height flattened the Row layout to nothing)
+    st.className = "cmp-stage lay-" + P.layout;
     const vis = visible(), ref = refLayer(), diff = P.blend === "difference";
     if (!vis.length){ st.innerHTML = `<div class="cmp-empty">All layers are hidden</div>`; paintAll(); return; }
     if (P.layout === "swipe"){
@@ -778,12 +790,11 @@ export function createCompare(host){
     const more = C.candidates.filter((a) => !C.layers.some((l) => l.id === a.id));
     box.innerHTML = C.layers.map((l) => {
       const v = isVideo(l.a);
-      return `<div class="cmp-chip${l.id === C.sel ? " sel" : ""}${l.vis ? "" : " off"}" data-id="${l.id}" draggable="true" title="${esc(l.a.path || l.a.name)}">
+      return `<div class="cmp-chip${l.id === C.sel ? " sel" : ""}${l.vis ? "" : " off"}" data-id="${l.id}" draggable="true" title="${esc(l.a.path || l.a.name)} — click shows / hides (H) · middle-click removes · drag to reorder">
         <i class="cmp-dot" style="background:${l.color}"></i>
         <span class="cmp-nm">${esc(l.a.name)}</span>
         <button type="button" data-a="ref" class="${l === ref ? "on" : ""}" title="${l === ref ? "Reference" : "Make reference (R)"} — the base the others are compared against">${l === ref ? "★" : "☆"}</button>
-        <button type="button" data-a="vis" title="${l.vis ? "Hide (H)" : "Show (H)"}">${l.vis ? "◉" : "○"}</button>
-        ${v ? `<span class="cmp-off" title="Where this clip's first frame sits on the timeline — [ ] (Shift ×10), drag or click to type"><button type="button" data-a="om">−</button><em data-a="ov">${l.start > 0 ? "+" : ""}${l.start}f</em><button type="button" data-a="op">+</button></span>
+        ${v ? `<span class="cmp-off" title="Where this clip's first frame sits on the timeline — drag sideways to slide it (Shift slower), click to type · [ ] (Shift ×10)"><em data-a="ov">${l.start > 0 ? "+" : ""}${l.start}f</em></span>
           <button type="button" data-a="snd" class="${C.sound === l.id ? "on" : ""}" title="${C.sound === l.id ? "Sound from this clip" : "Play this clip's sound"}">${C.sound === l.id ? "🔊" : "🔈"}</button>` : ""}
         <button type="button" data-a="lb" title="Open in the viewer">⤢</button>
         <button type="button" data-a="rm" title="Remove from compare">×</button>
@@ -923,6 +934,91 @@ export function createCompare(host){
   }
 
   // ---- input -----------------------------------------------------------------------------------
+  // Scrubbing (mouse, finger or pen), from the timeline or a drag on the picture: every clip shows the playhead's
+  // frame while it moves; playback that was running goes on from where it is let go, all clips together (the clock
+  // holds until each has landed there). timeAt(ev) — the playhead for this pointer position.
+  function startScrub(e, cap, timeAt){
+    if (!C || C.scrub) return false;
+    try { cap.setPointerCapture(e.pointerId); } catch {}
+    C.scrubGen = (C.scrubGen || 0) + 1;
+    armScrubs();
+    for (const l of C.layers) if (l.scrub){
+      l.scrub.hidden = true;
+      l.scrub._settle = false;
+      l.scrub._settleToken = (l.scrub._settleToken || 0) + 1; // drops a hand-off still waiting to hide it
+    }
+    C.scrub = { pid: e.pointerId };
+    const scrub = (ev) => {
+      if (!C || ev.pointerId !== C.scrub?.pid) return;
+      setT(timeAt(ev), true);
+      C.T = snapT(C.T);
+    };
+    let onWin = null;
+    const detach = () => {
+      cap.removeEventListener("pointermove", scrub);
+      cap.removeEventListener("pointerup", end);
+      cap.removeEventListener("pointercancel", end);
+      cap.removeEventListener("lostpointercapture", retake);
+    };
+    const dropWin = () => {
+      detach();
+      if (!onWin) return;
+      window.removeEventListener("pointerup", onWin);
+      window.removeEventListener("pointercancel", onWin);
+      onWin = null;
+      if (C && C.dropScrubListeners === dropWin) C.dropScrubListeners = null;
+    };
+    function end(ev){
+      // Compare already closed: the listeners must still come off (close() usually did this).
+      if (!C){ dropWin(); return; }
+      if (ev.pointerId !== C.scrub?.pid) return;
+      C.scrub = null;
+      dropWin();
+      queueRelease();
+      // Hold the clock while a clip still has the release time queued behind a seek already in flight.
+      C.wait = false;
+      for (const l of C.layers){
+        if (l.scrub && l.scrub.hidden) releaseScrubDecoder(l.scrub);
+        for (const m of l.media){
+          if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
+        }
+      }
+      C.last = performance.now();
+      C.syncNow = true;
+      paintTime();
+      C.onScrubEnd?.();
+    }
+    // A hardware overlay drops capture while the button is still down (and reports no buttons).
+    // That is not a release — the pointerup still comes. Take capture back so the drag follows.
+    let took = 0;
+    function retake(ev){
+      if (!C?.scrub || ev.pointerId !== C.scrub.pid || took > 3) return;
+      took++;
+      try { cap.setPointerCapture(ev.pointerId); } catch {}
+    }
+    scrub(e);
+    cap.addEventListener("pointermove", scrub);
+    cap.addEventListener("pointerup", end);
+    cap.addEventListener("pointercancel", end);
+    cap.addEventListener("lostpointercapture", retake);
+    onWin = (ev) => end(ev);
+    C.dropScrubListeners = dropWin;
+    window.addEventListener("pointerup", onWin);
+    window.addEventListener("pointercancel", onWin);
+    return true;
+  }
+  // A floating copy of a layer chip (the drag picture of a reorder), in the document so it keeps the chip's look.
+  function chipGhost(chip){
+    const r = chip.getBoundingClientRect();
+    const g = chip.cloneNode(true);
+    g.classList.remove("lift", "dnd-a", "dnd-b");
+    g.classList.add("cmp-ghost");
+    g.removeAttribute("draggable");
+    g.style.width = r.width + "px";
+    g.style.height = r.height + "px";
+    C.el.appendChild(g);
+    return g;
+  }
   function bindUi(){
     const el = C.el;
     el.querySelector(".cmp-bar").addEventListener("click", (e) => {
@@ -945,91 +1041,101 @@ export function createCompare(host){
       else if (a === "loop") setPref("loop", !P.loop);
     });
     const track = el.querySelector(".cmp-track");
-    // Scrubbing (mouse, finger or pen): every clip shows the playhead's frame while it moves; playback that was
-    // running goes on from where it is let go, all clips together (the clock holds until each has landed there).
+    // The timeline: the playhead goes where the pointer is; with Shift held it moves a tenth as fast from there.
     track.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || C.scrub) return;
-      track.setPointerCapture(e.pointerId);
-      C.scrubGen = (C.scrubGen || 0) + 1;
-      armScrubs();
-      for (const l of C.layers) if (l.scrub){
-        l.scrub.hidden = true;
-        l.scrub._settle = false;
-        l.scrub._settleToken = (l.scrub._settleToken || 0) + 1; // drops a hand-off still waiting to hide it
-      }
-      C.scrub = { pid: e.pointerId };
-      const scrub = (ev) => {
-        if (!C || ev.pointerId !== C.scrub?.pid) return;
-        const r = track.getBoundingClientRect(), [lo, hi] = range();
-        setT(lo + clamp((ev.clientX - r.left) / r.width, 0, 1) * (hi - lo), true);
-        C.T = snapT(C.T);
-      };
-      let onWin = null;
-      const dropWin = () => {
-        if (!onWin) return;
-        window.removeEventListener("pointerup", onWin);
-        window.removeEventListener("pointercancel", onWin);
-        onWin = null;
-        if (C && C.dropScrubListeners === dropWin) C.dropScrubListeners = null;
-      };
-      const end = (ev) => {
-        // Compare already closed: the listeners must still come off (close() usually did this).
-        if (!C){ dropWin(); return; }
-        if (ev.pointerId !== C.scrub?.pid) return;
-        C.scrub = null;
-        track.onpointermove = track.onpointerup = track.onpointercancel = track.onlostpointercapture = null;
-        dropWin();
-        queueRelease();
-        // Hold the clock while a clip still has the release time queued behind a seek already in flight.
-        C.wait = false;
-        for (const l of C.layers){
-          if (l.scrub && l.scrub.hidden) releaseScrubDecoder(l.scrub);
-          for (const m of l.media){
-            if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
-          }
-        }
-        C.last = performance.now();
-        C.syncNow = true;
-        paintTime();
-      };
-      scrub(e);
-      track.onpointermove = scrub;
-      track.onpointerup = track.onpointercancel = end;
-      onWin = (ev) => end(ev);
-      C.dropScrubListeners = dropWin;
-      window.addEventListener("pointerup", onWin);
-      window.addEventListener("pointercancel", onWin);
-      // A hardware overlay drops capture while the button is still down (and reports no buttons).
-      // That is not a release — the pointerup still comes. Take capture back so the drag follows.
-      let took = 0;
-      track.onlostpointercapture = (ev) => {
-        if (!C?.scrub || ev.pointerId !== C.scrub.pid || took > 3) return;
-        took++;
-        try { track.setPointerCapture(ev.pointerId); } catch {}
-      };
+      const d = { x: 0, T0: 0, fine: false, rel: false };
+      const abs = (ev) => { const r = track.getBoundingClientRect(), [lo, hi] = range(); return lo + clamp((ev.clientX - r.left) / r.width, 0, 1) * (hi - lo); };
+      startScrub(e, track, (ev) => {
+        // Once Shift has been used the drag stays relative (letting go of Shift must not jump to the pointer).
+        if (ev.shiftKey !== d.fine){ d.fine = ev.shiftKey; d.x = ev.clientX; d.T0 = C.T; if (d.fine) d.rel = true; }
+        if (!d.rel) return abs(ev);
+        const [lo, hi] = range();
+        return d.T0 + (ev.clientX - d.x) / Math.max(1, track.clientWidth) * (hi - lo) * (d.fine ? 0.1 : 1);
+      });
     });
     const layers = el.querySelector(".cmp-layers");
     layers.addEventListener("click", (e) => {
       const b = e.target.closest("button, em");
       const chip = e.target.closest(".cmp-chip");
       if (b?.dataset.a === "add"){ showAddMenu(b); return; }
-      if (!chip) return;
+      if (!chip || performance.now() - offDragAt < 300) return; // (the click that ends an offset slide)
       const id = chip.dataset.id, a = b?.dataset.a;
       if (a === "ref") setRef(id);
-      else if (a === "vis") toggleVis(id);
-      else if (a === "om") shift(id, e.shiftKey ? -10 : -1);
-      else if (a === "op") shift(id, e.shiftKey ? 10 : 1);
       else if (a === "ov") editOffset(id, b);
       else if (a === "snd") setSound(id);
       else if (a === "lb"){ const l = layer(id); close(); host.openInLight?.(l.a); }
       else if (a === "rm") remove(id);
-      else select(id);
+      else {
+        // A plain click on the clip shows / hides it; one it brings back becomes the selected layer.
+        // While annotating a click picks the layer to draw on instead (the picture and ↑ / ↓ are the annotator's).
+        const l = layer(id);
+        if (!l) return;
+        if (e.target.closest(".cmp-off")) return; // (the offset field's padding)
+        if (host.annotating?.()){ if (!l.vis) toggleVis(id); if (C && layer(id)?.vis) select(id); return; }
+        toggleVis(id);
+        if (C && layer(id)?.vis) select(id);
+      }
     });
+    // Middle-click on a clip removes it from the comparison (touch: its ×).
+    layers.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      const chip = e.target.closest(".cmp-chip");
+      if (!chip) return;
+      e.preventDefault();
+      remove(chip.dataset.id);
+    });
+    // The offset field: drag sideways slides the clip on the timeline frame by frame, live (Shift slower);
+    // a click without a move types a number (click handler above).
+    let offDragAt = -1e9;
+    layers.addEventListener("pointerdown", (e) => {
+      if (e.button === 1 && e.target.closest(".cmp-chip")){ e.preventDefault(); return; } // (no autoscroll: a middle-click removes)
+      const em = e.target.closest("em[data-a=ov]");
+      if (!em || e.button !== 0) return;
+      const chip = em.closest(".cmp-chip"), l = layer(chip?.dataset.id);
+      if (!l) return;
+      e.preventDefault();
+      e.stopPropagation(); // (not the chip's hold-to-reorder)
+      chip.draggable = false;
+      try { em.setPointerCapture(e.pointerId); } catch {}
+      const d = { pid: e.pointerId, x: e.clientX, f0: l.start, fine: e.shiftKey, on: false };
+      const PX = 6; // px per frame (Shift: five times that)
+      const move = (ev) => {
+        if (ev.pointerId !== d.pid || !C) return;
+        if (ev.pointerType === "mouse" && !ev.buttons){ up(ev); return; } // released outside the window: no pointerup came
+        if (!d.on){ if (Math.abs(ev.clientX - d.x) < 4) return; d.on = true; d.x = ev.clientX; em.classList.add("drag"); }
+        if (ev.shiftKey !== d.fine){ d.fine = ev.shiftKey; d.x = ev.clientX; d.f0 = l.start; } // no jump when Shift changes
+        const n = d.f0 + Math.round((ev.clientX - d.x) / (PX * (d.fine ? 5 : 1)));
+        if (n === l.start) return;
+        l.start = n;
+        C.syncNow = true;
+        em.textContent = `${n > 0 ? "+" : ""}${n}f`;
+        paintTimeline();
+      };
+      const up = (ev) => {
+        if (ev.pointerId !== d.pid) return;
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        em.classList.remove("drag");
+        if (d.on){ offDragAt = performance.now(); if (C) paintLayers(); }
+      };
+      // (on window: a repaint of the chips mid-drag detaches the field, and its own listeners would go quiet)
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    }, true);
     layers.addEventListener("dragstart", (e) => {
       const chip = e.target.closest(".cmp-chip");
       if (!chip) return;
       e.dataTransfer.setData("text/x-cmp", chip.dataset.id);
       e.dataTransfer.effectAllowed = "move";
+      // The whole chip is the drag picture (the browser's own showed only its text).
+      const r = chip.getBoundingClientRect();
+      const g = chipGhost(chip); // (rendered over the chip itself for this one frame: an off-screen node can paint empty)
+      g.style.left = r.left + "px"; g.style.top = r.top + "px";
+      try { e.dataTransfer.setDragImage(g, e.clientX - r.left, e.clientY - r.top); } catch {}
+      setTimeout(() => g.remove(), 0);
     });
     layers.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("text/x-cmp")) e.preventDefault(); });
     layers.addEventListener("drop", (e) => {
@@ -1072,6 +1178,11 @@ export function createCompare(host){
         h.on = true;
         try { layers.setPointerCapture(h.pid); } catch {}
         chip.classList.add("lift");
+        // The chip follows the finger as a whole block.
+        const r = chip.getBoundingClientRect();
+        h.dx = h.x - r.left; h.dy = h.y - r.top;
+        h.ghost = chipGhost(chip);
+        h.ghost.style.left = r.left + "px"; h.ghost.style.top = r.top + "px";
         navigator.vibrate?.(15);
       }, 400);
       hold = h;
@@ -1081,6 +1192,7 @@ export function createCompare(host){
       if (!h || e.pointerId !== h.pid) return;
       if (!h.on){ if (Math.hypot(e.clientX - h.x, e.clientY - h.y) > 10){ clearTimeout(h.timer); hold = null; } return; }
       e.preventDefault();
+      if (h.ghost){ h.ghost.style.left = (e.clientX - h.dx) + "px"; h.ghost.style.top = (e.clientY - h.dy) + "px"; }
       layers.querySelectorAll(".cmp-chip.dnd-b, .cmp-chip.dnd-a").forEach((c) => c.classList.remove("dnd-b", "dnd-a"));
       const d = dropAt(e.clientX, e.clientY, h.id);
       d.over?.classList.add(d.after ? "dnd-a" : "dnd-b");
@@ -1090,6 +1202,7 @@ export function createCompare(host){
       if (!h || e.pointerId !== h.pid) return;
       clearTimeout(h.timer);
       hold = null;
+      h.ghost?.remove();
       if (!h.on) return;
       heldAt = performance.now();
       clearMarks();
@@ -1128,75 +1241,205 @@ export function createCompare(host){
     window.addEventListener("resize", C.onResize);
   }
   function boxOf(e){ return e.target.closest(".cmp-box, .cmp-cell"); }
-  // While annotating (the annotator asks first, host.passThrough): in swipe a mouse moves a split with Alt held
-  // (as Alt scrubs a video in the viewer), a finger or pen moves the split it lands on — drawing is skipped then.
+  // The split a press grabs: only one within reach of the pointer (a mouse needs to be close, a finger less so).
+  // -1: none, the press is the picture's (scrub / play).
+  function splitNear(e, anyDistance){
+    if (!C || P.layout !== "swipe" || !C.splits.length) return -1;
+    const box = C.stage.querySelector(".cmp-box");
+    if (!box) return -1;
+    const r = box.getBoundingClientRect(), horiz = P.dir === "x";
+    const px = horiz ? e.clientX - r.left : e.clientY - r.top, span = horiz ? r.width : r.height;
+    const reach = anyDistance ? Infinity : e.pointerType === "touch" || e.pointerType === "pen" ? 24 : 10;
+    let k = -1, best = reach;
+    C.splits.forEach((p, i) => { const d = Math.abs(p * span - px); if (d <= best){ best = d; k = i; } });
+    return k;
+  }
+  // While annotating (the annotator asks first, host.passThrough): in swipe a mouse moves the nearest split with
+  // Alt held (as Alt scrubs a video in the viewer), a finger or pen moves the split it lands on — drawing is
+  // skipped then.
   function wantsPress(e){
     if (!C || P.layout !== "swipe" || !C.splits.length || e.button !== 0) return false;
     if (e.altKey) return true;
     if (e.pointerType !== "touch" && e.pointerType !== "pen") return false;
-    const box = C.stage.querySelector(".cmp-box");
-    if (!box) return false;
-    const r = box.getBoundingClientRect(), horiz = P.dir === "x";
-    const px = horiz ? e.clientX - r.left : e.clientY - r.top, span = horiz ? r.width : r.height;
-    return C.splits.some((p) => Math.abs(p * span - px) <= 24);
+    return splitNear(e) >= 0;
   }
+  // The layer a press lands on: a tile's own, or in swipe the region under the pointer.
+  function layerAt(e, box){
+    if (box.classList.contains("cmp-cell")) return box.dataset.id;
+    const vis = visible();
+    if (!vis.length) return null;
+    const r = box.getBoundingClientRect(), horiz = P.dir === "x";
+    const f = horiz ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
+    const edges = [0, ...C.splits, 1];
+    for (let i = 0; i < vis.length; i++) if (f < edges[i + 1] || i === vis.length - 1) return vis[i].id;
+    return null;
+  }
+  // Pointer on the picture, the same as the viewer: a click plays / pauses, a left drag scrubs every clip (the
+  // stage's width is the timeline, Shift a tenth), a right drag zooms, a middle drag (or Alt+left) pans; in
+  // swipe a left press right on a split moves that split. Two fingers pinch-zoom and pan.
+  const touches = new Map();
   function onDown(e){
     const box = boxOf(e);
-    if (!box) return;
-    if (box.classList.contains("cmp-cell")) select(box.dataset.id);
-    // (Alt+left pans in swipe, except while annotating: there Alt+left moves a split, see wantsPress.)
-    const altPan = e.altKey && !host.annotating?.();
-    const pan = e.button === 1 || e.button === 2 || (e.button === 0 && (P.layout !== "swipe" || altPan || !C.splits.length));
-    if (!pan && e.button !== 0) return;
+    if (!box || !C) return;
+    if (e.pointerType === "touch"){
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try { C.stage.setPointerCapture(e.pointerId); } catch {}
+      if (touches.size === 2){ startPinch(box); return; }
+      if (touches.size > 2) return;
+    }
+    if (C.drag) return;
+    const id = layerAt(e, box);
+    if (id && id !== C.sel) select(id);
+    // (Alt+left pans, except while annotating: there Alt+left moves a split, see wantsPress.)
+    const altPan = e.button === 0 && e.altKey && !host.annotating?.();
     e.preventDefault();
-    C.stage.setPointerCapture(e.pointerId);
-    if (pan){
-      C.drag = { kind: "pan", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box, pid: e.pointerId };
+    if (e.button === 1 || altPan){
+      try { C.stage.setPointerCapture(e.pointerId); } catch {}
+      C.drag = { kind: "pan", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box, pid: e.pointerId, fine: e.shiftKey };
+      C.stage.classList.add("panning");
       return;
     }
-    // Swipe: grab the split nearest to the pointer and move it there.
-    const r = box.getBoundingClientRect(), horiz = P.dir === "x";
-    const f = horiz ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
-    let k = 0, best = Infinity;
-    C.splits.forEach((p, i) => { const d = Math.abs(p - f); if (d < best){ best = d; k = i; } });
-    C.drag = { kind: "split", k, box, pid: e.pointerId }; // (only this pointer moves it: a pen drawing meanwhile must not)
-    moveSplit(e);
+    if (e.button === 2){
+      try { C.stage.setPointerCapture(e.pointerId); } catch {}
+      const r = box.getBoundingClientRect();
+      C.drag = { kind: "zoom", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, base: { ...C.view }, box, pid: e.pointerId, fine: e.shiftKey };
+      C.stage.classList.add("zooming");
+      return;
+    }
+    if (e.button !== 0) return;
+    // (annotating, Alt+left is the nearest split's wherever it is: the annotator let the press through for it)
+    const k = splitNear(e, e.altKey && !!host.annotating?.());
+    if (k >= 0){
+      try { C.stage.setPointerCapture(e.pointerId); } catch {}
+      const r = box.getBoundingClientRect(), horiz = P.dir === "x";
+      // (relative to the press: the split does not jump to the pointer, and Shift moves it slower from where it is)
+      C.drag = { kind: "split", k, box, pid: e.pointerId, p0: C.splits[k], at: horiz ? e.clientX : e.clientY, span: horiz ? r.width : r.height, fine: e.shiftKey };
+      return;
+    }
+    // A press: a click if it does not move, a scrub (videos) or a pan (pictures only) once it does.
+    try { C.stage.setPointerCapture(e.pointerId); } catch {}
+    C.drag = { kind: "press", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box, pid: e.pointerId };
+  }
+  function startPinch(box){
+    // A second finger: whatever the first one started stops (a scrub ends where it is), the two pinch.
+    if (C.scrub){ const pid = C.scrub.pid; window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: pid })); }
+    const [a, b] = [...touches.values()];
+    const r = box.getBoundingClientRect();
+    C.drag = { kind: "pinch", box, d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2 - r.left, my: (a.y + b.y) / 2 - r.top,
+      z0: C.view.zoom, cx: C.view.cx, cy: C.view.cy };
   }
   function moveSplit(e){
-    const { k, box } = C.drag, r = box.getBoundingClientRect(), horiz = P.dir === "x";
-    const f = horiz ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
-    const lo = k ? C.splits[k - 1] : 0, hi = k < C.splits.length - 1 ? C.splits[k + 1] : 1;
-    C.splits[k] = clamp(f, lo, hi);
+    const d = C.drag;
+    if (e.shiftKey !== d.fine){ d.fine = e.shiftKey; d.p0 = C.splits[d.k]; d.at = P.dir === "x" ? e.clientX : e.clientY; }
+    const at = P.dir === "x" ? e.clientX : e.clientY;
+    const lo = d.k ? C.splits[d.k - 1] : 0, hi = d.k < C.splits.length - 1 ? C.splits[d.k + 1] : 1;
+    C.splits[d.k] = clamp(d.p0 + (at - d.at) / Math.max(1, d.span) * (d.fine ? 0.1 : 1), lo, hi);
     place();
+  }
+  // Zoom to z keeping the box point (mx, my) — px from the box's top-left — where it is.
+  function zoomAt(box, z, mx, my, base){
+    const ref = refLayer(), W = box.clientWidth, H = box.clientHeight;
+    const rw = ref.nw || 1600, rh = ref.nh || 900, s0 = Math.min(W / rw, H / rh);
+    const b = base || C.view;
+    const ox = mx - W / 2, oy = my - H / 2;
+    const u = b.cx + ox / (rw * s0 * b.zoom), v = b.cy + oy / (rh * s0 * b.zoom);
+    z = clamp(z, 0.1, 64);
+    C.view.zoom = z;
+    C.view.cx = u - ox / (rw * s0 * z);
+    C.view.cy = v - oy / (rh * s0 * z);
+    place();
+  }
+  function hoverCursor(e){
+    if (C.drag || C.scrub) return;
+    const k = e.pointerType === "mouse" && !host.annotating?.() ? splitNear(e) : -1;
+    C.stage.classList.toggle("near-x", k >= 0 && P.dir === "x");
+    C.stage.classList.toggle("near-y", k >= 0 && P.dir !== "x");
   }
   function onMove(e){
-    const d = C?.drag;
-    if (!d || e.pointerId !== d.pid) return;
+    if (!C) return;
+    if (e.pointerType === "touch" && touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const d = C.drag;
+    if (!d){ hoverCursor(e); return; }
+    // The stage was rebuilt mid-drag (a layout / visibility key): a detached box measures 0 and the view would go NaN.
+    if (!d.box.isConnected){
+      if (d.kind === "split"){ C.drag = null; return; }
+      d.box = C.stage.querySelector(".cmp-box, .cmp-cell");
+      if (!d.box){ C.drag = null; return; }
+    }
+    if (d.kind === "pinch"){
+      if (touches.size < 2) return;
+      const [a, b] = [...touches.values()];
+      const r = d.box.getBoundingClientRect();
+      const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
+      zoomAt(d.box, d.z0 * Math.hypot(a.x - b.x, a.y - b.y) / d.d0, d.mx, d.my, { zoom: d.z0, cx: d.cx, cy: d.cy });
+      // ...and the pair's middle drags the picture with it
+      const ref = refLayer(), rw = ref.nw || 1600, rh = ref.nh || 900, s = Math.min(d.box.clientWidth / rw, d.box.clientHeight / rh) * C.view.zoom;
+      C.view.cx -= (mx - d.mx) / (rw * s);
+      C.view.cy -= (my - d.my) / (rh * s);
+      place();
+      return;
+    }
+    if (e.pointerId !== d.pid) return;
     if (d.kind === "split"){ moveSplit(e); return; }
+    if (d.kind === "press"){
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return;
+      if (vids().length){
+        // Scrub: the stage's width covers the whole timeline (Shift: a tenth), from where the playhead is.
+        const pid = d.pid, w = Math.max(1, C.stage.clientWidth);
+        const s = { x: e.clientX, T0: C.T, fine: e.shiftKey };
+        C.drag = null;
+        C.stage.classList.add("scrubbing");
+        C.onScrubEnd = () => { C.onScrubEnd = null; C.stage.classList.remove("scrubbing"); };
+        startScrub(e, C.stage, (ev) => {
+          if (ev.shiftKey !== s.fine){ s.fine = ev.shiftKey; s.x = ev.clientX; s.T0 = C.T; }
+          const [lo, hi] = range();
+          return s.T0 + (ev.clientX - s.x) / w * (hi - lo) * (s.fine ? 0.1 : 1);
+        });
+        if (C.scrub?.pid !== pid) C.stage.classList.remove("scrubbing");
+        return;
+      }
+      d.kind = "pan"; d.fine = e.shiftKey; // pictures only: a left drag pans, as before
+      C.stage.classList.add("panning");
+    }
+    if (d.kind === "zoom"){
+      // Right-drag zoom, the viewer's settings (axis, speed, invert); Shift slower.
+      const t = host.getZoomSettings?.() || {};
+      if (!d.base || e.shiftKey !== d.fine){ d.fine = e.shiftKey; d.x = e.clientX; d.y = e.clientY; d.base = { ...C.view }; } // (no jump)
+      const raw = t.zoomAxis === "x" ? (e.clientX - d.x) : (d.y - e.clientY);
+      const k = (t.zoomInvert ? -raw : raw) * 0.012 * (t.zoomSpeed ?? 1) * (d.fine ? 0.2 : 1);
+      zoomAt(d.box, d.base.zoom * Math.exp(k), d.mx, d.my, d.base);
+      return;
+    }
+    // pan (Shift: slower)
+    if (e.shiftKey !== d.fine){ d.fine = e.shiftKey; d.x = e.clientX; d.y = e.clientY; d.cx = C.view.cx; d.cy = C.view.cy; }
     const ref = refLayer(), W = d.box.clientWidth, H = d.box.clientHeight;
-    const rw = ref.nw || 1600, rh = ref.nh || 900, s = Math.min(W / rw, H / rh) * C.view.zoom;
-    C.view.cx = d.cx - (e.clientX - d.x) / (rw * s);
-    C.view.cy = d.cy - (e.clientY - d.y) / (rh * s);
+    const rw = ref.nw || 1600, rh = ref.nh || 900, s = Math.min(W / rw, H / rh) * C.view.zoom, f = d.fine ? 0.2 : 1;
+    C.view.cx = d.cx - (e.clientX - d.x) * f / (rw * s);
+    C.view.cy = d.cy - (e.clientY - d.y) * f / (rh * s);
     place();
   }
-  function onUp(e){ if (C && (!C.drag || e.pointerId === C.drag.pid)) C.drag = null; }
+  function onUp(e){
+    if (e.pointerType === "touch") touches.delete(e.pointerId);
+    if (!C) return;
+    const d = C.drag;
+    if (!d) return;
+    if (d.kind === "pinch"){ if (touches.size === 0) C.drag = null; return; }
+    if (e.pointerId !== d.pid) return;
+    C.drag = null;
+    C.stage.classList.remove("panning", "zooming");
+    // A click (no move): play / pause, as on the viewer's picture.
+    if (d.kind === "press" && e.type === "pointerup") togglePlay();
+  }
   function onWheel(e){
     const box = boxOf(e);
     if (!box) return;
     e.preventDefault();
-    const ref = refLayer(), r = box.getBoundingClientRect(), W = r.width, H = r.height;
-    const rw = ref.nw || 1600, rh = ref.nh || 900;
-    const s0 = Math.min(W / rw, H / rh), w0 = rw * s0 * C.view.zoom, h0 = rh * s0 * C.view.zoom;
-    const mx = e.clientX - r.left - W / 2, my = e.clientY - r.top - H / 2;
-    const u = C.view.cx + mx / w0, v = C.view.cy + my / h0;
+    const r = box.getBoundingClientRect();
     // The viewer-wide zoom settings (Speed, Invert) as the other viewers use them; the axis is not
     // a wheel setting, so the wheel is the same for both drag axes.
     const zs = host.getZoomSettings?.() || {};
-    const z = clamp(C.view.zoom * Math.exp((zs.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (zs.zoomSpeed ?? 1)), 0.1, 64);
-    C.view.zoom = z;
-    C.view.cx = u - mx / (rw * s0 * z);
-    C.view.cy = v - my / (rh * s0 * z);
-    place();
+    const dy = e.deltaY || (e.shiftKey ? e.deltaX : 0); // (Shift turns the wheel sideways in most browsers)
+    zoomAt(box, C.view.zoom * Math.exp((zs.zoomInvert ? dy : -dy) * 0.0016 * (zs.zoomSpeed ?? 1) * (e.shiftKey ? 0.2 : 1)), e.clientX - r.left, e.clientY - r.top);
   }
   // 100 % of the reference's own pixels.
   function actual(){
@@ -1358,7 +1601,7 @@ function injectStyles(){
 .cmp-b.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .cmp-b[hidden] { display: none; }
 .cmp-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: grid; gap: 2px; background: #000; touch-action: none; user-select: none; }
-.cmp-stage.grid, .cmp-stage.row, .cmp-stage.col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
+.cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
 .cmp-ly { position: absolute; inset: 0; pointer-events: none; }
@@ -1379,7 +1622,9 @@ function injectStyles(){
 .cmp-split b { position: absolute; width: 14px; height: 30px; border-radius: 7px; background: #fff; box-shadow: 0 1px 6px rgb(0 0 0 / .6); }
 .cmp-split.x b { left: -8px; top: calc(50% - 15px); }
 .cmp-split.y b { top: -8px; left: calc(50% - 15px); width: 30px; height: 14px; }
-.cmp-stage.swipe { grid-template: minmax(0, 1fr) / minmax(0, 1fr); cursor: ew-resize; }
+.cmp-stage.lay-swipe { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.cmp-stage.near-x { cursor: ew-resize; } .cmp-stage.near-y { cursor: ns-resize; }
+.cmp-stage.scrubbing { cursor: ew-resize; } .cmp-stage.panning { cursor: grabbing; } .cmp-stage.zooming { cursor: zoom-in; }
 .cmp-empty { display: grid; place-items: center; color: var(--subtle); }
 .cmp-foot { flex: none; border-top: 1px solid var(--border); background: var(--surface, #1b1c20); padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
 .cmp-tl { display: flex; align-items: center; gap: 6px; }
@@ -1403,7 +1648,11 @@ function injectStyles(){
 .cmp-chip button:hover { color: var(--fg); background: var(--surface-3, #2a2b31); }
 .cmp-chip button.on { color: #ffd60a; }
 .cmp-off { display: inline-flex; align-items: center; gap: 1px; padding: 0 2px; border-radius: 5px; background: rgb(0 0 0 / .25); }
-.cmp-off em { font-style: normal; min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; cursor: text; }
+.cmp-off em { font-style: normal; min-width: 38px; padding: 0 3px; text-align: center; font-variant-numeric: tabular-nums; cursor: ew-resize; touch-action: none; }
+.cmp-off em.drag { color: var(--accent); }
+.cmp-bar .btn.on { color: var(--accent); border-color: var(--accent); }
+.cmp-bar .an-btn { position: relative; }
+.cmp-ghost { position: fixed; z-index: 70; pointer-events: none; opacity: .92; box-shadow: 0 8px 22px rgb(0 0 0 / .55); background: var(--surface-2, #26272c); border-color: var(--accent) !important; }
 .cmp-offin { width: 44px; font: inherit; color: var(--fg); background: var(--bg, #111); border: 1px solid var(--accent); border-radius: 4px; padding: 0 3px; outline: none; }
 .cmp-menu { position: fixed; z-index: 61; display: flex; flex-direction: column; padding: 4px; min-width: 220px; max-height: 50vh; overflow: auto; border-radius: 10px; background: rgb(22 22 25 / .97); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .5); }
 .cmp-menu[hidden] { display: none; }
