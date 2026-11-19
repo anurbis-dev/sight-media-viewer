@@ -27,6 +27,7 @@ app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: 
                          textureQuad), the animation player (createAnimator), USD reading (parseUsd / usdAsSight) and
                          splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
+app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, zoom factors) — see Compare
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
@@ -792,10 +793,15 @@ each clip's scrub proxy when that copy can; until then the picture holds and the
 clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. Reference copies under Difference tiles are
 canvases painted from its one `<video>`. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox. The stage's layout class is `lay-<layout>` (a bare `row` is the
-sidebar's menu-row class and collapses the stage). Stage input (`onDown` / `onMove` / `onUp`): a left press is
-`press` → click = `togglePlay`, a move ≥ 4 px = `startScrub(e, stage, timeAt)` (the same scrub path as the timeline:
-`C.scrub`, proxies, `queueRelease`); a split is grabbed only within 10 px (finger / pen 24 px, `splitNear`);
-right = zoom (`zoomAt`, the viewer's zoom settings), middle / Alt = pan, two touches = pinch. Shift rebases a drag
+sidebar's menu-row class and collapses the stage). Stage input goes through `viewer-input.js` `attachViewerInput(stage, …)`
+(`C.input`, destroyed in `close`): the module owns the press / click / drag decision (4 px, the 250 ms click hold —
+`dropClick()` cancels it), Shift-fine, pointer capture (retaken ≤ 3× on `lostpointercapture`), window up / cancel
+fallbacks, the touch map and the pinch (its only capture-phase listeners: a second finger stops propagation, ends the
+first finger's gesture and calls `abortOthers` — the annotator's `abortGesture`, a timeline scrub). Callbacks are
+incremental: `pan(dx, dy)` CSS px, `zoom(factor, clientX, clientY)` about a point; `scrub.to(frac)` is cumulative from
+the drag start. A mode's own drag is a `claim` (compare: a split within 10 px, finger / pen 24 px, `splitNear`;
+Alt+left → `"pan"`). The picture scrub shares `scrubBegin` / `scrubTo` / `scrubEnd` with the timeline's own
+`startScrub` (`C.scrub`, proxies, `queueRelease`); right = zoom (`zoomAt`, the viewer's zoom settings), middle / Alt = pan, two touches = pinch. Shift rebases a drag
 and slows it (scrub / track ×0.1, zoom / pan ×0.2, offset 6 px → 30 px per frame; once Shift has been used, the timeline drag stays relative). The compare annotator has
 `readPanel` on, with `notesBtn` / `eyeBtn` pointing at the compare bar's own buttons; it binds the selected layer
 on every `onView`, drawing or not.

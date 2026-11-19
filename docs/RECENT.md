@@ -14,6 +14,13 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.94.2 — 2026-11-19 — Shared viewer input module; Compare runs on it
+- **What:** stage 1 of `docs/PLAN-viewer-input.md`. New `app/static/viewer-input.js` (`attachViewerInput`, `zoomFactorDrag`, `zoomFactorWheel`, `wheelDelta`): the press / click / drag decision, the 250 ms click hold, Shift-fine, right-drag / wheel zoom maths, pan, pinch, pointer capture and its retake, window fallbacks. Compare's picture input now goes through it; the behaviour is meant to be unchanged (click, double-click, scrub, split, zoom, pan, wheel, touch tap / scrub / pinch).
+- **Where:** viewer-input.js (new); compare.js (`bindStageInput`, `splitDrag`, `liveBox`; `startScrub` split into `scrubBegin` / `scrubTo` / `scrubEnd` — the timeline keeps its own absolute drag; `onDown` / `onMove` / `onUp` / `startPinch` / `onWheel` / `touches` / `C.clickT` / `C.drag` / `C.onScrubEnd` gone); index.html cmp host `abortAnnot`; ARCHITECTURE, PLAN-viewer-input ("As built").
+- **Notes:** callbacks are incremental (`pan` px, `zoom` factor about a client point), `scrub.to(frac)` cumulative. A second finger is caught in the stage's capture phase: it now also drops a stroke the compare annotator's first finger began (`abortGesture`) — before, the box-level annotator kept the first finger and the pinch did not start while drawing. A mouse move with no buttons ends a drag (not after a capture loss in it). Next: stage 2, the lightbox's `attachViewer`.
+- Review (fresh agent): no high-severity bugs; a stage press while a timeline scrub ran panned the picture (now a dead claim); a throwing end in `destroy` could leave window listeners (try/catch); a double-click between tiles no longer fitted (`dblclick` is not gated by `canStart` now); PLAN stage-1 text fixed. Left: a buttonless mouse move ends a drag unless capture was lost first (per spec capture loss comes first — check the 0.92.1 overlay case on Windows); a finger on an annotator control inside the box counts toward a pinch (stage 2 note); `close` mid-scrub runs `scrubEnd` on media about to be released (harmless).
+- The same reviewer confirmed every fix and found nothing new (side effect: a tap on the stage during a timeline scrub no longer toggles play — intended).
+
 ## 0.94.1 — 2026-11-19 — Annotation select tool: Ctrl / Shift as in the library grid, 2D too
 - **What:** owner: Ctrl in the select tool works as in the main window — Ctrl+click toggles a drawing, Ctrl+drag draws a box even when it starts on a drawing and toggles what it covers; Shift adds (Shift+click, Shift+drag on empty space, Ctrl+Shift+drag). Now in 2D as well as 3D (0.94.0 had limited it to 3D).
 - **Where:** annotate.js select branch of `onDown` (the Ctrl marquee no longer gated to `model3d`; a Shift+click on a drawing adds, it used to toggle; the empty-space box clears unless Shift, `toggle: false`), cursor (`S.ctrlHeld` → default everywhere), the select hint; MANUAL.
@@ -201,37 +208,3 @@ Add new entries directly below this line.
   outside the row left the drag stuck → cleared on a buttonless move; a leftover `eat` swallowed one keyboard
   click after a touch drag → cleared on the next task. The test now asserts the full scroll. Confirmed by the
   same reviewer.
-
-## 0.88.0 — 2026-11-18 — Phone: the sequence bar under the timeline, title swipe between clips
-- **What:** owner: like Sight, a group's videos should play and scrub across the cuts, not one by one. A review
-  whose group has 2+ videos now has a bar under the clip's own timeline with every video as a segment (name, current one
-  highlighted, note / drawing ticks, playhead across all); tap / drag it to move through the whole sequence,
-  playing runs on into the next clip (loop: the first after the last), a scrub on the picture past a clip's
-  edge carries on into the neighbour, the last frame is held until the next clip shows. Swiping the header's
-  title sideways switches clips (left = next) for any group, pictures and 3D included.
-- **Where:** mobile/js/app.js (`bindTitleSwipe`, `seqInfo` / `seqLoad` / `seqGeom` / `seqAt` / `renderSeqBar` /
-  `paintSeqPh` / `bindSeqBar` / `seqDragBegin` … `seqDragEnd` / `seqDragTo` / `seqSwitch` / `seqEnded` /
-  `seqApply` / `seqHold*` / `seqStop`; `buildStage` video branch; `bindStage` scrub hand-over; `scrubDelta`
-  (+ `scrubStep` wrapper); `openReviewNow` opts.seq, rate / clean carried; `setLoop`, `paintTime`,
-  `paintMarkers`), mobile/index.html (`.sqb`, `.seqhold`, `.ttl.swipe`), tests/pwa_e2e.cjs `seqbar`,
-  tests/test_pwa.py `test_seq_bar`, MANUAL, ARCHITECTURE.
-- **Notes:** each clip is still its own review (notes, drawings, exports untouched); a cut = one `openReview`
-  with `{replace, seq}`, so history stays one entry. Drags live on window listeners (`seqDrag`) because the
-  bar / stage are rebuilt at a cut. Not done: preloading the next clip (Sight's seamless adopt) — a cut on the
-  phone costs one open, hidden by the held frame. Pictures / 3D models are not on the bar (videos only); a clip
-  without its file on the phone stays a dimmed segment and stops playback there. No cut while drawing or with an
-  unsent note (`seqLocked`: the drag holds at the clip's edge, play stops at the end); ‹ › / title swipe /
-  Page keys ask first when a draft would be lost. `ended` goes on only after real play (`R.playOn`: a paused
-  seek to the very end also fires `ended`).
-- Review (fresh agent): a cut dropped a drawing session / unsent draft → `seqLocked`; a touch drag lost its
-  events on iOS once its target was detached → the target is moved into a hidden `.seqkeep` holder at the
-  rebuild (`seqKeepTarget` in renderReview; first version moved it too early and blanked the held frame) +
-  touchend safety net; paused seek to the end cut → `R.playOn`; hold not watched on a direct seek; a new
-  pointer on the new stage mid-drag; panel / filter / hide reset at each cut → carried on `opts.seq`; geometry
-  bounced at a cut when a length was guessed → frozen per drag (`seqDrag.G`); seqGo dropped drafts → asks
-  (one dialog at a time: no ask while any sheet is open — a flag got stuck when the sheet was closed by its
-  backdrop / Back); deleted-clip path repaints the header. All confirmed by the same reviewer.
-- Checked (owner asked): scrub on the picture across the cut both ways, mouse and CDP touch, screencast of a
-  test clip whose brightness tracks time: no black / blank frame, no flash of the wrong end of the next clip,
-  the drag carries on at once (≈ 3–4 frames of held picture at a cut). Found and fixed there: the big Play
-  button flashed over the picture at each cut → not added on a clip reached through the sequence (`seqPend`).

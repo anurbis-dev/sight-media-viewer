@@ -2,7 +2,8 @@
 
 Owner's request (after 0.93.0, written in 0.93.1): the picture should handle the mouse, pen and touch the same way in every viewing mode, and
 the code for that should be written once and reused everywhere. Today every mode has its own copy. This file is the
-plan for a fresh session. Nothing in it is implemented yet.
+plan for a fresh session. **Stage 1 is done (0.94.2)**: `app/static/viewer-input.js` exists and compare runs on it;
+the API as built differs from the sketch below in a few places (see "As built").
 
 ## Where the input lives today
 
@@ -73,10 +74,24 @@ What it owns, so no viewer re-implements it:
   — and starts the pinch;
 - a mouse move with no buttons held = a release that never came.
 
+## As built (stage 1)
+
+- `claim(e)` may return `"pan"` / `"zoom"` (the built-in drag for that press, compare's Alt+left) besides a handler;
+  it is asked on every press the module may take, so it also notes the press (compare selects the layer).
+- `pan(dx, dy, down)` and `zoom(factor, clientX, clientY, down)` are **incremental** (since the last call) and in
+  client coordinates; `down` is the press event, for a viewer that measures the pressed box. An anchored right-drag
+  is the same as incremental zooms about the press point, except at the zoom clamp (it follows back at once).
+- `scrub.to(frac, ev)`: `frac` is cumulative since the drag start (Shift-fine applied per move), so a viewer that
+  snaps its time each move (compare) does not lose sub-frame motion.
+- `onDrag(kind)` for cursors; `busy()` for hover code; `dropClick()` for Space / ▶ / a pause while a click is held.
+- Touch fingers are tracked in capture-phase listeners on `el` and on window (up / cancel); a second finger stops
+  propagation (the annotator below never sees it) and calls `abortOthers`.
+- A mouse move with no buttons ends the drag, but not after a `lostpointercapture` in that drag (0.92.1's overlay).
+
 ## Stages (one review per stage, per CLAUDE.md)
 
-1. **Module + compare.** Write `viewer-input.js`; move compare.js onto it (the stage scrub keeps its `startScrub`
-   path: the module's `scrub.begin` calls it, the timeline keeps its own absolute drag). Splits go through `claim`.
+1. **(done, 0.94.2) Module + compare.** Write `viewer-input.js`; move compare.js onto it (as built: `startScrub` was split
+   into `scrubBegin` / `scrubTo` / `scrubEnd`; the module's `scrub` calls those, only the timeline's own absolute drag uses `startScrub`). Splits go through `claim`.
    Playwright: the 0.93.0 checks (click, dblclick does not toggle, scrub, split only near, right-drag zoom, Shift,
    CDP touch tap / scrub / pinch, close with a finger down, layout rebuild mid-drag).
 2. **Lightbox 2D.** Move `attachViewer`'s pointer code onto the module: Alt turn and Ctrl+Alt video turn via `claim`,

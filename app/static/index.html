@@ -1261,6 +1261,7 @@ const cmp = createCompare({
   onPlaced: () => cmpAnnot.viewChanged(),
   onAnnotButton: () => cmpToggleAnnot(),
   annotating: () => cmpAnnot.isOn(),
+  abortAnnot: () => cmpAnnot.abortGesture(), // a second finger: a pinch drops the stroke the first one began
   onClose: () => {
     cmpAnnot.unmount();
     cmpAnnotAsset = null; cmpView = null;

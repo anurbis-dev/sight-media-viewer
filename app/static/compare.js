@@ -35,6 +35,7 @@
 
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
+import { attachViewerInput } from "/static/viewer-input.js";
 
 const COLORS = ["#4c9aff", "#ff9f0a", "#34c759", "#ff453a", "#af52de", "#32ade6", "#ffd60a", "#ff6482"];
 const LAYOUTS = [["swipe", "Swipe", "Digit1"], ["grid", "Tile", "Digit2"], ["row", "Row", "Digit3"], ["col", "Column", "Digit4"]];
@@ -94,7 +95,6 @@ export function createCompare(host){
     if (assets.length < 1) return false;
     if (session && assets.length < 2) return false; // a stored comparison with one file left is no comparison
     if (C) close();
-    touches.clear();
     const el = document.createElement("div");
     el.className = "cmp";
     // The right end of the bar is the lightbox's (notes, eye, compare, annotate, close), so every viewer looks alike.
@@ -130,7 +130,7 @@ export function createCompare(host){
     document.body.appendChild(el);
     C = {
       el, stage: el.querySelector(".cmp-stage"), layers: [], ref: null, sel: null, sound: null, splits: [],
-      view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0, drag: null,
+      view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0,
       candidates: [], built: "",
     };
     host.onOpen?.(el); // (the annotator mounts on the overlay before the first rebuild reports a viewer)
@@ -162,14 +162,13 @@ export function createCompare(host){
     if (!C) return;
     // A drag registers window listeners that finish it. Drop them before C goes away, or the
     // release after a mid-drag close keeps the detached compare, and the next drag's listener leaks.
+    C.input?.destroy(); // (ends a picture drag, forgets fingers still down: they never send a pointerup here)
     C.dropScrubListeners?.();
     C.scrub = null;
-    touches.clear(); // (a finger still down when it closes never sends its pointerup to the removed stage)
     host.onClose?.();
     C.ro?.disconnect();
     if (C.pBase) P = prefsToSave();
     cancelAnimationFrame(C.raf);
-    clearTimeout(C.clickT);
     if (C.onResize) window.removeEventListener("resize", C.onResize);
     for (const l of C.layers){ dropScrub(l); for (const m of l.media) releaseMedia(m); }
     C.el.remove();
@@ -577,7 +576,7 @@ export function createCompare(host){
   function step(n){ setT(snapT(C.T) + n / C.fps); }
   // A click on the picture waiting out its 250 ms (a double-click may still come) is dropped by anything else
   // that plays, pauses or seeks first (Space, ▶, a pinch, the annotator), or it would undo that a moment later.
-  function dropClick(){ if (C?.clickT){ clearTimeout(C.clickT); C.clickT = 0; } }
+  function dropClick(){ C?.input?.dropClick(); }
   function togglePlay(){
     dropClick();
     if (!vids().length) return;
@@ -942,9 +941,9 @@ export function createCompare(host){
   // Scrubbing (mouse, finger or pen), from the timeline or a drag on the picture: every clip shows the playhead's
   // frame while it moves; playback that was running goes on from where it is let go, all clips together (the clock
   // holds until each has landed there). timeAt(ev) — the playhead for this pointer position.
-  function startScrub(e, cap, timeAt){
+  // scrubBegin / scrubEnd: the shared part (the timeline's own drag below, the picture's through viewer-input).
+  function scrubBegin(pid){
     if (!C || C.scrub) return false;
-    try { cap.setPointerCapture(e.pointerId); } catch {}
     C.scrubGen = (C.scrubGen || 0) + 1;
     armScrubs();
     for (const l of C.layers) if (l.scrub){
@@ -952,11 +951,35 @@ export function createCompare(host){
       l.scrub._settle = false;
       l.scrub._settleToken = (l.scrub._settleToken || 0) + 1; // drops a hand-off still waiting to hide it
     }
-    C.scrub = { pid: e.pointerId };
+    C.scrub = { pid };
+    return true;
+  }
+  function scrubTo(t){
+    setT(t, true);
+    C.T = snapT(C.T);
+  }
+  function scrubEnd(){
+    C.scrub = null;
+    queueRelease();
+    // Hold the clock while a clip still has the release time queued behind a seek already in flight.
+    C.wait = false;
+    for (const l of C.layers){
+      if (l.scrub && l.scrub.hidden) releaseScrubDecoder(l.scrub);
+      for (const m of l.media){
+        if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
+      }
+    }
+    C.last = performance.now();
+    C.syncNow = true;
+    paintTime();
+  }
+  // The timeline's drag (absolute: the playhead goes where the pointer is). The picture's goes through viewer-input.
+  function startScrub(e, cap, timeAt){
+    if (!scrubBegin(e.pointerId)) return false;
+    try { cap.setPointerCapture(e.pointerId); } catch {}
     const scrub = (ev) => {
       if (!C || ev.pointerId !== C.scrub?.pid) return;
-      setT(timeAt(ev), true);
-      C.T = snapT(C.T);
+      scrubTo(timeAt(ev));
     };
     let onWin = null;
     const detach = () => {
@@ -977,21 +1000,8 @@ export function createCompare(host){
       // Compare already closed: the listeners must still come off (close() usually did this).
       if (!C){ dropWin(); return; }
       if (ev.pointerId !== C.scrub?.pid) return;
-      C.scrub = null;
       dropWin();
-      queueRelease();
-      // Hold the clock while a clip still has the release time queued behind a seek already in flight.
-      C.wait = false;
-      for (const l of C.layers){
-        if (l.scrub && l.scrub.hidden) releaseScrubDecoder(l.scrub);
-        for (const m of l.media){
-          if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
-        }
-      }
-      C.last = performance.now();
-      C.syncNow = true;
-      paintTime();
-      C.onScrubEnd?.();
+      scrubEnd();
     }
     // A hardware overlay drops capture while the button is still down (and reports no buttons).
     // That is not a release — the pointerup still comes. Take capture back so the drag follows.
@@ -1235,13 +1245,9 @@ export function createCompare(host){
     });
     el.addEventListener("pointerdown", (e) => { if (!menu.hidden && !e.target.closest(".cmp-menu, [data-a=add]")) menu.hidden = true; }, true);
     const st = C.stage;
-    st.addEventListener("pointerdown", onDown);
-    st.addEventListener("pointermove", onMove);
-    st.addEventListener("pointerup", onUp);
-    st.addEventListener("pointercancel", onUp);
+    C.input = bindStageInput(st);
+    st.addEventListener("pointermove", (e) => { if (C && !C.input.busy() && !C.scrub) hoverCursor(e); });
     st.addEventListener("contextmenu", (e) => e.preventDefault());
-    st.addEventListener("dblclick", () => { clearTimeout(C.clickT); C.clickT = 0; fit(); });
-    st.addEventListener("wheel", onWheel, { passive: false });
     C.onResize = () => place();
     window.addEventListener("resize", C.onResize);
   }
@@ -1279,68 +1285,96 @@ export function createCompare(host){
     for (let i = 0; i < vis.length; i++) if (f < edges[i + 1] || i === vis.length - 1) return vis[i].id;
     return null;
   }
-  // Pointer on the picture, the same as the viewer: a click plays / pauses, a left drag scrubs every clip (the
-  // stage's width is the timeline, Shift a tenth), a right drag zooms, a middle drag (or Alt+left) pans; in
-  // swipe a left press right on a split moves that split. Two fingers pinch-zoom and pan.
-  const touches = new Map();
-  function onDown(e){
-    const box = boxOf(e);
-    if (!box || !C) return;
-    if (e.pointerType === "touch"){
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      try { C.stage.setPointerCapture(e.pointerId); } catch {}
-      if (touches.size === 2){ startPinch(box); return; }
-      if (touches.size > 2) return;
-    }
-    if (C.drag) return;
-    const id = layerAt(e, box);
-    if (id && id !== C.sel) select(id);
-    // (Alt+left pans, except while annotating: there Alt+left moves a split, see wantsPress.)
-    const altPan = e.button === 0 && e.altKey && !host.annotating?.();
-    e.preventDefault();
-    if (e.button === 1 || altPan){
-      try { C.stage.setPointerCapture(e.pointerId); } catch {}
-      C.drag = { kind: "pan", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box, pid: e.pointerId, fine: e.shiftKey };
-      C.stage.classList.add("panning");
-      return;
-    }
-    if (e.button === 2){
-      try { C.stage.setPointerCapture(e.pointerId); } catch {}
-      const r = box.getBoundingClientRect();
-      C.drag = { kind: "zoom", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, base: { ...C.view }, box, pid: e.pointerId, fine: e.shiftKey };
-      C.stage.classList.add("zooming");
-      return;
-    }
-    if (e.button !== 0) return;
-    // (annotating, Alt+left is the nearest split's wherever it is: the annotator let the press through for it)
-    const k = splitNear(e, e.altKey && !!host.annotating?.());
-    if (k >= 0){
-      try { C.stage.setPointerCapture(e.pointerId); } catch {}
-      const r = box.getBoundingClientRect(), horiz = P.dir === "x";
-      // (relative to the press: the split does not jump to the pointer, and Shift moves it slower from where it is)
-      C.drag = { kind: "split", k, box, pid: e.pointerId, p0: C.splits[k], at: horiz ? e.clientX : e.clientY, span: horiz ? r.width : r.height, fine: e.shiftKey };
-      return;
-    }
-    // A press: a click if it does not move, a scrub (videos) or a pan (pictures only) once it does.
-    try { C.stage.setPointerCapture(e.pointerId); } catch {}
-    C.drag = { kind: "press", x: e.clientX, y: e.clientY, cx: C.view.cx, cy: C.view.cy, box, pid: e.pointerId };
+  // Pointer on the picture, the same as the viewer (viewer-input.js): a click plays / pauses, a left drag scrubs
+  // every clip (the stage's width is the timeline, Shift a tenth; pictures only: it pans), a right drag zooms,
+  // a middle drag (or Alt+left) pans; in swipe a left press right on a split moves that split. Two fingers
+  // pinch-zoom and pan.
+  // The box a gesture measures: the pressed one, or after a rebuild mid-drag (a layout / visibility key) any
+  // (a detached box measures 0 and the view would go NaN).
+  function liveBox(down){
+    const b = down?.target?.closest?.(".cmp-box, .cmp-cell");
+    return b && b.isConnected ? b : C.stage.querySelector(".cmp-box, .cmp-cell");
   }
-  function startPinch(box){
-    // A second finger: whatever the first one started stops (a scrub ends where it is), the two pinch.
-    dropClick();
-    if (C.scrub){ const pid = C.scrub.pid; window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: pid })); }
-    const [a, b] = [...touches.values()];
-    const r = box.getBoundingClientRect();
-    C.drag = { kind: "pinch", box, d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2 - r.left, my: (a.y + b.y) / 2 - r.top,
-      z0: C.view.zoom, cx: C.view.cx, cy: C.view.cy };
+  function bindStageInput(st){
+    let s = null; // the picture scrub: the playhead it started from
+    return attachViewerInput(st, {
+      canStart: (e) => !!C && !!boxOf(e),
+      claim: (e) => {
+        const box = boxOf(e);
+        const id = layerAt(e, box);
+        if (id && id !== C.sel) select(id);
+        // A timeline scrub is running (another finger): this press does nothing, it must not pan the picture.
+        if (C.scrub) return {};
+        // (Alt+left pans, except while annotating: there Alt+left moves a split, see wantsPress.)
+        if (e.button === 0 && e.altKey && !host.annotating?.()) return "pan";
+        if (e.button !== 0) return null;
+        // (annotating, Alt+left is the nearest split's wherever it is: the annotator let the press through for it)
+        const k = splitNear(e, e.altKey && !!host.annotating?.());
+        return k >= 0 ? splitDrag(e, box, k) : null;
+      },
+      click: () => { if (C) togglePlay(); },
+      dblclick: () => { if (C) fit(); },
+      scrub: {
+        begin: (e) => {
+          if (!C || !vids().length || !scrubBegin(e.pointerId)) return false;
+          s = { T0: C.T };
+          return true;
+        },
+        to: (frac) => {
+          if (!C || !s) return;
+          const [lo, hi] = range();
+          scrubTo(s.T0 + frac * (hi - lo));
+        },
+        end: () => { s = null; if (C?.scrub) scrubEnd(); },
+      },
+      scrubWidth: () => C?.stage.clientWidth || 1,
+      pan: (dx, dy, down) => {
+        if (!C) return;
+        const box = liveBox(down);
+        if (!box) return;
+        const ref = refLayer(), rw = ref.nw || 1600, rh = ref.nh || 900;
+        const sc = Math.min(box.clientWidth / rw, box.clientHeight / rh) * C.view.zoom;
+        if (!(sc > 0)) return;
+        C.view.cx -= dx / (rw * sc);
+        C.view.cy -= dy / (rh * sc);
+        place();
+      },
+      zoom: (f, x, y, down) => {
+        if (!C) return;
+        const box = liveBox(down);
+        if (!box || !box.clientWidth) return;
+        const r = box.getBoundingClientRect();
+        zoomAt(box, C.view.zoom * f, x - r.left, y - r.top);
+      },
+      zoomSettings: () => host.getZoomSettings?.() || {},
+      onDrag: (k) => {
+        if (!C) return;
+        C.stage.classList.toggle("panning", k === "pan");
+        C.stage.classList.toggle("zooming", k === "zoom");
+        C.stage.classList.toggle("scrubbing", k === "scrub");
+      },
+      // A second finger: the annotator's stroke is dropped, a timeline scrub ends where it is.
+      abortOthers: () => {
+        host.abortAnnot?.();
+        if (C?.scrub) window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: C.scrub.pid }));
+      },
+    });
   }
-  function moveSplit(e){
-    const d = C.drag;
-    if (e.shiftKey !== d.fine){ d.fine = e.shiftKey; d.p0 = C.splits[d.k]; d.at = P.dir === "x" ? e.clientX : e.clientY; }
-    const at = P.dir === "x" ? e.clientX : e.clientY;
-    const lo = d.k ? C.splits[d.k - 1] : 0, hi = d.k < C.splits.length - 1 ? C.splits[d.k + 1] : 1;
-    C.splits[d.k] = clamp(d.p0 + (at - d.at) / Math.max(1, d.span) * (d.fine ? 0.1 : 1), lo, hi);
-    place();
+  // A split drag, relative to the press: the split does not jump to the pointer, and Shift moves it slower
+  // from where it is.
+  function splitDrag(e, box, k){
+    const r = box.getBoundingClientRect(), horiz = P.dir === "x";
+    const d = { p0: C.splits[k], at: horiz ? e.clientX : e.clientY, span: horiz ? r.width : r.height, fine: e.shiftKey };
+    return {
+      move: (ev) => {
+        if (!C || !box.isConnected || k >= C.splits.length) return; // (rebuilt mid-drag: the split is gone)
+        const at = P.dir === "x" ? ev.clientX : ev.clientY;
+        if (ev.shiftKey !== d.fine){ d.fine = ev.shiftKey; d.p0 = C.splits[k]; d.at = at; }
+        const lo = k ? C.splits[k - 1] : 0, hi = k < C.splits.length - 1 ? C.splits[k + 1] : 1;
+        C.splits[k] = clamp(d.p0 + (at - d.at) / Math.max(1, d.span) * (d.fine ? 0.1 : 1), lo, hi);
+        place();
+      },
+    };
   }
   // Zoom to z keeping the box point (mx, my) — px from the box's top-left — where it is.
   function zoomAt(box, z, mx, my, base){
@@ -1356,101 +1390,9 @@ export function createCompare(host){
     place();
   }
   function hoverCursor(e){
-    if (C.drag || C.scrub) return;
     const k = e.pointerType === "mouse" && !host.annotating?.() ? splitNear(e) : -1;
     C.stage.classList.toggle("near-x", k >= 0 && P.dir === "x");
     C.stage.classList.toggle("near-y", k >= 0 && P.dir !== "x");
-  }
-  function onMove(e){
-    if (!C) return;
-    if (e.pointerType === "touch" && touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    const d = C.drag;
-    if (!d){ hoverCursor(e); return; }
-    // The stage was rebuilt mid-drag (a layout / visibility key): a detached box measures 0 and the view would go NaN.
-    if (!d.box.isConnected){
-      if (d.kind === "split"){ C.drag = null; return; }
-      d.box = C.stage.querySelector(".cmp-box, .cmp-cell");
-      if (!d.box){ C.drag = null; return; }
-    }
-    if (d.kind === "pinch"){
-      if (touches.size < 2) return;
-      const [a, b] = [...touches.values()];
-      const r = d.box.getBoundingClientRect();
-      const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
-      zoomAt(d.box, d.z0 * Math.hypot(a.x - b.x, a.y - b.y) / d.d0, d.mx, d.my, { zoom: d.z0, cx: d.cx, cy: d.cy });
-      // ...and the pair's middle drags the picture with it
-      const ref = refLayer(), rw = ref.nw || 1600, rh = ref.nh || 900, s = Math.min(d.box.clientWidth / rw, d.box.clientHeight / rh) * C.view.zoom;
-      C.view.cx -= (mx - d.mx) / (rw * s);
-      C.view.cy -= (my - d.my) / (rh * s);
-      place();
-      return;
-    }
-    if (e.pointerId !== d.pid) return;
-    if (d.kind === "split"){ moveSplit(e); return; }
-    if (d.kind === "press"){
-      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return;
-      if (vids().length){
-        // Scrub: the stage's width covers the whole timeline (Shift: a tenth), from where the playhead is.
-        const pid = d.pid, w = Math.max(1, C.stage.clientWidth);
-        clearTimeout(C.clickT); C.clickT = 0; // (a click just before this drag must not toggle under it)
-        const s = { x: e.clientX, T0: C.T, fine: e.shiftKey };
-        C.drag = null;
-        C.stage.classList.add("scrubbing");
-        C.onScrubEnd = () => { C.onScrubEnd = null; C.stage.classList.remove("scrubbing"); };
-        startScrub(e, C.stage, (ev) => {
-          if (ev.shiftKey !== s.fine){ s.fine = ev.shiftKey; s.x = ev.clientX; s.T0 = C.T; }
-          const [lo, hi] = range();
-          return s.T0 + (ev.clientX - s.x) / w * (hi - lo) * (s.fine ? 0.1 : 1);
-        });
-        if (C.scrub?.pid !== pid) C.stage.classList.remove("scrubbing");
-        return;
-      }
-      d.kind = "pan"; d.fine = e.shiftKey; // pictures only: a left drag pans, as before
-      C.stage.classList.add("panning");
-    }
-    if (d.kind === "zoom"){
-      // Right-drag zoom, the viewer's settings (axis, speed, invert); Shift slower.
-      const t = host.getZoomSettings?.() || {};
-      if (!d.base || e.shiftKey !== d.fine){ d.fine = e.shiftKey; d.x = e.clientX; d.y = e.clientY; d.base = { ...C.view }; } // (no jump)
-      const raw = t.zoomAxis === "x" ? (e.clientX - d.x) : (d.y - e.clientY);
-      const k = (t.zoomInvert ? -raw : raw) * 0.012 * (t.zoomSpeed ?? 1) * (d.fine ? 0.2 : 1);
-      zoomAt(d.box, d.base.zoom * Math.exp(k), d.mx, d.my, d.base);
-      return;
-    }
-    // pan (Shift: slower)
-    if (e.shiftKey !== d.fine){ d.fine = e.shiftKey; d.x = e.clientX; d.y = e.clientY; d.cx = C.view.cx; d.cy = C.view.cy; }
-    const ref = refLayer(), W = d.box.clientWidth, H = d.box.clientHeight;
-    const rw = ref.nw || 1600, rh = ref.nh || 900, s = Math.min(W / rw, H / rh) * C.view.zoom, f = d.fine ? 0.2 : 1;
-    C.view.cx = d.cx - (e.clientX - d.x) * f / (rw * s);
-    C.view.cy = d.cy - (e.clientY - d.y) * f / (rh * s);
-    place();
-  }
-  function onUp(e){
-    if (e.pointerType === "touch") touches.delete(e.pointerId);
-    if (!C) return;
-    const d = C.drag;
-    if (!d) return;
-    if (d.kind === "pinch"){ if (touches.size === 0) C.drag = null; return; }
-    if (e.pointerId !== d.pid) return;
-    C.drag = null;
-    C.stage.classList.remove("panning", "zooming");
-    // A click (no move): play / pause, as on the viewer's picture — held back 250 ms, as there, so the second click
-    // of a double-click (fit) cancels it instead of toggling twice.
-    if (d.kind === "press" && e.type === "pointerup"){
-      if (C.clickT){ clearTimeout(C.clickT); C.clickT = 0; return; }
-      C.clickT = setTimeout(() => { if (C){ C.clickT = 0; togglePlay(); } }, 250);
-    }
-  }
-  function onWheel(e){
-    const box = boxOf(e);
-    if (!box) return;
-    e.preventDefault();
-    const r = box.getBoundingClientRect();
-    // The viewer-wide zoom settings (Speed, Invert) as the other viewers use them; the axis is not
-    // a wheel setting, so the wheel is the same for both drag axes.
-    const zs = host.getZoomSettings?.() || {};
-    const dy = e.deltaY || (e.shiftKey ? e.deltaX : 0); // (Shift turns the wheel sideways in most browsers)
-    zoomAt(box, C.view.zoom * Math.exp((zs.zoomInvert ? dy : -dy) * 0.0016 * (zs.zoomSpeed ?? 1) * (e.shiftKey ? 0.2 : 1)), e.clientX - r.left, e.clientY - r.top);
   }
   // 100 % of the reference's own pixels.
   function actual(){
