@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.94.1 — 2026-11-19 — Annotation select tool: Ctrl / Shift as in the library grid, 2D too
+- **What:** owner: Ctrl in the select tool works as in the main window — Ctrl+click toggles a drawing, Ctrl+drag draws a box even when it starts on a drawing and toggles what it covers; Shift adds (Shift+click, Shift+drag on empty space, Ctrl+Shift+drag). Now in 2D as well as 3D (0.94.0 had limited it to 3D).
+- **Where:** annotate.js select branch of `onDown` (the Ctrl marquee no longer gated to `model3d`; a Shift+click on a drawing adds, it used to toggle; the empty-space box clears unless Shift, `toggle: false`), cursor (`S.ctrlHeld` → default everywhere), the select hint; MANUAL.
+- **Notes:** a Ctrl+press on a drawing no longer toggles-and-drags it (a Ctrl+drag is a box, as in the grid); to move a drawing, drag without Ctrl. Ctrl stays the momentary eraser only for the drawing tools (`effTool`). Compare's `wantsPress` claims Alt / a finger on a split only, so Ctrl never reaches compare.
+- Review (fresh agent): no regressions (Ctrl / Shift / Alt combinations, baked items, boards, compare, the eraser, touch); a Ctrl+click on a selected small drawing or a line's end hit its handle and did nothing — a Ctrl-press (without Shift) now skips the handles; MANUAL wording tightened. Left: the cursor follows Ctrl only on a mouse move, and Cmd on a Mac boxes without changing it (cosmetic, as before in 3D). The same reviewer confirmed the fix and found nothing new.
+
 ## 0.94.0 — 2026-11-19 — 3D annotation select tool: Ctrl+drag box select, Box switch for touch
 - **What:** merged the never-merged branch `ccr-90d2f55f-eyeipr` (its "0.83.0", numbered then, before master moved on). Select tool while annotating a 3D model: Ctrl+drag draws a selection box even when it starts over a drawing (Ctrl = toggle against the selection it started from, Ctrl+Shift = add — as in the library grid / board); a Ctrl-click without a drag toggles the drawing under it. In 3D a plain empty-space drag still orbits; Ctrl+drag box-selects, and a *Box* switch in the select tool's bar (3D only) makes a plain drag box-select — the touch way. A Ctrl-click on empty space in 3D still picks the model's mesh.
 - **Where:** annotate.js (select branch of `onDown`: Ctrl → `S.drag.marquee` with `hit` / `boxed` / `pid`; `S.box3d`; `onMove` 4 px click threshold; `onUp` Ctrl-click toggle, 3D empty Ctrl-click → `S.b3.pickMesh`; second-finger guard; `lostpointercapture` ends a stuck marquee; cursor; `renderProps` Box button + hint); index.html (`pickMeshAt(cx, cy, ctrl)` in boot3d, passed to `bindAnnot3d(…, pick)` → host `pickMesh`, absent for splats); MANUAL.
@@ -229,15 +235,3 @@ Add new entries directly below this line.
   test clip whose brightness tracks time: no black / blank frame, no flash of the wrong end of the next clip,
   the drag carries on at once (≈ 3–4 frames of held picture at a cut). Found and fixed there: the big Play
   button flashed over the picture at each cut → not added on a clip reached through the sequence (`seqPend`).
-
-## 0.87.4 — 2026-11-18 — New row ids no longer collide on Windows
-- **What:** two board cards (or boards, groups, collections, annotations) created in quick succession could get
-  the same id on Windows and the second one failed with a UNIQUE constraint error (e.g. duplicating a card twice
-  fast). Ids now include a random part. The intermittent `test_board_missing` failure was this bug.
-- **Where:** library.py — the five `asset_id(f"<kind>:{time.time_ns()}:…")` generators (collections, boards,
-  board items, board groups, annotations) now add `secrets.token_hex(8)`; tests/test_splash_win.py expects the OS
-  spelling of the interpreter path (`str(Path("/x/python"))`) — the test, not the code, was wrong.
-- **Notes:** Windows `time.time_ns()` has coarse resolution, so a timestamp is not a unique seed. These ids were
-  never reproducible; the deterministic import remaps (`anno-import:…`) and path-hash asset ids are unchanged,
-  and undo / merge pass the existing id. Full suite passes (87 tests).
-- Review (fresh agent): no findings.

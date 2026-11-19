@@ -1629,16 +1629,16 @@ export function createAnnotator(host){
         }
         endCrop();  // a press elsewhere ends cropping and then does what it always does
       }
-      const h = S.sel.size ? handleAt(sx, sy) : null;
+      const ctrl = e.ctrlKey || e.metaKey;
+      // (a Ctrl-press is a selection toggle / box, never a handle drag: a small drawing or a line's ends are mostly handles)
+      const h = S.sel.size && !(ctrl && !e.shiftKey) ? handleAt(sx, sy) : null;
       if (h){ grab(e); startHandleDrag(h, x, y, e); return; }
       const hit = hitAt(x, y);
-      const ctrl = e.ctrlKey || e.metaKey;
-      // 3D, Ctrl held = box-select mode, as in the library grid / board (index.html combineSelection): the drag
-      // draws a marquee even over a drawing (Ctrl = toggle against the selection it started from,
-      // Ctrl+Shift = add); a Ctrl-click without a drag toggles the drawing under it (onUp). It is the only way to
-      // box-select with a mouse there (plain empty space orbits), the Box button is touch's. 2D needs no such
-      // mode — a plain drag on empty space is already the box — so Ctrl keeps its click toggle there (below).
-      if (ctrl && !e.altKey && S.kind === "model3d"){
+      // Ctrl held = box-select mode, as in the library grid (index.html combineSelection): the drag draws a
+      // marquee even over a drawing (Ctrl = toggle against the selection it started from, Ctrl+Shift = add); a
+      // Ctrl-click without a drag toggles the drawing under it (onUp). In 3D it is the only way to box-select with
+      // a mouse (plain empty space orbits), the Box button is touch's.
+      if (ctrl && !e.altKey){
         grab(e);
         S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: !e.shiftKey, hit: hit?.id || null, boxed: false, pid: e.pointerId };
         renderSel(); renderProps();
@@ -1646,9 +1646,8 @@ export function createAnnotator(host){
       }
       if (hit){
         grab(e);
-        if (e.shiftKey || e.ctrlKey || e.metaKey){
-          if (S.sel.has(hit.id)) S.sel.delete(hit.id); else S.sel.add(hit.id);
-        } else if (!S.sel.has(hit.id)){ S.sel.clear(); S.sel.add(hit.id); }
+        if (e.shiftKey) S.sel.add(hit.id);  // Shift adds (Ctrl toggles: the box branch above), as in the grid
+        else if (!S.sel.has(hit.id)){ S.sel.clear(); S.sel.add(hit.id); }
         if (baked(hit)){ renderSel(); renderProps(); return; }  // selected for Delete; not dragged
         if (e.altKey && S.sel.has(hit.id)) duplicateSelection(0, true);
         const ids = [...S.sel].filter((id) => editable(S.items.get(id)));
@@ -1664,8 +1663,8 @@ export function createAnnotator(host){
       // tools (altCam). Alt on a drawing keeps its duplicate-drag above; a marquee has no Alt meaning.
       if (e.altKey) return;
       grab(e);
-      if (!(e.shiftKey || e.ctrlKey || e.metaKey)) S.sel.clear();
-      S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: e.ctrlKey || e.metaKey, pid: e.pointerId };
+      if (!e.shiftKey) S.sel.clear();  // Shift: the box adds (Ctrl took the branch above)
+      S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: false, pid: e.pointerId };
       renderSel(); renderProps();
       return;
     }
@@ -2005,7 +2004,7 @@ export function createAnnotator(host){
       if (h) c = RC.XF_CURSOR[h];
       else {
         const [x, y] = toDocS(sx, sy);
-        c = S.ctrlHeld && S.kind === "model3d" ? "default" : hitAt(x, y) ? "move" : S.kind === "model3d" && !S.box3d ? "" : "default";
+        c = S.ctrlHeld ? "default" : hitAt(x, y) ? "move" : S.kind === "model3d" && !S.box3d ? "" : "default";
       }
     } else if (STROKE_TOOLS.has(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
@@ -2440,7 +2439,7 @@ export function createAnnotator(host){
       html += `<span class="an-sep"></span><button type="button" class="an-tg${S.box3d ? " on" : ""}" data-cmd="box3d" title="Box select: dragging empty space draws a selection box instead of orbiting (or hold Ctrl and drag)">Box</button>`;
       if (!tg.items) html += `<span class="an-pl">${S.box3d ? "Drag to box-select · Ctrl+drag toggles" : "Click a drawing to select · drag empty space to orbit · Ctrl+drag to box-select"}</span>`;
     }
-    if (!html) html = `<span class="an-pl">${S.tool === "select" ? "Click or drag to select · Alt+drag duplicates" : ""}</span>`;
+    if (!html) html = `<span class="an-pl">${S.tool === "select" ? "Click or drag to select · Ctrl toggles · Shift adds · Alt+drag duplicates" : ""}</span>`;
     el.innerHTML = html;
     el.hidden = !html;
     bindProps(el, tg, list);

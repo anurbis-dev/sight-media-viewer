@@ -2,6 +2,18 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.87.4 — 2026-11-18 — New row ids no longer collide on Windows
+- **What:** two board cards (or boards, groups, collections, annotations) created in quick succession could get
+  the same id on Windows and the second one failed with a UNIQUE constraint error (e.g. duplicating a card twice
+  fast). Ids now include a random part. The intermittent `test_board_missing` failure was this bug.
+- **Where:** library.py — the five `asset_id(f"<kind>:{time.time_ns()}:…")` generators (collections, boards,
+  board items, board groups, annotations) now add `secrets.token_hex(8)`; tests/test_splash_win.py expects the OS
+  spelling of the interpreter path (`str(Path("/x/python"))`) — the test, not the code, was wrong.
+- **Notes:** Windows `time.time_ns()` has coarse resolution, so a timestamp is not a unique seed. These ids were
+  never reproducible; the deterministic import remaps (`anno-import:…`) and path-hash asset ids are unchanged,
+  and undo / merge pass the existing id. Full suite passes (87 tests).
+- Review (fresh agent): no findings.
+
 ## 0.87.3 — 2026-11-18 — Sources: nested folders, clean removal, stale-view reset, connection pool
 - **What:** user report "removing a source misbehaves" (two sources, ЛАЙТИНГ and Desktop: ЛАЙТИНГ → Desktop →
   × Desktop → ЛАЙТИНГ shows no previews; the source stays in the menu). Cause: ЛАЙТИНГ lies inside Desktop — not

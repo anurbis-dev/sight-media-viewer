@@ -117,8 +117,9 @@
     (`Ctrl+Enter` or Esc finishes).
   - While drawing: `Shift` keeps lines, arrows, a pin's line and straight brush strokes horizontal or vertical
     (also when dragging a line's end), makes rectangles square and ellipses round. Select tool: click /
-    Shift+click / drag a box to select (in 3D, where empty space orbits, Ctrl+drag or the *Box* switch draws
-    the box — Ctrl toggles what it covers, Ctrl+Shift adds), drag to move (Shift locks the axis), Alt+drag duplicates,
+    drag a box on empty space to select. `Ctrl`+click or a `Ctrl`+drag box (even one starting on a drawing)
+    toggles, as in the library grid; `Shift`+click, a `Shift`+drag box and `Ctrl+Shift`+drag add. In 3D, where
+    empty space orbits, `Ctrl`+drag or the *Box* switch draws the box. Drag to move (Shift locks the axis), Alt+drag duplicates,
     corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
     more finely; arrows nudge (Shift ×10). Hold `Ctrl` with any drawing tool to erase for a moment;
