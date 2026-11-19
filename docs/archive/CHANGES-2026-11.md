@@ -2,6 +2,34 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.87.2 — 2026-11-18 — macOS: Dock icon back; Sight.app answers the Dock (real Cocoa loop)
+- **What:** macOS: Sight.app keeps its Dock icon again and answers it. Clicking the icon brings the Sight window to
+  the front, restores it if minimized, and opens it again if it was closed. Cmd+Tab to Sight focuses the window.
+  Dock "Quit", Cmd+Q and the logout / shutdown quit stop the server cleanly and close the window. **Supersedes
+  0.84.2's agent-app approach** (LSUIElement, no Dock icon), which the owner found inconvenient.
+- **Where:** new app/macapp.py (`run`, `browser_pid_from_ps`, `find_browser_pid`); Sight.py `main()` mac branch
+  (`_serve`, `_window_alive`, `_relaunch`, `_request_stop`, `_close_window`, `_on_server_exit`, `hb_lock`) and
+  `_main_cleanup()` (`mac_agent_note()` removed); server.py (`/api/heartbeat?bye=1` → `app.state.window_bye`,
+  `/api/events` ends on `Bus.CLOSE`); library.py `Bus.close()` / `CLOSE`; index.html `startHeartbeat` pagehide
+  beacon; build_app_macos.sh (pyobjc-framework-Cocoa install + bundle check, LSUIElement removed,
+  `NSAppleEventsUsageDescription`, `NSAppSleepDisabled` kept); tests/test_mac_launch.py.
+- **Notes:** packaged macOS builds (not `--no-browser`) run NSApplication on the main thread and uvicorn on a
+  background thread; without pyobjc it falls back to the old path and logs a line. AppKit exits the process
+  itself, so main()'s `finally` never runs there: exit work lives in `_main_cleanup()` — never put cleanup only in
+  `finally`. "Is there a window" = fresh heartbeat and no `bye` (Chromium on macOS keeps running windowless); the
+  quit watchdog ignores `bye`, so F5 is safe. Dock reopen sends a "reopen" Apple Event only to Sight's own browser
+  process (found by its `--user-data-dir` in `ps`), never the user's Chrome; may show a one-time Automation
+  prompt; the ad-hoc re-sign resets that grant each build. Quit: `Bus.close()` ends every `/api/events` stream
+  so uvicorn's 3 s graceful shutdown completes and `lib.close()` runs; a 10 s force quit (`threading.Timer` +
+  `callAfter` — `callLater` does not fire while AppKit waits on the terminate reply) runs the same cleanup.
+  Windows / Linux / dev unchanged (only a lock around the watchdog check). Known minor gaps: a second Dock click
+  while a relaunched window is still loading can open a blank tab; with two Sight windows, closing one marks the
+  app closed for up to 3 s. Not tested on a Mac.
+- Review (fresh agent): 6 findings (quit hang at logout, force quit skipping cleanup, blank Chrome window on
+  reopen after close, duplicate tabs without a Chromium browser, Automation consent text, watchdog / reopen race),
+  fixed; second pass: 5 confirmed, 2 follow-ups (reopen still blank within 10 s of closing, Quit ending on the
+  force timer without `lib.close()`) fixed; the same reviewer confirmed both, nothing new beyond the two gaps above.
+
 ## 0.87.1 — 2026-11-18 — Notes no longer lost when switching clips; durable annotation write queue
 - **What:** user report (macOS desktop): comments written on a sequence's clips were gone after switching clips.
   Root cause: `setAsset()` / `unmount()` called the async `flush()` and then cleared `S.items` synchronously; after

@@ -169,6 +169,7 @@ export function createCompare(host){
     C.ro?.disconnect();
     if (C.pBase) P = prefsToSave();
     cancelAnimationFrame(C.raf);
+    clearTimeout(C.clickT);
     if (C.onResize) window.removeEventListener("resize", C.onResize);
     for (const l of C.layers){ dropScrub(l); for (const m of l.media) releaseMedia(m); }
     C.el.remove();
@@ -574,7 +575,11 @@ export function createCompare(host){
     paintTime();
   }
   function step(n){ setT(snapT(C.T) + n / C.fps); }
+  // A click on the picture waiting out its 250 ms (a double-click may still come) is dropped by anything else
+  // that plays, pauses or seeks first (Space, ▶, a pinch, the annotator), or it would undo that a moment later.
+  function dropClick(){ if (C?.clickT){ clearTimeout(C.clickT); C.clickT = 0; } }
   function togglePlay(){
+    dropClick();
     if (!vids().length) return;
     const [lo, hi] = range();
     if (!C.playing && C.T >= hi - 1.5 / C.fps) C.T = lo;
@@ -1235,7 +1240,7 @@ export function createCompare(host){
     st.addEventListener("pointerup", onUp);
     st.addEventListener("pointercancel", onUp);
     st.addEventListener("contextmenu", (e) => e.preventDefault());
-    st.addEventListener("dblclick", () => fit());
+    st.addEventListener("dblclick", () => { clearTimeout(C.clickT); C.clickT = 0; fit(); });
     st.addEventListener("wheel", onWheel, { passive: false });
     C.onResize = () => place();
     window.addEventListener("resize", C.onResize);
@@ -1322,6 +1327,7 @@ export function createCompare(host){
   }
   function startPinch(box){
     // A second finger: whatever the first one started stops (a scrub ends where it is), the two pinch.
+    dropClick();
     if (C.scrub){ const pid = C.scrub.pid; window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: pid })); }
     const [a, b] = [...touches.values()];
     const r = box.getBoundingClientRect();
@@ -1386,6 +1392,7 @@ export function createCompare(host){
       if (vids().length){
         // Scrub: the stage's width covers the whole timeline (Shift: a tenth), from where the playhead is.
         const pid = d.pid, w = Math.max(1, C.stage.clientWidth);
+        clearTimeout(C.clickT); C.clickT = 0; // (a click just before this drag must not toggle under it)
         const s = { x: e.clientX, T0: C.T, fine: e.shiftKey };
         C.drag = null;
         C.stage.classList.add("scrubbing");
@@ -1427,8 +1434,12 @@ export function createCompare(host){
     if (e.pointerId !== d.pid) return;
     C.drag = null;
     C.stage.classList.remove("panning", "zooming");
-    // A click (no move): play / pause, as on the viewer's picture.
-    if (d.kind === "press" && e.type === "pointerup") togglePlay();
+    // A click (no move): play / pause, as on the viewer's picture — held back 250 ms, as there, so the second click
+    // of a double-click (fit) cancels it instead of toggling twice.
+    if (d.kind === "press" && e.type === "pointerup"){
+      if (C.clickT){ clearTimeout(C.clickT); C.clickT = 0; return; }
+      C.clickT = setTimeout(() => { if (C){ C.clickT = 0; togglePlay(); } }, 250);
+    }
   }
   function onWheel(e){
     const box = boxOf(e);
@@ -1485,6 +1496,7 @@ export function createCompare(host){
   // The annotator stops: on the frame the selected clip is showing (its drawing is stored at that element
   // time), not the clock's snapped / drifted one.
   function pause(){
+    dropClick();
     if (!C || !C.playing) return;
     C.playing = false;
     const l = layer(C.sel), m = l && isVideo(l.a) ? l.media.find((x) => x._primary) : null;
@@ -1502,6 +1514,7 @@ export function createCompare(host){
   function seekLayer(id, t){
     const l = C && layer(id);
     if (!l) return;
+    dropClick();
     const T = t + (isVideo(l.a) ? l.start / C.fps : 0);
     const [lo, hi] = range();
     C.playing = false;

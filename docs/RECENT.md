@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.93.1 — 2026-11-19 — Compare: a double-click no longer toggles play twice; plan for a shared input module
+- **What:** a click on the compare picture now waits 250 ms before play / pause, as in the lightbox, so the second click of a double-click (fit) cancels it. New `docs/PLAN-viewer-input.md`: today every viewer (lightbox 2D, sequence, compare, board, 3D zoom, annotator, phone / HTML page) has its own pointer code; 0.93.0 wrote the compare's anew. The plan specifies one `viewer-input.js` module (click hold, scrub / pan / zoom / pinch, Shift-fine, capture handling) and the stages to move each mode onto it.
+- **Where:** compare.js (`onUp` timer `C.clickT`, `dropClick`, stage `dblclick`, `close`); docs/PLAN-viewer-input.md (new), docs/PLAN.md (link).
+- **Notes:** `dropClick()` runs in `togglePlay` (Space / ▶ while a click is pending would otherwise be undone 250 ms later), `startPinch`, `pause` and `seekLayer` (the annotator stopping / moving the clock), and a scrub start. Two quick clicks within 250 ms do nothing (the lightbox would toggle once) — `pointerup.detail` is not reliable enough to copy its test; left. The lightbox's 2D viewer has no touch pinch today: the plan's stage 2 gives it one.
+- Review (fresh agent): correct; Space / ▶ / a pinch / the annotator's pause within the 250 ms could be undone by the pending toggle — fixed with `dropClick`; the same reviewer confirmed it and found nothing new.
+
 ## 0.93.0 — 2026-11-19 — Compare: viewer-style picture input, Row fixed, viewer's top bar, Compare from the selection
 - **What:** owner's list. (1) On the compare picture a click plays / pauses, a left drag scrubs every clip, a right drag zooms, a middle drag pans — as in the viewer; a swipe split is grabbed only by a press right on it (10 px, finger 24 px), so it no longer eats every click / drag. Touch: tap, one-finger scrub, two-finger pinch-zoom / pan. (2) **Row was black**: the stage got the class `row`, which is the sidebar's menu-row class (`display:flex; height: var(--menu-row-h)`), so every cell had 0 height. The layout class is now `lay-<layout>`. (3) The right end of the compare bar is the lightbox's: notes button (`C`, badge), eye (while drawing), the compare icon (on; closes), annotate as an icon, ✕. (4) Layer chips: click shows / hides (a layer brought back is selected), middle-click removes, the ◉ button is gone. (5) The offset's − / + buttons are gone: drag the number sideways to slide the clip live (6 px per frame), click it to type. (6) **Shift slows every drag** (scrub, timeline, zoom, pan, split, offset) and can change mid-drag without a jump. (7) A chip drag shows the whole chip (mouse: `setDragImage` of a clone; touch: a clone follows the finger). (8) With 2+ images / videos selected, *Compare* sits next to *▶▶ Sequence* in the top bar and the touch selection bar, and the right-click menu has *Compare (N)*.
 - **Where:** compare.js (`startScrub` — the timeline's scrub, now shared with the stage —, `splitNear`, `layerAt`, `onDown` / `onMove` / `onUp`, `startPinch`, `zoomAt`, `hoverCursor`, `chipGhost`, offset drag in `bindUi`, the bar markup, CSS `lay-*`, `.cmp-ghost`); index.html (`cmpAnnot` host `notesBtn` / `eyeBtn` / `notesBtnShown`, no `readPanel: false`, `onView` always `cmpBind`, `C` routed to `cmpAnnot` while not drawing, `bindAnnoReset` on the compare's annotate button; `cmpCandidates` / `compareIds`, `#cmpSelBtn`, `#tsCmp`, ctx `cmp`); MANUAL, ARCHITECTURE.
@@ -257,31 +263,3 @@ Add new entries directly below this line.
 - Review (fresh agent, run by the implementing agent, three rounds): two medium nested-source edge cases (a
   running outer scan, the outer watcher applying its own rules) and a `flush()` race (check outside the lock) —
   fixed and confirmed; nothing new in round 3.
-
-## 0.87.2 — 2026-11-18 — macOS: Dock icon back; Sight.app answers the Dock (real Cocoa loop)
-- **What:** macOS: Sight.app keeps its Dock icon again and answers it. Clicking the icon brings the Sight window to
-  the front, restores it if minimized, and opens it again if it was closed. Cmd+Tab to Sight focuses the window.
-  Dock "Quit", Cmd+Q and the logout / shutdown quit stop the server cleanly and close the window. **Supersedes
-  0.84.2's agent-app approach** (LSUIElement, no Dock icon), which the owner found inconvenient.
-- **Where:** new app/macapp.py (`run`, `browser_pid_from_ps`, `find_browser_pid`); Sight.py `main()` mac branch
-  (`_serve`, `_window_alive`, `_relaunch`, `_request_stop`, `_close_window`, `_on_server_exit`, `hb_lock`) and
-  `_main_cleanup()` (`mac_agent_note()` removed); server.py (`/api/heartbeat?bye=1` → `app.state.window_bye`,
-  `/api/events` ends on `Bus.CLOSE`); library.py `Bus.close()` / `CLOSE`; index.html `startHeartbeat` pagehide
-  beacon; build_app_macos.sh (pyobjc-framework-Cocoa install + bundle check, LSUIElement removed,
-  `NSAppleEventsUsageDescription`, `NSAppSleepDisabled` kept); tests/test_mac_launch.py.
-- **Notes:** packaged macOS builds (not `--no-browser`) run NSApplication on the main thread and uvicorn on a
-  background thread; without pyobjc it falls back to the old path and logs a line. AppKit exits the process
-  itself, so main()'s `finally` never runs there: exit work lives in `_main_cleanup()` — never put cleanup only in
-  `finally`. "Is there a window" = fresh heartbeat and no `bye` (Chromium on macOS keeps running windowless); the
-  quit watchdog ignores `bye`, so F5 is safe. Dock reopen sends a "reopen" Apple Event only to Sight's own browser
-  process (found by its `--user-data-dir` in `ps`), never the user's Chrome; may show a one-time Automation
-  prompt; the ad-hoc re-sign resets that grant each build. Quit: `Bus.close()` ends every `/api/events` stream
-  so uvicorn's 3 s graceful shutdown completes and `lib.close()` runs; a 10 s force quit (`threading.Timer` +
-  `callAfter` — `callLater` does not fire while AppKit waits on the terminate reply) runs the same cleanup.
-  Windows / Linux / dev unchanged (only a lock around the watchdog check). Known minor gaps: a second Dock click
-  while a relaunched window is still loading can open a blank tab; with two Sight windows, closing one marks the
-  app closed for up to 3 s. Not tested on a Mac.
-- Review (fresh agent): 6 findings (quit hang at logout, force quit skipping cleanup, blank Chrome window on
-  reopen after close, duplicate tabs without a Chromium browser, Automation consent text, watchdog / reopen race),
-  fixed; second pass: 5 confirmed, 2 follow-ups (reopen still blank within 10 s of closing, Quit ending on the
-  force timer without `lib.close()`) fixed; the same reviewer confirmed both, nothing new beyond the two gaps above.
