@@ -944,17 +944,33 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   median averaged, snapped to a common rate within 1.5 %), 25 until then (shown as "≈25 fps").
   Frames for cards, reply drawings and reports come from a second hidden `<video>` (`Grabber`,
   one seek at a time) and are cached in `frames`.
+- **Debug log** (`debug.js dbg`, Settings → Debug log, `sight-review:debug`): `dbg.log(ev, data)` is a no-op
+  while off; on, events go to an in-memory ring (40,000) whose tail (6,000) is saved to localStorage when the
+  page is hidden and shown as "previous session" after a reload. Sources: ScrubCache (`turn`, `c.open`,
+  `c.plan`, `c.part` — part, rate, seek ms, frames got vs presented, gaps, why it ended —, `c.busy`, `poke`,
+  `c.dead`, `c.release`, `c.broken`), the visible player (`dbgPlayer`: play / playing with the delay since
+  the tap, waiting, seeking / seeked ms), stage `ptr.down` / `click` / `tap.play`, long tasks, errors, and a
+  `sample` each second (playhead, player state, every cache's runs). *Send debug log…* → `offerFile` with
+  `dbg.text()`: a header (device, app) then one JSON array per line `[ms, event, data]`.
 - **Scrub cache** (`media.js ScrubCache`): ≤ 640 px JPEGs of the frames around the playhead, keyed by
   each frame's own media time (`mts` sorted, `urls` by ms) from `requestVideoFrameCallback` — never on a
   grid of a guessed rate (a WebM's rate is unknown until played; a 25 fps grid lost every sixth frame of a
-  29.97 clip). The host calls `want([{lo, hi, from, end}])`: frames outside every range are dropped, missing
-  parts are fetched nearest a range's `from` first (behind it counted 1.5×), forward parts played through by
-  a hidden muted player (rate 1.5–4, `CHUNK` 2 s per turn), parts ≤ 6 frames sought frame by frame; a part
-  that yields nothing is not asked again until the ranges change (`dead`). Small moves (< 0.5 s or 5 % of the
-  window) are ignored, so a playing clip re-plans every few seconds, not per frame. Several caches take turns
-  on the decoder (`turnTake` / `turnGive`, lowest `prio` first, a running chunk yields when a lower prio
-  waits); an idle cache gives its hidden player back after 3 s. `span(t)` = the unbroken run around t (the
-  green strip). App side (`cacheFocus`, called from `paintTime`): window = `MAX` (1500) frames, `AHEAD`
+  29.97 clip). The host calls `want([{lo, hi, from, end, base}])`: frames outside every range are dropped,
+  missing parts are fetched cheapest first — cost = distance from the range's `from` (behind it × `wb()` =
+  AHEAD / (1 − AHEAD)) + `base` (the range's own distance from the playhead in the sequence) — forward parts
+  played through by a hidden muted player (rate 1.5–4, ≤ 60 presented frames/s, `CHUNK` 2 s ahead of `from`,
+  1 s behind it), parts ≤ 6 frames sought frame by frame; a part that yields nothing is not asked again until
+  the ranges change (`dead`). A range edge must move > 0.5 s or 5 % of the window for a re-plan (evict, the
+  running part dropped); a move of `from` / `base` alone is taken at once without a re-plan (the running part
+  ends only if `from` left it: `jolt`). Several caches take turns on the decoder (`turnTake` / `turnGive`):
+  the cheapest next part wins (`costOf`), the owner yields only to a part cheaper by `TURN_HYST` (3 s), `prio`
+  breaks ties; only the owner keeps a hidden player (`turnPick` releases the others' — phones have few
+  hardware decoders); an idle cache gives its player back after 3 s; a failed open is retried twice
+  (1.5 s / 3 s, a deadline not woken by re-plans), then `broken`. `ScrubCache.busy()` (host: a play starting
+  until `playing` + 300 ms, the visible player seeking, or stalled while playing) keeps every cache off the
+  decoder, and `poke()` (on the player's `play` / `seeking`) stops the running part at once. `span(t)` = the
+  unbroken run around t; `runs(gap)` = every run, gaps of ≤ `gap` frames ignored (the
+  green strip: `runs(3)`, all of them). App side (`cacheFocus`, called from `paintTime`): window = `MAX` (1500) frames, `AHEAD`
   (Settings → Cache ahead, `sight-review:cacheAhead`, 50-90 %, default 70) ahead, the rest behind; past the clip's end / start the rest goes to the next / previous clip of the
   sequence (`seqGeom`, loop on wraps) as a cache of its own in `scrubPool` (file from the `files` store), else
   to the other side. A move along the sequence parks the current cache in the pool (`closeReview(park)`)

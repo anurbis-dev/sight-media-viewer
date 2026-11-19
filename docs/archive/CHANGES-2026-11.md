@@ -2,6 +2,40 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.84.1 — 2026-11-18 — 3D: notes panel shows the drawings right away
+- **What:** opening the notes panel on a 3D model now shows its annotation drawings at once (before, only after
+  clicking a note — and in fact not even then). With annotation mode off they show, not editable, and follow the
+  camera: a drawing shows only while the camera is on its view. The eye button / Shift+H toggle them in 3D too.
+- **Where:** annotate.js — `shownOff()` includes `model3d` when `S.b3` is bound; `followOff()` keeps the tick
+  running for 3D while drawings exist and are not hidden.
+- **Notes:** root cause: `shownOff()` covered images, video, PSD and boards but not 3D, so outside annotate mode
+  3D never created / unhid its drawing layer. The compare overlay is unaffected (`showWhileWatching: false`).
+  The 3D tick runs every frame while drawings exist and annotation is off (cheap signature check; repaints only
+  on camera / hidden-mesh / explode / view change); it ends when `S.b3` goes null or drawings are hidden.
+- Review (fresh agent): no findings (rAF teardown, null `S.b3` mid-tick, compare, Shift+H vs 3D H keys,
+  pointer-events on the layer all checked).
+
+## 0.84.0 — 2026-11-18 — F fits / finds, long-press resets the annotation bar, modifier cursors
+- **What:** F fits the open picture / video to the frame in the lightbox (like double-click, but always fit); over
+  the thumbnail grid F scrolls to the selected files. Long-press (700 ms, mouse or touch) on the annotate button
+  resets the whole annotation toolbar to defaults (toast). The cursor on a picture / video shows what the held
+  modifier does (Alt turns a picture / scrubs a video, Ctrl+Alt turns a video, Shift = fine scrub) and during
+  pan / zoom / turn drags. The screenshot / area-screenshot buttons are gone from the annotation toolbar
+  (S / Shift+S and the composer's buttons stay).
+- **Where:** index.html (`light.fit` / `toFit` in `attachViewer`, F in the keydown handler, grid F in a
+  window-level capture keydown listener, `bindAnnoReset(btn, annots)`, body classes `k-alt` / `k-ctrl` / `k-shift`
+  + `.view` cursor CSS, drag cursors in `attachViewer`, `.vid` class); annotate.js (`resetPrefs(quiet)`, removed
+  shot / region buttons, help footer); MANUAL.
+- **Notes:** 3D models and canvas boards keep their own F. The grid F listener is capture-phase on `window` so the
+  board's F (canvas.js, on document) does not also frame the board in the split view; it swallows repeats too.
+  `resetPrefs` covers styles, stamp look, hold and tool for all three annotators (lightbox, board, compare —
+  otherwise a stale one saves its old styles back over the reset); not the per-video stamp on/off, drawings,
+  notes. The long-press swallows its release click in the capture phase, `fired` is cleared 60 ms after release.
+  Modifier classes re-sync on pointermove and clear on blur. An annotator tool's inline cursor wins over the CSS.
+- Review (fresh agent): 3 findings — compare annotator not reset (overwrote the reset), a stale long-press flag
+  swallowing the next keyboard activation, F framing the board as well as scrolling the grid in split view. Fixed;
+  the same reviewer confirmed them and noted held-F repeats still reaching the board (fixed: repeats swallowed).
+
 ## 0.83.1 — 2026-11-18 — Reference shadows follow the picture's alpha
 - **What:** a reference image with transparency (PNG / WebP) now casts a drop shadow of its alpha shape instead
   of its rectangle — in Sight, the HTML page, the phone app and canvas exports (screenshots / PDF).

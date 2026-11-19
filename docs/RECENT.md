@@ -14,6 +14,60 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.91.0 — 2026-11-19 — Phone: Settings → Debug log, sent as a file
+- **What:** owner: a debug option in Settings that collects data to send as a file, not a screenshot. Settings →
+  *Debug log* On / Off; *Send debug log…* shares / downloads `sight-debug-YYYYMMDD-HHMM.txt` (a header with the
+  device and app, then one JSON array per line `[ms, event, data]`); *Clear*. Off stops recording but keeps the
+  data (Send still works); only Clear deletes it.
+- **Where:** mobile/js/debug.js (new: `dbg.log / set / flush / clear / text / sample / info`); hooks in
+  mobile/js/media.js (`turn`, `poke`, `c.plan`, `c.open`, `c.part` — part, rate, seek ms, frames got vs
+  presented, gaps, why it ended —, `c.busy*`, `c.dead`, `c.release`, `c.broken`; caches get a `tag`) and
+  mobile/js/app.js (`dbgPlayer`: play / playing with the delay since the tap, waiting, seeking / seeked ms;
+  stage `ptr.down` / `click`, `tap.play`; a `sample` each second: playhead, player, every cache's runs; Settings
+  section); index.html (margin rule); MANUAL, ARCHITECTURE.
+- **Notes:** `dbg.log` is a no-op while off. Memory: ≤ 15,000 lines and ≤ 6M characters (pre-built JSON strings).
+  localStorage `sight-review:debugLog` = `{sessions: [{started, ev}]}`: the earlier saved sessions plus this one
+  (≤ 4), newest lines first within 1M characters, written every 15 s, ≤ 2 s after an error / `v.error` /
+  `c.broken` (one save per 2 s: a burst of errors must not write the tail each time), at once when the page is
+  hidden; the old value is removed first (a failed write never leaves stale data), half the budget on a full
+  storage. The file shows them as "# earlier session" blocks. Two tabs recording at once overwrite each other. The first look at a log already showed a real bug: a WebM's frame rate is a
+  guess (25) until known, so the fill ran at 60 / 25 = 2.4× on a 30 fps clip and dropped a frame in four; the
+  rate now uses the shorter of the guess and the measured step (in 0.90.2 below).
+- Review (fresh agent): a failed save left an older tail shown as the previous session; a foreground crash lost
+  everything since the last hide; Off deleted the log with no way to send it; memory unbounded per event; a stale
+  `sinceTap`; Settings margin — all fixed. Re-checks by the same reviewer found a save per error in a burst and
+  the earlier session lost after a restart — both fixed; the third re-check confirmed everything (Playwright:
+  quota, reloads, old format, error bursts).
+
+## 0.90.2 — 2026-11-19 — Phone scrub cache: one window across the cut, the player first, every cached part on the strip
+- **What:** owner (on the phone, after 0.90.1): tap-to-play lagged up to 4 s even with a full cache; the green strip
+  lost the old cache on a jump and showed nothing new while the playhead stood; the fill looked like 30 / 70, not
+  70 / 30; behind the playhead it filled towards it. Measured in Playwright first (a 60 s + 20 s sequence, the
+  cache sampled each second), which showed: (1) the strip drew only the unbroken run around the playhead, and the
+  2× fill drops frames, so that run stayed tiny until the holes were sought one by one; (2) the open clip filled
+  its whole window, far behind included, before the next clip got a frame — so in a short clip near its end the
+  left side won; (3) a move of the playhead under 2.5 s did not re-target the fill; (4) behind parts of 2 s
+  played forwards. Now: the strip draws every cached run (gaps ≤ 3 frames ignored); caches take turns by the
+  cost of their next part (distance from the playhead in the sequence, behind × AHEAD / (1 − AHEAD), + the
+  range's `base`), the owner yields only to a part cheaper by 3 s; a `from` move is taken at once; behind parts
+  are 1 s; while a play starts (until `playing` + 300 ms), the player seeks, or it stalls, no cache fetches
+  (`ScrubCache.busy`), and `ScrubCache.poke()` on the player's `play` / `seeking` stops the running part at once.
+- **Where:** mobile/js/media.js (`costOf`, `turnPick`, `turnWanted`, `TURN_HYST`, `isBusy`, `ScrubCache.busy /
+  poke / wb`, `want` in-place `from` / `base`, `job.held` / `jolt`, `nap`, `stopPart`, `runs(gap)`, the `dead`
+  rule, the fill rate); mobile/js/app.js (`cacheFocus` bases, `playPend`, `ScrubCache.busy` hook, `paintCache`
+  draws all runs); mobile/index.html (`.tl .cache` is a container of `<i>` runs); MANUAL, ARCHITECTURE.
+- **Notes:** tried and rejected: filling at ≤ 40 presented frames/s and patching holes by slow replay — in
+  Chromium coverage grew three times slower than 2× + frame-by-frame seeks; the dropped frames are hidden on the
+  strip instead. A part is cut only if it held `from` when it began and `from` left it (a playing clip moves
+  `from` every frame); jumps / scrubs stop it via `poke`. A cut part (moved / busy / poke / yield / replan /
+  closed) is never marked `dead`. Never end a part on the player's `pause` event: the one fired for the previous
+  part's own pause arrives later and killed the next part at once. Still a hypothesis on the phone: the play lag
+  came from the hidden player decoding next to the visible one — the debug log (0.91.0) will show `sinceTap`.
+- Review (fresh agent): a late `pause` event ended every second part; `jolt` cut nearly every part while playing;
+  cut parts were marked `dead` for good on clips that fit the window; the idle release never fired while playing;
+  busy / jolt unchecked before the first seek / play; `close()` held the turn up to 1.5 s — all fixed, each
+  confirmed by the same reviewer with its Playwright repros.
+
 ## 0.90.1 — 2026-11-19 — Phone: the open clip's scrub cache no longer loses the decoder to a neighbour
 - **What:** owner: in a 2-clip sequence the open clip got no cache at all, the neighbour got all of it. Cause (most
   likely, seen on Android): a neighbour's cache that yielded the turn (or sat idle / parked) kept its hidden
@@ -326,37 +380,3 @@ Add new entries directly below this line.
   app still cannot answer the logout / shutdown quit event (true before too). Needs a check on a Mac build:
   minimize 1 min and 6+ min, restore, log has no "no heartbeat … quitting".
 - Review (fresh agent run by the fixing agent): no correctness bugs; Windows command line confirmed unchanged.
-
-## 0.84.1 — 2026-11-18 — 3D: notes panel shows the drawings right away
-- **What:** opening the notes panel on a 3D model now shows its annotation drawings at once (before, only after
-  clicking a note — and in fact not even then). With annotation mode off they show, not editable, and follow the
-  camera: a drawing shows only while the camera is on its view. The eye button / Shift+H toggle them in 3D too.
-- **Where:** annotate.js — `shownOff()` includes `model3d` when `S.b3` is bound; `followOff()` keeps the tick
-  running for 3D while drawings exist and are not hidden.
-- **Notes:** root cause: `shownOff()` covered images, video, PSD and boards but not 3D, so outside annotate mode
-  3D never created / unhid its drawing layer. The compare overlay is unaffected (`showWhileWatching: false`).
-  The 3D tick runs every frame while drawings exist and annotation is off (cheap signature check; repaints only
-  on camera / hidden-mesh / explode / view change); it ends when `S.b3` goes null or drawings are hidden.
-- Review (fresh agent): no findings (rAF teardown, null `S.b3` mid-tick, compare, Shift+H vs 3D H keys,
-  pointer-events on the layer all checked).
-
-## 0.84.0 — 2026-11-18 — F fits / finds, long-press resets the annotation bar, modifier cursors
-- **What:** F fits the open picture / video to the frame in the lightbox (like double-click, but always fit); over
-  the thumbnail grid F scrolls to the selected files. Long-press (700 ms, mouse or touch) on the annotate button
-  resets the whole annotation toolbar to defaults (toast). The cursor on a picture / video shows what the held
-  modifier does (Alt turns a picture / scrubs a video, Ctrl+Alt turns a video, Shift = fine scrub) and during
-  pan / zoom / turn drags. The screenshot / area-screenshot buttons are gone from the annotation toolbar
-  (S / Shift+S and the composer's buttons stay).
-- **Where:** index.html (`light.fit` / `toFit` in `attachViewer`, F in the keydown handler, grid F in a
-  window-level capture keydown listener, `bindAnnoReset(btn, annots)`, body classes `k-alt` / `k-ctrl` / `k-shift`
-  + `.view` cursor CSS, drag cursors in `attachViewer`, `.vid` class); annotate.js (`resetPrefs(quiet)`, removed
-  shot / region buttons, help footer); MANUAL.
-- **Notes:** 3D models and canvas boards keep their own F. The grid F listener is capture-phase on `window` so the
-  board's F (canvas.js, on document) does not also frame the board in the split view; it swallows repeats too.
-  `resetPrefs` covers styles, stamp look, hold and tool for all three annotators (lightbox, board, compare —
-  otherwise a stale one saves its old styles back over the reset); not the per-video stamp on/off, drawings,
-  notes. The long-press swallows its release click in the capture phase, `fired` is cleared 60 ms after release.
-  Modifier classes re-sync on pointermove and clear on blur. An annotator tool's inline cursor wins over the CSS.
-- Review (fresh agent): 3 findings — compare annotator not reset (overwrote the reset), a stale long-press flag
-  swallowing the next keyboard activation, F framing the board as well as scrolling the grid in split view. Fixed;
-  the same reviewer confirmed them and noted held-F repeats still reaching the board (fixed: repeats swallowed).

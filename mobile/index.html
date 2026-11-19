@@ -206,7 +206,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* Timeline: markers, cache and playhead all in the track's own percent, so they line up. */
 .tl { position: relative; height: 30px; margin: 0 10px; touch-action: none; cursor: pointer; }
 .tl .trk { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; background: var(--trk); }
-.tl .cache { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: #30d158; opacity: .5; }
+.tl .cache { position: absolute; inset: 0; pointer-events: none; }
+.tl .cache i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: #30d158; opacity: .5; }
 .tl .mk { position: absolute; top: -5px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: #ff453a; pointer-events: none; }
 .tl .mk.done { background: #30d158; } .tl .mk.progress { background: #ffd60a; }
 .tl .mk.dr { width: 6px; height: 6px; top: -1px; margin-left: -3px; border-radius: 3px; background: var(--ov-mut); }
@@ -334,7 +335,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; margin: 8px 0 14px; }
 .kv b { color: var(--muted); font-weight: 500; }
 .sheet .lab { display: block; font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 4px; }
-.sheet .seg.themes, .sheet .seg.fs, .sheet .seg.thumbs, .sheet .seg.ahead { margin: 0 0 14px; }
+.sheet .seg.themes, .sheet .seg.fs, .sheet .seg.thumbs, .sheet .seg.ahead, .sheet .seg.debug { margin: 0 0 14px; }
 .sheet .seg.fs + p { margin-top: -8px; }
 /* Full-screen picture viewer */
 /* Full-screen picture viewer: no bar; round buttons float over the picture. Swipe up / down: the

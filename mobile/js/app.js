@@ -8,6 +8,7 @@
 import * as DB from "./store.js";
 import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, ScrubCache, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
 import { videoFps } from "./mp4.js";
+import { dbg } from "./debug.js";
 import { createViewer } from "./model3d.js";
 import { SPLAT_EXT } from "../core/model3d-core.js";
 import * as M from "./model.js";
@@ -1228,6 +1229,22 @@ async function settings(){
     AHEADS.forEach((n) => { const b = btn("", n + "%", () => { setCacheAhead(n); paintCa(); }); b.dataset.n = String(n); ca.appendChild(b); });
     sh.appendChild(ca); paintCa();
     sh.appendChild(el("p", "", "Share of the video frames kept in memory ahead of the playhead; the rest stays behind it for scrubbing back."));
+    sh.appendChild(el("b", "lab", "Debug log"));
+    const dg = el("div", "seg debug");
+    const dgNote = el("p", "");
+    const paintDg = () => {
+      dg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", (b.dataset.v === "1") === dbg.on));
+      const n = dbg.count();
+      dgNote.textContent = dbg.on ? `Recording: ${n} events. Do what goes wrong, then send the log.`
+        : n ? `Stopped: ${n} events kept until you clear them (after the app closes: the newest ≈ 1 MB).` : "Records what the video player and the frame cache do on this device, to send as a file.";
+      dgSend.hidden = dgClear.hidden = !n;
+    };
+    [["1", "On"], ["0", "Off"]].forEach(([v, label]) => { const b = btn("", label, () => { if (dbg.on !== (v === "1")) dbg.set(v === "1"); paintDg(); }); b.dataset.v = v; dg.appendChild(b); });
+    const dgActs = el("div", "acts");
+    const dgSend = btn("btn primary", "Send debug log…", () => { dbg.log("export", {}); offerFile(new Blob([dbg.text()], { type: "text/plain" }), dbg.fileName(), "Debug log"); });
+    const dgClear = btn("btn", "Clear", () => { dbg.clear(); paintDg(); });
+    dgActs.appendChild(dgClear); dgActs.appendChild(dgSend);
+    sh.appendChild(dg); sh.appendChild(dgNote); sh.appendChild(dgActs); paintDg();
     sh.appendChild(el("b", "lab", "Full screen"));
     if (fsCan()){
       const fs = el("div", "seg fs");
@@ -2378,7 +2395,7 @@ function buildStage(){
           let sc = scrubPool.get(rv.meta.key);
           scrubPool.delete(rv.meta.key);
           if (sc && sc.broken){ sc.close(); sc = null; }
-          if (!sc) sc = new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true });
+          if (!sc) sc = new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true, tag: rv.meta.asset.name });
           sc.prio = 0; sc.fps = () => rv.fps;
           sc.onProgress = () => { if (R === rv) TPS.forEach(paintCache); };
           rv.scrub = sc;
@@ -2414,8 +2431,13 @@ function buildStage(){
       });
       // The big play button only until the clip is first played or moved: it would cover the frame.
       // (A seek still landing keeps the cached picture until its frame is shown: settle on "seeked".)
-      v.addEventListener("play", () => { R.playOn = true; big.remove(); R.scrubT = null; R.want = null; if (!v.seeking) hideCached(); paintTime(); loop(); });
+      v.addEventListener("play", () => { playPend = performance.now() + 4000; ScrubCache.poke(); R.playOn = true; big.remove(); R.scrubT = null; R.want = null; if (!v.seeking) hideCached(); paintTime(); loop(); });
+      // The scrub caches keep off the decoder until the play has started (ScrubCache.busy).
+      v.addEventListener("playing", () => { playPend = performance.now() + 300; });
+      v.addEventListener("seeking", () => ScrubCache.poke());
+      v.addEventListener("pause", () => { playPend = 0; });
       v.addEventListener("seeking", () => big.remove());
+      dbgPlayer(v);  // (logs only while the debug log is on)
       els.T = makeTransport();
       // Under the clip's own timeline: the group's videos end to end (renderSeqBar; hidden outside a sequence).
       const sqb = el("div", "sqb");
@@ -2522,8 +2544,10 @@ const durOf = () => { const v = R && R.video; return (v && Number.isFinite(v.dur
 function togglePlay(){
   const v = R && R.video;
   if (!v) return;
-  if (!v.paused){ v.pause(); return; }
+  if (!v.paused){ dbg.log("tap.pause", { t: +v.currentTime.toFixed(3) }); v.pause(); return; }
   const t = R.want != null ? R.want : R.scrubT;
+  dbg.log("tap.play", { t: +v.currentTime.toFixed(3), want: t, seeking: v.seeking, rs: v.readyState, busy: !!(ScrubCache.busy && ScrubCache.busy()) });
+  dbgPlayAt = performance.now();
   if (t != null){
     R.want = null;
     if (R.dragging) dragEnd();
@@ -2660,7 +2684,7 @@ function makeTransport(){
   [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.fps, T.tc, T.snd, T.loop,
     ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next marker", () => jumpNote(1))].forEach((b) => row.appendChild(b));
   const tl = el("div", "tl"), trk = el("div", "trk");
-  T.cache = el("i", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
+  T.cache = el("div", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
   trk.appendChild(T.cache); trk.appendChild(T.marks); trk.appendChild(T.ph);
   tl.appendChild(trk);
   T.trk = trk;
@@ -2847,19 +2871,62 @@ function paintMarks(T){
     T.marks.appendChild(i);
   });
 }
-// The cache strip: the unbroken run of cached frames around the playhead.
+// The cache strip: every run of cached frames of the open clip (up to 3 dropped frames, still to be sought,
+// and gaps under 0.3 % of the track do not break it).
 function paintCache(T){
-  const d = durOf(), s = R && R.video && R.scrub && d ? R.scrub.span(posNow()) : null;
-  T.cache.style.left = s ? (s[0] / d * 100).toFixed(2) + "%" : "0";
-  T.cache.style.width = s ? (Math.max(0, s[1] - s[0]) / d * 100).toFixed(2) + "%" : "0";
+  const d = durOf(), rs = R && R.video && R.scrub && d ? R.scrub.runs(3) : [], m = [];
+  for (const [a, b] of rs){
+    const l = m[m.length - 1];
+    if (l && a - l[1] < d * 0.003) l[1] = Math.max(l[1], b); else m.push([a, b]);
+  }
+  const html = m.map(([a, b]) => '<i style="left:' + (a / d * 100).toFixed(2) + "%;width:" + (Math.max(0, b - a) / d * 100).toFixed(2) + '%"></i>').join("");
+  if (T.cacheHtml !== html){ T.cacheHtml = html; T.cache.innerHTML = html; }
 }
 function paintTime(){ if (R && R.video){ TPS.forEach(paintTransport); TPS.forEach(paintCache); paintSeqPh(); cacheFocus(); } }
-// The scrub caches follow the playhead (as Sight's RAM window): ScrubCache.MAX frames, 60 % ahead of it
-// and 40 % behind, filled outwards from it. Past the clip's end / start the rest goes to the next /
+// The scrub caches follow the playhead (as Sight's RAM window): ScrubCache.MAX frames, ScrubCache.AHEAD ahead of it
+// and the rest behind (Settings: 70 / 30 by default), filled outwards from it, behind weighted. Past the clip's end / start the rest goes to the next /
 // previous clip of the sequence (loop on: the first after the last) — its own cache in scrubPool, taken
 // over at the cut, so a play or scrub across the cut finds frames both ways; with no neighbour there, the
 // rest goes to the other side of the playhead.
 const scrubPool = new Map();   // review key → ScrubCache of a neighbouring clip
+let playPend = 0;              // a play started, not yet playing (until then + 300 ms): the caches wait
+// Debug log (Settings → Debug log, debug.js): the visible player's events with their latency, and every second
+// the playhead and each scrub cache's state.
+let dbgPlayAt = 0;             // when the last tap asked to play
+function dbgPlayer(v){
+  let seekAt = 0, waitAt = 0;
+  // x: a function building the data, called only while logging and while this is the open clip's player.
+  const L = (ev, x) => { if (dbg.on && R && R.video === v) dbg.log(ev, Object.assign({ t: +v.currentTime.toFixed(3) }, x ? x() : null)); };
+  const since = () => dbgPlayAt ? Math.round(performance.now() - dbgPlayAt) : null;
+  v.addEventListener("loadedmetadata", () => L("v.meta", () => ({ name: R.meta.asset.name, d: v.duration, w: v.videoWidth, h: v.videoHeight, size: R.file ? R.file.size : null, type: R.file ? R.file.type : null })));
+  v.addEventListener("play", () => L("v.play", () => ({ sinceTap: since() })));
+  v.addEventListener("playing", () => { L("v.playing", () => ({ sinceTap: since(), rs: v.readyState })); dbgPlayAt = 0; });
+  v.addEventListener("waiting", () => { waitAt = performance.now(); L("v.waiting", () => ({ rs: v.readyState })); });
+  v.addEventListener("canplay", () => { if (waitAt){ const ms = Math.round(performance.now() - waitAt); L("v.canplay", () => ({ ms })); waitAt = 0; } });
+  v.addEventListener("stalled", () => L("v.stalled"));
+  v.addEventListener("seeking", () => { seekAt = performance.now(); L("v.seeking", () => ({ dragging: !!R.dragging })); });
+  v.addEventListener("seeked", () => { const ms = seekAt ? Math.round(performance.now() - seekAt) : null; L("v.seeked", () => ({ ms })); seekAt = 0; });
+  v.addEventListener("pause", () => { L("v.pause"); dbgPlayAt = 0; });  // a play that never started: the next one is not timed from that tap
+  v.addEventListener("ended", () => L("v.ended"));
+  v.addEventListener("error", () => { L("v.error", () => ({ code: v.error && v.error.code, msg: v.error && v.error.message })); dbg.flush(); });
+}
+dbg.info({ version: VERSION });
+dbg.sample(() => {
+  const v = R && R.video;
+  if (!v) return null;
+  const cs = [];
+  const one = (c, role) => {
+    const rs = c.runs(3), m = c.mts;
+    cs.push({ c: c.tag, role, n: m.length, runs: rs.length > 8 ? rs.length : rs.map(([a, b]) => [+a.toFixed(2), +b.toFixed(2)]),
+      v: !!c.v, running: c.running, broken: c.broken, prio: c.prio });
+  };
+  if (R.scrub) one(R.scrub, "open");
+  scrubPool.forEach((c) => one(c, "pool"));
+  const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
+  return { t: +v.currentTime.toFixed(3), pos: +posNow().toFixed(3), paused: v.paused, rs: v.readyState, seeking: v.seeking, rate: v.playbackRate,
+    fps: R.fps, ahead: ScrubCache.AHEAD, busy: !!(ScrubCache.busy && ScrubCache.busy()), drag: !!R.dragging, caches: cs, heapMB: mem };
+});
+ScrubCache.busy = () => { const v = R && R.video; return !!v && (performance.now() < playPend || v.seeking || (!v.paused && v.readyState < 3)); };
 const scrubPoolPend = new Set(), scrubPoolMiss = new Set();  // a file being read / not kept on the device
 function scrubPoolClear(){ scrubPool.forEach((sc) => sc.close()); scrubPool.clear(); scrubPoolPend.clear(); scrubPoolMiss.clear(); }
 function cacheFocus(){
@@ -2886,12 +2953,14 @@ function cacheFocus(){
   g = Math.min(left, d - hi); hi += g; left -= g;
   g = Math.max(0, Math.min(left, capN - over - (same ? under : 0))); over += g; left -= g;
   g = Math.max(0, Math.min(left, capP - under - (same ? over : 0))); under += g;
-  sc.want([{ lo, hi, from: t }]);
+  // base: how far each neighbour's range starts from the playhead (behind weighted), so all the caches fill
+  // outwards from the playhead as one window, across the cut (ScrubCache's turns go to the cheapest part).
+  sc.want([{ lo, hi, from: t, base: 0 }]);
   const wants = new Map();
-  if (over) wants.set(next.key, { it: next, ranges: [{ lo: 0, hi: over, from: 0 }] });
+  if (over) wants.set(next.key, { it: next, ranges: [{ lo: 0, hi: over, from: 0, base: d - t }] });
   if (under){
     const w = wants.get(prev.key) || { it: prev, ranges: [] };
-    w.ranges.push({ lo: -under, hi: 0, from: 0, end: true });
+    w.ranges.push({ lo: -under, hi: 0, from: 0, end: true, base: t * ScrubCache.wb() });
     wants.set(prev.key, w);
   }
   scrubPool.forEach((c, k) => { if (!wants.has(k)){ c.close(); scrubPool.delete(k); } });
@@ -2905,7 +2974,7 @@ function cacheFocus(){
       if (!kept || !kept.blob){ scrubPoolMiss.add(k); return; }
       if (R !== rv){ if (R) cacheFocus(); return; }  // a cut meanwhile: the new clip asks again
       if (scrubPool.has(k)) return;
-      const c2 = new ScrubCache(URL.createObjectURL(kept.blob), w.it.dur || 0, () => rv.fps, null, { own: true, prio: 1 });
+      const c2 = new ScrubCache(URL.createObjectURL(kept.blob), w.it.dur || 0, () => rv.fps, null, { own: true, prio: 1, tag: (w.it.name || k) });
       scrubPool.set(k, c2);
       cacheFocus();
     });
@@ -2986,6 +3055,7 @@ function bindStage(stage){
     pin(g.q, mid(p));
     applyPlayerView();
   };
+  stage.addEventListener("pointerdown", (e) => { if (dbg.on) dbg.log("ptr.down", { type: e.pointerType, on: e.target.tagName }); }, true);
   stage.addEventListener("pointerdown", (e) => {
     if (!R || e.target.closest("button, label, input") || (e.pointerType === "mouse" && e.button !== 0)) return;
     if (e.pointerType === "mouse" && pts.size) return;
@@ -3068,6 +3138,7 @@ function bindStage(stage){
   stage.addEventListener("pointercancel", up);
   stage.addEventListener("lostpointercapture", (e) => { if (e.pointerType === "mouse") up(e); });
   stage.addEventListener("click", (e) => {
+    if (dbg.on) dbg.log("click", { on: e.target.tagName, eaten: performance.now() < eatUntil });
     if (!R || !els || performance.now() < eatUntil || e.target.closest("button, label, input")) return;
     const v = R.video;
     if (v){ if (e.target === v || e.target === els.scrubImg) togglePlay(); }

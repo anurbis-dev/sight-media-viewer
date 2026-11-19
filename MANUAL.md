@@ -331,12 +331,16 @@
   (iPhone / iPad Safari only mutes / unmutes). The canvas' transport has both too. The timeline (tap / drag anywhere; near a marker it lands on it). Drag left / right
   across the picture to scrub from where the clip is (a frame per few pixels, faster when you move
   faster; Shift with a mouse = finer) — the clip's length no longer spreads over the screen's
-  width; the app keeps small frames around the playhead in memory (the green strip in the timeline:
-  about 1,500 frames, 70 % ahead and 30 % behind by default — Settings → *Cache ahead* — filled outwards
-  from the playhead and following it),
+  width; the app keeps small frames around the playhead in memory (the green strip in the timeline shows
+  every cached part of the clip: about 1,500 frames, 70 % ahead and 30 % behind by default — Settings →
+  *Cache ahead* — filled outwards from the playhead and following it, across a sequence's cut as one window;
+  it pauses while a play starts or the player seeks, so the player itself goes first),
   so the picture follows at once. In a group's sequence, near a clip's end the window runs on into the
   next clip's start (near its start: into the previous clip's end), so playing or scrubbing across the
-  cut finds frames both ways. Tap the picture to play / pause
+  cut finds frames both ways. Settings → *Debug log* (On / Off) records what the player and the frame cache do
+  on this device (taps, play and seek delays, every part of the clip the cache reads, a sample each second);
+  reproduce the problem, then *Send debug log…* shares or downloads it as a `.txt` file to send to the developer.
+  Tap the picture to play / pause
   (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for markers); play starts from the frame on
   screen, also right after a scrub. Notes are listed and numbered in
   the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
