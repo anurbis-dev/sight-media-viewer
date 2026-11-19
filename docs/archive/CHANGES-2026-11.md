@@ -2,6 +2,22 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.88.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
+- **What:** owner: the drawing tools sat under the video transport, and on a narrow phone some icons went off the
+  edge. Now the tools row is the bottom bar's top row (over the host's footer / transport), in one line; when it
+  does not fit it scrolls sideways by a drag (finger, pen or mouse), centred while it fits. The colour button
+  stays at the right end.
+- **Where:** app/static/review-draw.js (`dragScroll`, `.dtrow` inside `.dtools`, bar order, CSS) — shared by
+  the phone app and the HTML review page; tests/pwa_e2e.cjs `seqbar` end + test_pwa.py `test_seq_bar`.
+- **Notes:** `.rd-panel` is `touch-action: none`, so the scroll is done in JS, not natively. Past 6 px a drag is
+  the scroll's: the pressed button gets a synthetic `pointercancel` (cancels its 550 ms hold), open flyouts
+  close, the click after a mouse drag is eaten. Flyouts still open above the whole bar (now above the tools).
+- Review (fresh agent): touch / pen drag stopped after the first move (the button's implicit capture moving to
+  the row fired `lostpointercapture` that ended the drag) → ignored unless on the row itself; a mouse released
+  outside the row left the drag stuck → cleared on a buttonless move; a leftover `eat` swallowed one keyboard
+  click after a touch drag → cleared on the next task. The test now asserts the full scroll. Confirmed by the
+  same reviewer.
+
 ## 0.88.0 — 2026-11-18 — Phone: the sequence bar under the timeline, title swipe between clips
 - **What:** owner: like Sight, a group's videos should play and scrub across the cuts, not one by one. A review
   whose group has 2+ videos now has a bar under the clip's own timeline with every video as a segment (name, current one

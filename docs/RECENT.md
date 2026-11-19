@@ -14,6 +14,13 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.95.0 — 2026-11-19 — Lightbox 2D viewer on the shared input module: touch pinch, left-drag pan on pictures
+- **What:** stage 2 of `docs/PLAN-viewer-input.md`. The lightbox's image / PSD / video viewer (`attachViewer`, also the 3D UV pane) takes its pointer input from `viewer-input.js`, like Compare. New for the user: **two-finger pinch-zoom / pan** on pictures and videos, **a left drag (one finger) pans a picture** (it did nothing), Shift slows pan / right-drag zoom / the wheel (×0.2). Unchanged: click a video = play / pause after 250 ms, double-click = Frame ↔ 100 %, left drag scrubs a video (window width = the clip, Shift ×0.1), Alt-drag turns a picture, Alt-drag scrubs a video and Ctrl+Alt-drag turns it, middle pans, right drag / wheel zoom, digits 1–9.
+- **Where:** index.html `attachViewer` (the click / dblclick / pointer / wheel listeners, `clickTimer`, `justScrubbed`, `vs.panD / zoomD / rotD / scrubD` replaced by one `attachViewerInput(wrap, …)`: Alt turn = `claim`, scrub = `beginScrub` / `seekVideo` / `endScrub`, a sequence hands over to `seqScrubBegin` in `scrub.begin`; returns `destroy`), `fillStage` / `closeLight` (destroy `stage._vinput`); viewer-input.js (presses on inputs / textareas / contenteditable are left alone; window touch listeners only while a finger is down); MANUAL, ARCHITECTURE, PLAN.
+- **Notes:** the module is attached before `annot.bind2d`, so its second-finger capture hook runs before the annotator's capture `onDown` on the same `.view`: a pinch while drawing drops the stroke (`annot.abortGesture`). The click is decided on pointerup, so while annotating a press the annotator keeps no longer plays / pauses via a stray `click` event. A sequence scrub stays claimed in the old viewer with no-op `to` / `end` until release (its window listeners run it across cuts). The text document viewer is left out (left button = text selection). Next: stage 3 (board and 3D zoom use the exported factors / a pinch helper).
+- Review (fresh agent): a second finger did not stop a sequence picture scrub (pinch and scrub together) — `seqScrubBegin` now registers `light.seqDrag {pid, end}`, ended by `abortOthers` and `closeLight`, and a press on a later clip's viewer while one runs stays dead; closing mid-scrub re-pinned the server's RAM window to the closed clip — `closeLight` destroys the input before `releaseMedia`; the UV pane's input was not destroyed when the pane went (`syncUvPane`, "No UVs") — fixed; a prevented press kept focus in a field elsewhere (Space / digits went there) — the module blurs a focused field outside `el` on a plain left press (as the browser did; middle / right / Alt presses keep a half-typed reply open). Accepted: a triple-click on a video toggles on the third click; right-drag zoom is incremental, so past the max scale it zooms out at once on the way back; a mouse release lost outside the browser leaves `seqDrag` set until the next pointerup (a new press stays dead meanwhile).
+- The same reviewer confirmed every fix (blur narrowed to a plain left press without Alt after its note) and found nothing new.
+
 ## 0.94.2 — 2026-11-19 — Shared viewer input module; Compare runs on it
 - **What:** stage 1 of `docs/PLAN-viewer-input.md`. New `app/static/viewer-input.js` (`attachViewerInput`, `zoomFactorDrag`, `zoomFactorWheel`, `wheelDelta`): the press / click / drag decision, the 250 ms click hold, Shift-fine, right-drag / wheel zoom maths, pan, pinch, pointer capture and its retake, window fallbacks. Compare's picture input now goes through it; the behaviour is meant to be unchanged (click, double-click, scrub, split, zoom, pan, wheel, touch tap / scrub / pinch).
 - **Where:** viewer-input.js (new); compare.js (`bindStageInput`, `splitDrag`, `liveBox`; `startScrub` split into `scrubBegin` / `scrubTo` / `scrubEnd` — the timeline keeps its own absolute drag; `onDown` / `onMove` / `onUp` / `startPinch` / `onWheel` / `touches` / `C.clickT` / `C.drag` / `C.onScrubEnd` gone); index.html cmp host `abortAnnot`; ARCHITECTURE, PLAN-viewer-input ("As built").
@@ -192,19 +199,3 @@ Add new entries directly below this line.
   parked caches kept decoding after a cut to a clip without its file → pool cleared. Re-review found the
   retry timer re-arming every 50 ms on past entries → only future entries count, a successful retry
   clears its mark. All confirmed by the same reviewer.
-
-## 0.88.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
-- **What:** owner: the drawing tools sat under the video transport, and on a narrow phone some icons went off the
-  edge. Now the tools row is the bottom bar's top row (over the host's footer / transport), in one line; when it
-  does not fit it scrolls sideways by a drag (finger, pen or mouse), centred while it fits. The colour button
-  stays at the right end.
-- **Where:** app/static/review-draw.js (`dragScroll`, `.dtrow` inside `.dtools`, bar order, CSS) — shared by
-  the phone app and the HTML review page; tests/pwa_e2e.cjs `seqbar` end + test_pwa.py `test_seq_bar`.
-- **Notes:** `.rd-panel` is `touch-action: none`, so the scroll is done in JS, not natively. Past 6 px a drag is
-  the scroll's: the pressed button gets a synthetic `pointercancel` (cancels its 550 ms hold), open flyouts
-  close, the click after a mouse drag is eaten. Flyouts still open above the whole bar (now above the tools).
-- Review (fresh agent): touch / pen drag stopped after the first move (the button's implicit capture moving to
-  the row fired `lostpointercapture` that ended the drag) → ignored unless on the row itself; a mouse released
-  outside the row left the drag stuck → cleared on a buttonless move; a leftover `eat` swallowed one keyboard
-  click after a touch drag → cleared on the next task. The test now asserts the full scroll. Confirmed by the
-  same reviewer.

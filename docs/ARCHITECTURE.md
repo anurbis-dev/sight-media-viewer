@@ -27,7 +27,9 @@ app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: 
                          textureQuad), the animation player (createAnimator), USD reading (parseUsd / usdAsSight) and
                          splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
-app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, zoom factors) — see Compare
+app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, zoom factors): Compare's
+                         stage and the lightbox 2D viewer (`attachViewer`, kept as `stage._vinput`, destroyed by
+                         the next attachViewer / `fillStage` / `closeLight`) — see Compare
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
@@ -85,7 +87,7 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   limits `PANEL_W`, applied as `--side-w / --insp-w` by `applyPanelWidths()`; narrow-screen drawers
   ignore them); `attachViewer(stage, a, src,
   {embedded:true})` shows any picture with the image lightbox's pan/zoom/fit and returns
-  `{fit, zoom}`; hover picks the pane that gets F/digits (`activePane`, `lightPane`).
+  `{fit, zoom, destroy}`; hover picks the pane that gets F/digits (`activePane`, `lightPane`).
   `attachPanScroll` handles nested scrollers (inner one wins via `e._panScroll`).
 - Info panel / sidebar: The inspector is shown by `state.details` (wide) or `.open` (narrow drawer) via `toggleDetails()` / `applyDetails()`, driven by `#infoBtn`, the `D` key and the palette; its File block collapse is `state.navCollapse.inspFile`. The file counter is `#srcCount` in the Sources header (`statusHtml()`, repainted by `renderStatus()`). Sidebar row icons: `row(..., iconId)`, `KIND_ICON`.
 - Theme (desktop look): every Settings knob is a key of `state.theme` (`DEFAULT_THEME`, overridden by
@@ -741,8 +743,9 @@ cut, scrubbing the bar into another clip) land via `pendT` (< 0 = from the end) 
 `seqOnReady`, called from the viewer's `onReady`; `autoplay` is turned off for a jump that lands paused.
 annotate.js's `stepFrame` calls `host.seqEdge(n, fd)` past either end of a clip. `light.vctl` exposes
 the viewer's `seekVideo / beginScrub / endScrub` for the sequence bar. Drags through the sequence (the bar, and the
-picture scrub — handed over by attachViewer once it starts, `seqScrubBegin`, on window listeners because the stage
-and the element holding the pointer are replaced at each cut) go through `seqDragTo(drag, T)`. Every non-adopted
+picture scrub — handed over by attachViewer's `scrub.begin` once it starts, `seqScrubBegin`, on window listeners
+because the stage and the element holding the pointer are replaced at each cut; the viewer-input gesture stays
+claimed with no-op `to` / `end` until release, so destroying that viewer at a cut does not end it) go through `seqDragTo(drag, T)`. Every non-adopted
 `seqGo` holds the frame on screen as a canvas over `.light-stage` (`seqHold`) until the new clip presents its
 frame (`seqReleaseHold` from `seqOnReady`, 1.5 s cap). Marks: `s.marks[k]` = `[{t, note}]` — the clip on
 screen reports annotate.js's own `marks()` through `host.marksChanged` (called by `renderMarks`); other clips

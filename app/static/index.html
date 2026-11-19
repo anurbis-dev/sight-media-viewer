@@ -788,6 +788,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
+import { attachViewerInput } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -5110,6 +5111,7 @@ const TEXT_EXT = new Set([
 
 function fillStage(stage, a, opts = {}){
   dispose3d("light3d");
+  stage._vinput?.destroy(); stage._vinput = null; // (a 2D viewer's input: window listeners, a held click)
   const src = previewSrc(a);
   if (a.kind === "video" || a.kind === "image" || a.ext === ".psd"){
     attachViewer(stage, a, src, opts.adopt ? { adopt: opts.adopt } : {});
@@ -5458,7 +5460,7 @@ function attachViewer(stage, a, src, opts = {}){
   let phEl = stage.querySelector(".view-ph");
   let scEl = null; // the scrub copy over a video (see loadScrubCopy)
   const hud = stage.querySelector(".view-hud");
-  const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit", panD: null, zoomD: null };
+  const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit" };
   // Turn / mirror about the window's centre, in front of the picture's own translate + scale;
   // pan and zoom work in the unturned frame (unturn maps the pointer there).
   const turn = opts.embedded ? { rot: 0, mir: false } : loadTurn(a.id);
@@ -5738,139 +5740,77 @@ function attachViewer(stage, a, src, opts = {}){
     bindVBar(el, seekVideo, beginScrub, endScrub);
     startVideoCache(el, a, !!opts.adopt);
   }
-  // A single click toggles play/pause; a double click still frames/100%s the picture. Both start
-  // as "click" events, so the first one is held back briefly — long enough for a second to arrive
-  // and cancel it as a dblclick, short enough not to feel laggy.
-  let clickTimer = 0;
-  let justScrubbed = false;
-  wrap.addEventListener("click", (e) => {
-    if (!isVid || e.button !== 0) return;
-    if (justScrubbed){ justScrubbed = false; return; }
-    if (e.detail > 1) return; // second click of a dblclick — let dblclick handle it
-    clearTimeout(clickTimer);
-    clickTimer = setTimeout(() => { if (el.paused) el.play(); else el.pause(); }, 250);
-  });
-  wrap.addEventListener("dblclick", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    clearTimeout(clickTimer);
-    if (vs.mode === "fit") toOne();
-    else toFit();
-  });
-  wrap.addEventListener("pointerdown", (e) => {
-    // Alt-drag turns a picture about its centre, to any angle; on a video plain Alt-drag scrubs it instead,
-    // and Ctrl+Alt-drag turns the video. Shift snaps the angle to absolute 15° steps (0, 15, 30 …), not
-    // steps from where the drag began. Alt over a drawing tool hands the press to the viewer (annotate.js).
-    if (e.button === 0 && e.altKey && (!isVid || e.ctrlKey || e.metaKey)){
-      e.preventDefault();
-      wrap.setPointerCapture(e.pointerId);
+  // Pointer input (viewer-input.js, the same module as Compare): a click on a video plays / pauses (held 250 ms,
+  // so a double-click — frame / 100 % — does not toggle), a left drag scrubs a video (the window's width is the
+  // clip, Shift a tenth; a sequence hands the drag to seqScrubBegin) and pans a picture, middle drag pans,
+  // right drag / wheel zoom, two fingers pinch-zoom and pan. Alt-drag turns a picture about its centre, to any
+  // angle; on a video plain Alt-drag scrubs it instead, and Ctrl+Alt-drag turns the video. Shift snaps the angle
+  // to absolute 15° steps. Alt over a drawing tool hands the press to the viewer (annotate.js altCam).
+  let scrubT0 = 0, handed = false;
+  stage._vinput?.destroy(); // (the viewer this stage held before: its window listeners, a held click)
+  const input = attachViewerInput(wrap, {
+    claim: (e) => {
+      if (!(e.button === 0 && e.altKey && (!isVid || e.ctrlKey || e.metaKey))) return null;
       const r = wrap.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      vs.rotD = { cx, cy, a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
+      const d = { a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
       wrap.style.cursor = "var(--cur-rot)";
-      return;
-    }
-    if (isVid && e.button === 0){
-      // Click-drag on the picture scrubs the video, same as dragging the timeline. Nothing happens
-      // until the pointer has moved a few px, so a plain click / double-click is untouched.
-      if (e.altKey) e.preventDefault(); // an Alt-scrub must not start a native text selection (as the turn does)
-      wrap.setPointerCapture(e.pointerId);
-      vs.scrubD = { x: e.clientX, t0: el.currentTime, t: el.currentTime, fine: e.shiftKey, on: false };
-      return;
-    }
-    if (e.button === 1){
-      e.preventDefault();
-      wrap.setPointerCapture(e.pointerId);
-      vs.panD = { x: e.clientX, y: e.clientY, px: vs.pan.x, py: vs.pan.y };
-      wrap.style.cursor = "grabbing";
-      return;
-    }
-    if (e.button === 2){
-      e.preventDefault();
-      wrap.setPointerCapture(e.pointerId);
-      const r = wrap.getBoundingClientRect();
-      vs.zoomD = { x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: vs.scale };
-      wrap.style.cursor = state.theme.zoomAxis === "x" ? "ew-resize" : "ns-resize";
-    }
-  });
-  wrap.addEventListener("pointermove", (e) => {
-    if (vs.rotD){
-      const d = vs.rotD;
-      let delta = Math.atan2(e.clientY - d.cy, e.clientX - d.cx) * 180 / Math.PI - d.a0;
-      delta = ((delta + 540) % 360) - 180; // -180 … 180: the way the pointer went round
-      let rot = d.rot0 + delta;
-      if (e.shiftKey) rot = Math.round(rot / 15) * 15;
-      turn.rot = ((rot % 360) + 360) % 360;
-      d.moved = true;
-      if (vs.mode === "fit") toFit(); else apply();
-      return;
-    }
-    if (vs.panD){
-      const [dx, dy] = unturnVec(e.clientX - vs.panD.x, e.clientY - vs.panD.y);
-      vs.pan = { x: vs.panD.px + dx, y: vs.panD.py + dy };
+      return {
+        move: (ev) => {
+          let delta = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI - d.a0;
+          delta = ((delta + 540) % 360) - 180; // -180 … 180: the way the pointer went round
+          let rot = d.rot0 + delta;
+          if (ev.shiftKey) rot = Math.round(rot / 15) * 15;
+          turn.rot = ((rot % 360) + 360) % 360;
+          if (vs.mode === "fit") toFit(); else apply();
+        },
+        end: () => {
+          wrap.style.cursor = "";
+          if (!opts.embedded) saveTurn(a.id, turn); // kept once the drag ends
+        },
+      };
+    },
+    click: isVid ? () => { if (!el.isConnected) return; if (el.paused) el.play(); else el.pause(); } : null,
+    dblclick: (e) => { e.preventDefault(); if (vs.mode === "fit") toOne(); else toFit(); },
+    scrub: isVid ? {
+      begin: (e) => {
+        handed = false;
+        // Sequence: the scrub belongs to the whole sequence, so it does not stop at this clip's ends. Its own
+        // window listeners run it (the stage is replaced at each cut); here it only stays claimed until release.
+        // (one already running — a finger pressed on an earlier clip's viewer — : this press stays dead)
+        if (light?.seq && !opts.embedded){ handed = true; if (!light.seqDrag) seqScrubBegin(e, e.shiftKey); return true; }
+        scrubT0 = el.currentTime;
+        beginScrub();
+        return true;
+      },
+      to: (frac) => { if (!handed) seekVideo(scrubT0 + frac * (el.duration || 0)); },
+      end: () => { if (!handed) endScrub(); handed = false; },
+    } : null,
+    pan: (dx, dy) => {
+      const [ux, uy] = unturnVec(dx, dy); // (pan is in the unturned frame)
+      vs.pan = { x: vs.pan.x + ux, y: vs.pan.y + uy };
       vs.mode = "free";
       apply();
-      return;
-    }
-    if (vs.zoomD){
-      // Right-drag zoom: axis/speed/invert are user-configurable (feedback: expose zoom speed,
-      // a vertical/horizontal axis toggle, and an invert option), anchored to where the drag
-      // started so that point stays under the cursor as the scale changes.
-      const t = state.theme;
-      const raw = t.zoomAxis === "x" ? (e.clientX - vs.zoomD.x) : (vs.zoomD.y - e.clientY);
-      const d = (t.zoomInvert ? -raw : raw) * 0.012 * (t.zoomSpeed ?? 1);
-      zoomAt(vs.zoomD.scale * Math.exp(d), vs.zoomD.mx, vs.zoomD.my);
-      return;
-    }
-    if (vs.scrubD){
-      const sd = vs.scrubD;
-      if (sd.handed) return; // the sequence's own drag runs it now (seqScrubBegin)
-      if (!sd.on){
-        if (Math.abs(e.clientX - sd.x) < 4) return;
-        // Sequence: the scrub belongs to the whole sequence, so it does not stop at this clip's ends.
-        if (light?.seq && !opts.embedded){ sd.handed = true; seqScrubBegin(e, e.shiftKey); return; }
-        sd.on = true;
-        sd.x = e.clientX; // rebase on the pointer's current spot so the picture doesn't jump
-        sd.t0 = sd.t = el.currentTime;
-        wrap.style.cursor = "ew-resize";
-        beginScrub();
-      }
-      if (e.shiftKey !== sd.fine){ sd.fine = e.shiftKey; sd.x = e.clientX; sd.t0 = sd.t; } // Shift = fine, without a jump
-      // Dragging across the whole window covers the whole clip (Shift: a tenth of it).
-      const t = seekVideo(sd.t0 + ((e.clientX - sd.x) / Math.max(wrap.clientWidth, 1)) * (el.duration || 0) * (sd.fine ? 0.1 : 1));
-      if (t != null) sd.t = t;
-    }
+    },
+    zoom: (f, x, y) => {
+      const r = wrap.getBoundingClientRect();
+      zoomAt(vs.scale * f, x - r.left, y - r.top);
+    },
+    zoomSettings: () => state.theme,
+    onDrag: (k) => {
+      wrap.style.cursor = k === "pan" ? "grabbing" : k === "scrub" && !handed ? "ew-resize"
+        : k === "zoom" ? (state.theme.zoomAxis === "x" ? "ew-resize" : "ns-resize") : "";
+    },
+    // A second finger: a stroke the first one began is dropped (the pinch never leaves a mark).
+    abortOthers: () => { if (light && !opts.embedded){ annot.abortGesture(); light.seqDrag?.end(); } },
   });
-  // cancelled: the browser took the pointer, so no click follows the drag and nothing may be swallowed.
-  const end = (cancelled) => {
-    const scrubbed = vs.scrubD && vs.scrubD.on;
-    const dragged = vs.rotD || vs.panD || vs.zoomD;
-    if (vs.scrubD?.handed && !cancelled) justScrubbed = true; // its click must not play / pause
-    // A turn or scrub drag ends with a click on the wrap: swallow it, or a video would pause. A turn
-    // of an image is not swallowed here (the click handler only looks at videos, so the flag would stay set).
-    if (vs.rotD){
-      if (vs.rotD.moved && isVid && !cancelled) justScrubbed = true;
-      vs.rotD = null;
-      if (!opts.embedded) saveTurn(a.id, turn); // kept once the drag ends
-    }
-    vs.panD = vs.zoomD = vs.scrubD = null;
-    if (dragged && !scrubbed) wrap.style.cursor = "";
-    if (scrubbed){ wrap.style.cursor = ""; endScrub(); if (!cancelled) justScrubbed = true; }
-  };
-  wrap.addEventListener("pointerup", () => end(false));
-  wrap.addEventListener("pointercancel", () => end(true));
+  stage._vinput = input;
   wrap.addEventListener("contextmenu", (e) => e.preventDefault());
   wrap.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
   // Annotations draw over this picture (its listeners go in first, in the capture phase, so a
-  // drawing gesture never reaches the pan / scrub / play handlers above).
+  // drawing gesture never reaches the pan / scrub / play handlers above; the input's second-finger
+  // hook is a capture listener on the same element, added before, so a pinch still aborts a stroke).
   if (light && !opts.embedded) annot.bind2d({ wrap, media: el, isVid, geom, unturn });
-  wrap.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const t = state.theme;
-    const r = wrap.getBoundingClientRect();
-    const d = (t.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (t.zoomSpeed ?? 1);
-    zoomAt(vs.scale * Math.exp(d), e.clientX - r.left, e.clientY - r.top);
-  }, { passive: false });
-  return { fit: toFit, zoom: toScale };
+  return { fit: toFit, zoom: toScale, destroy: () => input.destroy() };
 }
 
 // ---- Video bar: sound, loop, position field ---------------------------------------------------------
@@ -6784,6 +6724,9 @@ function seqScrubBegin(e, fine){
   if (!light?.seq) return;
   const frame = light.el.querySelector(".light-frame");
   const drag = { pid: e.pointerId, x: e.clientX, T0: seqNow(), fine, began: false, scale: seqDurs()[light.seq.i] || 1, w: Math.max(1, frame?.clientWidth || 1) };
+  // (light.seqDrag: a second finger on the viewer that started it, or closing the lightbox, ends it where it is;
+  // a press on a later clip's viewer while it runs stays dead)
+  light.seqDrag = { pid: drag.pid, end: () => up({ pointerId: drag.pid }) };
   drag.T = drag.T0;
   const move = (ev) => {
     if (ev.pointerId !== drag.pid || !light?.seq) return;
@@ -6797,6 +6740,7 @@ function seqScrubBegin(e, fine){
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
+    if (light?.seqDrag?.pid === drag.pid) light.seqDrag = null;
     if (drag.began) light?.vctl?.end();
   };
   window.addEventListener("pointermove", move);
@@ -7201,6 +7145,10 @@ function closeLight(){
   flushRotatedThumb();
   vMenuClose();
   light.closing = true;
+  // The 2D viewer's input first: a scrub it ends re-pins the RAM window, which releaseMedia then drops.
+  const lf = light.el.querySelector(".light-frame");
+  if (lf?._vinput){ lf._vinput.destroy(); lf._vinput = null; }
+  light.seqDrag?.end();
   try { light.video && light.video.pause(); } catch {}
   try { light.audio && light.audio.pause(); } catch {}
   scrubAudioStop();
@@ -7468,6 +7416,7 @@ function syncUvPane(){
   if (!want){
     if (pane){
       if (pane._url) URL.revokeObjectURL(pane._url);
+      pane._vinput?.destroy(); pane._vinput = null;
       pane.remove();
       frame.querySelector("#uvHandle")?.remove();
     }
@@ -7514,7 +7463,7 @@ async function refreshUv(){
   let res = null;
   try { res = await ins.renderUV(ins.sel, uvChan); } catch (err) { console.warn("UV render failed", err); }
   if (token !== uvToken || $("uvPane") !== pane){ if (res) URL.revokeObjectURL(res.url); return; }
-  if (!res){ pane.innerHTML = `<div class="uv-wait">No UVs</div>`; uvView = null; return; }
+  if (!res){ pane._vinput?.destroy(); pane._vinput = null; pane.innerHTML = `<div class="uv-wait">No UVs</div>`; uvView = null; return; }
   if (pane._url) URL.revokeObjectURL(pane._url);
   pane._url = res.url;
   uvView = attachViewer(pane, { kind: "image", width: res.w, height: res.h }, res.url, { embedded: true });

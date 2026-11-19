@@ -55,6 +55,11 @@ export function attachViewerInput(el, o = {}){
   const capture = (pid) => { try { el.setPointerCapture(pid); } catch {} }; // (synthetic / lost ids throw)
   const dropClick = () => { if (clickT){ clearTimeout(clickT); clickT = 0; } };
   const setKind = (k) => { try { o.onDrag?.(k); } catch {} };
+  // A text field / editor inside el (an annotator's text box, a pin number) keeps its own press.
+  const EDIT = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
+  const editable = (e) => !!e.target?.closest?.(EDIT);
+  // A prevented pointerdown moves no focus: a field focused elsewhere would keep taking Space / digits.
+  const blurOutside = () => { const a = document.activeElement; if (a && a !== document.body && !el.contains(a) && a.matches?.(EDIT)) a.blur(); };
 
   function addWin(){
     if (winOn) return;
@@ -99,7 +104,7 @@ export function attachViewerInput(el, o = {}){
   }
 
   function onDown(e){
-    if (!alive || g) return;
+    if (!alive || g || editable(e)) return;
     if (e.pointerType === "touch" && touches.size > 1) return; // (the pinch has it)
     if (o.canStart && !o.canStart(e)) return;
     const c = o.claim?.(e);
@@ -112,6 +117,7 @@ export function attachViewerInput(el, o = {}){
     }
     if (!kind || (kind === "pan" && !o.pan) || (kind === "zoom" && !o.zoom)) return;
     e.preventDefault();
+    if (kind === "press" && !e.altKey) blurOutside(); // (a plain left press, as the browser did; middle / right / Alt keep a field's text open)
     start(kind, e);
   }
 
@@ -159,9 +165,21 @@ export function attachViewerInput(el, o = {}){
 
   // ---- fingers (capture phase: a second finger must reach us before an annotator under it) ----
   const pair = () => { const [a, b] = touches.values(); return { gap: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
+  // Window up / cancel only while a finger is down (a finger released after its capture was lost), so a viewer
+  // that is never destroyed leaves nothing on window.
+  let touchWin = false;
+  function touchWinSync(){
+    const want = touches.size > 0 && alive;
+    if (want === touchWin) return;
+    touchWin = want;
+    const f = want ? "addEventListener" : "removeEventListener";
+    window[f]("pointerup", onTouchUp, true);
+    window[f]("pointercancel", onTouchUp, true);
+  }
   function onTouchDown(e){
     if (!alive || e.pointerType !== "touch") return;
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    touchWinSync();
     if (touches.size < 2 || !(o.zoom || o.pan)) return;
     // A second finger: what the first one started stops (a scrub ends where it is, a stroke is dropped), the two pinch.
     e.stopImmediatePropagation();
@@ -186,6 +204,7 @@ export function attachViewerInput(el, o = {}){
   }
   function onTouchUp(e){
     if (e.pointerType !== "touch" || !touches.delete(e.pointerId)) return;
+    touchWinSync();
     if (g?.kind !== "pinch") return;
     // One finger left: it does nothing until the other comes back (a new pinch) or it lifts too.
     if (touches.size === 0){ g = null; setKind(null); }
@@ -198,7 +217,7 @@ export function attachViewerInput(el, o = {}){
     o.zoom(zoomFactorWheel(wheelDelta(e), zs(), e.shiftKey), e.clientX, e.clientY, e);
   }
   function onDbl(e){
-    if (!alive) return; // (anywhere on el, as before: compare fits from the gap between tiles too)
+    if (!alive || editable(e)) return; // (anywhere on el, as before: compare fits from the gap between tiles too)
     dropClick();
     o.dblclick?.(e);
   }
@@ -207,8 +226,6 @@ export function attachViewerInput(el, o = {}){
   el.addEventListener("pointermove", onTouchMove, true);
   el.addEventListener("pointerup", onTouchUp, true);
   el.addEventListener("pointercancel", onTouchUp, true);
-  window.addEventListener("pointerup", onTouchUp, true);     // (a finger released after its capture was lost)
-  window.addEventListener("pointercancel", onTouchUp, true);
   el.addEventListener("pointerdown", onDown);
   el.addEventListener("lostpointercapture", onLost);
   if (o.wheel !== false) el.addEventListener("wheel", onWheel, { passive: false });
@@ -219,7 +236,7 @@ export function attachViewerInput(el, o = {}){
     busy: () => !!g,
     dropClick,
     // End the running gesture as cancelled (a scrub ends where it is) and forget every finger.
-    cancel(){ finish(null, true); g = null; touches.clear(); setKind(null); },
+    cancel(){ finish(null, true); g = null; touches.clear(); touchWinSync(); setKind(null); },
     destroy(){
       if (!alive) return;
       try { finish(null, true); } catch {} // (a throwing end must not leave the window listeners behind)
@@ -228,12 +245,11 @@ export function attachViewerInput(el, o = {}){
       dropClick();
       dropWin();
       touches.clear(); // (a finger down when the viewer goes never sends its pointerup here: 0.93.0)
+      touchWinSync();
       el.removeEventListener("pointerdown", onTouchDown, true);
       el.removeEventListener("pointermove", onTouchMove, true);
       el.removeEventListener("pointerup", onTouchUp, true);
       el.removeEventListener("pointercancel", onTouchUp, true);
-      window.removeEventListener("pointerup", onTouchUp, true);
-      window.removeEventListener("pointercancel", onTouchUp, true);
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("lostpointercapture", onLost);
       el.removeEventListener("wheel", onWheel);

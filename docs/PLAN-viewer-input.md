@@ -5,7 +5,7 @@ the code for that should be written once and reused everywhere. Today every mode
 plan for a fresh session. **Stage 1 is done (0.94.2)**: `app/static/viewer-input.js` exists and compare runs on it;
 the API as built differs from the sketch below in a few places (see "As built").
 
-## Where the input lives today
+## Where the input lives today (written before stage 1; Compare and the lightbox 2D rows are history now)
 
 | Mode | Code | What it handles | Notes |
 |---|---|---|---|
@@ -94,7 +94,8 @@ What it owns, so no viewer re-implements it:
    into `scrubBegin` / `scrubTo` / `scrubEnd`; the module's `scrub` calls those, only the timeline's own absolute drag uses `startScrub`). Splits go through `claim`.
    Playwright: the 0.93.0 checks (click, dblclick does not toggle, scrub, split only near, right-drag zoom, Shift,
    CDP touch tap / scrub / pinch, close with a finger down, layout rebuild mid-drag).
-2. **Lightbox 2D.** Move `attachViewer`'s pointer code onto the module: Alt turn and Ctrl+Alt video turn via `claim`,
+2. **(done, 0.95.0) Lightbox 2D.** The doc viewer is left out (its left button selects text; it keeps its own
+   middle / right drags). Move `attachViewer`'s pointer code onto the module: Alt turn and Ctrl+Alt video turn via `claim`,
    the sequence hand-off inside `scrub.begin` / `to` (keep `seqScrubBegin`'s window listeners or fold them in),
    `justScrubbed` goes away (the module does not report a click after a drag), `vctl.begin / end`, scrub audio
    (`scrubHear`). This also gives the lightbox **touch pinch / pan** on pictures. `attachViewer` needs a teardown

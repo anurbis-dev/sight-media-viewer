@@ -711,6 +711,10 @@
   Thumbs.db, .DS_Store, *.tmp, *.part, *.db, .git/, node_modules/ ...). Open it with the shield button
   next to *Apply* (Settings → Scan Filtering), edit it and *Save* (a copy goes to your Sight folder and
   replaces the shipped one; sources are rescanned), or *Restore shipped* to go back. Works the same on a phone.
+- Mouse and touch in the full-screen preview (the same as in version compare): click a video to play /
+  pause, double-click to switch Frame ↔ 100 %; a left drag on a picture pans it; middle-drag pans,
+  right-drag and the wheel zoom (hold `Shift` to go slower). On a touch screen tap plays / pauses, one
+  finger scrubs a video or pans a picture, two fingers pinch-zoom and pan.
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
   The green strip on the timeline is the RAM cache: a window around the playhead whose size is
