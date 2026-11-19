@@ -14,10 +14,17 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.94.0 — 2026-11-19 — 3D annotation select tool: Ctrl+drag box select, Box switch for touch
+- **What:** merged the never-merged branch `ccr-90d2f55f-eyeipr` (its "0.83.0", numbered then, before master moved on). Select tool while annotating a 3D model: Ctrl+drag draws a selection box even when it starts over a drawing (Ctrl = toggle against the selection it started from, Ctrl+Shift = add — as in the library grid / board); a Ctrl-click without a drag toggles the drawing under it. In 3D a plain empty-space drag still orbits; Ctrl+drag box-selects, and a *Box* switch in the select tool's bar (3D only) makes a plain drag box-select — the touch way. A Ctrl-click on empty space in 3D still picks the model's mesh.
+- **Where:** annotate.js (select branch of `onDown`: Ctrl → `S.drag.marquee` with `hit` / `boxed` / `pid`; `S.box3d`; `onMove` 4 px click threshold; `onUp` Ctrl-click toggle, 3D empty Ctrl-click → `S.b3.pickMesh`; second-finger guard; `lostpointercapture` ends a stuck marquee; cursor; `renderProps` Box button + hint); index.html (`pickMeshAt(cx, cy, ctrl)` in boot3d, passed to `bindAnnot3d(…, pick)` → host `pickMesh`, absent for splats); MANUAL.
+- **Notes:** owner: **3D only** — 2D needs no Ctrl box mode (no orbit on a drag: a plain drag on empty space is the box), so the branch's 2D change (Ctrl+press on a drawing = box, Ctrl+Shift = add) was dropped; in 2D Ctrl still toggles a drawing on click and a Ctrl box on empty space toggles, as before. The 4 px click threshold and the pointer-tied marquee apply in 2D too (harmless). The annotator grabs the Ctrl press, so the 3D viewer never sees it — hence the explicit `pickMesh` hand-back. A marquee is tied to its pointer: a second finger is ignored, so pinch-zoom is off while *Box* is on. `S.box3d` is per session. **Not merged from that branch:** its "0.83.1" (3D drawings shown only while a note is picked, loose ones hidden then) — master had since made 3D drawings show while watching (`shownOff`), so those hunks (`modeAllows`, `L.root.hidden`, the pick `renderAll`) were dropped in the merge. The branch's own review (4 findings, fixed there) came with it.
+- Review of the merge (fresh agent): every box-select hunk present and in scope against today's code (`pickMeshAt` / `bindAnnot3d`, splats pass no pick), no 0.83.1 hunk left, 2D equal to before apart from the 4 px click threshold, no interaction with compare / board / Ctrl eraser; it caught 0.83.1's ARCHITECTURE text still staged in the index — fixed before the commit. Left: Cmd+drag on a Mac does not switch the cursor (cosmetic).
+
 ## 0.93.1 — 2026-11-19 — Compare: a double-click no longer toggles play twice; plan for a shared input module
 - **What:** a click on the compare picture now waits 250 ms before play / pause, as in the lightbox, so the second click of a double-click (fit) cancels it. New `docs/PLAN-viewer-input.md`: today every viewer (lightbox 2D, sequence, compare, board, 3D zoom, annotator, phone / HTML page) has its own pointer code; 0.93.0 wrote the compare's anew. The plan specifies one `viewer-input.js` module (click hold, scrub / pan / zoom / pinch, Shift-fine, capture handling) and the stages to move each mode onto it.
 - **Where:** compare.js (`onUp` timer `C.clickT`, `dropClick`, stage `dblclick`, `close`); docs/PLAN-viewer-input.md (new), docs/PLAN.md (link).
 - **Notes:** `dropClick()` runs in `togglePlay` (Space / ▶ while a click is pending would otherwise be undone 250 ms later), `startPinch`, `pause` and `seekLayer` (the annotator stopping / moving the clock), and a scrub start. Two quick clicks within 250 ms do nothing (the lightbox would toggle once) — `pointerup.detail` is not reliable enough to copy its test; left. The lightbox's 2D viewer has no touch pinch today: the plan's stage 2 gives it one.
+- Plan review (fresh agent): several facts were wrong or missing (the embedded viewer is the 3D UV pane; the board's wheel pans; 3D dolly is incremental with its own pinch maths; the annotator / board second-finger ordering; lightbox video touch already scrubs; no teardown in `attachViewer`; the doc viewer) — corrected; the same reviewer re-checked, its last three wording items applied.
 - Review (fresh agent): correct; Space / ▶ / a pinch / the annotator's pause within the 250 ms could be undone by the pending toggle — fixed with `dropClick`; the same reviewer confirmed it and found nothing new.
 
 ## 0.93.0 — 2026-11-19 — Compare: viewer-style picture input, Row fixed, viewer's top bar, Compare from the selection
@@ -234,32 +241,3 @@ Add new entries directly below this line.
   never reproducible; the deterministic import remaps (`anno-import:…`) and path-hash asset ids are unchanged,
   and undo / merge pass the existing id. Full suite passes (87 tests).
 - Review (fresh agent): no findings.
-
-## 0.87.3 — 2026-11-18 — Sources: nested folders, clean removal, stale-view reset, connection pool
-- **What:** user report "removing a source misbehaves" (two sources, ЛАЙТИНГ and Desktop: ЛАЙТИНГ → Desktop →
-  × Desktop → ЛАЙТИНГ shows no previews; the source stays in the menu). Cause: ЛАЙТИНГ lies inside Desktop — not
-  the Cyrillic name. Sources may now nest: a file belongs to the innermost source, the outer source shows it too,
-  and removing either keeps the files the other still holds. Removing a source while it scanned / was watched left
-  rows in All forever; no longer, and startup deletes old leftovers. Removal drops collection membership, asks for
-  confirmation (× has no undo on touch), reports a failed DELETE, and resets a filter / cards / selection that
-  pointed into it (also from another window). A hidden window gives up its event stream after 10 s (the browser
-  allows 6 connections per host across windows) and catches up when shown. Paths compare regardless of Unicode
-  form (macOS decomposed "Й").
-- **Where:** library.py — `add_source`, `remove_source`, `_reassign`, `_source_scope`, `_nested*`, `_owner`,
-  `scan_source` (`_src_gen`, `_scans_running`, nested roots skipped, locked flush), `_touch_one` / `on_moved`,
-  `resume_watchers` (ownership fix-up + orphan cleanup), `sources()` (`own`), `normpath` (NFC), `disk_spelling`;
-  server.py `/api/events` now an async generator (polls the queue; still ends on `Bus.CLOSE`); index.html remove
-  confirm, `syncSourcesView`, `connectEvents` with visibilitychange; tests/test_sources.py (14 tests).
-- **Notes:** invariant: a file row's `source_id` is the innermost source holding it — use `_source_scope` for "in
-  source X", never a bare `source_id=`. Asset ids are path hashes (one row per file), which is why the inner scan's
-  INSERT OR IGNORE used to leave rows on the outer source. Scan / watcher inserts are `INSERT … WHERE
-  EXISTS(source)`; the flush checks the per-source generation under `self.lock`; a cancelled scan does not mark
-  unreached files missing. Removal keeps thumbnail files on disk, board cards and annotations. Startup deletes
-  orphan rows (the owner's library had 3 from a removed "Documents" source — found reading a copy of the DB).
-  The old sync events generator held one worker thread per open window. Windows Cyrillic paths were fine
-  everywhere checked. Not done: one shared stream for several visible windows; `_reassign` → `hidden()` reads
-  `.obj` files under the DB lock; a vanished inner root is not re-checked. `test_board_missing` (intermittent
-  UNIQUE id) and `test_splash_win` (path separator) fail on master already.
-- Review (fresh agent, run by the implementing agent, three rounds): two medium nested-source edge cases (a
-  running outer scan, the outer watcher applying its own rules) and a `flush()` race (check outside the lock) —
-  fixed and confirmed; nothing new in round 3.

@@ -1579,6 +1579,8 @@ export function createAnnotator(host){
     if (!S.on || !surfaceEl()) return;  // (a board switch nulls the surface while the listeners stay wired)
     // A board's rows are still loading: a stroke now would be wiped by load()'s S.items.clear().
     if (isBoard() && S.loading){ release(e); return; }
+    // A second finger while a marquee runs: ignored (it would restart the box and steal the first finger's moves).
+    if (S.drag?.marquee && S.drag.pid !== e.pointerId){ release(e); return; }
     if (!e.altKey && e.target.closest?.(".an-stamp")) return;  // the frame stamp has its own drag
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
@@ -1630,6 +1632,18 @@ export function createAnnotator(host){
       const h = S.sel.size ? handleAt(sx, sy) : null;
       if (h){ grab(e); startHandleDrag(h, x, y, e); return; }
       const hit = hitAt(x, y);
+      const ctrl = e.ctrlKey || e.metaKey;
+      // 3D, Ctrl held = box-select mode, as in the library grid / board (index.html combineSelection): the drag
+      // draws a marquee even over a drawing (Ctrl = toggle against the selection it started from,
+      // Ctrl+Shift = add); a Ctrl-click without a drag toggles the drawing under it (onUp). It is the only way to
+      // box-select with a mouse there (plain empty space orbits), the Box button is touch's. 2D needs no such
+      // mode — a plain drag on empty space is already the box — so Ctrl keeps its click toggle there (below).
+      if (ctrl && !e.altKey && S.kind === "model3d"){
+        grab(e);
+        S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: !e.shiftKey, hit: hit?.id || null, boxed: false, pid: e.pointerId };
+        renderSel(); renderProps();
+        return;
+      }
       if (hit){
         grab(e);
         if (e.shiftKey || e.ctrlKey || e.metaKey){
@@ -1642,7 +1656,7 @@ export function createAnnotator(host){
         renderSel(); renderProps();
         return;
       }
-      if (S.kind === "model3d"){ // empty space in 3D: let the orbit controls have it
+      if (S.kind === "model3d" && !S.box3d){ // empty space in 3D: let the orbit controls have it
         if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); }
         return;
       }
@@ -1651,7 +1665,7 @@ export function createAnnotator(host){
       if (e.altKey) return;
       grab(e);
       if (!(e.shiftKey || e.ctrlKey || e.metaKey)) S.sel.clear();
-      S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: e.ctrlKey || e.metaKey };
+      S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: e.ctrlKey || e.metaKey, pid: e.pointerId };
       renderSel(); renderProps();
       return;
     }
@@ -1800,6 +1814,9 @@ export function createAnnotator(host){
     }
     if (D.eraser){ eraseAt(x, y); renderSel(); return; }
     if (D.marquee){
+      if (D.pid !== e.pointerId) return;
+      if (!D.boxed && hyp(sx - D.marquee[0], sy - D.marquee[1]) <= 4) return;  // a click so far (onUp)
+      D.boxed = true;
       D.marquee[2] = sx; D.marquee[3] = sy;
       const [ax, ay] = toDocS(Math.min(D.marquee[0], sx), Math.min(D.marquee[1], sy));
       const [bx, by] = toDocS(Math.max(D.marquee[0], sx), Math.max(D.marquee[1], sy));
@@ -1830,6 +1847,7 @@ export function createAnnotator(host){
   function onUp(e){
     const D = S.drag;
     if (!D) return;
+    if (D.marquee && D.pid !== e.pointerId) return;  // another finger lifting: the box goes on
     S.drag = null;
     try { surfaceEl()?.releasePointerCapture(e.pointerId); } catch {}
     if (D.region){ finishRegion(); return; }
@@ -1879,7 +1897,14 @@ export function createAnnotator(host){
       }
       return;
     }
-    if (D.marquee){ renderSel(); renderProps(); return; }
+    if (D.marquee){
+      if (e.type === "pointercancel" || e.type === "lostpointercapture"){ /* the pointer was taken: not a click */ }
+      else if (!D.boxed && D.hit){ if (D.toggle && S.sel.has(D.hit)) S.sel.delete(D.hit); else S.sel.add(D.hit); }  // Ctrl(+Shift)-click
+      // A click on empty space in 3D is still the viewer's mesh pick / clear (the press never reached it):
+      // Ctrl = pick, anything else only clears (as the viewer's own pointerup).
+      else if (!D.boxed && S.kind === "model3d") S.b3?.pickMesh?.(e.clientX, e.clientY, !!D.toggle);
+      renderSel(); renderProps(); return;
+    }
     if (D.move || D.handle || D.crop){
       if (!D.moved){
         if (D.move && D.plain && S.sel.size > 1){ S.sel = new Set([D.hit]); renderProps(); }
@@ -1980,7 +2005,7 @@ export function createAnnotator(host){
       if (h) c = RC.XF_CURSOR[h];
       else {
         const [x, y] = toDocS(sx, sy);
-        c = hitAt(x, y) ? "move" : S.kind === "model3d" ? "" : "default";
+        c = S.ctrlHeld && S.kind === "model3d" ? "default" : hitAt(x, y) ? "move" : S.kind === "model3d" && !S.box3d ? "" : "default";
       }
     } else if (STROKE_TOOLS.has(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
@@ -2410,7 +2435,12 @@ export function createAnnotator(host){
     if (tg.items){
       html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="front" title="Bring to front (Ctrl+])">Front</button><button type="button" class="an-tg" data-cmd="back" title="Send to back (Ctrl+[)">Back</button><button type="button" class="an-tg" data-cmd="del" title="Delete (Del)">${ICON.trash}</button>`;
     }
-    if (!html) html = `<span class="an-pl">${S.tool === "select" ? (S.kind === "model3d" ? "Click a drawing to select · drag empty space to orbit" : "Click or drag to select · Alt+drag duplicates") : ""}</span>`;
+    // 3D: plain empty-space drags orbit, so touch (no Ctrl) gets a switch that makes them draw a marquee.
+    if (S.kind === "model3d" && S.tool === "select"){
+      html += `<span class="an-sep"></span><button type="button" class="an-tg${S.box3d ? " on" : ""}" data-cmd="box3d" title="Box select: dragging empty space draws a selection box instead of orbiting (or hold Ctrl and drag)">Box</button>`;
+      if (!tg.items) html += `<span class="an-pl">${S.box3d ? "Drag to box-select · Ctrl+drag toggles" : "Click a drawing to select · drag empty space to orbit · Ctrl+drag to box-select"}</span>`;
+    }
+    if (!html) html = `<span class="an-pl">${S.tool === "select" ? "Click or drag to select · Alt+drag duplicates" : ""}</span>`;
     el.innerHTML = html;
     el.hidden = !html;
     bindProps(el, tg, list);
@@ -2480,6 +2510,7 @@ export function createAnnotator(host){
     el.querySelector("[data-cmd=front]")?.addEventListener("click", () => reorder(1));
     el.querySelector("[data-cmd=back]")?.addEventListener("click", () => reorder(-1));
     el.querySelector("[data-cmd=del]")?.addEventListener("click", () => deleteSelection());
+    el.querySelector("[data-cmd=box3d]")?.addEventListener("click", () => { S.box3d = !S.box3d; renderProps(); });
     el.querySelector("[data-cmd=refdisk]")?.addEventListener("click", () => pickRefs(null));
     el.querySelector("[data-cmd=reflib]")?.addEventListener("click", () => host.toggleLibrary?.());
     el.querySelector("[data-cmd=refsel]")?.addEventListener("click", () => addSelectedRefs());
@@ -4591,6 +4622,9 @@ export function createAnnotator(host){
     el.addEventListener("pointermove", onMove);
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onUp);
+    // A marquee whose pointer lost capture without an up / cancel reaching us ends here: otherwise the
+    // second-pointer guard in onDown would swallow every later touch (new pointerIds) while it is stuck.
+    el.addEventListener("lostpointercapture", (e) => { if (S.drag?.marquee && S.drag.pid === e.pointerId) onUp(e); });
     el.addEventListener("pointerleave", () => { S.hover = null; if (S.on && !S.drag) renderSel(); });
     // Pictures dropped on the frame become reference images (files from outside, or files dragged from the library).
     el.addEventListener("dragover", (e) => { if (!refDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });

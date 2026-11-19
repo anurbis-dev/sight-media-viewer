@@ -117,7 +117,8 @@
     (`Ctrl+Enter` or Esc finishes).
   - While drawing: `Shift` keeps lines, arrows, a pin's line and straight brush strokes horizontal or vertical
     (also when dragging a line's end), makes rectangles square and ellipses round. Select tool: click /
-    Shift+click / drag a box to select, drag to move (Shift locks the axis), Alt+drag duplicates,
+    Shift+click / drag a box to select (in 3D, where empty space orbits, Ctrl+drag or the *Box* switch draws
+    the box — Ctrl toggles what it covers, Ctrl+Shift adds), drag to move (Shift locks the axis), Alt+drag duplicates,
     corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
     more finely; arrows nudge (Shift ×10). Hold `Ctrl` with any drawing tool to erase for a moment;
@@ -231,7 +232,9 @@
     the changed explode starts a new view with its own number. Going to a view puts the view's
     explode back. An older drawing has none.
     While annotating, left-drag on
-    empty space with the select tool orbits. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
+    empty space with the select tool orbits; Ctrl+drag draws a selection box instead (a Ctrl+click on
+    empty space still picks the model's mesh), and the select tool's *Box* button makes a plain drag
+    box-select — the touch way. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
     a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; a video note brings only the frames it has drawings or picture texts on; each video frame is captioned with its file name, frame number and timecode, e.g. "clip.mp4 · f128 / 0:05+3" — the frames after the full second — and carries that label, small, in its top-left corner), *Notes as ZIP* — a folder per note ("Note 01" …) with its
