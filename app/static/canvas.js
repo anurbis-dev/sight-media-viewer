@@ -16,6 +16,7 @@
 // the camera), saves / reloads it per board, gives it the keys while its mode is on, and adds the touch pinch.
 
 import { runHotkeys } from "/static/keys.js";
+import { pinchTracker, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
@@ -960,12 +961,9 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     if (drag && drag.kind === "zoomdrag"){
       if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
       drag.moved = true;
-      // Right-drag zoom: same formula, and the same theme axis/speed/invert knobs, as the
-      // lightbox's image zoom (bindStageDrag in index.html) — one zoom control everywhere.
-      const zs = zoomSettings();
-      const raw = zs.zoomAxis === "x" ? (e.clientX - drag.x) : (drag.y - e.clientY);
-      const d = (zs.zoomInvert ? -raw : raw) * 0.012 * (zs.zoomSpeed ?? 1);
-      zoomAt(drag.mx, drag.my, drag.scale * Math.exp(d));
+      // Right-drag zoom: the shared formula and theme axis / speed / invert knobs (viewer-input.js), anchored
+      // at the press as in the lightbox — one zoom control everywhere.
+      zoomAt(drag.mx, drag.my, drag.scale * zoomFactorDrag(e.clientX - drag.x, e.clientY - drag.y, zoomSettings()));
     }
   }
   function onPointerUp(e){
@@ -1052,9 +1050,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     const r = viewportEl.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
     if (e.ctrlKey || e.metaKey){
-      const zs = zoomSettings();
-      const d = (zs.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (zs.zoomSpeed ?? 1);
-      zoomAt(px, py, zoom * Math.exp(d));
+      zoomAt(px, py, zoom * zoomFactorWheel(e.deltaY, zoomSettings()));
     } else {
       vx -= e.deltaX; vy -= e.deltaY;
       worldTransform();
@@ -1064,40 +1060,34 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   // ---- touch: two fingers pan and pinch-zoom (a touch screen has no wheel, middle button or right-drag) ----
   // Registered before the annotator binds its own capture listener, so the second finger never reaches it: what
   // the first finger began (a stroke, an item move, a marquee) is finished or dropped first.
-  const fingers = new Map(); // pointerId -> {x, y} (client px) of the touches down on the viewport
-  let pinch = null;          // {a, b, dist, zoom, wx, wy}: the two pointer ids and the world point under their middle
-  const pinchMid = () => {
-    const p = fingers.get(pinch.a), q = fingers.get(pinch.b), r = viewportEl.getBoundingClientRect();
-    return { x: (p.x + q.x) / 2 - r.left, y: (p.y + q.y) / 2 - r.top, d: Math.max(1, Math.hypot(p.x - q.x, p.y - q.y)) };
-  };
+  // (the finger maths is viewer-input.js's pinchTracker, shared with the lightbox, compare and 3D)
+  const fingers = pinchTracker();
+  let pinching = false;
   viewportEl.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "touch") return;
-    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    fingers.down(e);
     if (fingers.size < 2) return;
-    if (!pinch){
+    if (!pinching){
       annot?.abortGesture();
       if (drag) onPointerUp(e);
-      const [a, b] = [...fingers.keys()];
-      pinch = { a, b, dist: 0, zoom, wx: 0, wy: 0 };
-      const m = pinchMid();
-      Object.assign(pinch, { dist: m.d, wx: (m.x - vx) / zoom, wy: (m.y - vy) / zoom });
+      pinching = true;
     }
     e.preventDefault();
     e.stopImmediatePropagation();
   }, true);
   window.addEventListener("pointermove", (e) => {
-    if (!fingers.has(e.pointerId)) return;
-    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (!pinch || (e.pointerId !== pinch.a && e.pointerId !== pinch.b)) return;
-    const m = pinchMid();
-    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinch.zoom * m.d / pinch.dist));
-    vx = m.x - pinch.wx * zoom;
-    vy = m.y - pinch.wy * zoom;
+    const s = fingers.move(e);
+    if (!s || !pinching) return;
+    // The world point under the pair's previous middle goes under its new middle, at the new zoom (one redraw).
+    const r = viewportEl.getBoundingClientRect(), px = s.x - r.left, py = s.y - r.top;
+    const wx = (px - vx) / zoom, wy = (py - vy) / zoom;
+    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * s.factor));
+    vx = px + s.dx - wx * zoom;
+    vy = py + s.dy - wy * zoom;
     worldTransform();
   });
   const fingerUp = (e) => {
-    fingers.delete(e.pointerId);
-    if (pinch && (e.pointerId === pinch.a || e.pointerId === pinch.b)) pinch = null;
+    if (fingers.up(e) && fingers.size < 2) pinching = false;
   };
   window.addEventListener("pointerup", fingerUp);
   window.addEventListener("pointercancel", fingerUp);

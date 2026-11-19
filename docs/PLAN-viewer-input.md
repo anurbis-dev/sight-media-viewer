@@ -103,7 +103,7 @@ What it owns, so no viewer re-implements it:
    ~7513) must keep its limits: no saved turn, no `light.video` / `setZoom`, no scrub copy, no sequence, no
    annotator, no scrub audio. Check: images, PSD, video, sequence across a cut, annotating (Alt with a drawing tool
    to the viewer — `altCam`; middle / right pass through), digits 1–9 still set scale, the doc viewer if included.
-3. **Board and 3D zoom.** `canvas.js` and `bind3dZoom` use the exported zoom factors and the module's pinch helper
+3. **(done, 0.95.1) Board and 3D zoom.** As built: `pinchTracker()` is the shared finger helper (the module uses it too); 3D keeps its incremental dolly (equal to anchoring except at the clamp) and its pinch speed (ratio ^ zoomSpeed). `canvas.js` and `bind3dZoom` use the exported zoom factors and the module's pinch helper
    (not the whole module: their left button means items / orbit). Keep the board's right-click menu (a right press
    without a drag over an item, 4 px), its wheel = pan / Ctrl+wheel = zoom, and the 3D Ctrl / Shift right-drags
    (mesh path). Decide anchored vs incremental zoom for 3D and say it in RECENT if it changes.

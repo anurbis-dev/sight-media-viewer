@@ -27,7 +27,8 @@ app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: 
                          textureQuad), the animation player (createAnimator), USD reading (parseUsd / usdAsSight) and
                          splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
-app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, zoom factors): Compare's
+app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, zoomFactorDrag /
+                         zoomFactorWheel, pinchTracker — the last three also used by canvas.js and bind3dZoom): Compare's
                          stage and the lightbox 2D viewer (`attachViewer`, kept as `stage._vinput`, destroyed by
                          the next attachViewer / `fillStage` / `closeLight`) — see Compare
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below

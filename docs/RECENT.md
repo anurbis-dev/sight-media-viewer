@@ -14,6 +14,13 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.95.1 — 2026-11-19 — Board and 3D zoom use the shared zoom maths and finger tracking
+- **What:** stage 3 of `docs/PLAN-viewer-input.md`. No visible change meant: the board (right-drag zoom, Ctrl+wheel, two-finger pinch) and the 3D viewer (wheel, right-drag, pinch dolly) now take their zoom factors and finger tracking from `viewer-input.js`.
+- **Where:** viewer-input.js (`pinchTracker()` new — the module's own fingers use it too); canvas.js (`zoomFactorDrag` / `zoomFactorWheel`, the pinch on `pinchTracker`, incremental: zoom about the pair's previous middle, then pan by its move); index.html `bind3dZoom` (same helpers; `dolly(f)` takes a factor now).
+- **Notes:** the board's left button, item drags, marquee, right-click menu (a right press without a 4 px move) and plain-wheel pan are unchanged — the board does not use `attachViewerInput`, only the helpers. 3D was already incremental and stays so; it keeps its pinch speed (finger ratio ^ zoomSpeed; the 2D pinches ignore zoomSpeed). The board's pinch now goes on with the remaining pair when one of three fingers lifts (it stopped). The 3D Ctrl / Shift right-drags (mesh path) are untouched. Next: stage 4, Shift slows the board / 3D drags.
+- Review (fresh agent): the maths matches the removed code (board right-drag / Ctrl+wheel, 3D wheel / right-drag / pinch, the module's pinch on finger add / lift). Found: the board pinch is now incremental, so at MIN / MAX zoom it turns back at once instead of the old dead zone (accepted, noted here); two redraws per board pinch move — now one. Left (as before): `bind3dZoom` drops a finger only on `el`'s pointerup / cancel, so a touch released outside it without capture stays counted.
+- The same reviewer confirmed the fixes and found nothing new.
+
 ## 0.95.0 — 2026-11-19 — Lightbox 2D viewer on the shared input module: touch pinch, left-drag pan on pictures
 - **What:** stage 2 of `docs/PLAN-viewer-input.md`. The lightbox's image / PSD / video viewer (`attachViewer`, also the 3D UV pane) takes its pointer input from `viewer-input.js`, like Compare. New for the user: **two-finger pinch-zoom / pan** on pictures and videos, **a left drag (one finger) pans a picture** (it did nothing), Shift slows pan / right-drag zoom / the wheel (×0.2). Unchanged: click a video = play / pause after 250 ms, double-click = Frame ↔ 100 %, left drag scrubs a video (window width = the clip, Shift ×0.1), Alt-drag turns a picture, Alt-drag scrubs a video and Ctrl+Alt-drag turns it, middle pans, right drag / wheel zoom, digits 1–9.
 - **Where:** index.html `attachViewer` (the click / dblclick / pointer / wheel listeners, `clickTimer`, `justScrubbed`, `vs.panD / zoomD / rotD / scrubD` replaced by one `attachViewerInput(wrap, …)`: Alt turn = `claim`, scrub = `beginScrub` / `seekVideo` / `endScrub`, a sequence hands over to `seqScrubBegin` in `scrub.begin`; returns `destroy`), `fillStage` / `closeLight` (destroy `stage._vinput`); viewer-input.js (presses on inputs / textareas / contenteditable are left alone; window touch listeners only while a finger is down); MANUAL, ARCHITECTURE, PLAN.
@@ -170,32 +177,3 @@ Add new entries directly below this line.
   2-clip loop partner listed blocks twice (`_missing` dedupes, the two ends share one cap); the phone's fill
   weighted behind by a fixed 1.5 (now `AHEAD / (1 − AHEAD)`, like the desktop). Confirmed by the same reviewer
   (20,000 random plans: every range inside its file, no block twice, budget fully used, playhead inside).
-
-## 0.89.0 — 2026-11-19 — Phone: the scrub cache follows the playhead, 60 / 40, across sequence cuts
-- **What:** owner: on the phone the cache always started at the clip's start, not at the playhead; near a clip's
-  end it must run on into the next clip so the cut is seamless both ways; 60 % ahead / 40 % behind. Now the
-  scrub cache is a window of ~1,500 frames around the playhead, filled outwards from it (forward first, a
-  second behind weighted 1.5×) and sliding with it; in a group's sequence the overflow past the end goes to
-  the next clip's start, past the start to the previous clip's end (loop on wraps), each as that clip's own
-  cache, taken over at the cut. The green strip shows the cached run around the playhead (no longer 0 → x).
-- **Where:** mobile/js/media.js `ScrubCache` (rewritten: `want`, `next`, `run`, `open`, `fetch`, `span`, turn
-  queue `turnTake` / `turnGive`); mobile/js/app.js `cacheFocus`, `scrubPool`, `closeReview(park)`, adoption in
-  the video `loadedmetadata`, `paintCache`; tests/pwa_e2e.cjs `seqbar` + test_pwa.py `test_seq_bar`; MANUAL,
-  ARCHITECTURE.
-- **Notes:** budget is frames (`MAX` × the clip's frame length), not bytes; one hidden player per cache, but they
-  take turns on the decoder (current clip first) and an idle one gives its player back after 3 s. The cut
-  itself is still one `openReview` (the player is not preloaded, as Sight's adopt does) — the held frame plus
-  the adopted cache cover it. Desktop checked, not changed: `SlidingVideoCache` (library.py) is a byte window
-  around the playhead, 72 % ahead (`AHEAD`), loading all of the ahead part before any of the behind part, for the
-  open clip only; a lightbox sequence preloads the next clip's start through a hidden `<video>`
-  (`seqPreload`, the browser's own buffer, not the RAM window) and nothing of the previous clip.
-  `tests.test_pwa` `test_touch` fails before this change too (a `.click` on an undefined element).
-- Review (fresh agent): a one-frame hole next to the playhead was split at `from` into two halves too short
-  to seek into, both marked dead for good (the clip's last frames never cached; flaky test) → holes ≤ 6 frames
-  are fetched whole, dead parts are retried after 1.5 s / 3 s, play stops at the last frame; a neighbour got
-  the decoder after every chunk of the open clip → the turn is kept while there is work; 60 fps clips at
-  1.5× lost every other frame → rate capped at 60 presented fps; an evicted-and-retaken frame leaked a blob
-  URL → per-take token; a neighbour with no kept file re-read IndexedDB on every repaint → `scrubPoolMiss`;
-  parked caches kept decoding after a cut to a clip without its file → pool cleared. Re-review found the
-  retry timer re-arming every 50 ms on past entries → only future entries count, a successful retry
-  clears its mark. All confirmed by the same reviewer.

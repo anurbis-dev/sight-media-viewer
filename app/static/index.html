@@ -788,7 +788,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
-import { attachViewerInput } from "/static/viewer-input.js";
+import { attachViewerInput, pinchTracker, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -4979,24 +4979,19 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
 // Zoom toward the pointer for the splat viewer (controls.zoomToCursor), as OrbitControls did.
 function bind3dZoom(el, controls){
   controls.enableZoom = false;
+  // The zoom factors and the finger tracking are viewer-input.js's, shared with the 2D viewers; the dolly stays
+  // incremental (each move relative to the camera's distance then), which is the same as anchoring at the press.
   let rdrag = null;
-  const touches = new Map(); // touch pointers: id -> {x, y}; two of them are a pinch
-  let pinch = 0;             // finger gap at the last pinch step
-  const dolly = (d) => controls.dollyOut(Math.exp(d)); // d > 0 zooms in, as in the 2D viewers
+  const touches = pinchTracker(); // two touch pointers are a pinch
+  const dolly = (f) => controls.dollyOut(f); // f > 1 zooms in, as in the 2D viewers
   const anchor = (x, y) => { if (controls.zoomToCursor) controls._updateZoomParameters?.(x, y); };
-  const gap = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
   el.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const t = state.theme;
     anchor(e.clientX, e.clientY);
-    dolly((t.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (t.zoomSpeed ?? 1));
+    dolly(zoomFactorWheel(e.deltaY, state.theme));
   }, { passive: false });
   el.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "touch"){
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 2) pinch = gap();
-      return;
-    }
+    if (e.pointerType === "touch"){ touches.down(e); return; }
     if (e.button !== 2) return;
     e.preventDefault();
     rdrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
@@ -5004,28 +4999,19 @@ function bind3dZoom(el, controls){
   });
   el.addEventListener("pointermove", (e) => {
     if (e.pointerType === "touch" && touches.has(e.pointerId)){
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 2){
-        const g = gap();
-        if (pinch > 0 && g > 0){
-          const [a, b] = [...touches.values()];
-          anchor((a.x + b.x) / 2, (a.y + b.y) / 2);
-          dolly(Math.log(g / pinch) * (state.theme.zoomSpeed ?? 1));
-        }
-        pinch = g;
-      }
+      const s = touches.move(e);
+      // (3D keeps its pinch speed: the finger ratio raised to the theme's zoomSpeed)
+      if (s && touches.size === 2){ anchor(s.x + s.dx, s.y + s.dy); dolly(s.factor ** (state.theme.zoomSpeed ?? 1)); }
       return;
     }
     if (!rdrag || e.pointerId !== rdrag.id) return;
-    const t = state.theme;
-    const raw = t.zoomAxis === "x" ? (e.clientX - rdrag.x) : (rdrag.y - e.clientY);
+    const dx = e.clientX - rdrag.x, dy = e.clientY - rdrag.y;
     rdrag.x = e.clientX; rdrag.y = e.clientY;
     anchor(e.clientX, e.clientY);
-    dolly((t.zoomInvert ? -raw : raw) * 0.012 * (t.zoomSpeed ?? 1));
+    dolly(zoomFactorDrag(dx, dy, state.theme));
   });
   const endPointer = (e) => {
-    touches.delete(e.pointerId);
-    if (touches.size < 2) pinch = 0;
+    touches.up(e);
     if (rdrag && rdrag.id === e.pointerId) rdrag = null;
   };
   el.addEventListener("pointerup", endPointer);

@@ -2,6 +2,35 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.89.0 — 2026-11-19 — Phone: the scrub cache follows the playhead, 60 / 40, across sequence cuts
+- **What:** owner: on the phone the cache always started at the clip's start, not at the playhead; near a clip's
+  end it must run on into the next clip so the cut is seamless both ways; 60 % ahead / 40 % behind. Now the
+  scrub cache is a window of ~1,500 frames around the playhead, filled outwards from it (forward first, a
+  second behind weighted 1.5×) and sliding with it; in a group's sequence the overflow past the end goes to
+  the next clip's start, past the start to the previous clip's end (loop on wraps), each as that clip's own
+  cache, taken over at the cut. The green strip shows the cached run around the playhead (no longer 0 → x).
+- **Where:** mobile/js/media.js `ScrubCache` (rewritten: `want`, `next`, `run`, `open`, `fetch`, `span`, turn
+  queue `turnTake` / `turnGive`); mobile/js/app.js `cacheFocus`, `scrubPool`, `closeReview(park)`, adoption in
+  the video `loadedmetadata`, `paintCache`; tests/pwa_e2e.cjs `seqbar` + test_pwa.py `test_seq_bar`; MANUAL,
+  ARCHITECTURE.
+- **Notes:** budget is frames (`MAX` × the clip's frame length), not bytes; one hidden player per cache, but they
+  take turns on the decoder (current clip first) and an idle one gives its player back after 3 s. The cut
+  itself is still one `openReview` (the player is not preloaded, as Sight's adopt does) — the held frame plus
+  the adopted cache cover it. Desktop checked, not changed: `SlidingVideoCache` (library.py) is a byte window
+  around the playhead, 72 % ahead (`AHEAD`), loading all of the ahead part before any of the behind part, for the
+  open clip only; a lightbox sequence preloads the next clip's start through a hidden `<video>`
+  (`seqPreload`, the browser's own buffer, not the RAM window) and nothing of the previous clip.
+  `tests.test_pwa` `test_touch` fails before this change too (a `.click` on an undefined element).
+- Review (fresh agent): a one-frame hole next to the playhead was split at `from` into two halves too short
+  to seek into, both marked dead for good (the clip's last frames never cached; flaky test) → holes ≤ 6 frames
+  are fetched whole, dead parts are retried after 1.5 s / 3 s, play stops at the last frame; a neighbour got
+  the decoder after every chunk of the open clip → the turn is kept while there is work; 60 fps clips at
+  1.5× lost every other frame → rate capped at 60 presented fps; an evicted-and-retaken frame leaked a blob
+  URL → per-take token; a neighbour with no kept file re-read IndexedDB on every repaint → `scrubPoolMiss`;
+  parked caches kept decoding after a cut to a clip without its file → pool cleared. Re-review found the
+  retry timer re-arming every 50 ms on past entries → only future entries count, a successful retry
+  clears its mark. All confirmed by the same reviewer.
+
 ## 0.88.1 — 2026-11-18 — Drawing canvas: tools over the transport, tools row scrolls by drag
 - **What:** owner: the drawing tools sat under the video transport, and on a narrow phone some icons went off the
   edge. Now the tools row is the bottom bar's top row (over the host's footer / transport), in one line; when it

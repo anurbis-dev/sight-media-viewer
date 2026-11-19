@@ -27,6 +27,32 @@ export function zoomFactorWheel(dy, t = {}, fine = false){
   return Math.exp((t.zoomInvert ? dy : -dy) * ZOOM_WHEEL * (t.zoomSpeed ?? 1) * (fine ? FINE : 1));
 }
 
+// Two-finger tracking, shared by attachViewerInput, the board (canvas.js) and the 3D zoom (bind3dZoom), which
+// keep their own cameras: down / move / up take touch pointer events; move returns the step since the last one
+// while two fingers are down — { factor (finger gap ratio), x, y (the pair's previous middle, client px: zoom
+// about it), dx, dy (how far the middle moved: pan by it) } — or null. With more fingers the first two count.
+export function pinchTracker(){
+  const pts = new Map(); // pointerId → {x, y}
+  let last = null;
+  const pair = () => { const [a, b] = pts.values(); return { gap: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
+  const rebase = () => { last = pts.size >= 2 ? pair() : null; };
+  return {
+    get size(){ return pts.size; },
+    has: (id) => pts.has(id),
+    down(e){ pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); rebase(); return pts.size; },
+    move(e){
+      if (!pts.has(e.pointerId)) return null;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size < 2) return null;
+      const p = pair(), l = last || p;
+      last = p;
+      return { factor: p.gap / l.gap, x: l.mx, y: l.my, dx: p.mx - l.mx, dy: p.my - l.my };
+    },
+    up(e){ const had = pts.delete(e.pointerId); if (had) rebase(); return had; },
+    clear(){ pts.clear(); last = null; },
+  };
+}
+
 // el: the element the viewer's picture lives in (listened to in the bubble phase, so an annotator's capture
 // listener on it or below sees presses first). Options, all optional:
 //   canStart(e) → bool        a press / wheel / double-click here belongs to the viewer (e.g. on a picture)
@@ -48,7 +74,7 @@ export function zoomFactorWheel(dy, t = {}, fine = false){
 //                             annotator stroke, another control's scrub)
 // Returns { destroy(), cancel(), dropClick(), busy() }.
 export function attachViewerInput(el, o = {}){
-  const touches = new Map(); // every finger on el: pointerId → {x, y} (capture phase, so the annotator's count too)
+  const touches = pinchTracker(); // every finger on el (capture phase, so the annotator's count too)
   let g = null;              // the running gesture
   let clickT = 0, alive = true, winOn = false;
   const zs = () => o.zoomSettings?.() || {};
@@ -164,7 +190,6 @@ export function attachViewerInput(el, o = {}){
   }
 
   // ---- fingers (capture phase: a second finger must reach us before an annotator under it) ----
-  const pair = () => { const [a, b] = touches.values(); return { gap: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
   // Window up / cancel only while a finger is down (a finger released after its capture was lost), so a viewer
   // that is never destroyed leaves nothing on window.
   let touchWin = false;
@@ -178,7 +203,7 @@ export function attachViewerInput(el, o = {}){
   }
   function onTouchDown(e){
     if (!alive || e.pointerType !== "touch") return;
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    touches.down(e);
     touchWinSync();
     if (touches.size < 2 || !(o.zoom || o.pan)) return;
     // A second finger: what the first one started stops (a scrub ends where it is, a stroke is dropped), the two pinch.
@@ -189,26 +214,21 @@ export function attachViewerInput(el, o = {}){
     if (g) finish(e, true);
     try { o.abortOthers?.(); } catch {}
     capture(e.pointerId);
-    const p = pair();
-    g = { kind: "pinch", down: e, gap: p.gap, mx: p.mx, my: p.my };
+    g = { kind: "pinch", down: e };
     setKind("pinch");
   }
   function onTouchMove(e){
-    if (e.pointerType !== "touch" || !touches.has(e.pointerId)) return;
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (g?.kind !== "pinch" || touches.size < 2) return;
-    const p = pair();
-    if (o.zoom) o.zoom(p.gap / g.gap, g.mx, g.my, g.down);
-    if (o.pan) o.pan(p.mx - g.mx, p.my - g.my, g.down); // (the pair's middle drags the picture with it)
-    g.gap = p.gap; g.mx = p.mx; g.my = p.my;
+    if (e.pointerType !== "touch") return;
+    const s = touches.move(e);
+    if (!s || g?.kind !== "pinch") return;
+    if (o.zoom) o.zoom(s.factor, s.x, s.y, g.down);
+    if (o.pan) o.pan(s.dx, s.dy, g.down); // (the pair's middle drags the picture with it)
   }
   function onTouchUp(e){
-    if (e.pointerType !== "touch" || !touches.delete(e.pointerId)) return;
+    if (e.pointerType !== "touch" || !touches.up(e)) return;
     touchWinSync();
-    if (g?.kind !== "pinch") return;
     // One finger left: it does nothing until the other comes back (a new pinch) or it lifts too.
-    if (touches.size === 0){ g = null; setKind(null); }
-    else if (touches.size >= 2){ const p = pair(); g.gap = p.gap; g.mx = p.mx; g.my = p.my; }
+    if (g?.kind === "pinch" && touches.size === 0){ g = null; setKind(null); }
   }
 
   function onWheel(e){
