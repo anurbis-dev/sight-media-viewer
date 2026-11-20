@@ -2,6 +2,22 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.90.1 — 2026-11-19 — Phone: the open clip's scrub cache no longer loses the decoder to a neighbour
+- **What:** owner: in a 2-clip sequence the open clip got no cache at all, the neighbour got all of it. Cause (most
+  likely, seen on Android): a neighbour's cache that yielded the turn (or sat idle / parked) kept its hidden
+  `<video>`; with the visible player that is three decoders, the open clip's hidden player failed to open and
+  `open()` marked the cache `broken` for good. Now only the cache holding the decoder turn keeps a hidden player.
+- **Where:** mobile/js/media.js — turn queue (`openCaches`, `turnPick` releases every other cache's player),
+  `ScrubCache.open` (a failed open retried after 1.5 s / 3 s, `broken` after 3: deadline `openAt` with its own
+  `openT` / `openOk`, not `wake`), `Grabber` (player given back 3 s after its last grab); mobile/js/app.js
+  `loadedmetadata` (a pooled `broken` cache is not adopted, a fresh one is made).
+- **Notes:** each turn handoff now reopens the other cache's player (a reload, a few hundred ms) — accepted, phones
+  have few hardware decoders. The retry wait must not use `wake`: `resolve()` fires on every scrub and would burn
+  the 3 tries in under a second. Not reproducible in desktop Chromium (no decoder limit); `test_seq_bar` passes.
+- Review (fresh agent): confirmed the cause; found a stale `retryT` and `resolve()` cutting the retry wait short,
+  adoption of a broken neighbour cache (same symptom), and the Grabber's player as a third decoder — all fixed and
+  confirmed by the same reviewer.
+
 ## 0.90.0 — 2026-11-19 — Desktop RAM cache like the phone's: outwards from the playhead, across cuts; ahead share in Settings
 - **What:** owner: the desktop cache should work like the phone's, with 70 / 30 instead of 60 / 40, and the share
   in Settings on both. Desktop: the RAM window now loads outwards from the playhead (behind blocks interleaved,

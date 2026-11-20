@@ -91,6 +91,37 @@ class Unit(unittest.TestCase):
             doc.close()
 
 
+    @unittest.skipUnless(NODE and shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs node, ffmpeg and ffprobe")
+    def test_mp4_track(self) -> None:
+        """mp4.js trackFromMoov (0.96.1, the phone's WebCodecs scrub cache): every frame's presentation time as the
+        player has it (ctts + edit list), sync samples, the codec string and the display turn — against ffprobe, on
+        H.264 with B-frames, a 90° turn and a variable frame rate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            src, rot = Path(tmp) / "vfr.mp4", Path(tmp) / "rot.mp4"
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=3",
+                            "-vf", "select='lt(t,1.5)+not(mod(n,2))'", "-fps_mode", "vfr", "-c:v", "libx264", "-g", "20", "-bf", "2",
+                            "-pix_fmt", "yuv420p", str(src)], check=True)
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-display_rotation", "90", "-i", str(src), "-c", "copy", str(rot)], check=True)
+            js = ("import('" + (ROOT / "mobile" / "js" / "mp4.js").as_uri() + "').then(async (m) => { const fs = require('fs');"
+                  " const t = await m.videoTrack(new Blob([fs.readFileSync(process.argv[1])]));"
+                  " console.log(JSON.stringify({ codec: t.codec, rot: t.rot, n: t.n, pts: Array.from(t.sorted), keys: Array.from(t.key).reduce((a, k, i) => k ? a.concat(i) : a, []) })); })")
+            for path, want_rot in ((src, 0), (rot, 270)):
+                r = subprocess.run([NODE, "-e", js, str(path)], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                got = json.loads(r.stdout)
+                pr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "frame=best_effort_timestamp_time,key_frame",
+                                     "-of", "json", str(path)], capture_output=True, text=True, check=True)
+                frames = json.loads(pr.stdout)["frames"]
+                want = sorted(float(f["best_effort_timestamp_time"]) for f in frames)
+                self.assertEqual(len(got["pts"]), len(want))
+                for a, b in zip(got["pts"], want):
+                    self.assertAlmostEqual(a, b, delta=1e-3)
+                self.assertTrue(got["codec"].startswith("avc1.64"), got["codec"])
+                self.assertEqual(got["rot"], want_rot)
+                self.assertEqual(got["keys"][0], 0)
+                self.assertGreater(len(got["keys"]), 1)
+
+
 @unittest.skipUnless(has_playwright(), "node with Playwright is not available")
 class RoundTrip(unittest.TestCase):
     @classmethod
@@ -274,6 +305,28 @@ class RoundTrip(unittest.TestCase):
         self.assertTrue(res["toolsAbove"])  # drawing canvas: the tools over the transport
         self.assertGreater(res["rowScroll"][1], 0)  # 300 px wide: the row does not fit...
         self.assertEqual(res["rowScroll"][0], min(80, res["rowScroll"][1]))  # ...and an 80 px finger drag scrolls it all the way
+
+    def test_wcache(self) -> None:
+        """Phone scrub cache on MP4s (0.96.1): decoded with WebCodecs — every frame of both clips of a sequence;
+        a timeline drag over cached frames does not seek the player until it is let go; a drag across the cut shows
+        the next clip's own cached frame (not the last clip's) while that clip opens. VP9 in MP4 (vpcC): Chromium
+        builds without H.264 decode it too."""
+        if not (self.video and has_playwright()):
+            self.skipTest("needs ffmpeg, node and Playwright")
+        d = self.tmp / "wcache"
+        d.mkdir()
+        for name, src in (("wc_a.mp4", "testsrc2"), ("wc_b.mp4", "rgbtestsrc")):
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"{src}=size=320x180:rate=24:duration=3",
+                            "-c:v", "libvpx-vp9", "-b:v", "200k", "-g", "24", "-pix_fmt", "yuv420p", str(d / name)], check=True)
+        res = self.e2e("wcache", self.base, str(d))
+        self.assertEqual(res["cache"], [72, True, 72, True, 0])  # every frame of the open clip and of its neighbour
+        self.assertEqual(res["during"], [0, True, True])  # dragging: the cached picture, the player not sought
+        self.assertEqual(res["rest"], [1, True])  # a finger resting on a frame: one seek there
+        self.assertEqual(res["after"][0], 1)  # let go on that frame: no other seek...
+        self.assertAlmostEqual(res["after"][1], 2.1, delta=0.1)  # ...to where the drag ended (70 % of 3 s)
+        self.assertIn("IMG:blob", res["holds"])  # across the cut: the next clip's cached frame
+        self.assertEqual(res["landed"][0], "wc_b.mp4")
+        self.assertTrue(res["landed"][2])  # its cache taken over
 
     def test_bundle(self) -> None:
         """Multi-clip stage 3: the phone opens a Sight bundle (one group, a damaged clip reported), a note

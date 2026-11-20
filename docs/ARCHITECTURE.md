@@ -924,7 +924,11 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   past a clip's edge, `one.mode = "seq"`) run on **window** listeners (`seqDrag`), since the bar / stage holding
   the pointer is rebuilt at each cut. `ended` → `seqEnded` (next clip playing; after the last the first if
   `loopOn`; the element's own `loop` is off in a sequence). The last frame is held as a canvas `.seqhold`
-  (`seqHold`, re-appended into the new stage by `buildStage`) until the new clip presents a frame (≤ 1.5 s).
+  (`seqHold`, re-appended into the new stage by `buildStage`) until the new clip presents a frame (≤ 1.5 s);
+  when the clip being opened has a cached frame for the time (`seqHoldPic`: its cache in `scrubPool`, or the open
+  one's on a turn back) the hold is that frame as an `<img class="seqhold">`, updated on every move while it
+  opens. On `loadedmetadata` the cache is taken over *before* `seqApply`, so the landing seek shows its frame;
+  the window is planned (`cacheFocus`) after it, around where the clip lands.
   Any open that is not a sequence move (`opts.seq`), Back, `route` home → `seqStop`. Rate and hidden controls
   carry over on a sequence move. No preloading of the next clip (unlike Sight): a cut costs one open.
 - **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?, bundle?, cur?}]` (localStorage;
@@ -951,7 +955,10 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   scrubs): snapped to its frame (`snapT`, never past the clip's last frame), shown at once
   (`R.scrubT` drives timecode, playhead, overlay; the ScrubCache frame), one seek in flight and the
   latest wanted time next (`R.want`, `pumpSeek`); `settle` when it lands and nothing is dragged
-  (`R.dragging`). `posNow()` = the pending / shown time, so quick steps add up. The timeline
+  (`R.dragging`). While dragging over a cached frame (`cachedAt`) `pumpSeek` sends nothing (`R.want` stays
+  pending, the cached picture is the screen): the player seeks once, from `dragEnd`, to the last time, or
+  when the finger rests 250 ms on a frame (`restT`). `settle` also wakes `whenSettled` (`settleWait`): a drag let
+  go on the frame the player stands on settles with no seek. On adoption the cache takes the player's duration. `posNow()` = the pending / shown time, so quick steps add up. The timeline
   (`makeTransport`, `.tl`) puts markers, cache bar and playhead in the same track percent; a tap
   within 10 px of a marker lands on it. Its row: ‹ ◀ `fps` timecode `snd` ▶ ›. `vdrag(button,
   {begin, move(dy), tap, hold})` is the small vertical-drag control (pointer captured, stage /
@@ -1007,9 +1014,25 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   `sample` each second (playhead, player state, every cache's runs). *Send debug log…* → `offerFile` with
   `dbg.text()`: a header (device, app) then one JSON array per line `[ms, event, data]`.
 - **Scrub cache** (`media.js ScrubCache`): ≤ 640 px JPEGs of the frames around the playhead, keyed by
-  each frame's own media time (`mts` sorted, `urls` by ms) from `requestVideoFrameCallback` — never on a
-  grid of a guessed rate (a WebM's rate is unknown until played; a 25 fps grid lost every sixth frame of a
-  29.97 clip). The host calls `want([{lo, hi, from, end, base}])`: frames outside every range are dropped,
+  each frame's own presentation time (`mts` sorted, `urls` by ms) — never on a grid of a guessed rate (a
+  WebM's rate is unknown until played; a 25 fps grid lost every sixth frame of a 29.97 clip). Two ways to
+  fill it: **WebCodecs** for an MP4 / MOV (non-fragmented) whose codec `VideoDecoder.isConfigSupported` takes
+  (avc1/avc3, hvc1/hev1, av01, vp09): `mp4.js videoTrack` reads the first video track's sample table (offsets,
+  sizes, pts = (dts + ctts − first non-empty edit's media_time) / timescale — the player's currentTime; on WebKit
+  leading empty edits are added as a delay (AVFoundation plays them, Chrome does not); `sorted` = the shown pts; sync
+  samples → `gops` with their presentation span; `rot` from the tkhd matrix), a part decodes every GOP that
+  shows a frame of it from its keyframe (`fetchWc`: one `blob.slice` per GOP, ≤ 4 chunks queued, ≤ 6 JPEGs
+  encoding), each output frame drawn turned by `rot` and closed at once — every frame, no seeks, no hidden
+  `<video>`. With WebCodecs a gap between cached frames is a hole only if `sorted` has a frame inside it
+  (variable frame rate, before the first / after the last frame: no re-decoding). A decoder with chunks queued
+  and no frame for 2 s, or a flush over 3 s, is a `watchdog` error; a frame the canvas cannot draw too. Container
+  colours (`colr nclx`) go into `cfg.colorSpace` when the stream says none. A mirrored tkhd matrix → hidden
+  player. An H.264 stream with no colour description (no `colr nclx`, no SPS VUI colour: `avcTagged`) under
+  720 px is decoded as BT.601 (`cfg.colorSpace`): the player takes such SD for 601, a VideoFrame for 709
+  (checked in Chromium: tagged SD and untagged HD agree as they are). A decoder error counts in `wcFails`; three
+  and that cache uses the hidden player for good. Otherwise (WebM, no WebCodecs) the **hidden player**: frames
+  from `requestVideoFrameCallback` while it plays a part muted; holes of ≤ 3 frames between cached ones cost
+  `LATE` (each is a seek from the keyframe, 0.5–0.8 s on a phone — they starved the rest of the window). The host calls `want([{lo, hi, from, end, base}])`: frames outside every range are dropped,
   missing parts are fetched cheapest first — cost = distance from the range's `from` (behind it × `wb()` =
   AHEAD / (1 − AHEAD)) + `base` (the range's own distance from the playhead in the sequence) — forward parts
   played through by a hidden muted player (rate 1.5–4, ≤ 60 presented frames/s, `CHUNK` 2 s ahead of `from`,
@@ -1019,7 +1042,7 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   ends only if `from` left it: `jolt`). Several caches take turns on the decoder (`turnTake` / `turnGive`):
   the cheapest next part wins (`costOf`), the owner yields only to a part cheaper by `TURN_HYST` (3 s), `prio`
   breaks ties; only the owner keeps a hidden player (`turnPick` releases the others' — phones have few
-  hardware decoders); an idle cache gives its player back after 3 s; a failed open is retried twice
+  hardware decoders; a `VideoDecoder` counts as one); an idle cache gives its player back after 3 s; a failed open is retried twice
   (1.5 s / 3 s, a deadline not woken by re-plans), then `broken`. `ScrubCache.busy()` (host: a play starting
   until `playing` + 300 ms, the visible player seeking, or stalled while playing) keeps every cache off the
   decoder, and `poke()` (on the player's `play` / `seeking`) stops the running part at once. `span(t)` = the

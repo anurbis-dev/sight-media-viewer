@@ -1681,7 +1681,7 @@ function seqDragTo(T){
     if (!openingKey && R.video && R.video.readyState >= 1){
       seqPend = null; R.dragging = true; seekTo(t);
       if (seqHoldEl) seqHoldWatch(R.video);
-    } else seqPend = { key: k, t, play: false, drag: true };
+    } else { seqPend = { key: k, t, play: false, drag: true }; seqHoldPic(k, t); }
     return;
   }
   seqSwitch(k, t, false, true);
@@ -1694,6 +1694,7 @@ function seqSwitch(k, t, play, drag){
   if (it && R.video){ it.marks = markerList().filter((m) => m.cls !== "mine"); it.dur = durOf() || it.dur; }
   const ks = si ? si.items.map((x) => x.key) : [];
   seqHold();
+  seqHoldPic(k, t);
   seqPend = { key: k, t, play, drag };
   openReview(k, null, false, undefined, { replace: true, seq: true, dir: ks.indexOf(k) < ks.indexOf(R.meta.key) ? -1 : 1 });
 }
@@ -1732,6 +1733,26 @@ function seqHold(){
   seqDropHold();
   seqHoldEl = c;
   st.appendChild(c);
+  seqHoldT = setTimeout(seqDropHold, 1500);
+}
+// The clip being opened (a drag / play / tap through the sequence): its cached frame at t over the stage instead
+// of the last clip's (that picture stood still while the next clip's player opened and was sought, and read as
+// the last clip's frame stuck on the next one). Its cache is still in scrubPool (taken over at loadedmetadata), or
+// is the open clip's when the drag turns back. Updated on every move until the clip lands.
+function seqHoldPic(k, t){
+  const st = els && els.stage, c = scrubPool.get(k) || (R && R.meta.key === k ? R.scrub : null);
+  const u = st && c && c.near(t < 0 ? (c.d || 0) + t : t);
+  if (!u) return;
+  let im = seqHoldEl;
+  if (!im || im.tagName !== "IMG"){
+    seqDropHold();
+    im = seqHoldEl = el("img", "seqhold");
+    im.alt = ""; im.draggable = false;
+    if (viewOf().mirror) im.style.transform = "scaleX(-1)";
+    st.appendChild(im);
+  }
+  if (im.getAttribute("src") !== u) im.src = u;
+  clearTimeout(seqHoldT);
   seqHoldT = setTimeout(seqDropHold, 1500);
 }
 // The element a sequence drag's finger went down on must stay in the document through a cut: WebKit keeps
@@ -2380,30 +2401,36 @@ function buildStage(){
       if (!(seqPend && seqPend.key === R.meta.key)) stage.appendChild(big);
       v.addEventListener("loadedmetadata", () => {
         if (!R || R.video !== v) return;
-        seqApply(v);
         const aa = R.meta.asset;
+        // The scrub cache first: a clip reached by a drag through the sequence lands (seqApply) on its cached frame,
+        // not on the last clip's held one until the player has sought.
+        const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
+        let sc = null;
+        if (!rv.scrub && d && rv.url && v.src === rv.url && rv.file){  // not a player whose file was just swapped (rebind)
+          // A clip reached through the sequence takes its cache over from scrubPool (filled as a neighbour).
+          // A neighbour's cache that gave up (its player never opened) is not taken over: a fresh one tries again.
+          sc = scrubPool.get(rv.meta.key);
+          scrubPool.delete(rv.meta.key);
+          if (sc && sc.broken){ sc.close(); sc = null; }
+          if (!sc) sc = new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true, tag: rv.meta.asset.name, blob: rv.file });
+          sc.prio = 0; sc.fps = () => rv.fps;
+          // The player's length is the clip's (a neighbour's came from the bar, a decoded track's from its last frame).
+          if (Math.abs((sc.d || 0) - d) > 1e-3){ sc.d = d; sc.resolve(); }
+          sc.onProgress = () => { if (R === rv) TPS.forEach(paintCache); };
+          rv.scrub = sc;
+          TPS.forEach(paintCache);
+          // After the player's own first frame, so the two do not race for the decoder (an adopted cache at once).
+          rv.scrubAt = performance.now() + (sc.spec ? 0 : 600);
+        }
+        seqApply(v);
+        // (After seqApply: the window is planned around where the clip lands, not its first frame.)
+        if (sc){ if (sc.spec) cacheFocus(); else setTimeout(() => { if (R === rv && rv.scrub === sc) cacheFocus(); }, 650); }
         if (!aa.width && v.videoWidth){ aa.width = v.videoWidth; aa.height = v.videoHeight; }
         if (!aa.duration && Number.isFinite(v.duration)) aa.duration = v.duration;
         // Sound: Safari lists the tracks, Firefox says; Chrome only once it has decoded some (timeupdate).
         if (v.audioTracks && typeof v.audioTracks.length === "number") setAudio(v.audioTracks.length > 0);
         else if (typeof v.mozHasAudio === "boolean") setAudio(v.mozHasAudio);
         paintTime(); paintMarkers(); paintOverlay(); applyStageView();
-        const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
-        if (!rv.scrub && d && rv.url && v.src === rv.url && rv.file){  // not a player whose file was just swapped (rebind)
-          // A clip reached through the sequence takes its cache over from scrubPool (filled as a neighbour).
-          // A neighbour's cache that gave up (its player never opened) is not taken over: a fresh one tries again.
-          let sc = scrubPool.get(rv.meta.key);
-          scrubPool.delete(rv.meta.key);
-          if (sc && sc.broken){ sc.close(); sc = null; }
-          if (!sc) sc = new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true, tag: rv.meta.asset.name });
-          sc.prio = 0; sc.fps = () => rv.fps;
-          sc.onProgress = () => { if (R === rv) TPS.forEach(paintCache); };
-          rv.scrub = sc;
-          TPS.forEach(paintCache);
-          // After the player's own first frame, so the two do not race for the decoder (an adopted cache at once).
-          rv.scrubAt = performance.now() + (sc.spec ? 0 : 600);
-          if (sc.spec) cacheFocus(); else setTimeout(() => { if (R === rv && rv.scrub === sc) cacheFocus(); }, 650);
-        }
       });
       v.addEventListener("error", () => { if (R && R.video === v){ seqDropHold(); scrubPoolClear(); } toast("This device cannot play this video (format or codec).", 5000); });
       // Only a clip played to its end goes on (a seek to the very end fires "ended" too, paused).
@@ -2593,8 +2620,19 @@ function seekTo(t){
   pumpSeek(v);
   paintTime(); paintOverlay(); paintCurrent();
 }
-function pumpSeek(v){
+let restT = 0;
+function pumpSeek(v, rest){
   if (R.want == null || v.seeking) return;
+  // Dragging over cached frames: the picture is the cache's, the player is not sought (each seek decodes from
+  // the keyframe and keeps the scrub caches off the decoder); it seeks once, to the last time, when the drag ends
+  // (as Sight's scrub proxy: the full file is sought on release).
+  // A finger resting on one frame for a moment: the player seeks there after all (its full picture replaces the
+  // 640 px cached one; the next move goes on from the cache).
+  clearTimeout(restT);
+  if (R.dragging && !rest && cachedAt(R.want)){
+    restT = setTimeout(() => { if (R && R.video === v && R.dragging && R.want != null) pumpSeek(v, true); }, 250);
+    return;
+  }
   const t = R.want;
   R.want = null;
   // The player is sent a quarter into the frame (well inside it, whatever the container's stamps)
@@ -2604,11 +2642,13 @@ function pumpSeek(v){
     const d = durOf();
     v.currentTime = R.fpsKnown ? Math.min((frameIdx(t) + 0.25) * frameDur(), d || Infinity) : t;
   } else if (!R.dragging) settle(v);
+  else if (rest) hideWhenShown(v);  // a rest on the frame the player stands on: its own picture at once
 }
 // The last seek has landed and nothing is being dragged: the player's own frame is the truth again.
 function settle(v){
   if (!R || R.video !== v) return;
   R.scrubT = null;
+  settleWait.forEach((f) => f());  // (a drag let go on the frame the player stands on settles with no seek)
   hideWhenShown(v);
   paintTime(); paintOverlay(); paintCurrent();
   if (R.drawS) R.drawS.settled();
@@ -2616,7 +2656,9 @@ function settle(v){
 function dragEnd(){
   R.dragging = false;
   const v = R.video;
-  if (v && R.want == null && !v.seeking) settle(v);
+  if (!v) return;
+  if (R.want != null) pumpSeek(v);  // a drag over cached frames: the player's one seek (it settles on "seeked")
+  else if (!v.seeking) settle(v);
 }
 // ±n frames from the frame on screen (or the one already on its way: quick taps add up).
 function step(n){
@@ -2918,7 +2960,7 @@ dbg.sample(() => {
   const one = (c, role) => {
     const rs = c.runs(3), m = c.mts;
     cs.push({ c: c.tag, role, n: m.length, runs: rs.length > 8 ? rs.length : rs.map(([a, b]) => [+a.toFixed(2), +b.toFixed(2)]),
-      v: !!c.v, running: c.running, broken: c.broken, prio: c.prio });
+      v: !!(c.v || c.dec), wc: c.wc ? true : c.wc === null ? false : null, running: c.running, broken: c.broken, prio: c.prio });
   };
   if (R.scrub) one(R.scrub, "open");
   scrubPool.forEach((c) => one(c, "pool"));
@@ -2974,7 +3016,7 @@ function cacheFocus(){
       if (!kept || !kept.blob){ scrubPoolMiss.add(k); return; }
       if (R !== rv){ if (R) cacheFocus(); return; }  // a cut meanwhile: the new clip asks again
       if (scrubPool.has(k)) return;
-      const c2 = new ScrubCache(URL.createObjectURL(kept.blob), w.it.dur || 0, () => rv.fps, null, { own: true, prio: 1, tag: (w.it.name || k) });
+      const c2 = new ScrubCache(URL.createObjectURL(kept.blob), w.it.dur || 0, () => rv.fps, null, { own: true, prio: 1, tag: (w.it.name || k), blob: kept.blob });
       scrubPool.set(k, c2);
       cacheFocus();
     });
@@ -3680,11 +3722,13 @@ function painted(v){
   });
 }
 // Resolves once the player stands still on the last time asked for.
+const settleWait = new Set();
 function whenSettled(rv){
   return new Promise((ok) => {
     const v = rv.video;
-    const check = () => { if (R !== rv || !v || (rv.want == null && !v.seeking)){ if (v) v.removeEventListener("seeked", check); ok(); } };
+    const check = () => { if (R !== rv || !v || (rv.want == null && !v.seeking)){ if (v) v.removeEventListener("seeked", check); settleWait.delete(check); ok(); } };
     if (v) v.addEventListener("seeked", check);
+    settleWait.add(check);
     check();
   });
 }

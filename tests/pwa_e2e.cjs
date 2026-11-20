@@ -14,6 +14,9 @@
 //     nothing changed.
 //   node tests/pwa_e2e.cjs seqbar <baseURL> <dir with seq_a.webm, seq_b.webm>
 //     two clips grouped: the sequence bar, tap / drag across the cut, play on past the end, title swipe, scrub.
+//   node tests/pwa_e2e.cjs wcache <baseURL> <dir with wc_a.mp4, wc_b.mp4 (3 s, 24 fps)>
+//     the scrub cache decoded with WebCodecs (every frame of both clips), a timeline drag over cached frames does
+//     not seek the player until the release, a drag across the cut shows the next clip's cached frame at once.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -286,6 +289,54 @@ async function bundle(){
   return res;
 }
 
+// The scrub cache on MP4s (WebCodecs): both clips of a sequence cached frame by frame; a drag over cached frames
+// leaves the player alone until the release; a drag across the cut shows the next clip's own cached frame.
+async function wcache(){
+  const dir = a1, res = {}, names = ["wc_a.mp4", "wc_b.mp4"];
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const p = await page(ctx);
+  for (const f of names){
+    await p.setInputFiles("label.pick-file input", path.join(dir, f));
+    await p.waitForFunction((n) => { const R = window.__sightReview.R; return R && R.meta.asset.name === n && R.video && R.video.readyState >= 1; }, f);
+    await tap(p.locator('button[title="All reviews"]'));
+    await p.waitForSelector(".list .row");
+  }
+  const keys = await p.evaluate(async (ns) => { const ms = await window.__sightReview.DB.all("reviews"); return ns.map((n) => ms.find((m) => m.asset.name === n).key); }, names);
+  await p.evaluate((ks) => localStorage.setItem("sight-review:groups", JSON.stringify([{ id: "gwc", name: "WC", keys: ks, open: true }])), keys);
+  await p.reload();
+  await p.waitForSelector(".list .row.group");
+  await p.locator(".list .row.group > .item .th").click();
+  const ready = (n) => p.waitForFunction((n) => { const R = window.__sightReview.R; return R && R.meta.asset.name === n && R.video && R.video.readyState >= 2 && !R.video.seeking && R.want == null; }, n);
+  await ready(names[0]);
+  await p.waitForFunction((kb) => { const S = window.__sightReview, a = S.R.scrub, c = S.scrubPool.get(kb); return !!(a && a.wc && a.mts.length >= 72 && c && c.wc && c.mts.length >= 72); }, keys[1], { timeout: 20000 }).catch(() => {});
+  res.cache = await p.evaluate((kb) => { const S = window.__sightReview, a = S.R.scrub, c = S.scrubPool.get(kb); return [a.mts.length, !!a.wc, c ? c.mts.length : null, !!(c && c.wc), a.mts[0]]; }, keys[1]);
+  // A timeline drag over cached frames: the cached picture, no seek; one seek on the release.
+  await p.evaluate(() => { const v = window.__sightReview.R.video; window.__seeks = 0; v.addEventListener("seeking", () => window.__seeks++); });
+  const tl = await p.locator(".tp .tl").first().boundingBox(), y = tl.y + tl.height / 2;
+  await p.mouse.move(tl.x + tl.width * 0.2, y); await p.mouse.down();
+  for (let i = 1; i <= 10; i++) await p.mouse.move(tl.x + tl.width * (0.2 + i * 0.05), y);
+  res.during = await p.evaluate(() => { const R = window.__sightReview.R; return [window.__seeks, R.want != null, !document.querySelector(".stage .scrubimg").hidden]; });
+  // The finger resting on a frame: the player seeks there after a moment (its own picture replaces the cached one).
+  await p.waitForTimeout(600);
+  res.rest = await p.evaluate(() => { const R = window.__sightReview.R; return [window.__seeks, R.want == null]; });
+  await p.mouse.up();
+  await ready(names[0]);
+  res.after = await p.evaluate(() => [window.__seeks, window.__sightReview.R.video.currentTime]);
+  // A drag across the cut on the sequence bar: the held picture is the next clip's cached frame (an <img>).
+  await p.evaluate(() => { window.__holds = []; new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("seqhold")) window.__holds.push(n.tagName + (n.tagName === "IMG" && String(n.src).startsWith("blob:") ? ":blob" : "")); }))).observe(document.body, { childList: true, subtree: true }); });
+  const bb = await p.locator(".sqb").boundingBox(), by = bb.y + bb.height / 2;
+  await p.mouse.move(bb.x + bb.width * 0.3, by); await p.mouse.down();
+  await p.mouse.move(bb.x + bb.width * 0.75, by, { steps: 6 });
+  await p.waitForFunction((n) => { const R = window.__sightReview.R; return R && R.meta.asset.name === n && R.video && R.video.readyState >= 1; }, names[1]);
+  await p.mouse.up();
+  await ready(names[1]);
+  res.holds = await p.evaluate(() => window.__holds);
+  res.landed = await p.evaluate(() => [window.__sightReview.R.meta.asset.name, window.__sightReview.R.video.currentTime, !!(window.__sightReview.R.scrub && window.__sightReview.R.scrub.mts.length >= 72)]);
+  await b.close();
+  return res;
+}
+
 // Two clips of a group as one sequence: the bar over the timeline, a tap / drag on it across the cut, play on
 // past a clip's end, a scrub on the picture past the end, a swipe on the header's title.
 async function seqbar(){
@@ -365,8 +416,10 @@ async function seqbar(){
   bb = await bar();
   const tp = { x: bb.x + bb.width * 0.4, y: bb.y + bb.height / 2 };
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [tp] });
-  await ready("seq_a.webm");
+  // (While the finger is down over cached frames the player is not sought: it seeks once on release.)
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R && R.meta.asset.name === "seq_a.webm" && R.video && R.video.readyState >= 1 && R.scrubT != null; });
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await ready("seq_a.webm");
   await p.waitForTimeout(200);
   res.touch = await p.evaluate(() => [window.__sightReview.R.video.currentTime, window.__sightReview.R.dragging]);
   await p.evaluate(() => { const v = window.__sightReview.R.video; v.currentTime = v.duration - 0.2; v.play(); });
@@ -400,7 +453,7 @@ async function seqbar(){
   return res;
 }
 
-(mode === "make" ? make() : mode === "bundle" ? bundle() : mode === "seqbar" ? seqbar() : merge()).then((res) => {
+(mode === "make" ? make() : mode === "bundle" ? bundle() : mode === "seqbar" ? seqbar() : mode === "wcache" ? wcache() : merge()).then((res) => {
   res.log = log;
   process.stdout.write(JSON.stringify(res));
 }).catch((e) => { console.error(e); console.error(log.join("\n")); process.exit(1); });
