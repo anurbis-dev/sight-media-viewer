@@ -26,6 +26,7 @@ import { convertForPlayback } from "/static/video-playable.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
 import "/static/review-core.js";
+import "/static/shotgrid-core.js";  // globalThis.SightShotGrid — the ShotGrid link, shared with the phone app (docs/SHOTGRID.md)
 import { createPlate } from "/static/caption-plate.js";
 import { createDictationUI } from "/static/dictation.js";
 const RC = globalThis.SightReviewCore;
@@ -629,9 +630,14 @@ export function createAnnotator(host){
   }
   OB.settlers.add({ settle, stage });
 
+  // ShotGrid popover state (see "ShotGrid" below) — per file: msg / picking belong to the file they were made for;
+  // projects to the site they were read from
+  const sgState = { busy: false, msg: "", picking: false, projects: null, projSite: "", aid: "" };
   async function load(a){
     const token = {};
     S.loading = token;
+    // the SG ▾ popover belongs to the file it was opened on; a sync of this file repaints it itself
+    if (sgState.aid && sgState.aid !== a.id){ const sgb = S.ui?.querySelector(".an-sg"); if (sgb) sgb.hidden = true; }
     let rows = [];
     try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); }
     catch (e){ console.warn(e); if (S.asset?.id === a.id) toast("Could not load the notes of this file"); }
@@ -719,6 +725,9 @@ export function createAnnotator(host){
       if (it.kind === "note"){
         it.data.from = { id: r.id, asset: p.asset.id, name: p.asset.name };
         it.data.shots = it.data.shots || [];
+        // a copy is a new note: not the ShotGrid note of the old version (docs/SHOTGRID.md)
+        delete it.data.sg;
+        if (Array.isArray(it.data.replies)) it.data.replies = it.data.replies.map((x) => { if (x && x.sg){ const y = { ...x }; delete y.sg; return y; } return x; });
       } else {
         it.data.note = map.get(r.data.note);
         if (!validItem(it)) continue;
@@ -2703,6 +2712,7 @@ export function createAnnotator(host){
       <div class="an-ph">
         <b>Review</b>
         <input class="an-who" placeholder="Your name" spellcheck="false" title="Reviewer name stored with every note">
+        <button type="button" class="an-ib" data-act="sg" title="ShotGrid: link this file to a Version and sync the notes both ways">SG ▾</button>
         <button type="button" class="an-ib" data-act="export" title="Export / import">Export ▾</button>
         <button type="button" class="an-ib" data-act="close" title="Hide panel (C)">${ICON.close}</button>
       </div>
@@ -2722,6 +2732,7 @@ export function createAnnotator(host){
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
       </div>
+      <div class="an-menu an-sg" hidden></div>
       <div class="an-rs"><span>State</span><div class="an-seg">
         <button type="button" data-rs="" title="No review state">—</button>
         <button type="button" data-rs="review" title="Waiting for review">Needs review</button>
@@ -2750,12 +2761,15 @@ export function createAnnotator(host){
     who.value = reviewer();
     who.addEventListener("change", () => { try { host.putSetting("sight.reviewer", who.value.trim()); } catch {} });
     who.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter") || hotkey(e, "Escape")) who.blur(); });
-    const menu = el.querySelector(".an-menu"), exBtn = el.querySelector("[data-act=export]");
+    const menu = el.querySelector(".an-menu:not(.an-sg)"), exBtn = el.querySelector("[data-act=export]");
     exBtn.onclick = () => {
       menu.hidden = !menu.hidden;
       // A sequence: the same exports for every clip of it that has notes (the host walks the clips).
       if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard();
     };
+    const sgBox = el.querySelector(".an-sg"), sgBtn = el.querySelector("[data-act=sg]");
+    sgBtn.onclick = () => { sgBox.hidden = !sgBox.hidden; if (!sgBox.hidden){ menu.hidden = true; sgPaint(); } };
+    host.registerAutoClose?.(sgBox, () => { sgBox.hidden = true; }, sgBtn);
     menu.querySelectorAll("[data-exall]").forEach((b) => { b.onclick = () => { menu.hidden = true; host.seqExport?.(b.dataset.exall); }; });
     host.registerAutoClose?.(menu, () => { menu.hidden = true; }, exBtn);
     menu.querySelectorAll("[data-ex]").forEach((b) => {
@@ -2861,7 +2875,152 @@ export function createAnnotator(host){
     const b = isBoard();
     el.classList.toggle("an-board", b);
     el.querySelectorAll("[data-ex]:not([data-ex=text])").forEach((x) => { x.hidden = b; });
-    el.querySelector(".an-menu > hr").hidden = b;
+    el.querySelector(".an-menu:not(.an-sg) > hr").hidden = b;
+    el.querySelector("[data-act=sg]").hidden = b;   // a board has no Version
+    if (b) el.querySelector(".an-sg").hidden = true;
+  }
+
+  // ---- ShotGrid (docs/SHOTGRID.md) ------------------------------------------------------------------
+  // The SG ▾ popover: link this file to a Version (project + search, or the Version its notes already name), then
+  // Sync — SightShotGrid.sync pulls ShotGrid's notes / replies / pictures (merged by /api/review/import), sends the
+  // notes written here (pictures = the report's frames with drawings burned in) and stamps the ShotGrid ids on the
+  // rows. The key stays in Sight's server (app/shotgrid.py); this side only talks to /api/sg/fetch.
+  const SGC = () => globalThis.SightShotGrid;
+  const sgHeaders = { "X-Sight": "1" };
+  async function sgApi(path, opts = {}){
+    const r = await fetch(path, { ...opts, headers: { ...sgHeaders, ...(opts.headers || {}) } });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) throw new Error(j?.detail || j?.errors?.[0]?.title || `HTTP ${r.status}`);
+    return j;
+  }
+  async function sgClient(){
+    const st = await sgApi("/api/sg/status");
+    if (!st.configured) throw new Error("Set up ShotGrid first: Settings → ShotGrid");
+    return { st, client: SGC().createClient({ site: st.site, via: "/api/sg/fetch?url=", serverAuth: true, headers: sgHeaders }) };
+  }
+  async function sgPaint(){
+    const box = S.ui?.querySelector(".an-sg");
+    if (!box || box.hidden || !S.asset) return;
+    const aid = S.asset.id;
+    if (sgState.aid !== aid){ sgState.aid = aid; sgState.msg = ""; sgState.picking = false; }
+    let st, cur;
+    try { [st, cur] = await Promise.all([sgApi("/api/sg/status"), sgApi(`/api/sg/link/${aid}`)]); }
+    catch (e){ box.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; return; }
+    if (S.asset?.id !== aid) return;
+    const msg = sgState.msg ? `<div class="an-sgmsg">${sgState.msg}</div>` : "";
+    if (!st.configured){ box.innerHTML = `<div class="an-mlbl">ShotGrid is not set up — Settings → ShotGrid (site, API script name and key).</div>`; return; }
+    const L = cur.link;
+    if (L && !sgState.picking){
+      const last = cur.state?.last ? fmtDate(cur.state.last) : "never";
+      box.innerHTML = `<div class="an-mlbl">Linked to <b>${esc(L.version.code)}</b>${L.project?.name ? " · " + esc(L.project.name) : ""}<br>Last sync: ${esc(last)}</div>
+        <button type="button" data-sg="sync" ${sgState.busy ? "disabled" : ""}>${sgState.busy ? "Syncing…" : "Sync now"}</button>
+        <button type="button" data-sg="pick">Link to another Version…</button>
+        <button type="button" data-sg="unlink">Unlink</button>${msg}`;
+    } else {
+      // Pick: the Version the notes already name (sent from another machine / the phone), or project + search.
+      const known = SGC().linkedVersionOf(S.items ? [...S.items.values()] : [], SGC().siteHost(st.site));
+      const stem = (S.asset.name || "").replace(/\.[^.]+$/, "");
+      box.innerHTML = `<div class="an-mlbl">Link <b>${esc(S.asset.name)}</b> to a ShotGrid Version</div>
+        ${known ? `<button type="button" data-sg="known">Version #${known} (from the notes)</button>` : ""}
+        <select class="an-sgproj"><option value="">Loading projects…</option></select>
+        <input class="an-sgq" type="search" placeholder="Version name contains…" value="${esc(stem)}" spellcheck="false">
+        <div class="an-sglist"></div>
+        ${L ? `<button type="button" data-sg="back">Cancel</button>` : ""}${msg}`;
+      const sel = box.querySelector(".an-sgproj"), q = box.querySelector(".an-sgq"), list = box.querySelector(".an-sglist");
+      q.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter")) find(); });
+      let timer = 0;
+      q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(find, 400); });
+      sel.onchange = () => { try { host.putSetting("sight.sg.project", sel.value); } catch {} find(); };
+      async function find(){
+        if (!sel.value){ list.innerHTML = ""; return; }
+        list.innerHTML = `<div class="an-mlbl">Searching…</div>`;
+        try {
+          const { client } = await sgClient();
+          let vs = await client.versions(sel.value, q.value.trim());
+          if (!vs.length && q.value.trim()){ const short = q.value.trim().replace(/[_. -]*v\d+$/i, ""); if (short !== q.value.trim()) vs = await client.versions(sel.value, short); }
+          list.innerHTML = vs.length ? vs.map((v) => `<button type="button" data-ver="${v.id}">${esc(v.code || "#" + v.id)}${v.entity?.name ? ` <small>${esc(v.entity.name)}</small>` : ""}</button>`).join("")
+            : `<div class="an-mlbl">No Version found</div>`;
+          list.querySelectorAll("[data-ver]").forEach((b) => { b.onclick = () => sgLink(Number(b.dataset.ver)); });
+        } catch (e){ list.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; }
+      }
+      try {
+        const { client } = await sgClient();
+        if (sgState.projSite !== st.site){ sgState.projects = null; sgState.projSite = st.site; }
+        const ps = sgState.projects || (sgState.projects = await client.projects());
+        if (S.asset?.id !== aid) return;
+        let want = ""; try { want = localStorage.getItem("sight.sg.project") || ""; } catch {}
+        sel.innerHTML = `<option value="">Project…</option>` + ps.map((p) => `<option value="${p.id}">${esc(p.name || "#" + p.id)}</option>`).join("");
+        if (ps.some((p) => String(p.id) === want)){ sel.value = want; find(); }
+      } catch (e){ sel.innerHTML = `<option value="">${esc(e.message)}</option>`; }
+    }
+    box.querySelectorAll("[data-sg]").forEach((b) => {
+      b.onclick = () => {
+        const a = b.dataset.sg;
+        if (a === "sync") sgSync();
+        else if (a === "pick"){ sgState.picking = true; sgState.msg = ""; sgPaint(); }
+        else if (a === "back"){ sgState.picking = false; sgPaint(); }
+        else if (a === "known") sgLink(SGC().linkedVersionOf([...S.items.values()], SGC().siteHost(st.site)));
+        else if (a === "unlink") sgApi(`/api/sg/link/${aid}`, { method: "DELETE" }).then(() => { sgState.msg = ""; sgPaint(); });
+      };
+    });
+  }
+  async function sgLink(vid){
+    try {
+      const { client } = await sgClient();
+      const link = await SGC().loadVersion(client, vid);
+      await sgApi(`/api/sg/link/${S.asset.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
+      sgState.picking = false; sgState.msg = `Linked to <b>${esc(link.version.code)}</b> — Sync now to exchange notes`;
+    } catch (e){ sgState.msg = esc(e.message); }
+    sgPaint();
+  }
+  // The notes' pictures for ShotGrid: the report's frames / views with the drawings burned in, then attached pictures.
+  async function sgPictures(ids, opt){
+    const want = new Set(ids), out = new Map(), skip = opt?.skipShots || new Set();
+    const rep = await gatherReport(false, true);
+    const blob = async (u) => (await fetch(u)).blob();
+    for (const n of rep.notes){
+      if (!want.has(n.id)) continue;
+      const list = [];
+      if (n.frame) list.push({ blob: await blob(n.frame), name: n.frameFile || "frame" });
+      for (const m of n.more || []) if (m.frame) list.push({ blob: await blob(m.frame), name: m.file || "frame" });
+      for (const sid of n.shots || []){ if (skip.has(sid)) continue; try { list.push({ blob: await blob(`/api/review/shots/${sid}`), name: sid }); } catch {} }
+      out.set(n.id, list);
+    }
+    return out;
+  }
+  async function sgSync(){
+    if (!S.asset || sgState.busy || exportBusy()) return;
+    const a = S.asset, aid = a.id;
+    sgState.busy = true; sgState.msg = ""; sgPaint();
+    try {
+      await flush();
+      const { st, client } = await sgClient();
+      const cur = await sgApi(`/api/sg/link/${aid}`);
+      if (!cur.link) throw new Error("Not linked to a Version");
+      const asset = { id: a.id, name: a.name, path: a.path, ext: a.ext, kind: a.kind, size: a.size, mtime: a.mtime, width: a.width, height: a.height, duration: a.duration };
+      const res = await SGC().sync({
+        client, link: cur.link, asset, fps: S.fps, state: cur.state, statusMap: st.statusMap, logins: st.logins, sudo: st.sudo,
+        getRows: () => sgApi(`/api/annotations?asset_id=${aid}&deleted=1`),  // tombstones: a note deleted here stays deleted
+        importPackage: (pkg) => sgApi("/api/review/import", { method: "POST", body: JSON.stringify(pkg) }),
+        pictures: (ids, opt) => S.asset?.id === aid ? sgPictures(ids, opt) : new Map(),
+        progress: (t) => toast(esc(t), 60000),
+      });
+      await sgApi(`/api/sg/link/${aid}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
+      const p = res.pulled, q = res.pushed;
+      const parts = [p.added && `${p.added} new from ShotGrid`, p.updated && `${p.updated} updated from ShotGrid`, q.notes && `${q.notes} sent`,
+        q.updated && `${q.updated} updated on ShotGrid`, q.replies && `${q.replies} repl${q.replies === 1 ? "y" : "ies"} sent`, q.pictures && `${q.pictures} picture${q.pictures === 1 ? "" : "s"} uploaded`].filter(Boolean);
+      if (res.skipped) parts.push(`${res.skipped} note${res.skipped === 1 ? " is" : "s are"} linked to another Version (not sent)`);
+      sgState.msg = (parts.join(" · ") || "Up to date") + (res.errors.length ? `<br><span class="an-sgerr">${res.errors.map(esc).join("<br>")}</span>` : "");
+      toast(res.errors.length ? `ShotGrid sync: ${res.errors.length} problem${res.errors.length === 1 ? "" : "s"} — see SG ▾` : `ShotGrid: ${parts.join(" · ") || "up to date"}`, 4000);
+      if (S.asset?.id === aid){ S.undo = []; S.redo = []; obForget(aid); await load(S.asset); }
+      host.onReviewChanged?.(aid);
+    } catch (e){
+      console.warn(e);
+      sgState.msg = `<span class="an-sgerr">${esc(e.message || "Sync failed")}</span>`;
+      toast("ShotGrid sync failed", 3000);
+    } finally {
+      sgState.busy = false; sgPaint();
+    }
   }
   // Drawings a new note picks up: every drawing not attached to a note yet, on any frame / view and from any
   // time — a note may hold drawings on several frames of a video or views of a 3D model (each keeps its own ctx),
@@ -4928,6 +5087,12 @@ function injectStyles(){
 .an-spos button { height: 22px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
 .an-spos button.on { background: var(--surface-3, #2a2b31); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .an-menu[hidden] { display: none; }
+.an-sg { width: 280px; gap: 4px; }
+.an-sg select, .an-sg input { width: 100%; padding: 6px 8px; border-radius: 6px; background: rgb(255 255 255 / .06); color: var(--fg); border: 1px solid var(--border); font-size: 12px; }
+.an-sglist { display: flex; flex-direction: column; max-height: 240px; overflow: auto; }
+.an-sglist small { opacity: .6; margin-left: 4px; }
+.an-sgmsg { padding: 6px 10px; font-size: 12px; opacity: .85; }
+.an-sgerr { color: #ff8a80; }
 .an-menu button { text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--fg); font-size: 12px; }
 .an-menu button:hover { background: var(--surface-2); }
 .an-mlbl { padding: 4px 10px 2px; font-size: 10.5px; color: var(--muted); }

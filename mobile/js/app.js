@@ -15,6 +15,7 @@ import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
+import { sgSheet, sgSettings } from "./shotgrid.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -1309,6 +1310,10 @@ async function settings(){
       sh.appendChild(fs); paintFs();
       sh.appendChild(el("p", "", "Auto: the app goes full screen at your first tap, and again after you leave it."));
     } else sh.appendChild(el("p", "", isStandalone() ? "The installed app is full screen already." : isIOS() ? "Safari on iPhone / iPad does not keep a page full screen. Add the app to the Home Screen: it then runs full screen." : "This browser cannot show a page full screen. Add the app to the Home Screen: it then runs full screen."));
+    sh.appendChild(el("b", "lab", "ShotGrid"));
+    const sgA = el("div", "acts");
+    sgA.appendChild(btn("btn", "ShotGrid connection…", () => { close(); sgSettings({ sheet, el, btn, toast }); }));
+    sh.appendChild(sgA);
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
     if (u && !u.persisted) a.appendChild(btn("btn", "Keep storage", async () => { close(); toast(await DB.persist() ? "Storage will be kept" : "The browser did not allow it (install the app first)", 3500); }));
@@ -5002,6 +5007,7 @@ function reviewActions(){
     { label: "PDF report", note: "share / save", fn: () => exportReport("pdf") },
     { label: "Web page (HTML)", note: "opens anywhere", fn: () => exportReport("html") },
     { label: "Review file for Sight (.srev)", fn: exportSrev },
+    { label: "ShotGrid…", note: R.meta.sg && R.meta.sg.link ? R.meta.sg.link.version.code : "link & sync", fn: () => sgSheet(sgCtx()) },
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,
@@ -5036,6 +5042,21 @@ function offerFile(blob, name, what, onSent){
     }));
     sh.appendChild(a);
   });
+}
+// What the ShotGrid module (shotgrid.js) needs from the app: its sheets, the open review, the merge, the pictures.
+function sgCtx(){
+  return { sheet, el, btn, toast, busy, R: () => R, flush, mergeInto, save: () => { if (R) dirty(false); }, pictures: sgPictures };
+}
+// The notes' pictures for ShotGrid: the report's frames / views with the drawings burned in, then attached pictures.
+async function sgPictures(ids, opt){
+  const want = new Set(ids), out = new Map(), skip = (opt && opt.skipShots) || new Set();
+  await refShots(R);
+  // (report pictures carry no shot id: pictures pulled from ShotGrid are left out by id before the report is made)
+  const rows = skip.size ? R.rows.map((r) => r.kind === "note" && want.has(r.id) && (r.data.shots || []).some((s) => skip.has(s))
+    ? Object.assign({}, r, { data: Object.assign({}, r.data, { shots: r.data.shots.filter((s) => !skip.has(s)) }) }) : r) : R.rows;
+  const p = await gatherReport({ asset: Object.assign({}, R.meta.asset), rows, fps: R.fps, author: who, appLabel: APP_LABEL, src: reportSrc() });
+  p.notes.forEach((n) => { if (want.has(n.id)) out.set(n.id, [n.frame].concat(n.shots || []).filter((x) => x && x.blob).map((x, i) => ({ blob: x.blob, name: "pic" + (i + 1) }))); });
+  return out;
 }
 function reportSrc(){
   return {

@@ -397,6 +397,8 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
 .stt-row[hidden] { display: none !important; }
+.sg-codes { display: flex; gap: 4px; }
+.sg-codes input { flex: 1; min-width: 0; }
 .light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
 .light-info h4:first-child { margin-top: 0; }
 .light-info dl { display: grid; grid-template-columns: 116px 1fr; gap: 1px 12px; font-size: inherit; color: inherit; margin: 0; }
@@ -790,6 +792,7 @@ import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
+import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → ShotGrid test; annotate.js syncs)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
@@ -965,6 +968,53 @@ function bindDictationSettings(){
     if (!saved?.url) return;
     try { show(await put({ url: saved.url, model: saved.model || "", key: "" })); } catch {}
   };
+}
+// Settings → ShotGrid (docs/SHOTGRID.md): site, API script name + key (kept by the server only — the key is never
+// sent back), whether to post as the reviewer, reviewer → login, note status codes.
+function bindShotGridSettings(){
+  const msg = $("sgMsg");
+  if (!msg) return;
+  let saved = null;
+  const show = (st) => {
+    if (!st) return;
+    const lost = saved?.hasKey && !st.hasKey && (saved.site !== st.site || saved.script !== st.script);
+    saved = st;
+    $("sgSite").value = st.site || ""; $("sgScript").value = st.script || ""; $("sgSudo").checked = !!st.sudo;
+    $("sgKey").placeholder = st.hasKey ? "saved (leave empty to keep)" : "none";
+    $("sgLogins").value = Object.entries(st.logins || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
+    $("sgStOpen").value = st.statusMap?.open || ""; $("sgStProgress").value = st.statusMap?.progress || ""; $("sgStDone").value = st.statusMap?.done || "";
+    msg.textContent = !st.configured ? "Not set up" : `Linked to ${(() => { try { return new URL(st.site).host; } catch { return st.site; } })()}${lost ? " · the key was removed with the old site — enter it again" : ""}`;
+  };
+  const body = () => {
+    const logins = {};
+    $("sgLogins").value.split(/\r?\n/).forEach((l) => { const m = /^(.+?)\s*=\s*(.+)$/.exec(l.trim()); if (m) logins[m[1].trim()] = m[2].trim(); });
+    const b = { site: $("sgSite").value.trim(), script: $("sgScript").value.trim(), sudo: $("sgSudo").checked, logins,
+      statusMap: { open: $("sgStOpen").value.trim(), progress: $("sgStProgress").value.trim(), done: $("sgStDone").value.trim() } };
+    if ($("sgKey").value.trim()) b.key = $("sgKey").value.trim();
+    return b;
+  };
+  const put = (b) => api("/api/sg/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  api("/api/sg/status").then(show).catch(() => {});
+  $("sgSave").onclick = async () => {
+    try { show(await put(body())); $("sgKey").value = ""; }
+    catch { msg.textContent = "Check the site address (https://…) and the script name / key"; }
+  };
+  $("sgForget").onclick = async () => {
+    if (!saved?.site) return;
+    try { show(await put({ ...body(), key: "" })); } catch {}
+  };
+  $("sgTest").onclick = async () => {
+    msg.textContent = "Connecting…";
+    try {
+      if ($("sgKey").value.trim() || !saved || saved.site !== body().site) { show(await put(body())); $("sgKey").value = ""; }
+      const ps = await sgClient().projects();
+      msg.textContent = `Connected — ${ps.length} project${ps.length === 1 ? "" : "s"}`;
+    } catch (e){ msg.textContent = e.message || "Could not connect"; }
+  };
+}
+// The page's ShotGrid client: everything goes through Sight's server, which holds the key (app/shotgrid.py).
+function sgClient(site){
+  return globalThis.SightShotGrid.createClient({ site: site || $("sgSite")?.value || "x", via: "/api/sg/fetch?url=", serverAuth: true, headers: { "X-Sight": "1" } });
 }
 function putSetting(key, value){
   try { localStorage.setItem(key, value); } catch {}
@@ -9369,6 +9419,20 @@ function renderOptions(){
         <input type="password" id="sttKey" autocomplete="off" spellcheck="false" placeholder="none"></label>
       <div class="theme-actions stt-row"><span class="ign-msg" id="sttMsg"></span><button class="btn ghost" id="sttForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sttSave" type="button">Save</button></div>
 
+      <div class="settings-sub">ShotGrid</div>
+      <label class="field" title="Your studio's ShotGrid (Flow Production Tracking) address, e.g. mystudio.shotgrid.autodesk.com">Site
+        <input type="url" id="sgSite" autocomplete="off" spellcheck="false" placeholder="mystudio.shotgrid.autodesk.com"></label>
+      <label class="field" title="An API script made by a ShotGrid admin (Admin → Scripts): its Script Name">Script name
+        <input type="text" id="sgScript" autocomplete="off" spellcheck="false" placeholder="sight"></label>
+      <label class="field" title="The script's Application Key. Kept by the Sight server only (shotgrid.json in Sight's own data folder), never shown again. Changing the site or the script name drops the saved key.">Script key
+        <input type="password" id="sgKey" autocomplete="off" spellcheck="false" placeholder="none"></label>
+      <label class="opt" title="Notes and replies are posted as the reviewer's own ShotGrid user (the login below). Needs the script to be allowed to act as users. Off: posted by the script, the reviewer's name goes into the note's subject / the reply's text.">Post as the reviewer <input type="checkbox" id="sgSudo"></label>
+      <label class="field" title="Reviewer name in Sight = ShotGrid login, one per line, e.g.&#10;Ann Lee = ann.lee@studio.com">Reviewer logins
+        <textarea id="sgLogins" spellcheck="false" placeholder="Ann Lee = ann.lee@studio.com"></textarea></label>
+      <label class="field" title="The ShotGrid note status codes for Open / In progress / Done (Admin → Status list). Empty = opn / ip / clsd.">Note statuses
+        <span class="sg-codes"><input type="text" id="sgStOpen" placeholder="opn" aria-label="Open"><input type="text" id="sgStProgress" placeholder="ip" aria-label="In progress"><input type="text" id="sgStDone" placeholder="clsd" aria-label="Done"></span></label>
+      <div class="theme-actions"><span class="ign-msg" id="sgMsg"></span><button class="btn ghost" id="sgForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sgTest" type="button" title="Connect and list the projects">Test</button><button class="btn ghost" id="sgSave" type="button">Save</button></div>
+
       <div class="settings-sub">Colors</div>
       <label class="opt">Backdrop <input type="color" data-color="bg" value="${t.bg}"></label>
       <label class="opt">Accent <input type="color" data-color="accent" value="${t.accent || t.border}"></label>
@@ -9439,6 +9503,7 @@ function renderOptions(){
   $("zoomAxisSel").onchange = () => { state.theme.zoomAxis = $("zoomAxisSel").value; saveTheme(); };
   $("scanIgnoreApply").onclick = applyScanIgnore;
   bindDictationSettings();
+  bindShotGridSettings();
   $("scanDefaults").onclick = dfOpen;
   $("scanIgnore").oninput = (e) => { e.target.dataset.dirty = "1"; };
   renderThemeList();

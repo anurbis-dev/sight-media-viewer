@@ -633,6 +633,21 @@ class RoundTrip(unittest.TestCase):
             for a, b in zip(sum(u["centres"], []) + u["bounds"]["min"] + u["bounds"]["max"], sum(s["centres"], []) + s["bounds"]["min"] + s["bounds"]["max"]):
                 self.assertAlmostEqual(a, b, places=4, msg=name)
 
+    def test_shotgrid(self) -> None:
+        # docs/SHOTGRID.md: the phone's connection form, link to a Version and Sync against the fake site (any origin)
+        fake = subprocess.Popen([NODE, str(ROOT / "tests" / "sg_fake_server.cjs")], stdout=subprocess.PIPE, text=True)
+        try:
+            site = json.loads(fake.stdout.readline())["site"]
+            r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg.cjs"), self.base, str(self.media / "shot_v001.png"), site],
+                               capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+            self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
+            res = json.loads(r.stdout.strip().splitlines()[-1])
+            self.assertEqual((res["ok"], res["rows"], res["attachments"]), (True, 2, 1))
+        finally:
+            fake.terminate()
+            fake.wait(5)
+            fake.stdout.close()
+
     def test_touch(self) -> None:
         if not self.video:
             self.skipTest("ffmpeg is not installed (no test clip)")

@@ -12,7 +12,7 @@ later stage before the earlier ones it depends on.
 | 2 | Video in reviews | The **HTML page** keeps only the sent frames (drawing on those). The **app** plays the video itself (a local file now; later a download from a tracker / cloud) and can draw on any frame. Downloaded files need **cleanup** (see Cache). |
 | 3 | What is downloaded | *(trackers / clouds, later stages)* A **proxy** by default (Sight writes it next to the `.srev` on export: H.264 720p/1080p); the **original on a button** (check first that the device can play it, warn before downloading). |
 | 4 | Clouds | **Later** (changed 2026-11-11): after every tracker. Google Drive first, then Dropbox, behind one storage interface. |
-| 5 | Trackers | **Changed 2026-11-11: all tracker work comes after the local app.** First the owner's **own tracker — Coreline** (working repository `anurbis-dev/CueTrack`; it stores vectors like Sight), then **ftrack** (two-way), then **ShotGrid**. |
+| 5 | Trackers | **Changed 2026-11-11: all tracker work comes after the local app.** **Changed 2026-11-20: ShotGrid first** (done in 0.99, docs/SHOTGRID.md), then Coreline (the owner's own tracker, repository `anurbis-dev/CueTrack`; it stores vectors like Sight), then **ftrack** (two-way). |
 | 6 | Drawing on a reply | **Vector**, linked to the reply. A flat picture is generated **only** when sending to an external tracker (ftrack / ShotGrid). |
 | 7 | Scope of the app | **Now (changed 2026-11-11): local files on the device**, phones first — pick a file (image / video / 3D) from the device, review it from scratch (notes, drawings, states), export. Opening tracker versions / cloud files comes with those stages. |
 | 8 | Offline | **Fully offline**: the app works on local files without network; reviews live on the device. Edits made on reviews that came from Sight / a tracker merge back with the same rules as Sight. |
@@ -135,10 +135,10 @@ separate plan: `docs/PLAN-viewer.md`.
 - Sync is the same merge: pull ftrack notes into our rows, push our new / edited rows; conflicts by
   the same stamps. ftrack 3D support: check (decision 9).
 
-### 7. ShotGrid
-- ShotGrid REST API: login with user + password is allowed (`grant_type=password`) unless the site
-  uses SSO (then browser login / script keys). Note ↔ Note on Version, pictures ↔ Attachments,
-  state ↔ `sg_status_list` through the same per-site mapping table.
+### 7. ShotGrid — done in 0.99.0 (see RECENT, docs/SHOTGRID.md)
+- Decided 2026-11-20: Sight and the phone together on one core; API script key (+ optional post as the reviewer);
+  two-way notes / replies / states / pictures. Left: checks on a real site (SHOTGRID.md), deletes, reply pictures,
+  Version status, opening a Version's media on the phone.
 
 ### 8. Clouds — Google Drive, then Dropbox
 - One storage interface. OAuth on the device; a project folder holds `.srev` files + proxies;

@@ -130,7 +130,7 @@ export async function gatherReport({ asset, rows, fps, author, appLabel, src, pr
     }
     const t0 = kind === "video" && c && c.t != null ? RC().noteTimes(d, noteFrameTimes(rows, n), sameT, true)[0] : null;
     const vk0 = kind === "model3d" && c && c.vk ? noteViews(rows, n, order, true)[0] : null;
-    out.push({ num: i + 1, ctx: t0 != null ? fmtTime(t0, fps) + "  ·  f " + Math.round(t0 * fps) : vk0 ? viewLabel(vk0) : "", author: d.author || "", date: fmtDate(d.created),
+    out.push({ id: n.id, num: i + 1, ctx: t0 != null ? fmtTime(t0, fps) + "  ·  f " + Math.round(t0 * fps) : vk0 ? viewLabel(vk0) : "", author: d.author || "", date: fmtDate(d.created),
       text: d.text || "", picText, status: d.status, frame, frameCaption: cap, shots: more.filter(Boolean).concat(await shotPics(d.shots, d)), replies });
   }
   const st = reviewState(rows);

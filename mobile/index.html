@@ -341,6 +341,12 @@ input:focus, textarea:focus { border-color: var(--accent); }
    (app.js swipeDownToClose). Pulled over the sheet's top padding. */
 .sheet > .grab { position: sticky; top: -16px; z-index: 2; height: 30px; margin: -16px -16px 2px; background: var(--card); border-radius: 18px 18px 0 0; }
 .sheet > .grab::after { content: ""; position: absolute; left: 50%; top: 10px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--muted); opacity: .45; }
+.sgform input, .sheet select { width: 100%; margin-bottom: 12px; }
+.sheet select { font: inherit; font-size: 16px; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.sgcodes { display: flex; gap: 6px; } .sgcodes input { flex: 1; min-width: 0; }
+.sheet .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 12px; }
+.sheet .chk input { width: auto; margin: 0; }
+.sheet .sglist { max-height: 40vh; overflow: auto; }
 .sheet .lab { display: block; font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 4px; }
 .sheet .seg.themes, .sheet .seg.fs, .sheet .seg.thumbs, .sheet .seg.ahead, .sheet .seg.debug { margin: 0 0 14px; }
 .sheet .seg.fs + p { margin-top: -8px; }
@@ -372,6 +378,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <script type="importmap">{"imports":{"three":"./three/three.module.js","three/addons/":"./three/jsm/","@sparkjsdev/spark":"./three/spark.module.js"}}</script>
 <script src="core/review-core.js"></script>
 <script src="core/review-draw.js"></script>
+<script src="core/shotgrid-core.js"></script>
 <script>window.SIGHT_REVIEW_VERSION = "%%VERSION%%";</script>
 <script type="module" src="js/app.js"></script>
 </body>

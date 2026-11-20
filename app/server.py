@@ -22,6 +22,7 @@ from .library import Bus, Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
 from .stt import SttError, SttService
+from .shotgrid import SgError, ShotGridService
 from .version import APP_VERSION
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -970,12 +971,12 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return {"ok": True}
 
     @app.get("/api/annotations")
-    def annotations_for_asset(asset_id: str = "", board_id: str = "") -> list[dict]:
+    def annotations_for_asset(asset_id: str = "", board_id: str = "", deleted: str = "") -> list[dict]:
         if board_id:
             return lib.annotations_for_board(board_id)
         if not asset_id:
             raise HTTPException(400, "asset_id or board_id required")
-        return lib.annotations_for_asset(asset_id)
+        return lib.annotations_for_asset(asset_id, with_deleted=deleted == "1")
 
     @app.post("/api/annotations")
     async def add_annotation(request: Request) -> dict:
@@ -1603,6 +1604,94 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         except SttError as e:
             return JSONResponse({"error": e.code}, status_code=502 if e.code in ("failed", "offline", "rate") else 412)
         return JSONResponse({"text": text}, headers={"Cache-Control": "no-store"})
+
+    # ShotGrid (app/shotgrid.py, docs/SHOTGRID.md): the key is set here and never read back; the page's sync
+    # (shotgrid-core.js) goes through /api/sg/fetch, which adds the token.
+    sg = ShotGridService(lib.root)
+
+    def _sg_guard(request: Request) -> None:
+        # Only Sight's own page: a custom header needs a CORS preflight, which this server never answers, so
+        # another site open in the browser cannot make ShotGrid calls with the user's key. The Host check stops DNS
+        # rebinding (a site that points its own name at 127.0.0.1 would be same-origin and could send the header).
+        if request.headers.get("x-sight") != "1":
+            raise HTTPException(403, "Sight page only")
+        _sg_local(request)
+
+    def _sg_local(request: Request) -> None:
+        host = (request.headers.get("host") or "").lower()
+        name = host[1:host.index("]")] if host.startswith("[") and "]" in host else host.rsplit(":", 1)[0]
+        if name not in ("127.0.0.1", "localhost", "::1"):
+            raise HTTPException(403, "Sight page only")
+
+    @app.get("/api/sg/status")
+    def sg_status() -> JSONResponse:
+        return JSONResponse(sg.status(), headers={"Cache-Control": "no-store"})
+
+    @app.put("/api/sg/config")
+    async def sg_config(request: Request) -> JSONResponse:
+        if not request.headers.get("content-type", "").lower().startswith("application/json"):
+            raise HTTPException(415, "json required")
+        _sg_local(request)
+        if not sg.configure(await json_body(request)):
+            raise HTTPException(400, "invalid ShotGrid settings")
+        return JSONResponse(sg.status(), headers={"Cache-Control": "no-store"})
+
+    async def _sg_forward(request: Request, method: str) -> Response:
+        _sg_guard(request)
+        url = request.query_params.get("url", "")
+        sudo = request.query_params.get("sudo", "")[:200]
+        body = None
+        if method in ("POST", "PUT"):
+            buf = bytearray()
+            async for chunk in request.stream():
+                buf += chunk
+                if len(buf) > 512 * 1048576:
+                    raise HTTPException(413, "too big")
+            body = bytes(buf)
+        hdrs = {k.lower(): v for k, v in request.headers.items() if k.lower() in ("content-type", "accept")}
+        try:
+            status, ctype, data = await asyncio.to_thread(sg.forward, method, url, body, hdrs, sudo)
+        except SgError as e:
+            return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+        return Response(data, status_code=status, media_type=ctype or None, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/sg/fetch")
+    async def sg_fetch_get(request: Request) -> Response:
+        return await _sg_forward(request, "GET")
+
+    @app.post("/api/sg/fetch")
+    async def sg_fetch_post(request: Request) -> Response:
+        return await _sg_forward(request, "POST")
+
+    @app.put("/api/sg/fetch")
+    async def sg_fetch_put(request: Request) -> Response:
+        return await _sg_forward(request, "PUT")
+
+    @app.delete("/api/sg/fetch")
+    async def sg_fetch_delete(request: Request) -> Response:
+        return await _sg_forward(request, "DELETE")
+
+    @app.get("/api/sg/link/{aid}")
+    def sg_link_get(aid: str) -> JSONResponse:
+        return JSONResponse(lib.get_sg_link(aid) or {"link": None, "state": {}}, headers={"Cache-Control": "no-store"})
+
+    @app.put("/api/sg/link/{aid}")
+    async def sg_link_put(aid: str, request: Request) -> dict:
+        _sg_guard(request)
+        body = await json_body(request)
+        link, state = body.get("link"), body.get("state")
+        if (link is not None and not isinstance(link, dict)) or (state is not None and not isinstance(state, dict)):
+            raise HTTPException(400, "link / state must be objects")
+        if not lib.get_asset(aid):
+            raise HTTPException(404)
+        lib.set_sg_link(aid, link, state)
+        return {"ok": True}
+
+    @app.delete("/api/sg/link/{aid}")
+    def sg_link_drop(aid: str, request: Request) -> dict:
+        _sg_guard(request)
+        lib.drop_sg_link(aid)
+        return {"ok": True}
 
     @app.get("/api/settings")
     def get_settings() -> JSONResponse:

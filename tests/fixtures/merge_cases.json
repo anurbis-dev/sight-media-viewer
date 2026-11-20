@@ -1607,5 +1607,169 @@
   ],
   "deleted": [],
   "shot_map": {}
+ },
+ {
+  "name": "shotgrid ids kept from either side",
+  "now": 1800000000000,
+  "local": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "newer here",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000020,
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "a",
+       "author": "Bob",
+       "created": 1790000000001
+      },
+      {
+       "id": "00000000000000a8",
+       "text": "b",
+       "author": "Bob",
+       "created": 1790000000002,
+       "edited": 1790000000030
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "older here",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "replies": [
+      {
+       "id": "00000000000000a9",
+       "text": "c",
+       "author": "Bob",
+       "created": 1790000000003,
+       "sg": 903
+      }
+     ],
+     "sg": {
+      "site": "studio.shotgrid.autodesk.com",
+      "id": 501,
+      "v": 77
+     }
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "incoming": [
+   {
+    "id": "00000000000000a0",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "older there",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000010,
+     "replies": [
+      {
+       "id": "00000000000000a7",
+       "text": "a",
+       "author": "Bob",
+       "created": 1790000000001,
+       "sg": 901
+      },
+      {
+       "id": "00000000000000a8",
+       "text": "b0",
+       "author": "Bob",
+       "created": 1790000000002,
+       "sg": 902
+      }
+     ],
+     "sg": {
+      "site": "studio.shotgrid.autodesk.com",
+      "id": 501,
+      "v": 77
+     }
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   },
+   {
+    "id": "00000000000000a1",
+    "kind": "note",
+    "shape_kind": null,
+    "x": null,
+    "y": null,
+    "w": null,
+    "h": null,
+    "rotation": 0,
+    "z_index": 0,
+    "color": null,
+    "data": {
+     "text": "newer there",
+     "author": "Ann",
+     "created": 1790000000000,
+     "status": "open",
+     "ctx": null,
+     "shots": [],
+     "edited_at": 1790000000040,
+     "replies": [
+      {
+       "id": "00000000000000a9",
+       "text": "c2",
+       "author": "Bob",
+       "created": 1790000000003,
+       "edited": 1790000000041
+      }
+     ]
+    },
+    "locked": 0,
+    "created_at": 1790000000000,
+    "updated_at": 1790000000000
+   }
+  ],
+  "deleted": [],
+  "shot_map": {}
  }
 ]

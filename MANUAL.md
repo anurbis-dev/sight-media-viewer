@@ -302,6 +302,18 @@
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Download page*
     saves the same page with your changes in it (it opens in any browser, with the replies, notes and drawings
     already there, and can be answered and downloaded again); Sight does not import that file — send the `.srev` back for that. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
+- **ShotGrid** — sync a file's notes with a ShotGrid (Flow Production Tracking) Version, both ways. Set it up once in
+  Settings → ShotGrid: the site, an API script's name and key (a ShotGrid admin makes one: Admin → Scripts; Sight's
+  server keeps the key and never shows it again), optionally *Post as the reviewer* with a *Reviewer logins* list
+  (`Name in Sight = ShotGrid login`, one per line) and the studio's note status codes for Open / In progress / Done
+  (empty = `opn` / `ip` / `clsd`); *Test* lists the projects. Then in the review panel **SG ▾** → pick the project
+  and the Version (the search starts with the file's name; a Version already named by the notes is offered first)
+  → *Sync now*. A sync brings ShotGrid's notes, replies and pictures in (as notes here, a picture named like
+  `annot….1025.png` lands on that frame), and sends the notes written here — text, state, the frame / view with the
+  drawings burned in, attached pictures — and their replies. Later edits travel on the next sync (the later edit
+  wins). Deleting a note does not delete it on the other side. The phone app has the same: Settings → *ShotGrid
+  connection…* and *Export and more → ShotGrid…*; if the site does not answer the phone app, put a proxy's address in
+  the connection (`tools/sg-proxy-worker.js`, a Cloudflare Worker). Details: `docs/SHOTGRID.md`.
 - **Phone app (Sight Review)** — review pictures, videos and 3D models on a phone or tablet, offline, without
   Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews

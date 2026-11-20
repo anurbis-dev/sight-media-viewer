@@ -1288,6 +1288,14 @@ class Library:
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+            -- ShotGrid link of an asset (docs/SHOTGRID.md): the Version it syncs with (link JSON) and what
+            -- this machine last saw / sent (state JSON, SightShotGrid.sync's own bookkeeping).
+            CREATE TABLE IF NOT EXISTS sg_links (
+              asset_id TEXT PRIMARY KEY,
+              link TEXT NOT NULL,
+              state TEXT NOT NULL DEFAULT '{}',
+              updated_at INTEGER NOT NULL
+            );
             """
         )
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(assets)")}
@@ -4024,10 +4032,11 @@ class Library:
             d["data"] = {}
         return d
 
-    def annotations_for_asset(self, aid: str) -> list[dict]:
+    def annotations_for_asset(self, aid: str, with_deleted: bool = False) -> list[dict]:
+        # with_deleted: tombstones too (deleted_at set) — the ShotGrid sync must see notes deleted here.
         rows = self.query(
-            "SELECT * FROM annotations WHERE scope='asset' AND target_asset_id=? AND deleted_at IS NULL "
-            "ORDER BY z_index",
+            "SELECT * FROM annotations WHERE scope='asset' AND target_asset_id=? "
+            + ("" if with_deleted else "AND deleted_at IS NULL ") + "ORDER BY z_index",
             (aid,),
         )
         return [self._annotation_out(r) for r in rows]
@@ -4218,6 +4227,42 @@ class Library:
         )
         return [{"id": r["id"], "deleted_at": r["deleted_at"]} for r in rows]
 
+    # ---- ShotGrid links (app/shotgrid.py, docs/SHOTGRID.md) ------------------------------------------
+    def get_sg_link(self, aid: str) -> dict | None:
+        rows = self.query("SELECT link, state, updated_at FROM sg_links WHERE asset_id=?", (aid,))
+        if not rows:
+            return None
+        try:
+            return {"link": json.loads(rows[0]["link"]), "state": json.loads(rows[0]["state"] or "{}"), "updated_at": rows[0]["updated_at"]}
+        except json.JSONDecodeError:
+            return None
+
+    def set_sg_link(self, aid: str, link: dict | None = None, state: dict | None = None) -> None:
+        """Store the link and / or the sync state (None keeps what is there; a new link starts a fresh state)."""
+        now = int(time.time() * 1000)
+        with self.lock:
+            cur = self.conn.execute("SELECT link, state FROM sg_links WHERE asset_id=?", (aid,)).fetchone()
+            if cur is None and link is None:
+                return
+            new_link = json.dumps(link) if link is not None else cur["link"]
+            if state is not None:
+                new_state = json.dumps(state)
+            elif cur is None or (link is not None and cur["link"] != new_link):
+                new_state = "{}"
+            else:
+                new_state = cur["state"]
+            self.conn.execute(
+                "INSERT INTO sg_links(asset_id, link, state, updated_at) VALUES (?,?,?,?) "
+                "ON CONFLICT(asset_id) DO UPDATE SET link=excluded.link, state=excluded.state, updated_at=excluded.updated_at",
+                (aid, new_link, new_state, now),
+            )
+            self.conn.commit()
+
+    def drop_sg_link(self, aid: str) -> None:
+        with self.lock:
+            self.conn.execute("DELETE FROM sg_links WHERE asset_id=?", (aid,))
+            self.conn.commit()
+
     @staticmethod
     def merge_replies(a: list | None, b: list | None) -> list[dict]:
         """Union of two reply lists by id; for the same id the later edit (or delete) wins."""
@@ -4229,8 +4274,12 @@ class Library:
             if not isinstance(x, dict) or not x.get("id"):
                 continue
             k = str(x["id"])
-            if k not in out or stamp(x) > stamp(out[k]):
-                out[k] = x
+            prev = out.get(k)
+            # A ShotGrid reply id (FORMAT.md `sg`) is kept from either copy: only one client sent the reply.
+            if prev is None or stamp(x) > stamp(prev):
+                out[k] = {**x, "sg": prev["sg"]} if prev is not None and not x.get("sg") and prev.get("sg") else x
+            elif not prev.get("sg") and x.get("sg"):
+                out[k] = {**prev, "sg": x["sg"]}
         return sorted(out.values(), key=lambda x: Library._stamp(x.get("created")))
 
     @staticmethod
@@ -4379,6 +4428,10 @@ class Library:
                             merged["status"], merged["status_at"] = data.get("status"), b_at
                         elif a_at > b_at:
                             merged["status"], merged["status_at"] = have.get("status"), a_at
+                        # The ShotGrid link (FORMAT.md `data.sg`) is kept from either side, whichever content won.
+                        other = have if newer else data
+                        if not merged.get("sg") and other.get("sg"):
+                            merged["sg"] = other["sg"]
                     elif kind == "status" and (have.get("history") or data.get("history")):
                         merged["history"] = self.merge_history(have.get("history"), data.get("history"))
                     if not newer and not revived and merged == have:

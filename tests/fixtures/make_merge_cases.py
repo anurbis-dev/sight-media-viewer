@@ -148,5 +148,13 @@ case("duplicate ids in one package",
      [],
      [note(N1, "first", T0, replies=[rep(R1, "a", T0 + 1)]), note(N1, "second", T0, edited=T0 + 9, replies=[rep(R2, "b", T0 + 2)])])
 
+# 16. ShotGrid ids (data.sg on a note, sg on a reply) survive whichever copy wins.
+SG = {"site": "studio.shotgrid.autodesk.com", "id": 501, "v": 77}
+case("shotgrid ids kept from either side",
+     [note(N1, "newer here", T0, edited=T0 + 20, replies=[rep(R1, "a", T0 + 1), rep(R2, "b", T0 + 2, edited=T0 + 30)]),
+      note(N2, "older here", T0, sg=SG, replies=[rep(R3, "c", T0 + 3, sg=903)])],
+     [note(N1, "older there", T0, edited=T0 + 10, sg=SG, replies=[rep(R1, "a", T0 + 1, sg=901), rep(R2, "b0", T0 + 2, sg=902)]),
+      note(N2, "newer there", T0, edited=T0 + 40, replies=[rep(R3, "c2", T0 + 3, edited=T0 + 41)])])
+
 json.dump(cases, open(sys.argv[1], "w"), indent=1)
 print(len(cases), "cases")

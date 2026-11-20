@@ -1104,7 +1104,10 @@ var SightReviewCore = (function(){
     [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(function(x){
       if (!isObj(x) || !pyTrue(x.id)) return;
       var k = pyStr(x.id);
-      if (!out.has(k) || st(x) > st(out.get(k))) out.set(k, x);
+      var prev = out.get(k);
+      // A ShotGrid reply id (FORMAT.md `sg`) is kept from either copy: only one client sent the reply.
+      if (!prev || st(x) > st(prev)) out.set(k, prev && !pyTrue(x.sg) && pyTrue(prev.sg) ? Object.assign({}, x, { sg: prev.sg }) : x);
+      else if (!pyTrue(prev.sg) && pyTrue(x.sg)) out.set(k, Object.assign({}, prev, { sg: x.sg }));
     });
     return Array.from(out.values()).sort(function(x, y){ return stamp(x.created) - stamp(y.created); });
   }
@@ -1203,6 +1206,9 @@ var SightReviewCore = (function(){
         var aAt = stamp(have.status_at), bAt = stamp(data.status_at);
         if (bAt > aAt){ merged.status = data.status === undefined ? null : data.status; merged.status_at = bAt; }
         else if (aAt > bAt){ merged.status = have.status === undefined ? null : have.status; merged.status_at = aAt; }
+        // The ShotGrid link (FORMAT.md `data.sg`) is kept from either side, whichever content won.
+        var other = newer ? have : data;
+        if (!pyTrue(merged.sg) && pyTrue(other.sg)) merged.sg = other.sg;
       } else if (kind === "status" && (pyTrue(have.history) || pyTrue(data.history))){
         merged.history = mergeHistory(have.history, data.history);
       }

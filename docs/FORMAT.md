@@ -130,6 +130,7 @@ data = {
   replies?: [reply | event],          // the thread, oldest first
   from?: {id, asset, name},           // copied from note `id` on the previous version `asset`
   captions?: {key: text},             // 0.46+: each picture's own text, see below
+  sg?: {site, id, v},                 // 0.99+: the ShotGrid Note it is synced with (host, Note id, Version id), docs/SHOTGRID.md
   compare?: {                         // 0.68+: written in Sight's version compare — that comparison
     ids: [assetId],                   //   its files in layer order (2+, this note's file among them)
     ref, sel,                         //   reference layer and the selected one (= this note's file)
@@ -167,6 +168,11 @@ add replies).
 
 `progress` appeared in 0.19; older Sight shows such a note as open. "Open notes" (counts,
 carry-over, the report's *Open*) means status ≠ `done`.
+
+**ShotGrid link** (`sg`, 0.99+): set by the ShotGrid sync (docs/SHOTGRID.md) on a note sent to or pulled from
+ShotGrid, and `sg: <Reply id>` on such a reply. Kept from either copy by the merge (rule 4), so a `.srev` carries it to
+the other client and its sync finds the same ShotGrid records. Older clients ignore it and keep it (rows are rewritten
+with `data` as is; an older merge may drop it when the other copy wins — the next sync then sends a duplicate).
 
 **Reply**: `{id, text, author, created, edited?, shots?: [shotId]}` — `edited` is stamped on a
 change of its text or pictures (the phone app since 0.32 keeps it past the reply's own stamp); the
@@ -318,7 +324,8 @@ Merging a package into what a client holds (Sight: `Library.import_annotations`;
    same id the later of `edited` (else `created`) / `deleted` wins; sorted by `created` — and
    `status` comes from the copy with the later `status_at` (no change on a tie). For a **status**
    row the `history` lists are unioned (same `at` + `state` + `author` = one entry, the local one
-   kept), sorted by `at`.
+   kept), sorted by `at`. *0.99+:* a note's `data.sg` and a reply's `sg` (ShotGrid ids) are kept from the other copy
+   when the winning one has none.
 5. A row **deleted here** comes back only if the incoming content stamp is later than the delete.
    *Sight only (0.83+):* the import reports how many rows stayed deleted this way (`deleted_here`) and, when
    the user agrees, merges again with `restore` — those rows come back stamped as edited at the merge

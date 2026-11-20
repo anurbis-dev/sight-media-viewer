@@ -11,6 +11,7 @@ app/server.py            HTTP API + UI server; routes are closures inside build_
 app/web.py               FastAPI-shaped router on plain Starlette (@app.get on plain functions; see below)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
+app/shotgrid.py          ShotGrid link, server side: shotgrid.json (key never read back), token, /api/sg/fetch pass-through (docs/SHOTGRID.md)
 app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package,
                          HTML page for reviewers without Sight
 app/settings.py          settings.json store (UI prefs) + defaults
@@ -19,6 +20,7 @@ app/static/index.html    the whole UI: one inline <script type="module"> (no bui
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
+app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version, shared with the phone app (docs/SHOTGRID.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
                          buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers, ENV_PRESETS,
