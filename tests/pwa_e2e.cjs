@@ -339,43 +339,95 @@ async function wcache(){
   await p.waitForFunction(() => window.__sightReview.R.scrub.mts.length >= 72, null, { timeout: 15000 }).catch(() => {});
   await p.evaluate(() => {
     const S = window.__sightReview;
-    Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6 });
+    Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6, o: 0 }); S.setLag(0.1);
     window.__br = []; window.__sk = [];
     const si = document.querySelector(".stage .scrubimg");
-    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.t1 : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused]); window.__brRaf = requestAnimationFrame(f); };
+    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.x : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused, R.video.playbackRate, R.video.muted, R.bridge ? (R.bridge.tail ? "tail" : R.bridge.stay ? "stay" : "seek") : null]); window.__brRaf = requestAnimationFrame(f); };
     f();
     // Every time the player is sent to (its "seeking" event reads only the last one).
     const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
     Object.defineProperty(S.R.video, "currentTime", { configurable: true, get(){ return d.get.call(this); }, set(x){ window.__sk.push(+x.toFixed(3)); d.set.call(this, x); } });
+    // (A slow start, as a phone's — playing, not yet moving off its frame for 0.3 s: the cached picture must stay.)
+    const v = S.R.video;
+    v.play = function (){ delete this.play; const r = this.playbackRate; this.playbackRate = 0.0625; setTimeout(() => { this.playbackRate = r; }, 300); return this.play(); };
     S.seekTo(0.3); S.togglePlay();
   });
   await p.waitForFunction(() => { const R = window.__sightReview.R; return !R.bridge && !R.video.paused && R.video.currentTime > 1.2; }, null, { timeout: 10000 });
+  await p.waitForTimeout(100);  // (the sampler's last frame after the handover)
   res.bridge = await p.evaluate(() => {
     const br = window.__br, on = br.filter((x) => x[1] != null), last = br[br.length - 1];
     let back = 0;
     for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
-    return { t1: [...new Set(on.map((x) => x[1]))], seeks: window.__sk, shown: on.length ? [on[0][2], on[on.length - 1][2]] : null, back, cached: on.filter((x) => !x[3]).length, end: [last[3], last[5]] };
+    // Handed over while the player still stood on the frame it was sought to (1 s): the picture would freeze there.
+    const i0 = br.findIndex((x) => x[1] != null), early = br.slice(i0).filter((x) => x[1] == null && x[4] < 1 + 0.75 / 24).length;
+    return { t1: [...new Set(on.map((x) => x[1]))], seeks: window.__sk, shown: on.length ? [on[0][2], on[on.length - 1][2]] : null, back, early, cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]] };
   });
   await p.evaluate(() => window.__sightReview.togglePlay());
   // A tap during the bridge: paused on the frame shown, and the player sought to that frame.
   await ready(names[1]);
-  await p.evaluate(() => { const S = window.__sightReview; Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6 }); S.seekTo(0.3); S.togglePlay(); });
+  await p.evaluate(() => { const S = window.__sightReview; Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6, o: 0 }); S.setLag(0.1); S.seekTo(0.3); S.togglePlay(); });
   await p.waitForFunction(() => { const R = window.__sightReview.R; return R.bridge && R.scrubT > 0.35; });
   res.halt = await p.evaluate(() => { const S = window.__sightReview, R = S.R, on = !!R.bridge, T = R.scrubT; S.togglePlay(); return [on, T, R.bridge == null, R.video.paused]; });
   await ready(names[1]);
   res.halt.push(await p.evaluate(() => window.__sightReview.R.video.currentTime));
+  // Play from the frame the player stands on, its start slow (an HEVC clip's ~0.25 s, faked): the cache plays at once,
+  // the player — not sought — plays muted at twice the rate until it has caught the clock up, then at its own with sound.
+  await p.evaluate(() => window.__sightReview.seekTo(1.5));
+  await ready(names[1]);
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.scrubT == null && !R.video.seeking; });
+  await p.evaluate(() => {
+    const S = window.__sightReview, v = S.R.video;
+    S.setLag(0.3); window.__br.length = 0; window.__sk.length = 0;
+    v.play = function (){ delete this.play; return new Promise((ok, no) => setTimeout(() => this.play().then(ok, no), 300)); };  // (a slow start)
+    S.togglePlay();
+  });
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return !R.bridge && !R.video.paused && R.video.currentTime > 2; }, null, { timeout: 10000 });
+  res.stay = await p.evaluate(() => {
+    const br = window.__br, on = br.filter((x) => x[1] != null), last = br[br.length - 1];
+    let back = 0;
+    for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
+    return { modes: [...new Set(on.map((x) => x[8]))], seeks: window.__sk.slice(), first: on.length ? on[0][2] : null, back, fast: Math.max(...on.map((x) => x[6])),
+      muted: on.some((x) => x[7]), cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]] };
+  });
+  await p.evaluate(() => window.__sightReview.togglePlay());
   // Played on past clip a's end: clip b opens with its cached frames already running, then the bridge, then its player.
   bb = await p.locator(".sqb").boundingBox();
   await p.mouse.click(bb.x + bb.width * 0.42, bb.y + bb.height / 2);
   await ready(names[0]);
-  await p.evaluate(() => { window.__br.length = 0; window.__sightReview.togglePlay(); });
+  await p.evaluate(() => { window.__br.length = 0; window.__ended = 0; window.__sightReview.R.video.addEventListener("ended", () => window.__ended++); window.__sightReview.setLag(0.03); window.__sightReview.togglePlay(); });
   await p.waitForFunction((n) => { const R = window.__sightReview.R; return R.meta.asset.name === n && !R.bridge && R.video && !R.video.paused && R.video.currentTime > 0.5; }, names[1], { timeout: 15000 });
   res.cut = await p.evaluate((n) => {
     const br = window.__br.filter((x) => x[0] === n), on = br.filter((x) => x[1] != null), last = br[br.length - 1];
     let back = 0;
     for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
-    return { t1: [...new Set(on.map((x) => x[1]))], first: on.length ? on[0][2] : null, back, end: [last[3], last[5]] };
+    return { t1: [...new Set(on.map((x) => x[1]))], modes: [...new Set(on.map((x) => x[8]))], first: on.length ? on[0][2] : null, back, end: [last[3], last[5], last[6], last[7]],
+      aModes: [...new Set(window.__br.filter((x) => x[0] !== n && x[8]).map((x) => x[8]))], ended: window.__ended, last: window.__sightReview.bridgeLast };
   }, names[1]);
+  await p.evaluate(() => window.__sightReview.togglePlay());
+  // Near clip a's end with no time for the player to catch up: the cache plays the tail alone (the player left where
+  // it stands) and the clip ends as if played: on into clip b.
+  bb = await p.locator(".sqb").boundingBox();
+  await p.mouse.click(bb.x + bb.width * 0.42, bb.y + bb.height / 2);
+  await ready(names[0]);
+  await p.evaluate(() => window.__sightReview.seekTo(2.85));
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.scrubT == null && !R.video.seeking; });
+  await p.evaluate(() => {
+    const S = window.__sightReview, d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+    Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6, o: 0 }); S.setLag(0.3);
+    window.__br.length = 0; window.__sk = [];
+    Object.defineProperty(S.R.video, "currentTime", { configurable: true, get(){ return d.get.call(this); }, set(x){ window.__sk.push(+x.toFixed(3)); d.set.call(this, x); } });
+    S.togglePlay();
+  });
+  await p.waitForFunction((n) => { const R = window.__sightReview.R; return R.meta.asset.name === n && !R.bridge && R.video && !R.video.paused && R.video.currentTime > 0.3; }, names[1], { timeout: 15000 });
+  res.tail = await p.evaluate((n) => {
+    const a = window.__br.filter((x) => x[0] !== n && x[1] != null);
+    return { modes: [...new Set(a.map((x) => x[8]))], seeks: window.__sk, last: a.length ? a[a.length - 1][2] : null, paused: a.every((x) => x[5]) };
+  }, names[1]);
+  // Played to the end of the last clip (loop off): a tap plays it from the start again.
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.video.ended; }, null, { timeout: 15000 });
+  await p.evaluate(() => window.__sightReview.togglePlay());
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return !R.bridge && !R.video.paused && R.video.currentTime > 0.2 && R.video.currentTime < 2; }, null, { timeout: 10000 })
+    .then(() => { res.again = true; }, () => { res.again = false; });
   await p.evaluate(() => { cancelAnimationFrame(window.__brRaf); window.__sightReview.togglePlay(); });
   await b.close();
   return res;

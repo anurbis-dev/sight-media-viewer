@@ -2,6 +2,31 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.91.0 — 2026-11-19 — Phone: Settings → Debug log, sent as a file
+- **What:** owner: a debug option in Settings that collects data to send as a file, not a screenshot. Settings →
+  *Debug log* On / Off; *Send debug log…* shares / downloads `sight-debug-YYYYMMDD-HHMM.txt` (a header with the
+  device and app, then one JSON array per line `[ms, event, data]`); *Clear*. Off stops recording but keeps the
+  data (Send still works); only Clear deletes it.
+- **Where:** mobile/js/debug.js (new: `dbg.log / set / flush / clear / text / sample / info`); hooks in
+  mobile/js/media.js (`turn`, `poke`, `c.plan`, `c.open`, `c.part` — part, rate, seek ms, frames got vs
+  presented, gaps, why it ended —, `c.busy*`, `c.dead`, `c.release`, `c.broken`; caches get a `tag`) and
+  mobile/js/app.js (`dbgPlayer`: play / playing with the delay since the tap, waiting, seeking / seeked ms;
+  stage `ptr.down` / `click`, `tap.play`; a `sample` each second: playhead, player, every cache's runs; Settings
+  section); index.html (margin rule); MANUAL, ARCHITECTURE.
+- **Notes:** `dbg.log` is a no-op while off. Memory: ≤ 15,000 lines and ≤ 6M characters (pre-built JSON strings).
+  localStorage `sight-review:debugLog` = `{sessions: [{started, ev}]}`: the earlier saved sessions plus this one
+  (≤ 4), newest lines first within 1M characters, written every 15 s, ≤ 2 s after an error / `v.error` /
+  `c.broken` (one save per 2 s: a burst of errors must not write the tail each time), at once when the page is
+  hidden; the old value is removed first (a failed write never leaves stale data), half the budget on a full
+  storage. The file shows them as "# earlier session" blocks. Two tabs recording at once overwrite each other. The first look at a log already showed a real bug: a WebM's frame rate is a
+  guess (25) until known, so the fill ran at 60 / 25 = 2.4× on a 30 fps clip and dropped a frame in four; the
+  rate now uses the shorter of the guess and the measured step (in 0.90.2 below).
+- Review (fresh agent): a failed save left an older tail shown as the previous session; a foreground crash lost
+  everything since the last hide; Off deleted the log with no way to send it; memory unbounded per event; a stale
+  `sinceTap`; Settings margin — all fixed. Re-checks by the same reviewer found a save per error in a burst and
+  the earlier session lost after a restart — both fixed; the third re-check confirmed everything (Playwright:
+  quota, reloads, old format, error bursts).
+
 ## 0.90.2 — 2026-11-19 — Phone scrub cache: one window across the cut, the player first, every cached part on the strip
 - **What:** owner (on the phone, after 0.90.1): tap-to-play lagged up to 4 s even with a full cache; the green strip
   lost the old cache on a jump and showed nothing new while the playhead stood; the fill looked like 30 / 70, not

@@ -962,20 +962,38 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   pending, the cached picture is the screen): the player seeks once, from `dragEnd`, to the last time, or
   when the finger rests 250 ms on a frame (`restT`). `settle` also wakes `whenSettled` (`settleWait`): a drag let
   go on the frame the player stands on settles with no seek. On adoption the cache takes the player's duration.
-  **Play start from the cache** (`bridgeStart` / `bridgePlan` / `bridgeEnd` / `bridgeHalt`, `R.bridge`): a seek
-  costs the player a decode from the keyframe before the frame (phone: ~5 ms a frame, so 0.5-1 s far into a long
-  GOP — phone clips, exports with one keyframe), so `togglePlay` on a frame the player is not standing on
-  (seeking, `readyState < 2`, another frame) plays the scrub cache instead: its frames in `.scrubimg` at the
-  clock `t0 + elapsed·rate` (`R.scrubT` follows it) while the player is sent to `t1`, the first frame ahead it can
-  stand on in time — `x − tn ≥ (costAt(x)·1.2 + playLag + 0.05)·rate`, scanned frame by frame, so a near
-  keyframe (cost `a`) wins over a far frame (cost `a + b·frames from its keyframe`; keyframes = `R.scrub.wc.gops`,
-  no track: one flat `seekCost.s`); the cache must hold every frame up to `t1` (`span`), `t1` within 3 s and
-  2 frames short of the end, else a plain play. The player is played `playLag` before the clock reaches `t1`;
-  the cache picture shows up to `t1` and goes when an rVFC frame past `t1` is presented (`playLag` learnt from
-  that; 2 s without one: given up). `seekCost` (`a`, `b`, `s`) is learnt from every seek ("seeking" →
-  "seeked"). While `R.bridge`: the "seeked" handler does nothing (no settle), "play" keeps the cached picture,
-  `playPend` holds the caches off; a tap = `bridgeHalt` (paused on the shown frame: `seekTo`), any `seekTo` ends
-  it, the panel / a drawing session halt it, no bridge inside a drawing session. No sound before the player
+  **Play start from the cache** (`bridgeStart` / `bridgePlan` / `bridgeEnd` / `bridgeTailEnd` / `bridgeHalt`,
+  `R.bridge`): the player is slow to start on a phone — a seek decodes from the keyframe before the frame
+  (~5-10 ms a frame, 0.5-1.2 s far into a long GOP: phone clips, exports with one keyframe) and even a settled
+  HEVC clip takes ~0.25 s from `play()` to its first moving frame (H.264 ~0.03). So `togglePlay` plays the scrub
+  cache at once (its frames in `.scrubimg` at the clock `t0 + elapsed·rate`, `R.scrubT` follows it) whenever the
+  player is not on the frame (seeking, `readyState < 2`, another frame) or is but slow (`lagNow()` >
+  max(0.07 s, 1.5 frames)); the player catches the clock up unseen and muted. `bridgePlan` picks the plan with the
+  soonest handover `h`: *stay* (not seeking, standing at or ≤ 2 s before the shown frame — a settled frame, a clip
+  just opened at 0: played from there; or a seek already on its way there let finish — its cost less the time
+  since its "seeking", `R.seekFrom` / `R.seekX`, all of it when that event has not come yet) or *seek* to the shown frame or one ahead (`costAt(x) = a + b·frames from
+  its keyframe`, keyframes from `R.scrub.wc.gops`, no track: flat `s`; `+ o` for a clip's first seek or one sent over
+  a seek in flight). Ready time `(cost·1.1) + lag`; if the clock is then ahead by `lead`, `h = ready + lead /
+  (catchRate − rate)` (`catchRate` = 2× capped at 4×: faster starves the decoder and stalls), else `h = (x − tn) /
+  rate` (it waits for the clock). The handover must fall within the cached frames and 2 frames before the end;
+  stay wins unless a seek is ≥ 0.15 s sooner (a seek's cost is a guess). No plan but the cache holds the clip to its
+  end and ≤ 3 s are left: *tail* — the cache plays alone (no seek, no player play, no sound) and `bridgeTailEnd`
+  ends the clip as if played (`seqEnded` into the next clip, else the last frame / loop). The player is played once
+  `T + lag·rate ≥ x` (at once when behind, at `catchRate`); an rVFC watch hands over when its `mediaTime ≥ T −
+  fd/2` at the frame's display time, switching to `catchRate` if it falls a frame behind; the cache picture shows
+  the clock's frame all along (never held, so never a freeze). A tap on an ended clip plays from 0. `bridgeEnd` puts `playbackRate` (`B.rate`) and
+  `muted` (from `volLevel`; `applyVol` leaves it muted meanwhile) back; `rateNow()` reads `B.rate`; `setRate`
+  re-bases the clock (`t0`, `at`, `rate`, `cr`) and goes on.
+  Learnt: `seekCost` (`a`, `b`, `s`, `o`) from every seek ("seeking" → "seeked", `R.seekN`), `lagBy` (by codec:
+  `wc.codec` first 4 chars, else the extension) from the first moving rVFC frame after any `play()` from a decoded
+  frame (the bridge's and plain ones, so a fast codec that stopped bridging still notices a slower start).
+  Timeouts: not played within `h + 1.5 s` → stuck (its own play, `R.keepPic`); played but not caught up within
+  max(2 s, h + 1 s) → late (its own picture once it shows one: `hideWhenShown`); paused from outside for 0.5 s →
+  `bridgeHalt`. While `R.bridge`: the "seeked" handler does nothing (no settle),
+  "play" keeps the cached picture, `playPend` holds the caches off; a tap = `bridgeHalt` (paused on the shown frame:
+  `seekTo`), any `seekTo` ends it, the panel / a drawing session halt it, no bridge inside a drawing session; WebKit
+  only once a `play()` of the element ran inside a tap (`v.sightTap`, set by `playTapped` with
+  `navigator.userActivation`): a muted play outside a tap is allowed there, but un-muting it pauses it. No sound before the player
   takes over. `posNow()` = the pending / shown time, so quick steps add up. The timeline
   (`makeTransport`, `.tl`) puts markers, cache bar and playhead in the same track percent; a tap
   within 10 px of a marker lands on it. Its row: ‹ ◀ `fps` timecode `snd` ▶ ›. `vdrag(button,

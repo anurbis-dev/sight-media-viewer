@@ -338,13 +338,36 @@ class RoundTrip(unittest.TestCase):
         self.assertAlmostEqual(br["shown"][0], 0.292, delta=0.002)
         self.assertGreater(br["shown"][1], br["shown"][0])
         self.assertEqual(br["back"], 0)
+        self.assertEqual(br["early"], 0, br)  # (a faked slow start) the cache until the player has moved off 1 s
         self.assertGreater(br["cached"], 3)
-        self.assertEqual(br["end"], [True, False])  # the player's own picture, playing
+        self.assertEqual(br["end"], [True, False, 1, False])  # the player's own picture, playing, its rate and sound back
         # Played on past the clip's end: the next clip starts from its cached frames (the bridge), then its player.
-        self.assertTrue(res["cut"]["t1"], res["cut"])
-        self.assertLess(res["cut"]["first"], 0.5)
-        self.assertEqual(res["cut"]["end"], [True, False])
+        # (A player that starts at once hands over within a frame or two: the bridge may be too short to be sampled.)
+        last = res["cut"]["last"]
+        self.assertEqual(last["name"], "wc_b.mp4", res["cut"])
+        self.assertLess(last["t"], 0.5)
+        self.assertEqual(res["cut"]["end"], [True, False, 1, False])  # rate and sound back
         self.assertEqual(res["cut"]["back"], 0)
+        self.assertEqual(res["cut"]["aModes"], [])  # clip a (fast start) played plainly...
+        self.assertEqual(res["cut"]["ended"], 1)  # ...to its end
+        # 0.96.3: from the frame the player stands on, its start slow (faked 0.3 s): the cache plays at once, the
+        # player (not sought) catches it up muted at 2x, then plays on at its own rate with sound.
+        st = res["stay"]
+        self.assertEqual(st["modes"], ["stay"], st)
+        self.assertEqual(st["seeks"], [])
+        self.assertAlmostEqual(st["first"], 1.5, delta=0.05)
+        self.assertEqual(st["back"], 0)
+        self.assertEqual(st["fast"], 2)
+        self.assertTrue(st["muted"])
+        self.assertGreater(st["cached"], 3)
+        self.assertEqual(st["end"], [True, False, 1, False])
+        # Near the clip's end with no time to catch up: the cache plays the tail alone, then on into the next clip.
+        tl = res["tail"]
+        self.assertEqual(tl["modes"], ["tail"], tl)
+        self.assertEqual(tl["seeks"], [])  # the player is left where it stands
+        self.assertTrue(tl["paused"])
+        self.assertGreater(tl["last"], 2.9)
+        self.assertTrue(res["again"])  # played to the end of the last clip: a tap plays it from the start
         # A tap during the bridge: paused on the frame shown; the player lands on that frame.
         on, T, ended, paused, ct = res["halt"]
         self.assertTrue(on and ended and paused, res["halt"])
