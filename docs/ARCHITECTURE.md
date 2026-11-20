@@ -572,11 +572,12 @@ fitted into it with no padding, bars ignored) and `o.nav {z, r, o}` (its own zoo
 offset from that fit, opened with; `o.onNav` gets the view back on close, relative to the fit
 centre and the quarter turn last reported by `onView`). Gestures: hold (450 ms, touch / pen, ≤ 8 /
 4 px) with a tool → `adj`: the stroke it began is aborted, then one axis per hold (the first
-10 px): a vertical drag sets `SIZE[tool]` on a log scale (screen height = `SIZE_RANGE` ratio), a
-sideways one `OPAC[tool]` (0.05…1, 0.8 × width = full range; none for the eraser, always size; new
-items take `OPAC`), preview `.dsize` on the left ("px · %"); with select +
-a selection, copies are adjusted (one axis per hold: y = width key `WKEY[kind]` ×16 per screen,
-x = opacity), one undo step. When a pinch / pan / right-drag zoom ends (`settleView`, the
+10 px), maths in `RC.sizeOpDrag` / `RC.opAfter` (review-core.js, shared with annotate.js's
+Ctrl + right-drag `startSizeOp`): a sideways drag sets `SIZE[tool]` as a ratio of what it had (×16 per
+view width, clamped to `SIZE_RANGE`), a vertical one `OPAC[tool]` (up = more; 0.05…1, 0.8 × height =
+full range; none for the eraser, always size; new items take `OPAC`), preview `.dsize` on the left
+("px · %"); with select + a selection, copies are adjusted (x = width key `WKEY[kind]`, y = opacity),
+one undo step. When a pinch / pan / right-drag zoom ends (`settleView`, the
 player's rule): z < 1 → fit with the turn to the nearest quarter, z < 1.04 straight and < 24 px
 from `fitC` → exactly fit; eased .2 s (transform / size), started from the angle nearest the
 target so 0° / 360° never spins round; any move clears the ease (`unease`). The wheel stops at fit

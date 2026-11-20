@@ -78,6 +78,13 @@
   the notes panel stop taking the pointer until Alt is let go. With the select tool Alt keeps its own
   duplicate-drag on a drawing; Alt+drag on empty space scrubs the video (turns a picture), as without
   annotating.
+  - **Brush size and opacity on the fly:** **Ctrl + right-drag** sets the drawing tool's size and
+    opacity: sideways the size (right = bigger, from the size it has), up / down the opacity (up = more
+    solid) — one direction per drag, set by the first move; a circle at the press shows it with the
+    "px · %". With the select tool it does the same to the selected drawings' line width / text size and
+    opacity (one undo step). In a 3D view, while a drawing tool (or the select tool with a selection) is
+    active, it takes the place of Ctrl + right-drag explode. On a phone or tablet: press and hold with
+    the tool, then drag (the phone app and the review page's drawing canvas).
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
     `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
     eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) · `R` / `O` the shape tool as
@@ -302,8 +309,8 @@
   empty home screen, two small icons in the bar once there are reviews: *Photo or video* opens the phone's
   gallery; *Open a file…* opens Files (pictures, videos, 3D models — glTF / GLB, FBX, OBJ, STL, PLY, USDZ / USD,
   Gaussian splats, picked together with their textures — or a `.srev` someone sent). Nothing is
-  uploaded: the review lives on the device. The app asks your name once (Settings ⚙ or the ⋯ menu
-  changes it). The review is a full-screen player: a header over the picture (no background, the
+  uploaded: the review lives on the device. The app asks your name once (tap the name in Settings ⚙ to change it).
+  Settings and the menus slide up from the bottom: swipe one down (or tap beside it) to close it. The review is a full-screen player: a header over the picture (no background, the
   picture shows through) holds ← (all reviews), the name, ⋯, and a row with the eye (hide
   drawings) and mirror (the full-screen view and the canvas follow; the drawings stay put on the
   picture) in the middle of the bar and, when the view is zoomed, *Fit* at its right end; at its
@@ -380,10 +387,11 @@
   text being typed and the next ones; with the select tool and texts selected, a tap on *Text*
   shows the row for those texts (the tool stays select; `T` takes the text tool). The colour is the circle at the bar's right end: a tap shows the colours above it. Opened from the player, the picture stays exactly
   where and as big as it was (zoom and turn too) — drawing only brings the tools up; closing keeps
-  the view. Press and hold with a tool, then drag up / down: that tool's size (a circle on the
-  left shows it); with the select tool and a selection, hold and drag up / down for the line width,
-  sideways for the opacity; hold with a drawing tool and drag sideways: its opacity (right = more
-  solid; the circle and the "px · %" under it show it; kept like the size). Press and hold a
+  the view. Press and hold with a tool, then drag sideways: that tool's size (right = bigger, from
+  the size it had; a circle on the left shows it), up / down: its opacity (up = more solid; the
+  circle and the "px · %" under it show it; kept like the size) — one direction per hold, set by the
+  first move; with the select tool and a selection, sideways scales the line width, up / down the
+  opacity. The same as Ctrl + right-drag in Sight. Press and hold a
   tool's button: its default size and opacity. Tap with two fingers
   to undo, with three to redo. On a video the canvas has the timeline at its
   foot: tap the tool in hand to put it down (no fill), then drag the picture or the timeline / the

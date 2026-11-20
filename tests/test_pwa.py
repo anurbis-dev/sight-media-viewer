@@ -661,7 +661,7 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["itemsAfterHold"], 0)  # the hold's dot is dropped
         self.assertEqual(res["undoRedo"], [1, 0, 1])
         self.assertEqual(res["brushReset"], [6, True, 1])
-        # Hold + drag sideways: the tool's opacity (not its size), shown in the preview; nothing drawn.
+        # Hold + drag down: the tool's opacity (not its size), shown in the preview; nothing drawn.
         self.assertEqual(res["opac"][0], 1)
         self.assertLess(res["opac"][1], 0.9)
         self.assertEqual(res["opac"][2:], [True, True, 0])
@@ -745,6 +745,8 @@ class RoundTrip(unittest.TestCase):
         # Auto full screen on a plain tap, not a scrub / drag / hold (again after the reload);
         # Settings → Off leaves it.
         self.assertEqual(res["fullscreen"], [False, True, False, True, [False, "0"]])
+        # Settings: no Done / Change name buttons, the name is tappable, a swipe down closes it.
+        self.assertEqual(res["settingsUi"], [True, True, True])
         self.assertEqual(res["group"], [["shot", "grp-a,grp-b", False], ["shot", "grp-a,grp-b", True], None, 0])
         # Reply on a video note: over the player (panel closed, compose bar, 2 frame chips + ticks),
         # from the note's first frame; a chip goes to its frame; drawn on a new frame, sent, the

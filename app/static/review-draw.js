@@ -130,10 +130,11 @@ var SightReviewDraw = (function(){
   // Full screen: select / transform (V), brush (pen pressure), highlighter, arrow, rectangle,
   // ellipse, text, eraser (whole objects drawn here; Ctrl held = eraser for a moment), five colours,
   // undo / redo, clear. Two fingers pinch-zoom / pan / turn the view; a quick tap of two fingers
-  // undoes, of three redoes. Press and hold with a tool, then drag up / down: its size (a preview
-  // circle on the left; the screen's height spans the tool's whole range), sideways: its opacity
-  // (right = more solid; one axis per hold, set by the first 10 px); with the transform tool
-  // and a selection, up / down scales the selection's line width, sideways its opacity. Press and
+  // undoes, of three redoes. Press and hold with a tool, then drag sideways: its size (right =
+  // bigger, from the size it had; a preview circle on the left), up / down: its opacity (up = more
+  // solid; one axis per hold, set by the first 10 px; RC.sizeOpDrag, shared with Sight's Alt +
+  // right-drag); with the transform tool and a selection, sideways scales the selection's line
+  // width, up / down its opacity. Press and
   // hold a tool's button: that tool's size and opacity back to their defaults. Once a pen has touched it, the
   // pen draws and one finger pans too. Mouse: left draws, wheel / right-drag zoom (the pen's side
   // button too), middle drags. Top
@@ -240,7 +241,7 @@ var SightReviewDraw = (function(){
   var SIZE0 = { brush: 6, marker: 24, arrow: 4, rect: 4, ellipse: 4, text: 24, eraser: 14 };
   var SIZE_RANGE = { brush: [1, 80], marker: [4, 140], arrow: [1, 40], rect: [1, 40], ellipse: [1, 40], text: [8, 160], eraser: [4, 120] };
   var SIZE = clone(SIZE0);
-  // Opacity per tool (0.05…1), set by the hold's sideways drag, kept with the pen. The eraser has none.
+  // Opacity per tool (0.05…1), set by the hold's up / down drag, kept with the pen. The eraser has none.
   var OPAC0 = { brush: 1, marker: 0.4, arrow: 1, rect: 1, ellipse: 1, text: 1 };
   var OPAC = clone(OPAC0);
   // pen.fill: a filled shape's fill colour, null = the line's own (lighter).
@@ -926,7 +927,7 @@ var SightReviewDraw = (function(){
         sel = sel.map(function(x){ return map.get(x); });
         showSelSize();
       } else if (SIZE0[tool] != null){
-        adj = { id: h.id, x: h.x, y: h.y, tool: tool, s0: SIZE[tool], o0: OPAC[tool], axis: null };
+        adj = { id: h.id, x: h.x, y: h.y, tool: tool, s0: SIZE[tool], o0: OPAC[tool], op: OPAC[tool] != null, axis: null };
         showSize(tool);
       }
       paint();
@@ -942,29 +943,28 @@ var SightReviewDraw = (function(){
       showSize(null, { d: w / kNow(), color: d.color || "#fff", op: d.opacity != null ? d.opacity : 1,
         label: (Math.round(w / kNow() * 10) / 10) + " px · " + Math.round((d.opacity != null ? d.opacity : 1) * 100) + " %" });
     }
-    // The screen's height spans the tool's whole range (a ratio, so small sizes move as finely as
-    // big ones), from the size it had; up = bigger.
+    // The hold's drag (RC.sizeOpDrag, shared with Sight's Ctrl + right-drag): sideways the size /
+    // width as a ratio of what it had (right = bigger), up / down the opacity (up = more solid).
     function adjMove(e){
-      var r = view.getBoundingClientRect(), dy = e.clientY - adj.y, dx = e.clientX - adj.x;
-      // One axis per hold (up / down the size / width, sideways the opacity), set by the first 10 px
-      // (a tool without an opacity, the eraser: always the size).
-      if (!adj.axis){ if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return; adj.axis = Math.abs(dy) >= Math.abs(dx) || (adj.tool && adj.o0 == null) ? "y" : "x"; }
+      var r = view.getBoundingClientRect();
+      var m = RC.sizeOpDrag(adj, e.clientX - adj.x, e.clientY - adj.y, r.width, r.height);
+      if (!m) return;
       if (adj.tool){
         var rg = SIZE_RANGE[adj.tool];
-        if (adj.axis === "y") SIZE[adj.tool] = Math.round(RC.clamp(adj.s0 * Math.pow(rg[1] / rg[0], -dy / Math.max(1, r.height)), rg[0], rg[1]) * 10) / 10;
-        else OPAC[adj.tool] = Math.round(RC.clamp(adj.o0 + dx / Math.max(1, r.width * 0.8), 0.05, 1) * 100) / 100;
+        if (m.f) SIZE[adj.tool] = Math.round(RC.clamp(adj.s0 * m.f, rg[0], rg[1]) * 10) / 10;
+        else OPAC[adj.tool] = RC.opAfter(adj.o0, m.dOp);
         showSize(adj.tool);
         return;
       }
-      var k = kNow(), f = Math.pow(16, -dy / Math.max(1, r.height)), dOp = dx / Math.max(1, r.width * 0.8);
+      var k = kNow();
       sel.forEach(function(it, i){
         var b = adj.base[i], d = it.data, key = wkey(it);
-        if (adj.axis === "y" && key && typeof b[key] === "number"){
-          d[key] = RC.clamp(b[key] * f, 0.5 * k, vb[2] * 0.5);
+        if (m.f && key && typeof b[key] === "number"){
+          d[key] = RC.clamp(b[key] * m.f, 0.5 * k, vb[2] * 0.5);
           var g = d[key] / b[key];
           if (b[key] > 0) WFOLLOW.forEach(function(x){ if (typeof b[x] === "number") d[x] = b[x] * g; });
         }
-        if (adj.axis === "x") d.opacity = Math.round(RC.clamp((b.opacity != null ? b.opacity : 1) + dOp, 0.05, 1) * 100) / 100;
+        if (m.dOp != null) d.opacity = RC.opAfter(b.opacity, m.dOp);
       });
       adj.changed = true;
       showSelSize();

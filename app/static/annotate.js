@@ -1360,7 +1360,8 @@ export function createAnnotator(host){
       html += `<path class="an-regionshade" d="M0 0H${g.w}V${g.h}H0Z M${x} ${y}v${h}h${w}v${-h}Z"/><rect class="an-region" x="${x}" y="${y}" width="${w}" height="${h}"/><text class="an-regionlbl" x="${x + 4}" y="${y - 6}">${Math.round(w)} × ${Math.round(h)}</text>`;
     }
     // The brush circle: shown while drawing too (it follows the pointer), hidden while Alt moves the camera.
-    if (S.hover && !S.region && !altCam()){
+    if (S.drag?.sizeOp) html += sizeOpSvg(S.drag);
+    else if (S.hover && !S.region && !altCam()){
       const t = effTool(), st = S.styles[t];
       if (!S.drag?.eraser && (STROKE_TOOLS.has(t) || t === "eraser")){
         const r = Math.max(1, st.size / 2);
@@ -1581,6 +1582,8 @@ export function createAnnotator(host){
     if (isBoard() && S.loading){ release(e); return; }
     // A second finger while a marquee runs: ignored (it would restart the box and steal the first finger's moves).
     if (S.drag?.marquee && S.drag.pid !== e.pointerId){ release(e); return; }
+    // Another pointer during an Ctrl + right-drag: ignored too (it would drop the drag uncommitted).
+    if (S.drag?.sizeOp && S.drag.sizeOp.pid !== e.pointerId){ release(e); return; }
     if (!e.altKey && e.target.closest?.(".an-stamp")) return;  // the frame stamp has its own drag
     if (e.target.closest?.(".scp")) return;  // the text plate (caption-plate.js) has its own gestures
     if (S.edit){ if (e.button === 0){ finishEdit(); release(e); } return; }
@@ -1595,6 +1598,10 @@ export function createAnnotator(host){
     }
     const pen = e.pointerType === "pen";
     S.lastPtr = e.pointerType;
+    // Ctrl + right-drag: the tool's (or the selection's) size sideways, opacity up / down — ahead of the host's own
+    // right-button meanings (the viewer's right-drag zoom, the 3D view's Ctrl + right-drag explode). Not Alt: Alt hands
+    // the press to the viewer (altCam).
+    if (e.button === 2 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !S.region && startSizeOp(e)) return;
     const penEraser = pen && (e.buttons & 32 || e.button === 5);
     // The host's own control under the press (compare: a split under the finger, Alt+drag) — not while an area is
     // being picked, with the pen's eraser end, or Alt with the select tool (its duplicate-drag).
@@ -1760,6 +1767,7 @@ export function createAnnotator(host){
     const D = S.drag;
     if (!D){ updateCursor(sx, sy); renderSel(); return; }
     e.preventDefault();
+    if (D.sizeOp){ moveSizeOp(D, e); return; }
     if (D.region){ S.region.rect[2] = sx; S.region.rect[3] = sy; renderSel(); return; }
     const [x, y] = toDoc(e);
     if (D.stroke){
@@ -1847,8 +1855,10 @@ export function createAnnotator(host){
     const D = S.drag;
     if (!D) return;
     if (D.marquee && D.pid !== e.pointerId) return;  // another finger lifting: the box goes on
+    if (D.sizeOp && D.sizeOp.pid !== e.pointerId) return;  // the same for an Ctrl + right-drag
     S.drag = null;
     try { surfaceEl()?.releasePointerCapture(e.pointerId); } catch {}
+    if (D.sizeOp){ endSizeOp(D, e.type === "pointercancel" || e.type === "lostpointercapture"); return; }
     if (D.region){ finishRegion(); return; }
     if (D.stroke){
       const it = D.stroke;
@@ -1919,6 +1929,102 @@ export function createAnnotator(host){
     }
   }
 
+  // ---- Ctrl + right-drag: size / opacity ---------------------------------------------------------
+  // The same gesture as the drawing canvas's press-and-hold drag (review-draw.js), maths shared in RC.sizeOpDrag:
+  // sideways the size / width as a ratio of what it had (right = bigger), up / down the opacity (up = more
+  // solid), one axis per drag. A drawing tool changes its style (the props bar follows on release); the select
+  // tool changes the selection (one undo step). A circle at the press shows the size and opacity.
+  // The size descriptor (Size / Width, its range in screen px) of a tool / an item type, or null.
+  const sizeProp = (type) => (PROPS[type] || []).find((p) => p.t === "num" && (p.k === "size" || p.k === "width")) || null;
+  const hasOpacity = (type) => !!PROPS[type]?.some((p) => p.k === "opacity");
+  function startSizeOp(e){
+    const t = S.tool, [sx, sy] = local(e);
+    const G = { axis: null, x: e.clientX, y: e.clientY, at: [sx, sy], pid: e.pointerId };
+    if (t !== "select"){
+      const sp = sizeProp(t), st = S.styles[t];
+      if (!sp || !st) return false;
+      Object.assign(G, { tool: t, key: sp.k, min: sp.min, max: sp.max, s0: st[sp.k], o0: st.opacity, op: hasOpacity(t) });
+      grab(e);
+      S.drag = { sizeOp: G };
+    } else {
+      const ids = editSel().map((it) => it.id).filter((id) => { const ty = typeOf(S.items.get(id)); return sizeProp(ty) || hasOpacity(ty); });
+      if (!ids.length) return false;
+      G.op = ids.some((id) => hasOpacity(typeOf(S.items.get(id))));
+      grab(e);
+      S.drag = { sizeOp: G, ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), moved: false };
+    }
+    suppressClick = false;  // (grab's flag: a right press brings no click to eat, the next left click would go)
+    renderSel();
+    return true;
+  }
+  function moveSizeOp(D, e){
+    const G = D.sizeOp;
+    if (e.pointerId !== G.pid) return;  // another pointer (a finger, the pen) does not steer it
+    const r = surfaceEl().getBoundingClientRect();
+    const m = RC.sizeOpDrag(G, e.clientX - G.x, e.clientY - G.y, r.width, r.height);
+    if (!m) return;
+    if (G.tool){
+      const st = S.styles[G.tool];
+      if (m.f) st[G.key] = Math.round(clamp(G.s0 * m.f, G.min, G.max) * 10) / 10;
+      else if (G.op) st.opacity = RC.opAfter(G.o0, m.dOp);
+    } else {
+      const kk = k();
+      for (const id of D.ids){
+        const it = S.items.get(id), src = D.src.get(id);
+        if (!it || !src) continue;
+        const ty = typeOf(it), sp = sizeProp(ty), b = src.data, d = it.data;
+        if (m.f && sp && typeof b[sp.k] === "number" && b[sp.k] > 0){
+          // (the range widened to the value it had: one already outside the props bar's px range at this zoom
+          // must not jump to its edge)
+          d[sp.k] = clamp(b[sp.k] * m.f, Math.min(b[sp.k], sp.min * kk), Math.max(b[sp.k], sp.max * kk));
+          const g = d[sp.k] / b[sp.k];
+          for (const x of ["gap", "step", "len"]) if (typeof b[x] === "number") d[x] = b[x] * g;  // lengths that follow the width
+        }
+        if (m.dOp != null && hasOpacity(ty)) d.opacity = RC.opAfter(b.opacity, m.dOp);
+        renderItem(it);
+      }
+      D.moved = true;
+    }
+    renderSel();
+  }
+  function endSizeOp(D, cancel){
+    const G = D.sizeOp;
+    if (G.tool){
+      const st = S.styles[G.tool];
+      if (cancel){ st[G.key] = G.s0; if (G.o0 !== undefined) st.opacity = G.o0; }
+      else saveStyles();
+    } else if (cancel || !D.moved){
+      for (const [id, src] of D.src) if (src && S.items.has(id)){ S.items.set(id, structuredClone(src)); renderItem(S.items.get(id)); }
+    } else {
+      const ids = D.ids.filter((id) => S.items.has(id));
+      const after = new Map(ids.map((id) => [id, snap(S.items.get(id))]));
+      S.undo.push({ before: new Map(ids.map((id) => [id, D.src.get(id)])), after, at: performance.now() });
+      S.redo.length = 0;
+      for (const id of ids) serverUpdate(id);
+      afterChange();
+    }
+    renderSel(); renderProps();
+  }
+  // The circle (the size, filled at the opacity) and value at the press of an Ctrl + right-drag.
+  function sizeOpSvg(D){
+    const G = D.sizeOp;
+    let size, op, color;
+    if (G.tool){
+      const st = S.styles[G.tool];
+      size = st[G.key]; op = G.op ? st.opacity ?? 1 : null; color = G.tool === "eraser" ? "none" : st.color || "#fff";
+    } else {
+      const it = S.items.get(D.ids[0]);
+      if (!it) return "";
+      const sp = sizeProp(typeOf(it)), d = it.data;
+      size = sp && typeof d[sp.k] === "number" ? d[sp.k] / k() : null; op = hasOpacity(typeOf(it)) ? d.opacity ?? 1 : null; color = d.color || "#fff";
+    }
+    const [cx, cy] = G.at, r = Math.max(1, (size || 0) / 2);
+    const label = [size != null ? fmtNum({ unit: "px" }, size) + " px" : "", op != null ? Math.round(op * 100) + " %" : ""].filter(Boolean).join(" · ");
+    let h = "";
+    if (size != null) h += `<circle class="an-cursor" cx="${r2(cx)}" cy="${r2(cy)}" r="${r2(r)}" style="fill:${esc(color)};fill-opacity:${op ?? 1}"${G.tool === "eraser" ? ` stroke-dasharray="3 2"` : ""}/>`;
+    return h + `<text class="an-regionlbl" x="${r2(cx)}" y="${r2(cy + r + 16)}" text-anchor="middle">${esc(label)}</text>`;
+  }
+
   // A second finger came down (the board's pinch / pan, canvas.js): the stroke / shape / move the first finger began
   // is dropped (an eraser pass keeps what it erased), so a pinch never leaves a mark.
   function abortGesture(){
@@ -1926,6 +2032,7 @@ export function createAnnotator(host){
     if (!D) return;
     if (D.eraser){ onUp({ pointerId: -1 }); return; }
     S.drag = null;
+    if (D.sizeOp){ endSizeOp(D, true); return; }
     if (D.stroke || D.shape || D.pin) S.items.delete((D.stroke || D.shape || D.pin).id);
     else if (D.src) for (const [id, src] of D.src) if (src) S.items.set(id, structuredClone(src));
     renderAll();
@@ -4441,7 +4548,8 @@ export function createAnnotator(host){
     // Mouse / touch things that are not hotkeys (static: they live in the pointer code, not in the table).
     const extra = {
       "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Straight stroke, line / arrow, pin line: horizontal or vertical only; rectangle square, ellipse circle"]],
-      "General": [[["Alt + drag"], isBoard() ? "Pan the board while a drawing tool is active (middle-drag and the wheel pan too, right-drag / Ctrl+wheel zoom)" : "Hand the drag to the viewer (pan / zoom, orbit in 3D) while a drawing tool is active"]],
+      "General": [[["Alt + drag"], isBoard() ? "Pan the board while a drawing tool is active (middle-drag and the wheel pan too, right-drag / Ctrl+wheel zoom)" : "Hand the drag to the viewer (pan / zoom, orbit in 3D) while a drawing tool is active"],
+        [["Ctrl + right-drag"], "Sideways: the tool's size (right = bigger), up / down: its opacity (up = more solid); with the select tool, the selection's (touch: press and hold, then drag, in the phone app / review page)"]],
       ...(S.kind !== "model3d" ? {} : { "3D models": [[["Shift+A"], "Enter / leave annotation mode (A flies the camera in a 3D view)"], [["Alt+1–9"], "Save the camera view (1–9 recall it)"]] }),
     };
     for (const [group, rows] of Object.entries(extra)){
@@ -4489,6 +4597,9 @@ export function createAnnotator(host){
       else if (!e.ctrlKey && !e.metaKey && !e.altKey && !/^F\d+$/.test(e.code)) e.preventDefault();
       return true;
     }
+    // A Ctrl + right-drag in progress: Esc cancels it, other keys wait (Ctrl is already down: a stray Ctrl+Z / Ctrl+D
+    // mid-drag would mix an undo or a copy into the drag's own step).
+    if (S.drag?.sizeOp){ e.preventDefault(); if (hotkey(e, "Escape")) abortGesture(); return true; }
     if (stampPop && !stampPop.hidden && hotkey(e, "Escape")){ e.preventDefault(); closeStampPop(); return true; }
     // An enlarged screenshot closes first (before deselect / pin / leaving the mode would eat the Esc).
     if (S.shotView && hotkey(e, "Escape")){ e.preventDefault(); closeShotView(); return true; }
@@ -4623,7 +4734,7 @@ export function createAnnotator(host){
     el.addEventListener("pointercancel", onUp);
     // A marquee whose pointer lost capture without an up / cancel reaching us ends here: otherwise the
     // second-pointer guard in onDown would swallow every later touch (new pointerIds) while it is stuck.
-    el.addEventListener("lostpointercapture", (e) => { if (S.drag?.marquee && S.drag.pid === e.pointerId) onUp(e); });
+    el.addEventListener("lostpointercapture", (e) => { if ((S.drag?.marquee && S.drag.pid === e.pointerId) || S.drag?.sizeOp?.pid === e.pointerId) onUp(e); });
     el.addEventListener("pointerleave", () => { S.hover = null; if (S.on && !S.drag) renderSel(); });
     // Pictures dropped on the frame become reference images (files from outside, or files dragged from the library).
     el.addEventListener("dragover", (e) => { if (!refDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });

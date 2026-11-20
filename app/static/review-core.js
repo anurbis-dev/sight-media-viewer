@@ -817,6 +817,25 @@ var SightReviewCore = (function(){
     var a = Math.atan2(y - y0, x - x0), l = hyp(x - x0, y - y0), s = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
     return [x0 + Math.cos(s) * l, y0 + Math.sin(s) * l];
   }
+  // ---- size / opacity drag -----------------------------------------------------------------------
+  // One gesture for a tool's (or a selection's) line size and opacity, shared by Sight's editor
+  // (Ctrl + right-drag) and the drawing canvas (press and hold, then drag). Sideways: the size, as a
+  // ratio of the size it had (right = bigger; the view's width = x SIZE_SPAN, so small sizes move as
+  // finely as big ones). Up / down: the opacity (up = more solid; 80 % of the view's height = the whole
+  // 0..1 range). One axis per drag, set by the first 10 px; g.op === false (no opacity, the eraser):
+  // always the size. g = { axis: null, op } is the caller's, kept for the drag; (dx, dy) from the press,
+  // (w, h) the view's size in the same pixels. null until the axis is set, then { f } (size factor) or
+  // { dOp } (opacity change).
+  var SIZE_SPAN = 16;
+  function sizeOpDrag(g, dx, dy, w, h){
+    if (!g.axis){
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return null;
+      g.axis = g.op === false || Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    }
+    return g.axis === "x" ? { f: Math.pow(SIZE_SPAN, dx / Math.max(1, w)) } : { dOp: -dy / Math.max(1, h * 0.8) };
+  }
+  // Opacity after a drag's change, kept within 0.05..1 and to whole per cent (a missing one is 1).
+  function opAfter(o0, dOp){ return Math.round(clamp((o0 != null ? o0 : 1) + dOp, 0.05, 1) * 100) / 100; }
   // Moves the drag to (x, y). m: {shift, alt} — move: Shift keeps one axis; line ends: Shift keeps the line
   // horizontal / vertical; rotate: Shift snaps to 15°; corners: Shift keeps the ratio; Alt scales about the centre.
   function xfDrag(D, x, y, m){
@@ -1220,6 +1239,7 @@ var SightReviewCore = (function(){
     primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
+    sizeOpDrag: sizeOpDrag, opAfter: opAfter,
     ctxVisible: ctxVisible, camMatch: camMatch, animMatch: animMatch, drawingRow: drawingRow,
     picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel, picFileName: picFileName,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,

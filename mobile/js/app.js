@@ -89,17 +89,69 @@ function busy(msg){
   const b = el("div", "busy"), d = el("div", "", msg); b.appendChild(d); document.body.appendChild(b);
   return { set(m){ d.textContent = m; }, done(){ b.remove(); } };
 }
-// A sheet over the page: from the bottom (menus) or centred (questions). Returns close().
+// A sheet over the page: from the bottom (menus, settings) or centred (questions). Returns close().
+// A bottom sheet also closes with a swipe down, as a tap beside it: anywhere on a short one; on one that
+// scrolls (Settings) from its grabber (which stays on top) or its title, the rest scrolls.
 const sheets = [];
 function sheet(build, mid){
   const back = el("div", "back" + (mid ? " mid" : "")), sh = el("div", "sheet");
   back.appendChild(sh);
   const close = () => { back.remove(); const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1); };
   back.addEventListener("click", (e) => { if (e.target === back) close(); });
+  if (!mid){ sh.appendChild(el("div", "grab")); swipeDownToClose(sh, close); }
   build(sh, close);
   document.body.appendChild(back);
   sheets.push(close);
   return close;
+}
+// One finger down a bottom sheet: the sheet follows it; let go past 80 px (or a quick flick) and it
+// closes, else it springs back. Where it starts: anywhere on a sheet with nothing to scroll; on one
+// that scrolls, on the grabber, or within its top 64 px while scrolled to the top — the rest of it
+// only scrolls (no swipe to tell from a scroll there). Fields keep their own touches.
+function swipeDownToClose(sh, close){
+  let st = null;
+  const reset = () => { sh.style.transition = "transform 160ms ease"; sh.style.transform = ""; st = null; };
+  sh.addEventListener("touchstart", (e) => {
+    if (st && st.on) reset();  // a second finger: the sheet back in place, no swipe
+    st = null;
+    if (e.touches.length !== 1 || e.target.closest("input, textarea, select")) return;
+    const t = e.touches[0];
+    const scrolls = sh.scrollHeight > sh.clientHeight + 1;
+    if (scrolls && !e.target.closest(".grab") && (sh.scrollTop > 0 || t.clientY - sh.getBoundingClientRect().top > 64)) return;
+    st = { x: t.clientX, y: t.clientY, top: sh.scrollTop <= 0 || !!e.target.closest(".grab"), on: false, dy: 0, v: 0, lt: e.timeStamp, ly: t.clientY };
+  }, { passive: true });
+  sh.addEventListener("touchmove", (e) => {
+    if (!st) return;
+    if (e.touches.length !== 1){ reset(); return; }
+    const t = e.touches[0], dx = t.clientX - st.x, dy = t.clientY - st.y;
+    if (!st.on){
+      if (dy === 0 && dx === 0) return;  // (a zero-length first move: not prevented, an upward scroll may follow)
+      // Only a downward drag from the sheet's top; sideways or up (or a scrolled sheet) is the page's.
+      if (!st.top || dy < 0 || Math.abs(dx) > Math.abs(dy)){ st = null; return; }
+      // Prevented from the first move, below the slop too: iOS lets the native scroll / bounce start on
+      // the first unprevented move and ignores preventDefault after it.
+      e.preventDefault();
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+      st.on = true; sh.style.transition = "none";
+    }
+    e.preventDefault();  // (no scroll / pull-to-refresh under it)
+    // The speed of the last move (a slow drag ending in a flick counts as a flick).
+    if (e.timeStamp > st.lt){ st.v = (t.clientY - st.ly) / (e.timeStamp - st.lt); st.lt = e.timeStamp; st.ly = t.clientY; }
+    st.dy = Math.max(0, dy);
+    sh.style.transform = `translateY(${st.dy}px)`;
+  }, { passive: false });
+  const end = (e) => {
+    if (!st) return;
+    if (!st.on){ st = null; return; }
+    const fast = st.dy > 30 && st.v > 0.6 && e.timeStamp - st.lt < 120;  // still moving down fast as it lifts
+    if (st.dy > 80 || fast){
+      st = null;
+      sh.style.transition = "transform 160ms ease"; sh.style.transform = "translateY(100%)";
+      setTimeout(close, 150);
+    } else reset();
+  };
+  sh.addEventListener("touchend", end);
+  sh.addEventListener("touchcancel", () => { if (st) reset(); });
 }
 function menu(title, items){
   sheet((sh, close) => {
@@ -1208,8 +1260,12 @@ async function settings(){
   sheet((sh, close) => {
     sh.appendChild(el("h2", "", "Settings"));
     const kv = el("div", "kv");
-    const row = (k, v) => { kv.appendChild(el("b", "", k)); kv.appendChild(el("span", "", v)); };
-    row("Your name", who || "—");
+    const row = (k, v) => { kv.appendChild(el("b", "", k)); return kv.appendChild(el("span", "", v)); };
+    // A tap on the name renames (the question opens over the settings, which stay open).
+    // (a button: a keyboard reaches it too)
+    kv.appendChild(el("b", "", "Your name"));
+    const nm = kv.appendChild(btn("tapedit", who || "—", async () => { if (await setName()) nm.textContent = who; }));
+    nm.title = "Tap to change your name";  // (a title only: the button's name stays the reviewer's name)
     if (u) row("Storage", `${fmtBytes(u.used)} used${u.quota ? " of " + fmtBytes(u.quota) : ""}${u.persisted ? " · kept" : ""}`);
     row("Version", VERSION);
     sh.appendChild(kv);
@@ -1255,10 +1311,8 @@ async function settings(){
     } else sh.appendChild(el("p", "", isStandalone() ? "The installed app is full screen already." : isIOS() ? "Safari on iPhone / iPad does not keep a page full screen. Add the app to the Home Screen: it then runs full screen." : "This browser cannot show a page full screen. Add the app to the Home Screen: it then runs full screen."));
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
-    a.appendChild(btn("btn", "Change name", async () => { close(); await setName(); }));
     if (u && !u.persisted) a.appendChild(btn("btn", "Keep storage", async () => { close(); toast(await DB.persist() ? "Storage will be kept" : "The browser did not allow it (install the app first)", 3500); }));
-    a.appendChild(btn("btn primary", "Done", close));
-    sh.appendChild(a);
+    if (a.childNodes.length) sh.appendChild(a);
   });
 }
 
