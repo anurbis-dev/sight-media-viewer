@@ -2,8 +2,10 @@
 
 Owner's request (after 0.93.0, written in 0.93.1): the picture should handle the mouse, pen and touch the same way in every viewing mode, and
 the code for that should be written once and reused everywhere. Today every mode has its own copy. This file is the
-plan for a fresh session. **Stage 1 is done (0.94.2)**: `app/static/viewer-input.js` exists and compare runs on it;
-the API as built differs from the sketch below in a few places (see "As built").
+plan (now closed). **Done: stages 1–4 (0.94.2 – 0.96.0)** — `app/static/viewer-input.js` drives Compare and the
+lightbox 2D viewer, the board and 3D use its zoom maths / `pinchTracker`, and Shift slows every pan / zoom / scrub drag.
+**Stage 5 was dropped by the owner (2026-11-20)**: the HTML review page, its draw sheet and the phone app keep their
+own gestures. The API as built differs from the sketch below in a few places (see "As built").
 
 ## Where the input lives today (written before stage 1; Compare and the lightbox 2D rows are history now)
 
@@ -16,7 +18,7 @@ the API as built differs from the sketch below in a few places (see "As built").
 | Board (Canvas) | `canvas.js` `createCanvasView()` (~960–1100) | middle / Alt+left = pan (Alt+left on an item = crop-pan, ~314), right drag = zoom after a 4 px threshold (a right-click without a drag over an item opens its menu), **plain wheel pans, Ctrl/Cmd+wheel zooms**, its own two-finger pinch (zoom = z0 × gap ratio + middle-point pan, no speed setting) as a **capture listener before the annotator** that calls `annot.abortGesture()` (a second finger cancels a stroke), item drags, marquee, crop | the camera is world-space (`vx, vy, zoom`), not the lightbox's `vs` |
 | Annotator overlay (all of the above) | `annotate.js` `attachInput()` — a capture-phase `pointerdown` on the viewer's wrap (lightbox: `.view`, the same element as the viewer's handlers; compare: `.cmp-box` / `.cmp-cell`, while compare listens on the stage, an ancestor) | while drawing it takes left presses and stops them (`stopImmediatePropagation`); middle / right go through; Alt with a drawing tool goes to the viewer (`altCam`); only the compare annotator has `host.passThrough` (`cmp.wantsPress`); `suppressClick` eats the click after a stroke | the module listens in the bubble phase on the annotated element or an ancestor, never a capture listener above it — except a second-finger hook like the board's, so a pinch works while annotating and aborts the stroke |
 | Text document viewer | `index.html` `mountDocStage` (~5147–5210) | middle-drag scroll, right-drag zoom ×0.012, sets `light.setZoom`; left is text selection, the wheel scrolls; no touch | include in stage 2 for pinch, or exclude explicitly |
-| HTML review page / phone app | `app/static/review-draw.js` (`SightReviewDraw.pinch`), `mobile/js/*` | its own pinch / pan / turn (a quarter turn snaps) | a separate bundle with no build step; **out of scope for stage 1**, but keep the same gesture meanings |
+| HTML review page / phone app | `app/static/review-draw.js` (`SightReviewDraw.pinch`), `mobile/js/*` | its own pinch / pan / turn (a quarter turn snaps) | a separate bundle with no build step; **stage 5 dropped (2026-11-20)** — keeps its own gestures |
 
 ## The gesture contract (what every 2D viewer should do)
 
@@ -109,7 +111,7 @@ What it owns, so no viewer re-implements it:
    (mesh path). Decide anchored vs incremental zoom for 3D and say it in RECENT if it changes.
 4. **(done, 0.96.0) Shift-fine everywhere.** (Also the text viewer's middle / right drags; 3D orbit not slowed.) Add the Shift slow-down to the drags that do not have it: the board pan / zoom, the
    lightbox pan / zoom, 3D dolly. Write the rule in ARCHITECTURE and MANUAL as one sentence that holds for all modes.
-5. (later, separate) **HTML page / phone parity**: the same meanings in `review-draw.js` / `mobile/`; they cannot import
+5. **(dropped by the owner, 2026-11-20 — they keep their own gestures)** **HTML page / phone parity**: the same meanings in `review-draw.js` / `mobile/`; they cannot import
    the module (no build step, a self-contained page), so either inline a copy kept by a parity test or leave them.
 
 ## Gotchas to keep

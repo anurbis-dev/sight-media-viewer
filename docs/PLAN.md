@@ -9,7 +9,7 @@ Bigger plans live in their own files: **`docs/PLAN-mobile.md`** (the review app 
 the phone next, then the owner's tracker Coreline, ftrack / ShotGrid, clouds last) and
 **`docs/PLAN-viewer.md`** (Sight as the tray quick viewer on Space, later), **`docs/PLAN-multiclip.md`** (one review page / `.srev`
 bundle for several clips — a sequence's review). **`docs/PLAN-viewer-input.md`** — one shared pointer / gesture module for
-every viewer (lightbox, compare, sequence, board, 3D zoom), staged; the owner starts it in a fresh session.
+every viewer (lightbox, compare, sequence, board, 3D zoom) — done (stages 1–4, 0.94.2 – 0.96.0); stage 5 (HTML page / phone parity) dropped.
 
 ## Left to check on Windows (done in 0.22.0, not verifiable in the Linux container)
 
