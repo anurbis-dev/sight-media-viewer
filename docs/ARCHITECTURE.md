@@ -929,6 +929,9 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   one's on a turn back) the hold is that frame as an `<img class="seqhold">`, updated on every move while it
   opens. On `loadedmetadata` the cache is taken over *before* `seqApply`, so the landing seek shows its frame;
   the window is planned (`cacheFocus`) after it, around where the clip lands.
+  A play on across the cut (`seqSwitch(…, play)`) starts `seqRun`: the held `<img>` runs the next clip's cached
+  frames at the clip's pace from `p.t` (`p.run` = the clock's start) while it opens, and `seqApply` hands that
+  clock to the bridge (`bridgeStart(p.t, p.run)`, below) instead of a plain play from `p.t`.
   Any open that is not a sequence move (`opts.seq`), Back, `route` home → `seqStop`. Rate and hidden controls
   carry over on a sequence move. No preloading of the next clip (unlike Sight): a cut costs one open.
 - **Review groups**: `sight-review:groups` = `[{id, name, keys, open, thumb?, bundle?, cur?}]` (localStorage;
@@ -958,7 +961,22 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   (`R.dragging`). While dragging over a cached frame (`cachedAt`) `pumpSeek` sends nothing (`R.want` stays
   pending, the cached picture is the screen): the player seeks once, from `dragEnd`, to the last time, or
   when the finger rests 250 ms on a frame (`restT`). `settle` also wakes `whenSettled` (`settleWait`): a drag let
-  go on the frame the player stands on settles with no seek. On adoption the cache takes the player's duration. `posNow()` = the pending / shown time, so quick steps add up. The timeline
+  go on the frame the player stands on settles with no seek. On adoption the cache takes the player's duration.
+  **Play start from the cache** (`bridgeStart` / `bridgePlan` / `bridgeEnd` / `bridgeHalt`, `R.bridge`): a seek
+  costs the player a decode from the keyframe before the frame (phone: ~5 ms a frame, so 0.5-1 s far into a long
+  GOP — phone clips, exports with one keyframe), so `togglePlay` on a frame the player is not standing on
+  (seeking, `readyState < 2`, another frame) plays the scrub cache instead: its frames in `.scrubimg` at the
+  clock `t0 + elapsed·rate` (`R.scrubT` follows it) while the player is sent to `t1`, the first frame ahead it can
+  stand on in time — `x − tn ≥ (costAt(x)·1.2 + playLag + 0.05)·rate`, scanned frame by frame, so a near
+  keyframe (cost `a`) wins over a far frame (cost `a + b·frames from its keyframe`; keyframes = `R.scrub.wc.gops`,
+  no track: one flat `seekCost.s`); the cache must hold every frame up to `t1` (`span`), `t1` within 3 s and
+  2 frames short of the end, else a plain play. The player is played `playLag` before the clock reaches `t1`;
+  the cache picture shows up to `t1` and goes when an rVFC frame past `t1` is presented (`playLag` learnt from
+  that; 2 s without one: given up). `seekCost` (`a`, `b`, `s`) is learnt from every seek ("seeking" →
+  "seeked"). While `R.bridge`: the "seeked" handler does nothing (no settle), "play" keeps the cached picture,
+  `playPend` holds the caches off; a tap = `bridgeHalt` (paused on the shown frame: `seekTo`), any `seekTo` ends
+  it, the panel / a drawing session halt it, no bridge inside a drawing session. No sound before the player
+  takes over. `posNow()` = the pending / shown time, so quick steps add up. The timeline
   (`makeTransport`, `.tl`) puts markers, cache bar and playhead in the same track percent; a tap
   within 10 px of a marker lands on it. Its row: ‹ ◀ `fps` timecode `snd` ▶ ›. `vdrag(button,
   {begin, move(dy), tap, hold})` is the small vertical-drag control (pointer captured, stage /

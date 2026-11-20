@@ -325,7 +325,8 @@ async function wcache(){
   res.after = await p.evaluate(() => [window.__seeks, window.__sightReview.R.video.currentTime]);
   // A drag across the cut on the sequence bar: the held picture is the next clip's cached frame (an <img>).
   await p.evaluate(() => { window.__holds = []; new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("seqhold")) window.__holds.push(n.tagName + (n.tagName === "IMG" && String(n.src).startsWith("blob:") ? ":blob" : "")); }))).observe(document.body, { childList: true, subtree: true }); });
-  const bb = await p.locator(".sqb").boundingBox(), by = bb.y + bb.height / 2;
+  let bb = await p.locator(".sqb").boundingBox();
+  const by = bb.y + bb.height / 2;
   await p.mouse.move(bb.x + bb.width * 0.3, by); await p.mouse.down();
   await p.mouse.move(bb.x + bb.width * 0.75, by, { steps: 6 });
   await p.waitForFunction((n) => { const R = window.__sightReview.R; return R && R.meta.asset.name === n && R.video && R.video.readyState >= 1; }, names[1]);
@@ -333,6 +334,49 @@ async function wcache(){
   await ready(names[1]);
   res.holds = await p.evaluate(() => window.__holds);
   res.landed = await p.evaluate(() => [window.__sightReview.R.meta.asset.name, window.__sightReview.R.video.currentTime, !!(window.__sightReview.R.scrub && window.__sightReview.R.scrub.mts.length >= 72)]);
+  // Play from a frame the player is not on yet (a seek on its way), seeks made costly: the cache plays from there and
+  // the player, sought to the next keyframe (1 s: -g 24), takes over when the clock gets there.
+  await p.waitForFunction(() => window.__sightReview.R.scrub.mts.length >= 72, null, { timeout: 15000 }).catch(() => {});
+  await p.evaluate(() => {
+    const S = window.__sightReview;
+    Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6 });
+    window.__br = []; window.__sk = [];
+    const si = document.querySelector(".stage .scrubimg");
+    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.t1 : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused]); window.__brRaf = requestAnimationFrame(f); };
+    f();
+    // Every time the player is sent to (its "seeking" event reads only the last one).
+    const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+    Object.defineProperty(S.R.video, "currentTime", { configurable: true, get(){ return d.get.call(this); }, set(x){ window.__sk.push(+x.toFixed(3)); d.set.call(this, x); } });
+    S.seekTo(0.3); S.togglePlay();
+  });
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return !R.bridge && !R.video.paused && R.video.currentTime > 1.2; }, null, { timeout: 10000 });
+  res.bridge = await p.evaluate(() => {
+    const br = window.__br, on = br.filter((x) => x[1] != null), last = br[br.length - 1];
+    let back = 0;
+    for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
+    return { t1: [...new Set(on.map((x) => x[1]))], seeks: window.__sk, shown: on.length ? [on[0][2], on[on.length - 1][2]] : null, back, cached: on.filter((x) => !x[3]).length, end: [last[3], last[5]] };
+  });
+  await p.evaluate(() => window.__sightReview.togglePlay());
+  // A tap during the bridge: paused on the frame shown, and the player sought to that frame.
+  await ready(names[1]);
+  await p.evaluate(() => { const S = window.__sightReview; Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6 }); S.seekTo(0.3); S.togglePlay(); });
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.bridge && R.scrubT > 0.35; });
+  res.halt = await p.evaluate(() => { const S = window.__sightReview, R = S.R, on = !!R.bridge, T = R.scrubT; S.togglePlay(); return [on, T, R.bridge == null, R.video.paused]; });
+  await ready(names[1]);
+  res.halt.push(await p.evaluate(() => window.__sightReview.R.video.currentTime));
+  // Played on past clip a's end: clip b opens with its cached frames already running, then the bridge, then its player.
+  bb = await p.locator(".sqb").boundingBox();
+  await p.mouse.click(bb.x + bb.width * 0.42, bb.y + bb.height / 2);
+  await ready(names[0]);
+  await p.evaluate(() => { window.__br.length = 0; window.__sightReview.togglePlay(); });
+  await p.waitForFunction((n) => { const R = window.__sightReview.R; return R.meta.asset.name === n && !R.bridge && R.video && !R.video.paused && R.video.currentTime > 0.5; }, names[1], { timeout: 15000 });
+  res.cut = await p.evaluate((n) => {
+    const br = window.__br.filter((x) => x[0] === n), on = br.filter((x) => x[1] != null), last = br[br.length - 1];
+    let back = 0;
+    for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
+    return { t1: [...new Set(on.map((x) => x[1]))], first: on.length ? on[0][2] : null, back, end: [last[3], last[5]] };
+  }, names[1]);
+  await p.evaluate(() => { cancelAnimationFrame(window.__brRaf); window.__sightReview.togglePlay(); });
   await b.close();
   return res;
 }

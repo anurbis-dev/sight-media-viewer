@@ -2,6 +2,35 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.90.2 — 2026-11-19 — Phone scrub cache: one window across the cut, the player first, every cached part on the strip
+- **What:** owner (on the phone, after 0.90.1): tap-to-play lagged up to 4 s even with a full cache; the green strip
+  lost the old cache on a jump and showed nothing new while the playhead stood; the fill looked like 30 / 70, not
+  70 / 30; behind the playhead it filled towards it. Measured in Playwright first (a 60 s + 20 s sequence, the
+  cache sampled each second), which showed: (1) the strip drew only the unbroken run around the playhead, and the
+  2× fill drops frames, so that run stayed tiny until the holes were sought one by one; (2) the open clip filled
+  its whole window, far behind included, before the next clip got a frame — so in a short clip near its end the
+  left side won; (3) a move of the playhead under 2.5 s did not re-target the fill; (4) behind parts of 2 s
+  played forwards. Now: the strip draws every cached run (gaps ≤ 3 frames ignored); caches take turns by the
+  cost of their next part (distance from the playhead in the sequence, behind × AHEAD / (1 − AHEAD), + the
+  range's `base`), the owner yields only to a part cheaper by 3 s; a `from` move is taken at once; behind parts
+  are 1 s; while a play starts (until `playing` + 300 ms), the player seeks, or it stalls, no cache fetches
+  (`ScrubCache.busy`), and `ScrubCache.poke()` on the player's `play` / `seeking` stops the running part at once.
+- **Where:** mobile/js/media.js (`costOf`, `turnPick`, `turnWanted`, `TURN_HYST`, `isBusy`, `ScrubCache.busy /
+  poke / wb`, `want` in-place `from` / `base`, `job.held` / `jolt`, `nap`, `stopPart`, `runs(gap)`, the `dead`
+  rule, the fill rate); mobile/js/app.js (`cacheFocus` bases, `playPend`, `ScrubCache.busy` hook, `paintCache`
+  draws all runs); mobile/index.html (`.tl .cache` is a container of `<i>` runs); MANUAL, ARCHITECTURE.
+- **Notes:** tried and rejected: filling at ≤ 40 presented frames/s and patching holes by slow replay — in
+  Chromium coverage grew three times slower than 2× + frame-by-frame seeks; the dropped frames are hidden on the
+  strip instead. A part is cut only if it held `from` when it began and `from` left it (a playing clip moves
+  `from` every frame); jumps / scrubs stop it via `poke`. A cut part (moved / busy / poke / yield / replan /
+  closed) is never marked `dead`. Never end a part on the player's `pause` event: the one fired for the previous
+  part's own pause arrives later and killed the next part at once. Still a hypothesis on the phone: the play lag
+  came from the hidden player decoding next to the visible one — the debug log (0.91.0) will show `sinceTap`.
+- Review (fresh agent): a late `pause` event ended every second part; `jolt` cut nearly every part while playing;
+  cut parts were marked `dead` for good on clips that fit the window; the idle release never fired while playing;
+  busy / jolt unchecked before the first seek / play; `close()` held the turn up to 1.5 s — all fixed, each
+  confirmed by the same reviewer with its Playwright repros.
+
 ## 0.90.1 — 2026-11-19 — Phone: the open clip's scrub cache no longer loses the decoder to a neighbour
 - **What:** owner: in a 2-clip sequence the open clip got no cache at all, the neighbour got all of it. Cause (most
   likely, seen on Android): a neighbour's cache that yielded the turn (or sat idle / parked) kept its hidden

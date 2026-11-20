@@ -1266,6 +1266,7 @@ async function settings(){
 function closeReview(park){
   if (!R) return;
   flush();
+  bridgeEnd(R, "close", true);
   if (R.video){ R.video.pause(); R.video.removeAttribute("src"); R.video.load(); }
   if (R.grab) R.grab.close();
   if (R.scrub && park){ R.scrub.prio = 1; R.scrub.onProgress = null; scrubPool.set(R.meta.key, R.scrub); }
@@ -1696,6 +1697,7 @@ function seqSwitch(k, t, play, drag){
   seqHold();
   seqHoldPic(k, t);
   seqPend = { key: k, t, play, drag };
+  if (play) seqRun(seqPend, (R.video && R.video.playbackRate) || R.rate || 1);
   openReview(k, null, false, undefined, { replace: true, seq: true, dir: ks.indexOf(k) < ks.indexOf(R.meta.key) ? -1 : 1 });
 }
 // The clip played to its end: on into the next one; past the last, the first again when looping.
@@ -1711,9 +1713,31 @@ function seqApply(v){
   if (!p || !R || R.video !== v || p.key !== R.meta.key) return;
   seqPend = null;
   if (p.drag && seqDrag) R.dragging = true;
+  // A play on across the cut whose cached frames have been running (seqRun): the bridge goes on with that clock — or
+  // from the frame the held picture stopped on, when its frames ran out; with no bridge, the player plays from that
+  // frame (never back to p.t: the picture would jump back by the time the clip took to open).
+  if (p.play && p.run && p.t >= 0){
+    const e = p.t + (performance.now() - p.run) / 1000 * p.rate, sh = p.shown != null ? p.shown : p.t;
+    if (e - sh < 0.1 ? bridgeStart(p.t, p.run) : bridgeStart(sh)) return;
+    if (sh > p.t) p.t = sh;
+  }
   if (p.t) seekTo(p.t < 0 ? durOf() + p.t : p.t);
   if (p.play) togglePlay();
   seqHoldWatch(v);
+}
+// A play on into the next clip: while it opens, its cached frames (its cache, filled as the neighbour) run on in
+// the held picture at the clip's pace from p.t, so the cut does not stand still; the bridge takes the clock over
+// when the clip lands (seqApply). (No cached frames: the held picture stays, as before.)
+// p.shown: the time of the last frame it showed (it stops where the cached frames run out).
+function seqRun(p, rate){
+  p.run = performance.now(); p.rate = rate; p.shown = null;
+  const tick = () => {
+    if (seqPend !== p || !p.run || !seqHoldEl) return;  // landed, paused (a tap), or given up
+    const t = p.t + (performance.now() - p.run) / 1000 * rate;
+    if (seqHoldPic(p.key, t, true)) p.shown = t;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 // The last frame over the stage (a canvas, the picture fitted as the player fits it) until the next
 // clip's first frame is on screen — no black between clips. At most 1.5 s.
@@ -1739,10 +1763,14 @@ function seqHold(){
 // of the last clip's (that picture stood still while the next clip's player opened and was sought, and read as
 // the last clip's frame stuck on the next one). Its cache is still in scrubPool (taken over at loadedmetadata), or
 // is the open clip's when the drag turns back. Updated on every move until the clip lands.
-function seqHoldPic(k, t){
+// prev: the frame at or before t (a play running on, seqRun: as the bridge shows it), else the nearest.
+function seqHoldPic(k, t, prev){
   const st = els && els.stage, c = scrubPool.get(k) || (R && R.meta.key === k ? R.scrub : null);
-  const u = st && c && c.near(t < 0 ? (c.d || 0) + t : t);
-  if (!u) return;
+  const tt = c && t < 0 ? (c.d || 0) + t : t;
+  let u = null;
+  if (st && c && prev){ const i = c.at(tt + 1e-4) - 1; if (i >= 0 && tt - c.mts[i] <= c.step() * 1.6) u = c.pic(i); }
+  if (!u) u = st && c && c.near(tt);
+  if (!u) return false;
   let im = seqHoldEl;
   if (!im || im.tagName !== "IMG"){
     seqDropHold();
@@ -1754,6 +1782,7 @@ function seqHoldPic(k, t){
   if (im.getAttribute("src") !== u) im.src = u;
   clearTimeout(seqHoldT);
   seqHoldT = setTimeout(seqDropHold, 1500);
+  return true;
 }
 // The element a sequence drag's finger went down on must stay in the document through a cut: WebKit keeps
 // sending a touch's events to that node, and a detached one never reaches window. Moved out of the review
@@ -1790,6 +1819,7 @@ function setPanel(open){
   R.panel = !!open;
   // The player slides off the screen: a playing clip stops where it is (paused, not rewound — the
   // list then marks the note on that frame), it must not run on unseen.
+  if (R.panel && R.bridge) bridgeHalt();
   if (R.panel && R.video && !R.video.paused) R.video.pause();
   root.classList.toggle("open", R.panel);
   paintPanelBar();
@@ -2450,7 +2480,7 @@ function buildStage(){
         if (R.playedFor > 0.25 && R.hasAudio == null) setAudio(false, true);
       });
       v.addEventListener("seeked", () => {
-        if (!R || R.video !== v) return;
+        if (!R || R.video !== v || R.bridge) return;  // (the bridge's own seek: it watches the player itself)
         pumpSeek(v);
         if (R.want == null && !R.dragging && !v.seeking) settle(v);
         else if (R.want == null && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideWhenShown(v);  // the player has caught up
@@ -2458,10 +2488,16 @@ function buildStage(){
       });
       // The big play button only until the clip is first played or moved: it would cover the frame.
       // (A seek still landing keeps the cached picture until its frame is shown: settle on "seeked".)
-      v.addEventListener("play", () => { playPend = performance.now() + 4000; ScrubCache.poke(); R.playOn = true; big.remove(); R.scrubT = null; R.want = null; if (!v.seeking) hideCached(); paintTime(); loop(); });
+      v.addEventListener("play", () => { playPend = performance.now() + 4000; ScrubCache.poke(); R.playOn = true; big.remove(); R.want = null; if (!R.bridge && !R.keepPic){ R.scrubT = null; if (!v.seeking) hideCached(); } paintTime(); loop(); });
       // The scrub caches keep off the decoder until the play has started (ScrubCache.busy).
-      v.addEventListener("playing", () => { playPend = performance.now() + 300; });
+      v.addEventListener("playing", () => { playPend = performance.now() + 300; if (R && R.video === v && R.keepPic){ R.keepPic = false; R.scrubT = null; hideWhenShown(v); } });
       v.addEventListener("seeking", () => ScrubCache.poke());
+      // What each seek costs the player (bridgePlan): the last one asked for, to "seeked".
+      // (Not before the player has shown its first frame: those seeks include its decoder's start.)
+      let seekAt = 0, seekX = 0, had = false;
+      v.addEventListener("loadeddata", () => { had = true; });
+      v.addEventListener("seeking", () => { seekAt = had ? performance.now() : 0; seekX = v.currentTime; });
+      v.addEventListener("seeked", () => { if (seekAt && R && R.video === v && !document.hidden) noteSeek(seekX, (performance.now() - seekAt) / 1000); seekAt = 0; });
       v.addEventListener("pause", () => { playPend = 0; });
       v.addEventListener("seeking", () => big.remove());
       dbgPlayer(v);  // (logs only while the debug log is on)
@@ -2571,10 +2607,25 @@ const durOf = () => { const v = R && R.video; return (v && Number.isFinite(v.dur
 function togglePlay(){
   const v = R && R.video;
   if (!v) return;
+  if (R.bridge){ dbg.log("tap.pause", { t: +posNow().toFixed(3), bridge: true }); bridgeHalt(); return; }
+  // A tap while a play on across the cut is opening the next clip (its frames running, seqRun): it lands paused on
+  // the frame shown. (Not once the clip has failed to open: the tap is the player's again.)
+  const sp = seqPend;
+  if (sp && sp.play && !(sp.key === R.meta.key && v.error)){
+    sp.play = false; sp.run = 0;
+    if (sp.shown != null) sp.t = sp.shown;
+    dbg.log("tap.pause", { t: +sp.t.toFixed(3), seq: true });
+    return;
+  }
   if (!v.paused){ dbg.log("tap.pause", { t: +v.currentTime.toFixed(3) }); v.pause(); return; }
   const t = R.want != null ? R.want : R.scrubT;
   dbg.log("tap.play", { t: +v.currentTime.toFixed(3), want: t, seeking: v.seeking, rs: v.readyState, busy: !!(ScrubCache.busy && ScrubCache.busy()) });
   dbgPlayAt = performance.now();
+  // The player not standing on that frame yet (a seek to make or still on its way, a clip just opened): the scrub
+  // cache plays meanwhile (bridgeStart).
+  const there = !v.seeking && v.readyState >= 2 && (t == null || (R.fpsKnown ? frameIdx(v.currentTime) === frameIdx(t) : Math.abs(v.currentTime - t) < 1e-3));
+  // (WebKit lets an element play with sound only from a tap until it has played once: the bridge plays it later.)
+  if (!there && !(strictPlay && !v.played.length) && bridgeStart(t != null ? t : v.currentTime)) return;
   if (t != null){
     R.want = null;
     if (R.dragging) dragEnd();
@@ -2611,6 +2662,8 @@ function snapT(t){
 function seekTo(t){
   const v = R && R.video;
   if (!v) return;
+  if (R.bridge) bridgeEnd(R, "seek", true);
+  R.keepPic = false;
   if (!v.paused) v.pause();
   R.playOn = false;
   t = snapT(t);
@@ -2647,7 +2700,7 @@ function pumpSeek(v, rest){
 // The last seek has landed and nothing is being dragged: the player's own frame is the truth again.
 function settle(v){
   if (!R || R.video !== v) return;
-  R.scrubT = null;
+  R.scrubT = null; R.keepPic = false;
   settleWait.forEach((f) => f());  // (a drag let go on the frame the player stands on settles with no seek)
   hideWhenShown(v);
   paintTime(); paintOverlay(); paintCurrent();
@@ -2659,6 +2712,136 @@ function dragEnd(){
   if (!v) return;
   if (R.want != null) pumpSeek(v);  // a drag over cached frames: the player's one seek (it settles on "seeked")
   else if (!v.seeking) settle(v);
+}
+// ---- play start from the scrub cache -------------------------------------------------------------
+// A seek costs the player a decode from the keyframe before the frame: 0.5-1 s on a phone for a frame far into a
+// long group of pictures (a phone or export clip may have one keyframe in seconds, or only the first) — a play
+// from a frame the player is not standing on stood still that long, longer the further the frame was from the
+// keyframe. Instead the scrub cache plays (its frames in the cached-picture layer, at the clip's pace) while the
+// player is sought to a frame ahead that it can reach in time — the next keyframe when one is near enough (a seek
+// there decodes one frame), else as far as the measured seek cost needs — and the player plays on from there when
+// the clock reaches it; its own picture replaces the cache's once it has moved on. No sound until then.
+const strictPlay = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Android/.test(navigator.userAgent);
+const seekCost = { a: 0.08, b: 0.006, s: 0.6 };  // s per seek + s per frame decoded from the keyframe; s per seek with no track
+let playLag = 0.12;                                 // s from play() until the player runs (shows frames at its pace)
+// The clip's keyframe times (the scrub cache's parsed track: an MP4 decoded with WebCodecs), or null.
+function keyTimes(){
+  const tr = R && R.scrub && R.scrub.wc;
+  if (!tr || !tr.gops) return null;
+  if (!tr.keyT) tr.keyT = tr.gops.map((g) => tr.pts[g.i0]).sort((a, b) => a - b);
+  return tr.keyT;
+}
+// What a seek to time x costs the player, s (frames decoded from the keyframe before it).
+function costAt(x){
+  const ks = keyTimes();
+  if (!ks) return seekCost.s;
+  let k = 0;
+  for (const y of ks){ if (y <= x + 1e-4) k = y; else break; }
+  return seekCost.a + seekCost.b * Math.max(0, Math.round((x - k) / frameDur()));
+}
+// Each seek the player makes teaches the model (bridgePlan): its whole time, and per frame decoded.
+function noteSeek(x, s){
+  if (!(s > 0 && s < 5)) return;
+  seekCost.s += (s - seekCost.s) * 0.3;
+  const ks = keyTimes();
+  if (!ks) return;
+  let k = 0;
+  for (const y of ks){ if (y <= x + 1e-4) k = y; else break; }
+  const n = Math.round((x - k) / frameDur());
+  if (n < 4) seekCost.a = RC.clamp(seekCost.a + (s - seekCost.b * n - seekCost.a) * 0.3, 0.02, 0.5);  // (a keyframe's: the fixed part)
+  if (n >= 12) seekCost.b = RC.clamp(seekCost.b + ((s - seekCost.a) / n - seekCost.b) * 0.3, 0.001, 0.05);
+}
+// Where the player takes over from a cached play at time tn, or null (the cache does not hold the way there, or the
+// player could not be there within 3 s): {t1: the frame it takes over on, seek: the time it is sent to, key}.
+function bridgePlan(tn, c, rate, v){
+  const fd = frameDur(), d = durOf(), sp = c.span(tn);
+  if (!sp || !d || !c.near(tn)) return null;
+  const end = Math.min(sp[1] - fd, d - 2 * fd, tn + 3);
+  const open = v.readyState < 2 && !v.seeking ? 0.25 : 0;  // a player just opened: its decoder starts first (a seek drops it to 1 too)
+  const lead = (x) => ((costAt(x) + open) * 1.2 + playLag + 0.05) * rate;
+  const ks = keyTimes() || [];
+  // The first frame ahead the player can stand on (sought, started) by the time the clock gets there: a frame
+  // further from its keyframe costs more, a keyframe itself next to nothing.
+  for (let i = Math.floor(tn / fd + 1e-6) + 1; i * fd <= end; i++){
+    const k = ks.find((y) => Math.abs(y - i * fd) < fd * 0.5), x = k != null ? k : i * fd;
+    if (x > tn && x - tn >= lead(x)) return { t1: x, seek: Math.min(x + 0.25 * fd, d), key: k != null };
+  }
+  return null;
+}
+function bridgeStart(t0, at){
+  const rv = R, v = rv && rv.video, c = rv && rv.scrub, si = els && els.scrubImg;
+  if (!v || !c || !si || rv.drawS || !(v.playbackRate > 0)) return false;
+  const rate = v.playbackRate, now = performance.now();
+  at = at || now;
+  const tn = t0 + (now - at) / 1000 * rate, p = bridgePlan(tn, c, rate, v);
+  if (!p) return false;
+  const fd = frameDur(), B = { t0, at, rate, t1: p.t1, raf: 0, played: 0, u: null };
+  rv.bridge = B;
+  rv.want = null; clearTimeout(restT);
+  if (rv.dragging) dragEnd();
+  rv.playOn = true;
+  playPend = now + 4000;  // the caches keep off the decoder: the player's seek and start come first
+  seqDropHold();          // (a play on across a cut: the bridge shows the next clip's frames from here)
+  dbg.log("bridge", { t: +tn.toFixed(3), t1: +p.t1.toFixed(3), key: p.key, cost: +costAt(p.t1).toFixed(3), lag: +playLag.toFixed(3), rs: v.readyState, seeking: v.seeking });
+  v.currentTime = p.seek;
+  // The player has moved past the frame it took over on: its own picture from here.
+  // playLag learnt from it: play() to the frame after t1 less that frame's own duration (the player's start).
+  const handed = (mt, learn) => {
+    if (R !== rv || rv.bridge !== B || v.paused || !(mt >= B.t1 + fd * 0.5)) return false;
+    if (learn) playLag = RC.clamp(playLag + ((performance.now() - B.played) / 1000 - fd / B.rate - playLag) * 0.3, 0.02, 0.5);
+    bridgeEnd(rv, "player");
+    return true;
+  };
+  const watch = (_, m) => { if (R === rv && rv.bridge === B && !handed(m ? m.mediaTime : v.currentTime, !!m)) v.requestVideoFrameCallback(watch); };
+  // The cached frame on screen at s: the one starting at or before it (as the player shows, and the timecode says).
+  const pic = (s) => { const i = c.at(s + 1e-4) - 1; return i >= 0 && s - c.mts[i] <= fd * 1.6 ? c.pic(i) : c.near(s); };
+  const tick = () => {
+    if (R !== rv || rv.bridge !== B) return;
+    const t = performance.now(), T = B.t0 + (t - B.at) / 1000 * B.rate;
+    // Played a little before the clock gets there: the player takes that long to show its next frame.
+    if (!B.played && !v.seeking && v.readyState >= 2 && T >= B.t1 - playLag * B.rate){
+      B.played = t;
+      v.play().catch(() => { if (R === rv && rv.bridge === B) bridgeHalt(); });
+      if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(watch);
+    }
+    if (B.played && !v.requestVideoFrameCallback && handed(v.currentTime, false)) return;
+    if (B.played && t - B.played > 2000){ bridgeEnd(rv, "late"); return; }  // never seen to move on: its picture anyway
+    // The player's seek never landed in time (a stalled load): its own play, as without the bridge.
+    // (The cached frame at t1 stays until the player shows its own: R.keepPic, the "playing" / "seeked" handlers.)
+    if (!B.played && T > B.t1 + 1.5 * B.rate){ bridgeEnd(rv, "stuck", true); rv.keepPic = true; v.play().catch(() => {}); return; }
+    // The cache's frame up to the takeover frame (the player stands on it, paused, until it plays on).
+    const s = Math.min(T, B.t1), u = pic(s);
+    hideSeq++;  // (no older hideWhenShown takes the picture away)
+    if (u){ B.u = u; if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
+    rv.scrubT = snapT(s);
+    paintTime(); paintOverlay(); paintCurrent();
+    B.raf = requestAnimationFrame(tick);
+  };
+  tick();
+  return true;
+}
+// The bridge over (quiet: a seek takes the picture over itself).
+function bridgeEnd(rv, why, quiet){
+  const B = rv && rv.bridge;
+  if (!B) return;
+  cancelAnimationFrame(B.raf);
+  rv.bridge = null;
+  if (!B.played) playPend = 0;  // (no play to come: the caches may go on)
+  dbg.log("bridge.end", { why, t1: +B.t1.toFixed(3), ms: Math.round(performance.now() - B.at), lag: +playLag.toFixed(3) });
+  if (quiet || R !== rv) return;
+  rv.scrubT = null;
+  hideCached();
+  paintTime(); paintOverlay(); paintCurrent();
+}
+// A pause during the bridge: on the frame the cache shows (the player is sought there).
+function bridgeHalt(){
+  const rv = R, B = rv && rv.bridge;
+  if (!B) return;
+  const T = rv.scrubT, si = els && els.scrubImg;
+  bridgeEnd(rv, "halt", true);
+  if (T != null) seekTo(T);
+  // The frame shown stays until the player has sought there (seekTo has no cached frame for it with the rate unknown).
+  if (si && si.hidden && B.u){ si.src = B.u; si.hidden = false; }
 }
 // ±n frames from the frame on screen (or the one already on its way: quick taps add up).
 function step(n){
@@ -2941,7 +3124,18 @@ function dbgPlayer(v){
   const L = (ev, x) => { if (dbg.on && R && R.video === v) dbg.log(ev, Object.assign({ t: +v.currentTime.toFixed(3) }, x ? x() : null)); };
   const since = () => dbgPlayAt ? Math.round(performance.now() - dbgPlayAt) : null;
   v.addEventListener("loadedmetadata", () => L("v.meta", () => ({ name: R.meta.asset.name, d: v.duration, w: v.videoWidth, h: v.videoHeight, size: R.file ? R.file.size : null, type: R.file ? R.file.type : null })));
-  v.addEventListener("play", () => L("v.play", () => ({ sinceTap: since() })));
+  v.addEventListener("play", () => {
+    L("v.play", () => ({ sinceTap: since() }));
+    // The first frame after the one it stood on: when the picture really moves (not "playing").
+    if (!dbg.on || !v.requestVideoFrameCallback) return;
+    const p0 = performance.now(), m0 = v.currentTime, tap = dbgPlayAt, fd = 1 / ((R && R.fps) || 25);
+    const f = (_, m) => {
+      if (!R || R.video !== v || v.paused) return;
+      if (m.mediaTime > m0 + fd * 0.5) L("v.moved", () => ({ ms: Math.round(performance.now() - p0), sinceTap: tap ? Math.round(performance.now() - tap) : null }));
+      else v.requestVideoFrameCallback(f);
+    };
+    v.requestVideoFrameCallback(f);
+  });
   v.addEventListener("playing", () => { L("v.playing", () => ({ sinceTap: since(), rs: v.readyState })); dbgPlayAt = 0; });
   v.addEventListener("waiting", () => { waitAt = performance.now(); L("v.waiting", () => ({ rs: v.readyState })); });
   v.addEventListener("canplay", () => { if (waitAt){ const ms = Math.round(performance.now() - waitAt); L("v.canplay", () => ({ ms })); waitAt = 0; } });
@@ -3128,6 +3322,7 @@ function bindStage(stage){
       const dx = e.clientX - one.x, dy = e.clientY - one.y;
       // Sideways a few px (video): the scrub. Nothing happens before, so a tap still plays / pauses.
       if (v && Math.abs(dx) >= 6 && Math.abs(dx) >= Math.abs(dy)){
+        if (R.bridge) bridgeHalt();  // (a play starting from the cache stops on the frame shown)
         one.mode = "scrub"; one.lx = e.clientX; one.lt = e.timeStamp; one.t = posNow();
         R.dragging = true;
         v.pause();
@@ -3970,6 +4165,7 @@ function replyBar(nb, n){
 }
 // The picture on screen as a frame to draw a new note on: the picture, or the paused video frame.
 async function currentFrame(){
+  if (R && R.bridge) bridgeHalt();  // (a play still starting from the cache: the frame shown, the player sought there)
   const rv = R, vb = [0, 0, docW(), docH()];
   if (is3d()){
     const fr = await frame3dNow(rv);
@@ -4077,6 +4273,7 @@ async function drawVideo({ frames = [], onDone, noPlace }){
   try { await openDrawVideo(rv, v, frames, onDone, noPlace); } finally { rv.drawOpening = false; }
 }
 async function openDrawVideo(rv, v, frames, onDone, noPlace){
+  if (rv.bridge) bridgeHalt();  // (a play still starting from the cache stops on the frame shown)
   let ownPause = !v.paused;  // this pause's event (queued) is not the user's: no second grab
   v.pause();
   // Opens at once on the frame on screen: its picture from the frame cache, else the scrub
@@ -4751,4 +4948,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, scrubPool, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote, exportBundle, loadGroups };
+window.__sightReview = { get R(){ return R; }, scrubPool, seekCost, togglePlay, seekTo, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote, exportBundle, loadGroups };

@@ -344,7 +344,10 @@
   decoded frame by frame in the background where the browser can (WebCodecs), which fills it several times
   faster than playing them), so the picture follows at once. While you drag over cached frames the player is
   not sought; it seeks once, to where you let go. Dragging across a sequence's cut shows the next clip's
-  cached frame at once while that clip opens. In a group's sequence, near a clip's end the window runs on into the
+  cached frame at once while that clip opens. Play starts at once from cached frames too: the player needs
+  a moment to reach a frame far from a keyframe (phone clips may have one keyframe in seconds), so the
+  cached frames play until it has caught up, then it takes over — the sound comes in then. The same at a
+  cut when a sequence plays on into the next clip. In a group's sequence, near a clip's end the window runs on into the
   next clip's start (near its start: into the previous clip's end), so playing or scrubbing across the
   cut finds frames both ways. Settings → *Debug log* (On / Off) records what the player and the frame cache do
   on this device (taps, play and seek delays, every part of the clip the cache reads, a sample each second);

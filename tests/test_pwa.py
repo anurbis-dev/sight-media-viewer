@@ -309,7 +309,8 @@ class RoundTrip(unittest.TestCase):
     def test_wcache(self) -> None:
         """Phone scrub cache on MP4s (0.96.1): decoded with WebCodecs — every frame of both clips of a sequence;
         a timeline drag over cached frames does not seek the player until it is let go; a drag across the cut shows
-        the next clip's own cached frame (not the last clip's) while that clip opens. VP9 in MP4 (vpcC): Chromium
+        the next clip's own cached frame (not the last clip's) while that clip opens. 0.96.2: a play from a frame the
+        player is not on yet, and a play on across the cut, start from the cache (the bridge). VP9 in MP4 (vpcC): Chromium
         builds without H.264 decode it too."""
         if not (self.video and has_playwright()):
             self.skipTest("needs ffmpeg, node and Playwright")
@@ -327,6 +328,28 @@ class RoundTrip(unittest.TestCase):
         self.assertIn("IMG:blob", res["holds"])  # across the cut: the next clip's cached frame
         self.assertEqual(res["landed"][0], "wc_b.mp4")
         self.assertTrue(res["landed"][2])  # its cache taken over
+        # Play from a frame the player is still seeking to (seeks made costly): the cache plays from that frame, the
+        # player is sent to the next keyframe (1 s) and takes over there; the picture never goes back.
+        br = res["bridge"]
+        self.assertEqual(br["t1"], [1])
+        self.assertEqual(len(br["seeks"]), 2, br)  # the tap's seek (0.3 s, a quarter into its frame), then the keyframe
+        self.assertAlmostEqual(br["seeks"][0], 0.302, delta=0.002)
+        self.assertAlmostEqual(br["seeks"][1], 1.01, delta=0.002)
+        self.assertAlmostEqual(br["shown"][0], 0.292, delta=0.002)
+        self.assertGreater(br["shown"][1], br["shown"][0])
+        self.assertEqual(br["back"], 0)
+        self.assertGreater(br["cached"], 3)
+        self.assertEqual(br["end"], [True, False])  # the player's own picture, playing
+        # Played on past the clip's end: the next clip starts from its cached frames (the bridge), then its player.
+        self.assertTrue(res["cut"]["t1"], res["cut"])
+        self.assertLess(res["cut"]["first"], 0.5)
+        self.assertEqual(res["cut"]["end"], [True, False])
+        self.assertEqual(res["cut"]["back"], 0)
+        # A tap during the bridge: paused on the frame shown; the player lands on that frame.
+        on, T, ended, paused, ct = res["halt"]
+        self.assertTrue(on and ended and paused, res["halt"])
+        self.assertGreater(T, 0.3)
+        self.assertEqual(int(ct * 24 + 1e-6), int(T * 24 + 1e-6), res["halt"])
 
     def test_bundle(self) -> None:
         """Multi-clip stage 3: the phone opens a Sight bundle (one group, a damaged clip reported), a note
