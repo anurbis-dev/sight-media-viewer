@@ -2,6 +2,29 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.90.0 — 2026-11-19 — Desktop RAM cache like the phone's: outwards from the playhead, across cuts; ahead share in Settings
+- **What:** owner: the desktop cache should work like the phone's, with 70 / 30 instead of 60 / 40, and the share
+  in Settings on both. Desktop: the RAM window now loads outwards from the playhead (behind blocks interleaved,
+  not after all of the ahead part), and in a lightbox sequence the part past a clip's end goes to the next clip's
+  start, before its start to the previous clip's end (loop on wraps) — a cut either way reads from RAM, and the
+  hidden preload `<video>` of the next clip is served from it. Settings → Video → *Cache ahead* (50–90 %, default
+  70) on the desktop, Settings → *Cache ahead* (50–90 %) in the phone app; the phone default is now 70 too.
+- **Where:** app/library.py `SlidingVideoCache` (`_Window.ranges` / `wants`, `_plan`, `configure(mb, ahead)`,
+  `focus(path, pos, next, prev)`, `focus_many`, `_missing` costs), app/server.py `/api/video/focus` (`ahead`,
+  `next`, `prev`), app/static/index.html (`clampAhead`, `videoAhead` theme key + slider, `pushVideoFocus`
+  neighbours, `seqToggleLoop` re-push, host `cacheAhead`), app/static/compare.js (sends `ahead`),
+  defaults.json; mobile/js/app.js (`AHEADS`, `setCacheAhead`, settings sheet), mobile/js/media.js `AHEAD` 0.7,
+  mobile/index.html; tests/test_video_cache.py (new); MANUAL, ARCHITECTURE.
+- **Notes:** the ahead share is server-wide state (like the budget): every focus post carries it, so the saved
+  value applies from the first video after a restart. The compare keeps one window per clip and no neighbours.
+  The playhead's byte is still `size · t / duration` (no byte↔time index), so the windows are approximate in
+  time on VBR files, as before. The phone setting is per device (`localStorage`), not synced with Sight.
+- Review (fresh agent): no correctness bugs; three minor ones fixed — a neighbour shorter than the overflow
+  wasted the rest of the window (now it goes to the other side of the playhead, desktop and phone); a short
+  2-clip loop partner listed blocks twice (`_missing` dedupes, the two ends share one cap); the phone's fill
+  weighted behind by a fixed 1.5 (now `AHEAD / (1 − AHEAD)`, like the desktop). Confirmed by the same reviewer
+  (20,000 random plans: every range inside its file, no block twice, budget fully used, playhead inside).
+
 ## 0.89.0 — 2026-11-19 — Phone: the scrub cache follows the playhead, 60 / 40, across sequence cuts
 - **What:** owner: on the phone the cache always started at the clip's start, not at the playhead; near a clip's
   end it must run on into the next clip so the cut is seamless both ways; 60 % ahead / 40 % behind. Now the

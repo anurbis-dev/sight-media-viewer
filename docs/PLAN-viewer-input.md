@@ -107,7 +107,7 @@ What it owns, so no viewer re-implements it:
    (not the whole module: their left button means items / orbit). Keep the board's right-click menu (a right press
    without a drag over an item, 4 px), its wheel = pan / Ctrl+wheel = zoom, and the 3D Ctrl / Shift right-drags
    (mesh path). Decide anchored vs incremental zoom for 3D and say it in RECENT if it changes.
-4. **Shift-fine everywhere.** Add the Shift slow-down to the drags that do not have it: the board pan / zoom, the
+4. **(done, 0.96.0) Shift-fine everywhere.** (Also the text viewer's middle / right drags; 3D orbit not slowed.) Add the Shift slow-down to the drags that do not have it: the board pan / zoom, the
    lightbox pan / zoom, 3D dolly. Write the rule in ARCHITECTURE and MANUAL as one sentence that holds for all modes.
 5. (later, separate) **HTML page / phone parity**: the same meanings in `review-draw.js` / `mobile/`; they cannot import
    the module (no build step, a self-contained page), so either inline a copy kept by a parity test or leave them.

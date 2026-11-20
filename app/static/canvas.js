@@ -16,7 +16,7 @@
 // the camera), saves / reloads it per board, gives it the keys while its mode is on, and adds the touch pinch.
 
 import { runHotkeys } from "/static/keys.js";
-import { pinchTracker, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
+import { FINE, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
@@ -953,8 +953,12 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       return;
     }
     if (drag && drag.kind === "pan"){
-      vx = drag.startVx + (e.clientX - drag.startClient.x);
-      vy = drag.startVy + (e.clientY - drag.startClient.y);
+      // Shift: slower (×0.2). The move that sees Shift change still counts at the old speed, then the drag
+      // rebases on it, so pressing / releasing Shift mid-drag neither jumps nor drops that step.
+      const f = drag.fine ? FINE : 1;
+      vx = drag.startVx + (e.clientX - drag.startClient.x) * f;
+      vy = drag.startVy + (e.clientY - drag.startClient.y) * f;
+      if (e.shiftKey !== !!drag.fine){ drag.fine = e.shiftKey; drag.startClient = { x: e.clientX, y: e.clientY }; drag.startVx = vx; drag.startVy = vy; }
       worldTransform();
       return;
     }
@@ -963,7 +967,9 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       drag.moved = true;
       // Right-drag zoom: the shared formula and theme axis / speed / invert knobs (viewer-input.js), anchored
       // at the press as in the lightbox — one zoom control everywhere.
-      zoomAt(drag.mx, drag.my, drag.scale * zoomFactorDrag(e.clientX - drag.x, e.clientY - drag.y, zoomSettings()));
+      // (Shift: slower; rebased after this step, as the pan)
+      zoomAt(drag.mx, drag.my, drag.scale * zoomFactorDrag(e.clientX - drag.x, e.clientY - drag.y, zoomSettings(), drag.fine));
+      if (e.shiftKey !== !!drag.fine){ drag.fine = e.shiftKey; drag.x = e.clientX; drag.y = e.clientY; drag.scale = zoom; }
     }
   }
   function onPointerUp(e){
@@ -994,7 +1000,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   viewportEl.addEventListener("pointerdown", (e) => {
     if (e.button === 1 || (e.button === 0 && e.altKey)){
       e.preventDefault();
-      drag = { kind: "pan", startClient: { x: e.clientX, y: e.clientY }, startVx: vx, startVy: vy };
+      drag = { kind: "pan", startClient: { x: e.clientX, y: e.clientY }, startVx: vx, startVy: vy, fine: e.shiftKey };
       viewportEl.style.cursor = "grabbing";
       el_setPointerCapture(e);
       return;
@@ -1003,7 +1009,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       e.preventDefault();
       const r = viewportEl.getBoundingClientRect();
       // A right-click that never turns into a zoom drag opens the item menu (see onPointerUp).
-      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, moved: false, itemId: e.target.closest?.(".citem")?.dataset.id || null };
+      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, moved: false, fine: e.shiftKey, itemId: e.target.closest?.(".citem")?.dataset.id || null };
       el_setPointerCapture(e);
       return;
     }
@@ -1050,7 +1056,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     const r = viewportEl.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
     if (e.ctrlKey || e.metaKey){
-      zoomAt(px, py, zoom * zoomFactorWheel(e.deltaY, zoomSettings()));
+      zoomAt(px, py, zoom * zoomFactorWheel(wheelDelta(e), zoomSettings(), e.shiftKey)); // (Ctrl+Shift: slower)
     } else {
       vx -= e.deltaX; vy -= e.deltaY;
       worldTransform();

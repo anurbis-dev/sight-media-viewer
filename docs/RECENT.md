@@ -14,6 +14,13 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.96.0 — 2026-11-19 — Shift slows every drag, in every viewer
+- **What:** stage 4 of `docs/PLAN-viewer-input.md`. Shift now slows the board's pan (middle / Alt+left) and right-drag zoom, Ctrl+Shift+wheel on a board, the 3D wheel and right-drag dolly, and the text viewer's middle-drag scroll and right-drag text size (×0.2), as it already did in the lightbox (0.95.0) and compare. One rule, in MANUAL and ARCHITECTURE.
+- **Where:** canvas.js (pan / zoomdrag `drag.fine`, Ctrl+wheel `wheelDelta` + fine); index.html `bind3dZoom` (wheel / right-drag fine), `mountDocStage` (`panD.fine`, `ts.zoomD.fine`, `zoomFactorDrag`); MANUAL, ARCHITECTURE, PLAN.
+- **Notes:** the anchored drags (board pan / zoom, text viewer) count the move that sees Shift change at the old speed and re-anchor after it — re-anchoring on that move dropped its step (a 25 px drag lost per Shift change in testing). A Shift+right press anywhere on the full-screen mesh-model canvas still turns the lights (its handler stops the press before the dolly sees it); Shift pressed after a right-drag has started slows the dolly. The board's plain wheel still pans (Shift = sideways, the browser's way); 3D orbit and OrbitControls' pan are not slowed. Compare's split drag still re-anchors on the Shift move (its old code, kept).
+- Review (fresh agent): rebasing, signs and the board's right-click menu / plain-wheel pan / 3D lights all correct. Found: the board did not record Shift held at the press (the first move ran 5× too fast) — `fine: e.shiftKey` on both drags now; the MANUAL rule overclaimed ("every drag, everywhere") — reworded with its exceptions (board item drags, 3D orbit, the 3D preview's Shift+right = lights anywhere on a mesh canvas), ARCHITECTURE too. The 3D dolly is incremental, so the Shift-change move runs at the new speed (no jump).
+- The same reviewer confirmed the fixes and found nothing new.
+
 ## 0.95.1 — 2026-11-19 — Board and 3D zoom use the shared zoom maths and finger tracking
 - **What:** stage 3 of `docs/PLAN-viewer-input.md`. No visible change meant: the board (right-drag zoom, Ctrl+wheel, two-finger pinch) and the 3D viewer (wheel, right-drag, pinch dolly) now take their zoom factors and finger tracking from `viewer-input.js`.
 - **Where:** viewer-input.js (`pinchTracker()` new — the module's own fingers use it too); canvas.js (`zoomFactorDrag` / `zoomFactorWheel`, the pinch on `pinchTracker`, incremental: zoom about the pair's previous middle, then pan by its move); index.html `bind3dZoom` (same helpers; `dolly(f)` takes a factor now).
@@ -154,26 +161,3 @@ Add new entries directly below this line.
 - Review (fresh agent): confirmed the cause; found a stale `retryT` and `resolve()` cutting the retry wait short,
   adoption of a broken neighbour cache (same symptom), and the Grabber's player as a third decoder — all fixed and
   confirmed by the same reviewer.
-
-## 0.90.0 — 2026-11-19 — Desktop RAM cache like the phone's: outwards from the playhead, across cuts; ahead share in Settings
-- **What:** owner: the desktop cache should work like the phone's, with 70 / 30 instead of 60 / 40, and the share
-  in Settings on both. Desktop: the RAM window now loads outwards from the playhead (behind blocks interleaved,
-  not after all of the ahead part), and in a lightbox sequence the part past a clip's end goes to the next clip's
-  start, before its start to the previous clip's end (loop on wraps) — a cut either way reads from RAM, and the
-  hidden preload `<video>` of the next clip is served from it. Settings → Video → *Cache ahead* (50–90 %, default
-  70) on the desktop, Settings → *Cache ahead* (50–90 %) in the phone app; the phone default is now 70 too.
-- **Where:** app/library.py `SlidingVideoCache` (`_Window.ranges` / `wants`, `_plan`, `configure(mb, ahead)`,
-  `focus(path, pos, next, prev)`, `focus_many`, `_missing` costs), app/server.py `/api/video/focus` (`ahead`,
-  `next`, `prev`), app/static/index.html (`clampAhead`, `videoAhead` theme key + slider, `pushVideoFocus`
-  neighbours, `seqToggleLoop` re-push, host `cacheAhead`), app/static/compare.js (sends `ahead`),
-  defaults.json; mobile/js/app.js (`AHEADS`, `setCacheAhead`, settings sheet), mobile/js/media.js `AHEAD` 0.7,
-  mobile/index.html; tests/test_video_cache.py (new); MANUAL, ARCHITECTURE.
-- **Notes:** the ahead share is server-wide state (like the budget): every focus post carries it, so the saved
-  value applies from the first video after a restart. The compare keeps one window per clip and no neighbours.
-  The playhead's byte is still `size · t / duration` (no byte↔time index), so the windows are approximate in
-  time on VBR files, as before. The phone setting is per device (`localStorage`), not synced with Sight.
-- Review (fresh agent): no correctness bugs; three minor ones fixed — a neighbour shorter than the overflow
-  wasted the rest of the window (now it goes to the other side of the playhead, desktop and phone); a short
-  2-clip loop partner listed blocks twice (`_missing` dedupes, the two ends share one cap); the phone's fill
-  weighted behind by a fixed 1.5 (now `AHEAD / (1 − AHEAD)`, like the desktop). Confirmed by the same reviewer
-  (20,000 random plans: every range inside its file, no block twice, budget fully used, playhead inside).

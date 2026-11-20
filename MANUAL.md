@@ -713,8 +713,14 @@
   replaces the shipped one; sources are rescanned), or *Restore shipped* to go back. Works the same on a phone.
 - Mouse and touch in the full-screen preview (the same as in version compare): click a video to play /
   pause, double-click to switch Frame ↔ 100 %; a left drag on a picture pans it; middle-drag pans,
-  right-drag and the wheel zoom (hold `Shift` to go slower). On a touch screen tap plays / pauses, one
+  right-drag and the wheel zoom. On a touch screen tap plays / pauses, one
   finger scrubs a video or pans a picture, two fingers pinch-zoom and pan.
+- **`Shift` slows every pan / zoom / scrub drag** — in the preview, version compare, on a board, in 3D and in a
+  text document: scrubbing to a tenth, panning and zooming (right-drag and the wheel; Ctrl+Shift+wheel on a board)
+  to a fifth. Press or let go of it mid-drag and the drag carries on from where it is, without a jump. Not slowed:
+  moving / resizing / turning items on a board (Shift keeps its own meaning there), the 3D orbit, the text's own
+  scrolling. In the 3D preview of a model Shift+right-drag turns the lights, so press Shift after starting a
+  right-drag zoom to slow it.
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
   The green strip on the timeline is the RAM cache: a window around the playhead whose size is

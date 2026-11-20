@@ -27,7 +27,7 @@ app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: 
                          textureQuad), the animation player (createAnimator), USD reading (parseUsd / usdAsSight) and
                          splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
-app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, zoomFactorDrag /
+app/static/viewer-input.js shared pointer / gesture layer for the viewers (attachViewerInput, FINE / FINE_SCRUB, zoomFactorDrag /
                          zoomFactorWheel, pinchTracker — the last three also used by canvas.js and bind3dZoom): Compare's
                          stage and the lightbox 2D viewer (`attachViewer`, kept as `stage._vinput`, destroyed by
                          the next attachViewer / `fillStage` / `closeLight`) — see Compare
@@ -809,6 +809,13 @@ Alt+left → `"pan"`). The picture scrub shares `scrubBegin` / `scrubTo` / `scru
 and slows it (scrub / track ×0.1, zoom / pan ×0.2, offset 6 px → 30 px per frame; once Shift has been used, the timeline drag stays relative). The compare annotator has
 `readPanel` on, with `notesBtn` / `eyeBtn` pointing at the compare bar's own buttons; it binds the selected layer
 on every `onView`, drawing or not.
+**Shift-fine rule (every viewer):** Shift held slows a drag — scrub ×0.1 (`FINE_SCRUB`), pan / zoom ×0.2 (`FINE`,
+`zoomFactorDrag(…, fine)`, `zoomFactorWheel(…, fine)`) — in the lightbox, compare, the board, 3D dolly and the text
+viewer; a change of Shift mid-drag rebases (incremental code needs nothing; anchored code counts that move at the old
+speed, then re-anchors; Shift held at the press is recorded as `fine` there). Exceptions: a Shift+right press anywhere
+on the full-screen mesh-model canvas turns the lights (splats / the inspector viewer have no such handler); the board's
+plain wheel pans (Shift turns it sideways, the browser's way); board item moves / resize / crop / rotate and the marquee
+keep their own Shift meanings; the 3D orbit / OrbitControls pan and the text viewer's native scroll are not slowed.
 Exports land in `~/Downloads` (else `<SIGHT_HOME>/exports`) and are revealed in the file manager.
 
 ## Phone app (mobile/, PWA)

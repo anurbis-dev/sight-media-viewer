@@ -788,7 +788,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
-import { attachViewerInput, pinchTracker, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
+import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -4988,7 +4988,7 @@ function bind3dZoom(el, controls){
   el.addEventListener("wheel", (e) => {
     e.preventDefault();
     anchor(e.clientX, e.clientY);
-    dolly(zoomFactorWheel(e.deltaY, state.theme));
+    dolly(zoomFactorWheel(wheelDelta(e), state.theme, e.shiftKey)); // (Shift: slower)
   }, { passive: false });
   el.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "touch"){ touches.down(e); return; }
@@ -5008,7 +5008,8 @@ function bind3dZoom(el, controls){
     const dx = e.clientX - rdrag.x, dy = e.clientY - rdrag.y;
     rdrag.x = e.clientX; rdrag.y = e.clientY;
     anchor(e.clientX, e.clientY);
-    dolly(zoomFactorDrag(dx, dy, state.theme));
+    // (Shift held mid-drag: slower. A Shift+right press on a mesh turns the lights instead and never gets here.)
+    dolly(zoomFactorDrag(dx, dy, state.theme, e.shiftKey));
   });
   const endPointer = (e) => {
     touches.up(e);
@@ -5171,25 +5172,28 @@ async function mountDocStage(stage, a){
       if (e.button === 1){
         e.preventDefault();
         wrap.setPointerCapture(e.pointerId);
-        panD = { x: e.clientX, y: e.clientY, sl: pre.scrollLeft, st: pre.scrollTop };
+        panD = { x: e.clientX, y: e.clientY, sl: pre.scrollLeft, st: pre.scrollTop, fine: e.shiftKey };
         return;
       }
       if (e.button !== 2) return;
       e.preventDefault();
       wrap.setPointerCapture(e.pointerId);
-      ts.zoomD = { x: e.clientX, y: e.clientY, scale: ts.scale };
+      ts.zoomD = { x: e.clientX, y: e.clientY, scale: ts.scale, fine: e.shiftKey };
     });
     wrap.addEventListener("pointermove", (e) => {
+      // (Shift: slower, as in every viewer — pressing / releasing it mid-drag rebases without a jump)
+      // (the move that sees Shift change counts at the old speed, then the drag rebases on it)
       if (panD){
-        pre.scrollLeft = panD.sl - (e.clientX - panD.x);
-        pre.scrollTop = panD.st - (e.clientY - panD.y);
+        const f = panD.fine ? FINE : 1;
+        pre.scrollLeft = panD.sl - (e.clientX - panD.x) * f;
+        pre.scrollTop = panD.st - (e.clientY - panD.y) * f;
+        if (e.shiftKey !== panD.fine) Object.assign(panD, { fine: e.shiftKey, x: e.clientX, y: e.clientY, sl: pre.scrollLeft, st: pre.scrollTop });
         return;
       }
       if (!ts.zoomD) return;
-      const t = state.theme;
-      const raw = t.zoomAxis === "x" ? (e.clientX - ts.zoomD.x) : (ts.zoomD.y - e.clientY);
-      const d = (t.zoomInvert ? -raw : raw) * 0.012 * (t.zoomSpeed ?? 1);
-      setTextScale(ts.zoomD.scale * Math.exp(d));
+      const z = ts.zoomD;
+      setTextScale(z.scale * zoomFactorDrag(e.clientX - z.x, e.clientY - z.y, state.theme, z.fine));
+      if (e.shiftKey !== z.fine) Object.assign(z, { fine: e.shiftKey, x: e.clientX, y: e.clientY, scale: ts.scale });
     });
     const endDrag = () => { ts.zoomD = null; panD = null; };
     wrap.addEventListener("pointerup", endDrag);
