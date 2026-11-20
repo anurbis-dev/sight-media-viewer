@@ -399,8 +399,8 @@ async function wcache(){
   // Paused after a play with sound: the next play starts from the frame shown, not past the sound Android still had
   // in its output.
   res.stay.last = await p.evaluate(() => window.__sightReview.bridgeLast);
-  // (Android only — faked here: S.androidAudio.) The pause notes the frame (no seek then); the next play first sends
-  // the player to that frame's middle. A muted pause notes nothing.
+  // (Android only — faked here: S.androidAudio.) The pause notes the frame; the next play seeks nothing — the bridge
+  // plays the cached frames from it and expects the player padJ ahead. A muted pause notes nothing.
   res.pauseSeek = await p.evaluate(async () => {
     const S = window.__sightReview, v = S.R.video, wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
     S.androidAudio = true; window.__sk.length = 0;
@@ -409,8 +409,9 @@ async function wcache(){
     await wait(300);
     const atPause = { sk: window.__sk.slice(), padT: S.R.padT, paused: v.paused };
     S.togglePlay();
-    const sk = window.__sk.slice();
+    const sk = window.__sk.slice(), lastB = S.bridgeLast;
     for (let i = 0; i < 60 && (S.R.bridge || v.paused); i++) await wait(50);
+    const last = { ...lastB };
     await wait(200);
     S.togglePlay();
     await wait(300);
@@ -421,8 +422,24 @@ async function wcache(){
     S.togglePlay();
     await wait(300);
     const muted = { padT: S.R.padT, paused: v.paused };
-    S.setVol(1); S.androidAudio = false;
-    return { t, atPause, sk, muted };
+    S.setVol(1);
+    // No cached frames there (span faked away): noted, but a plain play (it skips the device's jump).
+    S.seekTo(0.5); await wait(400);
+    S.togglePlay();
+    for (let i = 0; i < 60 && (S.R.bridge || v.paused); i++) await wait(50);
+    await wait(150);
+    S.togglePlay();
+    await wait(300);
+    const c = S.R.scrub, span = c.span, padT = S.R.padT;
+    c.span = () => null; window.__sk.length = 0;
+    S.togglePlay();
+    const noCache = { padT, sk: window.__sk.slice(), bridge: !!S.R.bridge };
+    c.span = span;
+    await wait(300);
+    S.androidAudio = false;
+    S.togglePlay();
+    await wait(200);
+    return { t, atPause, sk, last, muted, noCache };
   });
   // Played on past clip a's end: clip b opens with its cached frames already running, then the bridge, then its player.
   bb = await p.locator(".sqb").boundingBox();

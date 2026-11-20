@@ -992,10 +992,12 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   the clock's frame all along (never held, so never a freeze). A tap on an ended clip plays from 0. `bridgeEnd` puts `playbackRate` (`B.rate`)
   back (the bridge touches neither `muted` nor `volume`); `rateNow()` reads `B.rate`; `setRate` re-bases the clock
   (`t0`, `at`, `sp`, `rate`, `cr`) and goes on. On Android (`androidAudio`) a pause after a play with sound (not
-  muted, `hasAudio` not false) notes the frame (`R.padT`; any seek clears it) and the next `togglePlay` with nothing
-  pending first sends the player to that frame's middle: the device plays out the ~0.2 s already in its audio output
-  after the pause, and the next `play()` went on from past it (the picture skipped that much); Chrome skips a seek to
-  the paused time itself. Deferred to the play so a step / scrub after the pause never waits behind it.
+  muted, `hasAudio` not false) notes the frame (`R.padT`; any seek clears it): the device plays out the ~0.2 s already
+  in its audio output after the pause, and the next `play()` goes on that far past the frame shown (`padJ`, learnt from
+  the first frame off it, default 0.2). The next `togglePlay` with nothing pending bridges (`bridgeStart(…, jump)`):
+  the cached frames play from the frame shown and the stay plan expects the player at `x = paused + padJ` — no seek
+  (a seek back cost up to ~1 s on a phone clip, frozen whenever no cache could cover it). With no cached frames a
+  plain play skips the `padJ`.
   Learnt: `seekCost` (`a`, `b`, `s`, `o`) from every seek ("seeking" → "seeked", `R.seekN`), `lagBy` (by codec —
   `wc.codec` first 4 chars, else the extension — and sound: `:m` silent — muted or a clip with none; `*` / `*:m` the last
   learnt, for a codec not seen yet) from the first moving rVFC frame after any `play()` from a decoded

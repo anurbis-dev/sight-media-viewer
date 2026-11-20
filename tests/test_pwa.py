@@ -370,12 +370,17 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(ps["atPause"]["sk"], [], ps)  # no seek at the pause...
         self.assertTrue(ps["atPause"]["paused"], ps)
         self.assertAlmostEqual(ps["atPause"]["padT"], ps["t"], delta=1e-6)  # ...the frame noted
-        self.assertGreaterEqual(len(ps["sk"]), 1, ps)  # the next play: first to that frame's middle (24 fps; the bridge may seek on)
-        self.assertEqual(int(ps["sk"][0] * 24), int(ps["t"] * 24), ps)
-        f = (ps["sk"][0] * 24) % 1
-        self.assertLess(min(abs(f - 0.5), abs(f - 0.6)), 0.02, ps)  # (0.6: nudged off a paused time at the middle)
+        self.assertEqual(ps["sk"], [], ps)  # the next play: no seek (0.96.6)...
+        self.assertEqual(ps["last"]["mode"], "stay", ps)  # ...a bridge from the paused frame...
+        self.assertAlmostEqual(ps["last"]["pad"], ps["t"], delta=1e-6)
+        self.assertAlmostEqual(ps["last"]["x"], ps["t"] + 0.2, delta=1e-3)  # ...expecting the player padJ (0.2) ahead
+        self.assertEqual(ps["last"]["why"], "player", ps)  # handed over by the player (no jump here: it is behind)
+        self.assertLess(ps["last"]["ms"], (ps["last"]["h"] + 0.8) * 1000, ps)
         self.assertIsNone(ps["muted"]["padT"], ps)  # a muted pause notes nothing
         self.assertTrue(ps["muted"]["paused"], ps)
+        self.assertIsNotNone(ps["noCache"]["padT"], ps)  # noted, but no cached frames there:
+        self.assertEqual(ps["noCache"]["sk"], [], ps)  # a plain play
+        self.assertFalse(ps["noCache"]["bridge"], ps)
         self.assertGreater(st["cached"], 3)
         self.assertEqual(st["end"], [True, False, 1, False])
         # Near the clip's end with no time to catch up: the cache plays the tail alone, then on into the next clip.
