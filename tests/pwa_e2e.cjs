@@ -342,7 +342,7 @@ async function wcache(){
     Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6, o: 0 }); S.setLag(0.1);
     window.__br = []; window.__sk = [];
     const si = document.querySelector(".stage .scrubimg");
-    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.x : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused, R.video.playbackRate, R.video.muted, R.bridge ? (R.bridge.tail ? "tail" : R.bridge.stay ? "stay" : "seek") : null]); window.__brRaf = requestAnimationFrame(f); };
+    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.x : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused, R.video.playbackRate, R.video.muted || R.video.volume < 0.01, R.bridge ? (R.bridge.tail ? "tail" : R.bridge.stay ? "stay" : "seek") : null, R.video.muted, R.video.volume]); window.__brRaf = requestAnimationFrame(f); };
     f();
     // Every time the player is sent to (its "seeking" event reads only the last one).
     const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
@@ -360,7 +360,7 @@ async function wcache(){
     for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
     // Handed over while the player still stood on the frame it was sought to (1 s): the picture would freeze there.
     const i0 = br.findIndex((x) => x[1] != null), early = br.slice(i0).filter((x) => x[1] == null && x[4] < 1 + 0.75 / 24).length;
-    return { t1: [...new Set(on.map((x) => x[1]))], seeks: window.__sk, shown: on.length ? [on[0][2], on[on.length - 1][2]] : null, back, early, cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]] };
+    return { t1: [...new Set(on.map((x) => x[1]))], seeks: window.__sk, shown: on.length ? [on[0][2], on[on.length - 1][2]] : null, back, early, cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]], elMuted: on.length > 0 && on.every((x) => x[9]) };
   });
   await p.evaluate(() => window.__sightReview.togglePlay());
   // A tap during the bridge: paused on the frame shown, and the player sought to that frame.
@@ -371,24 +371,30 @@ async function wcache(){
   await ready(names[1]);
   res.halt.push(await p.evaluate(() => window.__sightReview.R.video.currentTime));
   // Play from the frame the player stands on, its start slow (an HEVC clip's ~0.25 s, faked): the cache plays at once,
-  // the player — not sought — plays muted at twice the rate until it has caught the clock up, then at its own with sound.
+  // the player — not sought — plays hushed at twice the rate until it has caught the clock up, then at its own with sound.
+  // (A clip with sound: hushed at a whisper, never muted — un-muting a playing video stalls it on Android.)
   await p.evaluate(() => window.__sightReview.seekTo(1.5));
   await ready(names[1]);
   await p.waitForFunction(() => { const R = window.__sightReview.R; return R.scrubT == null && !R.video.seeking; });
   await p.evaluate(() => {
     const S = window.__sightReview, v = S.R.video;
-    S.setLag(0.3); window.__br.length = 0; window.__sk.length = 0;
+    S.R.hasAudio = true; S.setLag(0.3); window.__br.length = 0; window.__sk.length = 0;
     v.play = function (){ delete this.play; return new Promise((ok, no) => setTimeout(() => this.play().then(ok, no), 300)); };  // (a slow start)
     S.togglePlay();
   });
+  // A level set during the catch-up: kept off the hushed player until the handover.
+  await p.waitForFunction(() => { const R = window.__sightReview.R; return R.bridge && R.bridge.played; }, null, { timeout: 10000 });
+  const midVol = await p.evaluate(() => { const S = window.__sightReview, v = S.R.video; S.setVol(0.5); return [v.muted, v.volume < 0.01, !!S.R.bridge]; });
   await p.waitForFunction(() => { const R = window.__sightReview.R; return !R.bridge && !R.video.paused && R.video.currentTime > 2; }, null, { timeout: 10000 });
   res.stay = await p.evaluate(() => {
     const br = window.__br, on = br.filter((x) => x[1] != null), last = br[br.length - 1];
     let back = 0;
     for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
     return { modes: [...new Set(on.map((x) => x[8]))], seeks: window.__sk.slice(), first: on.length ? on[0][2] : null, back, fast: Math.max(...on.map((x) => x[6])),
-      muted: on.some((x) => x[7]), cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]] };
+      muted: on.some((x) => x[7]), elMuted: on.some((x) => x[9]), cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]], vol: [last[9], last[10]] };
   });
+  res.stay.midVol = midVol;
+  await p.evaluate(() => window.__sightReview.setVol(1));
   await p.evaluate(() => window.__sightReview.togglePlay());
   // Played on past clip a's end: clip b opens with its cached frames already running, then the bridge, then its player.
   bb = await p.locator(".sqb").boundingBox();

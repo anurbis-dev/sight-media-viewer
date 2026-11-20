@@ -965,10 +965,14 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   **Play start from the cache** (`bridgeStart` / `bridgePlan` / `bridgeEnd` / `bridgeTailEnd` / `bridgeHalt`,
   `R.bridge`): the player is slow to start on a phone — a seek decodes from the keyframe before the frame
   (~5-10 ms a frame, 0.5-1.2 s far into a long GOP: phone clips, exports with one keyframe) and even a settled
-  HEVC clip takes ~0.25 s from `play()` to its first moving frame (H.264 ~0.03). So `togglePlay` plays the scrub
+  clip with sound takes ~0.25 s on Android from `play()` to its first moving frame (its audio output starts first;
+  muted or with no sound ~0.03-0.06 s, whatever the codec). So `togglePlay` plays the scrub
   cache at once (its frames in `.scrubimg` at the clock `t0 + elapsed·rate`, `R.scrubT` follows it) whenever the
-  player is not on the frame (seeking, `readyState < 2`, another frame) or is but slow (`lagNow()` >
-  max(0.07 s, 1.5 frames)); the player catches the clock up unseen and muted. `bridgePlan` picks the plan with the
+  player is not on the frame (seeking, `readyState < 2`, another frame) or is but slow (`lagNow(volLevel < 0.02)` >
+  max(0.07 s, 1.5 frames)); the player catches the clock up unseen and hushed (`bridgeMutes()`: at a whisper,
+  `volume = BRIDGE_HUSH` 0.001, wherever the page sets the volume (`volWorks`), the level is > 0 and the clip may have
+  sound — un-muting a playing video stalls it ~0.2 s on Android while its audio output starts, muted the output never
+  ran; else `muted`: iOS, level 0, a clip with no sound). `bridgePlan` picks the plan with the
   soonest handover `h`: *stay* (not seeking, standing at or ≤ 2 s before the shown frame — a settled frame, a clip
   just opened at 0: played from there; or a seek already on its way there let finish — its cost less the time
   since its "seeking", `R.seekFrom` / `R.seekX`, all of it when that event has not come yet) or *seek* to the shown frame or one ahead (`costAt(x) = a + b·frames from
@@ -982,10 +986,11 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   `T + lag·rate ≥ x` (at once when behind, at `catchRate`); an rVFC watch hands over when its `mediaTime ≥ T −
   fd/2` at the frame's display time, switching to `catchRate` if it falls a frame behind; the cache picture shows
   the clock's frame all along (never held, so never a freeze). A tap on an ended clip plays from 0. `bridgeEnd` puts `playbackRate` (`B.rate`) and
-  `muted` (from `volLevel`; `applyVol` leaves it muted meanwhile) back; `rateNow()` reads `B.rate`; `setRate`
+  the sound (`applyVol`, which does nothing to a bridging player meanwhile) back; `rateNow()` reads `B.rate`; `setRate`
   re-bases the clock (`t0`, `at`, `rate`, `cr`) and goes on.
-  Learnt: `seekCost` (`a`, `b`, `s`, `o`) from every seek ("seeking" → "seeked", `R.seekN`), `lagBy` (by codec:
-  `wc.codec` first 4 chars, else the extension) from the first moving rVFC frame after any `play()` from a decoded
+  Learnt: `seekCost` (`a`, `b`, `s`, `o`) from every seek ("seeking" → "seeked", `R.seekN`), `lagBy` (by codec —
+  `wc.codec` first 4 chars, else the extension — and sound: `:m` muted or a clip with none; `*` / `*:m` the last
+  learnt, for a codec not seen yet) from the first moving rVFC frame after any `play()` from a decoded
   frame (the bridge's and plain ones, so a fast codec that stopped bridging still notices a slower start).
   Timeouts: not played within `h + 1.5 s` → stuck (its own play, `R.keepPic`); played but not caught up within
   max(2 s, h + 1 s) → late (its own picture once it shows one: `hideWhenShown`); paused from outside for 0.5 s →

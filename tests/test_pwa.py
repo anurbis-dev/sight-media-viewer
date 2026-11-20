@@ -341,6 +341,7 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(br["early"], 0, br)  # (a faked slow start) the cache until the player has moved off 1 s
         self.assertGreater(br["cached"], 3)
         self.assertEqual(br["end"], [True, False, 1, False])  # the player's own picture, playing, its rate and sound back
+        self.assertTrue(br["elMuted"])  # a clip with no sound (these fixtures): the catch-up muted, not whispered
         # Played on past the clip's end: the next clip starts from its cached frames (the bridge), then its player.
         # (A player that starts at once hands over within a frame or two: the bridge may be too short to be sampled.)
         last = res["cut"]["last"]
@@ -351,14 +352,17 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["cut"]["aModes"], [])  # clip a (fast start) played plainly...
         self.assertEqual(res["cut"]["ended"], 1)  # ...to its end
         # 0.96.3: from the frame the player stands on, its start slow (faked 0.3 s): the cache plays at once, the
-        # player (not sought) catches it up muted at 2x, then plays on at its own rate with sound.
+        # player (not sought) catches it up hushed at 2x, then plays on at its own rate with sound.
         st = res["stay"]
         self.assertEqual(st["modes"], ["stay"], st)
         self.assertEqual(st["seeks"], [])
         self.assertAlmostEqual(st["first"], 1.5, delta=0.05)
         self.assertEqual(st["back"], 0)
         self.assertEqual(st["fast"], 2)
-        self.assertTrue(st["muted"])
+        self.assertTrue(st["muted"])  # hushed...
+        self.assertFalse(st["elMuted"])  # ...0.96.4: at a whisper, never muted (a clip with sound)
+        self.assertEqual(st["midVol"], [False, True, True])  # a level set mid-bridge waits (still hushed, not muted)...
+        self.assertEqual(st["vol"], [False, 0.5])  # ...and is the player's at the handover
         self.assertGreater(st["cached"], 3)
         self.assertEqual(st["end"], [True, False, 1, False])
         # Near the clip's end with no time to catch up: the cache plays the tail alone, then on into the next clip.
