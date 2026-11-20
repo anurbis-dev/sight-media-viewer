@@ -346,8 +346,9 @@
   not sought; it seeks once, to where you let go. Dragging across a sequence's cut shows the next clip's
   cached frame at once while that clip opens. Play starts at once from cached frames too: the player needs
   a moment to reach a frame far from a keyframe (phone clips may have one keyframe in seconds), and a clip
-  with sound a moment to start even from where it stands (on Android its sound output starts first), so the cached frames play until it has caught up (it runs
-  faster, silently, for a fraction of a second), then it takes over — the sound comes in then. The same at a
+  with sound a moment to start even from where it stands (on Android its sound output starts first), so the cached frames play until it has caught up, then it takes over: with sound
+  the player starts with its sound as soon as the phone allows and the cached picture runs slower for a fraction of a
+  second until the player has caught up (silent clips: the player catches up faster instead). The same at a
   cut when a sequence plays on into the next clip. Near a clip's end, where the player could not catch up in
   time, the cached frames play the rest of the clip alone (no sound) and play goes on into the next clip. In a group's sequence, near a clip's end the window runs on into the
   next clip's start (near its start: into the previous clip's end), so playing or scrubbing across the

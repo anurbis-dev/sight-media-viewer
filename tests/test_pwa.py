@@ -341,7 +341,7 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(br["early"], 0, br)  # (a faked slow start) the cache until the player has moved off 1 s
         self.assertGreater(br["cached"], 3)
         self.assertEqual(br["end"], [True, False, 1, False])  # the player's own picture, playing, its rate and sound back
-        self.assertTrue(br["elMuted"])  # a clip with no sound (these fixtures): the catch-up muted, not whispered
+        self.assertFalse(br["elMuted"])  # 0.96.5: the bridge mutes nothing (a clip with no sound catches up at 2x)
         # Played on past the clip's end: the next clip starts from its cached frames (the bridge), then its player.
         # (A player that starts at once hands over within a frame or two: the bridge may be too short to be sampled.)
         last = res["cut"]["last"]
@@ -352,17 +352,30 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["cut"]["aModes"], [])  # clip a (fast start) played plainly...
         self.assertEqual(res["cut"]["ended"], 1)  # ...to its end
         # 0.96.3: from the frame the player stands on, its start slow (faked 0.3 s): the cache plays at once, the
-        # player (not sought) catches it up hushed at 2x, then plays on at its own rate with sound.
+        # player (not sought) plays at its own rate with sound while the picture slows until it has caught up.
         st = res["stay"]
         self.assertEqual(st["modes"], ["stay"], st)
         self.assertEqual(st["seeks"], [])
         self.assertAlmostEqual(st["first"], 1.5, delta=0.05)
         self.assertEqual(st["back"], 0)
-        self.assertEqual(st["fast"], 2)
-        self.assertTrue(st["muted"])  # hushed...
-        self.assertFalse(st["elMuted"])  # ...0.96.4: at a whisper, never muted (a clip with sound)
-        self.assertEqual(st["midVol"], [False, True, True])  # a level set mid-bridge waits (still hushed, not muted)...
-        self.assertEqual(st["vol"], [False, 0.5])  # ...and is the player's at the handover
+        # 0.96.5, a clip with sound: the player at its own rate with its sound all along, the picture slowed.
+        self.assertEqual(st["fast"], 1)
+        self.assertFalse(st["muted"])
+        self.assertLess(st["speed"], 0.85, st)
+        self.assertEqual(st["midVol"], [False, 0.5, True])  # a level set mid-bridge applies at once
+        self.assertEqual(st["vol"], [False, 0.5])
+        self.assertEqual(st["last"]["why"], "player", st["last"])  # handed over by the player...
+        self.assertLess(st["last"]["ms"], (st["last"]["h"] + 0.35) * 1000, st["last"])  # ...on time
+        ps = res["pauseSeek"]
+        self.assertEqual(ps["atPause"]["sk"], [], ps)  # no seek at the pause...
+        self.assertTrue(ps["atPause"]["paused"], ps)
+        self.assertAlmostEqual(ps["atPause"]["padT"], ps["t"], delta=1e-6)  # ...the frame noted
+        self.assertGreaterEqual(len(ps["sk"]), 1, ps)  # the next play: first to that frame's middle (24 fps; the bridge may seek on)
+        self.assertEqual(int(ps["sk"][0] * 24), int(ps["t"] * 24), ps)
+        f = (ps["sk"][0] * 24) % 1
+        self.assertLess(min(abs(f - 0.5), abs(f - 0.6)), 0.02, ps)  # (0.6: nudged off a paused time at the middle)
+        self.assertIsNone(ps["muted"]["padT"], ps)  # a muted pause notes nothing
+        self.assertTrue(ps["muted"]["paused"], ps)
         self.assertGreater(st["cached"], 3)
         self.assertEqual(st["end"], [True, False, 1, False])
         # Near the clip's end with no time to catch up: the cache plays the tail alone, then on into the next clip.

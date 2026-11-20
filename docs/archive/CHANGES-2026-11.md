@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.92.0 — 2026-11-19 — Compare scrubs every clip from a short-GOP proxy
+- **What:** dragging the compare timeline seeks each clip's small scrub copy (a keyframe every few frames), made as soon as the comparison opens, so several clips follow the pointer together. Until a copy is ready, that clip is still seeked, but only one seek at a time, so a slow clip keeps its last frame. Letting go seeks the full file once and the proxy stays up until that frame is on screen.
+- **Where:** compare.js `ensureScrubs` / `pumpTime` / `wantTime` / `settleScrub`; library.py `SCRUB_PARALLEL` / `_encode_copy` / `_stop_scrub_procs`; tests/test_playback_copy.py; MANUAL, ARCHITECTURE.
+- **Notes:** up to 3 scrub encodes at once (decode, scale and encode each capped at 2 threads). A playback copy still goes first and stops every running scrub encode; those jobs start over. Letting go queues the release time even when a seek is already in flight, so an older `seeked` cannot take the proxy down. Clips under 3 s are skipped, same as the lightbox. The proxy is shown only during the drag, after it has landed on that drag. Difference tiles paint from the proxy while it is the picture on screen. The RAM byte cache is unchanged. The phone scrub cache is unchanged.
+- Review (fresh agent): while playing, a full-file seek still in flight when the proxy became ready hid the proxy on that older frame. Fixed (`queueRelease`, `settleScrub` only once the primary is on the playhead). The same reviewer confirmed the fix and found nothing new.
+
 ## 0.91.1 — 2026-11-19 — Scrub audio plays from a PCM cache
 - **What:** sound while scrubbing no longer stutters. A drag used to `play()` the video for 90 ms at each position, so every move waited on that seek (the scrub copy has no audio). Sight now extracts the clip's audio once to a mono 16-bit PCM cache and plays slices of it while the picture scrubs; a slow drag hears the sound continuously, a jump starts at the pointer.
 - **Where:** library.py `start_scrub_audio` / `scrub_audio_path` (file `thumbs/video/<aid>_<stamp>.scruba.pcm`, 22050 Hz mono s16le); server.py `POST/GET /api/video/scrub-audio`; index.html `scrubHear` / `saPlay` (replaces `scrubBlip`); tests/test_playback_copy.py; MANUAL, ARCHITECTURE.

@@ -342,7 +342,7 @@ async function wcache(){
     Object.assign(S.seekCost, { a: 0.2, b: 0.02, s: 0.6, o: 0 }); S.setLag(0.1);
     window.__br = []; window.__sk = [];
     const si = document.querySelector(".stage .scrubimg");
-    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.x : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused, R.video.playbackRate, R.video.muted || R.video.volume < 0.01, R.bridge ? (R.bridge.tail ? "tail" : R.bridge.stay ? "stay" : "seek") : null, R.video.muted, R.video.volume]); window.__brRaf = requestAnimationFrame(f); };
+    const f = () => { const R = S.R; if (R && R.video) window.__br.push([R.meta.asset.name, R.bridge ? R.bridge.x : null, R.scrubT, !si.isConnected || si.hidden, R.video.currentTime, R.video.paused, R.video.playbackRate, R.video.muted || R.video.volume < 0.01, R.bridge ? (R.bridge.tail ? "tail" : R.bridge.stay ? "stay" : "seek") : null, R.video.muted, R.video.volume, performance.now()]); window.__brRaf = requestAnimationFrame(f); };
     f();
     // Every time the player is sent to (its "seeking" event reads only the last one).
     const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
@@ -371,8 +371,8 @@ async function wcache(){
   await ready(names[1]);
   res.halt.push(await p.evaluate(() => window.__sightReview.R.video.currentTime));
   // Play from the frame the player stands on, its start slow (an HEVC clip's ~0.25 s, faked): the cache plays at once,
-  // the player — not sought — plays hushed at twice the rate until it has caught the clock up, then at its own with sound.
-  // (A clip with sound: hushed at a whisper, never muted — un-muting a playing video stalls it on Android.)
+  // the player — not sought — plays at its own rate with its sound from its start, and the cached picture slows
+  // (BRIDGE_SLOW) until the player has caught it up. (A clip with sound: no mute, no rate change.)
   await p.evaluate(() => window.__sightReview.seekTo(1.5));
   await ready(names[1]);
   await p.waitForFunction(() => { const R = window.__sightReview.R; return R.scrubT == null && !R.video.seeking; });
@@ -382,20 +382,48 @@ async function wcache(){
     v.play = function (){ delete this.play; return new Promise((ok, no) => setTimeout(() => this.play().then(ok, no), 300)); };  // (a slow start)
     S.togglePlay();
   });
-  // A level set during the catch-up: kept off the hushed player until the handover.
+  // A level set during the catch-up: applied to the player at once (the bridge leaves its sound alone).
   await p.waitForFunction(() => { const R = window.__sightReview.R; return R.bridge && R.bridge.played; }, null, { timeout: 10000 });
-  const midVol = await p.evaluate(() => { const S = window.__sightReview, v = S.R.video; S.setVol(0.5); return [v.muted, v.volume < 0.01, !!S.R.bridge]; });
+  const midVol = await p.evaluate(() => { const S = window.__sightReview, v = S.R.video; S.setVol(0.5); return [v.muted, v.volume, !!S.R.bridge]; });
   await p.waitForFunction(() => { const R = window.__sightReview.R; return !R.bridge && !R.video.paused && R.video.currentTime > 2; }, null, { timeout: 10000 });
   res.stay = await p.evaluate(() => {
     const br = window.__br, on = br.filter((x) => x[1] != null), last = br[br.length - 1];
     let back = 0;
     for (let i = 1; i < on.length; i++) if (on[i][2] != null && on[i - 1][2] != null && on[i][2] < on[i - 1][2] - 1e-6) back++;
     return { modes: [...new Set(on.map((x) => x[8]))], seeks: window.__sk.slice(), first: on.length ? on[0][2] : null, back, fast: Math.max(...on.map((x) => x[6])),
+      speed: on.length > 1 ? (on[on.length - 1][2] - on[0][2]) / ((on[on.length - 1][11] - on[0][11]) / 1000) : null,
       muted: on.some((x) => x[7]), elMuted: on.some((x) => x[9]), cached: on.filter((x) => !x[3]).length, end: [last[3], last[5], last[6], last[7]], vol: [last[9], last[10]] };
   });
   res.stay.midVol = midVol;
   await p.evaluate(() => window.__sightReview.setVol(1));
-  await p.evaluate(() => window.__sightReview.togglePlay());
+  // Paused after a play with sound: the next play starts from the frame shown, not past the sound Android still had
+  // in its output.
+  res.stay.last = await p.evaluate(() => window.__sightReview.bridgeLast);
+  // (Android only — faked here: S.androidAudio.) The pause notes the frame (no seek then); the next play first sends
+  // the player to that frame's middle. A muted pause notes nothing.
+  res.pauseSeek = await p.evaluate(async () => {
+    const S = window.__sightReview, v = S.R.video, wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+    S.androidAudio = true; window.__sk.length = 0;
+    S.togglePlay();
+    const t = v.currentTime;
+    await wait(300);
+    const atPause = { sk: window.__sk.slice(), padT: S.R.padT, paused: v.paused };
+    S.togglePlay();
+    const sk = window.__sk.slice();
+    for (let i = 0; i < 60 && (S.R.bridge || v.paused); i++) await wait(50);
+    await wait(200);
+    S.togglePlay();
+    await wait(300);
+    S.seekTo(0.5); await wait(400);
+    S.setVol(0); S.togglePlay();
+    for (let i = 0; i < 60 && (S.R.bridge || v.paused); i++) await wait(50);
+    await wait(200);
+    S.togglePlay();
+    await wait(300);
+    const muted = { padT: S.R.padT, paused: v.paused };
+    S.setVol(1); S.androidAudio = false;
+    return { t, atPause, sk, muted };
+  });
   // Played on past clip a's end: clip b opens with its cached frames already running, then the bridge, then its player.
   bb = await p.locator(".sqb").boundingBox();
   await p.mouse.click(bb.x + bb.width * 0.42, bb.y + bb.height / 2);
