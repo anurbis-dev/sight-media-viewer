@@ -30,6 +30,7 @@ export function createSgSource(opts){
   const statuses = new Set();
   // the filter builder's conditions on Version fields (Filter ▾ in the top bar), sent with every page
   let where = SF().sanitize(readJson(WHERE_KEY, null));
+  let smart = null;   // a ShotGrid smart collection's rule in effect instead of `where` (stage 3c; null: the free conditions)
   let fieldsPromise = null;
   const loadFields = () => fieldsAll ? Promise.resolve(fieldsAll)
     : (fieldsPromise = fieldsPromise || SG().versionFields(opts.client()).then((f) => { fieldsAll = f; return f; }).finally(() => { fieldsPromise = null; }));
@@ -108,7 +109,7 @@ export function createSgSource(opts){
   function filterFields(){
     if (!fieldsAll) return null;
     const named = new Set(statuses);
-    (function walk(g){ g.c.forEach((x) => { if (SF().isGroup(x)) walk(x); else if (x.f === "sg_status_list" && x.v) named.add(String(x.v)); }); })(where);
+    (function walk(g){ g.c.forEach((x) => { if (SF().isGroup(x)) walk(x); else if (x.f === "sg_status_list" && x.v) named.add(String(x.v)); }); })(smart || where);
     return SF().sgFields(fieldsAll.map((f) => f.name === "sg_status_list" && !(f.values || []).length && named.size
       ? Object.assign({}, f, { values: [...named].sort() }) : f));
   }
@@ -133,12 +134,19 @@ export function createSgSource(opts){
     // The filter builder: the Version fields it offers (null until read), the conditions, and setting them.
     filterFields,
     loadFilterFields(){ return loadFields().then(filterFields); },
-    get where(){ return where; },
-    setWhere(t){ where = SF().sanitize(t); opts.putSetting(WHERE_KEY, JSON.stringify(where)); },
+    // (while a smart collection is on, its rule: the builder edits that one; the caller stores it with the collection)
+    get where(){ return smart || where; },
+    setWhere(t){
+      if (smart){ smart = SF().sanitize(t); return; }
+      where = SF().sanitize(t); opts.putSetting(WHERE_KEY, JSON.stringify(where));
+    },
+    get smartOn(){ return !!smart; },
+    setSmart(t){ smart = t ? SF().sanitize(t) : null; },
     // One page of Versions (1-based) as grid items; `more` = there may be further pages.
     async page(n){
-      if (where.c.length && !fieldsAll){ await loadFields(); opts.onChange("labels"); }   // a condition needs its field's type (an error shows)
-      const cond = where.c.length ? SF().toSgConditions(where, filterFields()) : null;
+      const w = smart || where;
+      if (w.c.length && !fieldsAll){ await loadFields(); opts.onChange("labels"); }   // a condition needs its field's type (an error shows)
+      const cond = w.c.length ? SF().toSgConditions(w, filterFields()) : null;
       const vs = await SG().browseVersions(opts.client(), Object.assign({ project: project.id }, filter), fields, n, SG_PAGE, cond);
       vs.forEach((v) => { if (v.sg_status_list && !statuses.has(v.sg_status_list)){ statuses.add(v.sg_status_list); paintStatuses(); } });
       return { items: vs.map(toItem), more: vs.length === SG_PAGE };

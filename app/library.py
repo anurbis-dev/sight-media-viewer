@@ -125,6 +125,23 @@ _WHERE_MAX_CONDS = 100
 _TAGS_JSON = "(CASE WHEN json_valid(assets.tags) THEN assets.tags ELSE '[]' END)"
 
 
+MAX_RULE_CHARS = 64_000
+
+
+def _rule_json(rule: object) -> str:
+    """A smart collection's rule as stored: a JSON object (the client's Filter ▾ tree, sanitized there), bounded."""
+    if not isinstance(rule, dict):
+        raise ValueError("a smart collection's rule must be an object")
+    try:
+        s = json.dumps(rule, ensure_ascii=False, separators=(",", ":"))
+        s.encode("utf-8")   # (a lone surrogate would fail in SQLite instead)
+    except (RecursionError, TypeError, ValueError):
+        raise ValueError("the smart collection's rule is not valid") from None
+    if len(s) > MAX_RULE_CHARS:
+        raise ValueError("the smart collection's rule is too long")
+    return s
+
+
 def where_sql(tree: object) -> tuple[str, list[object]] | None:
     """SQL (and its arguments) for a filter-builder tree; None when it has no condition."""
     count = [0]
@@ -1438,6 +1455,14 @@ class Library:
             self.conn.execute("ALTER TABLE collections ADD COLUMN icon TEXT")
         if "color" not in ccols:
             self.conn.execute("ALTER TABLE collections ADD COLUMN color TEXT")
+        # Smart collections (docs/PLAN-trackers.md stage 3c): `rule` holds a saved Filter ▾ tree (JSON, the client's
+        # model); a ShotGrid one also names its site (host) and project.
+        if "rule" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN rule TEXT")
+        if "sg_site" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN sg_site TEXT")
+        if "sg_project" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN sg_project INTEGER")
         if "sort_order" not in ccols:
             self.conn.execute("ALTER TABLE collections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
             # Backfill from creation order so existing collections keep their current order on upgrade.
@@ -3844,7 +3869,8 @@ class Library:
         return int(row[0]["c"]) if row else 0
 
     def collections(self) -> list[dict]:
-        cols = [dict(r) for r in self.query("SELECT id, name, parent_id, created_at, icon, color FROM collections ORDER BY sort_order, created_at")]
+        cols = [dict(r) for r in self.query(
+            "SELECT id, name, parent_id, created_at, icon, color, rule, sg_site, sg_project FROM collections ORDER BY sort_order, created_at")]
         counts = {
             r["collection_id"]: int(r["c"])
             for r in self.query("SELECT collection_id, COUNT(*) c FROM collection_assets GROUP BY collection_id")
@@ -3856,16 +3882,42 @@ class Library:
             c["count"] = counts.get(c["id"], 0)
             c["assetIds"] = members.get(c["id"], [])
             c["parentId"] = c.pop("parent_id")
+            rule = c.pop("rule")
+            try:
+                c["rule"] = json.loads(rule) if rule else None
+            except ValueError:
+                c["rule"] = {"op": "and", "c": []}   # (a smart collection stays one: its rule is just empty)
+            c["sgSite"] = c.pop("sg_site")
+            c["sgProject"] = c.pop("sg_project")
         return cols
 
-    def add_collection(self, name: str, parent_id: str | None = None) -> dict:
+    def add_collection(self, name: str, parent_id: str | None = None, rule: object = None,
+                       sg_site: str | None = None, sg_project: int | None = None) -> dict:
+        """A collection; with `rule` a smart one (a saved filter, no members). A ShotGrid smart collection
+        (`sg_site` + `sg_project`) lives under its project in Sources, never nested in a collection."""
+        rule_s = _rule_json(rule) if rule is not None else None
+        if rule_s is None:
+            sg_site, sg_project = None, None
+        if sg_site or sg_project:
+            if (not isinstance(sg_site, str) or not sg_site.strip() or len(sg_site) > 255
+                    or not isinstance(sg_project, int) or isinstance(sg_project, bool) or not 0 < sg_project < 2 ** 53):
+                raise ValueError("a ShotGrid smart collection needs its site and project")
+            parent_id = None
+        if parent_id and self.query("SELECT 1 FROM collections WHERE id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL)", (parent_id,)):
+            parent_id = None   # (nothing nests inside a smart collection)
         cid = asset_id(f"col:{time.time_ns()}:{secrets.token_hex(8)}:{name}")
         nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM collections")[0]["n"]
         self.execute(
-            "INSERT INTO collections(id, name, parent_id, created_at, sort_order) VALUES (?,?,?,?,?)",
-            (cid, name.strip() or "Untitled", parent_id or None, int(time.time() * 1000), nxt),
+            "INSERT INTO collections(id, name, parent_id, created_at, sort_order, rule, sg_site, sg_project) VALUES (?,?,?,?,?,?,?,?)",
+            (cid, name.strip() or "Untitled", parent_id or None, int(time.time() * 1000), nxt, rule_s, sg_site or None, sg_project),
         )
-        return {"id": cid, "name": name.strip() or "Untitled", "parentId": parent_id, "assetIds": [], "count": 0, "icon": None, "color": None}
+        return {"id": cid, "name": name.strip() or "Untitled", "parentId": parent_id or None, "assetIds": [], "count": 0,
+                "icon": None, "color": None, "rule": json.loads(rule_s) if rule_s else None,
+                "sgSite": sg_site or None, "sgProject": sg_project}
+
+    def set_collection_rule(self, cid: str, rule: object) -> None:
+        """A smart collection's saved filter (a plain collection never becomes a smart one this way)."""
+        self.execute("UPDATE collections SET rule=? WHERE id=? AND rule IS NOT NULL", (_rule_json(rule), cid))
 
     def set_collection_icon(self, cid: str, icon: str | None, color: str | None) -> None:
         self.execute("UPDATE collections SET icon=?, color=? WHERE id=?", (icon or None, color or None, cid))
@@ -3876,6 +3928,12 @@ class Library:
     def move_collection(self, cid: str, parent_id: str | None) -> None:
         if parent_id == cid:
             return
+        if parent_id:
+            # nothing nests inside a smart collection, and a ShotGrid one stays at the top (under its project)
+            bad = self.query("SELECT 1 FROM collections WHERE (id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL))"
+                             " OR (id=? AND sg_site IS NOT NULL)", (parent_id, cid))
+            if bad:
+                return
         # Walking up from the proposed parent must never reach cid, or the move would turn cid
         # into its own ancestor.
         if parent_id:
@@ -3915,6 +3973,8 @@ class Library:
             self.conn.commit()
 
     def add_to_collection(self, cid: str, ids: list[str]) -> None:
+        if self.query("SELECT 1 FROM collections WHERE id=? AND rule IS NOT NULL", (cid,)):
+            return   # a smart collection has no members: its filter decides
         rows = [(cid, i) for i in ids if i]
         self.executemany(
             "INSERT OR IGNORE INTO collection_assets(collection_id, asset_id) VALUES (?,?)",

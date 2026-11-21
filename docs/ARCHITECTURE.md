@@ -744,6 +744,16 @@ ShotGrid project: `sgSrc.where` (`sight.sg.where`), fields from the Version sche
 status / list with `valid_values`, date / date_time, number, checkbox), sent by `browseVersions` as a REST **hash**
 filter (`toSgConditions`, content type `api3_hash+json`) ANDed with the bar's own filters; without conditions the
 array format is used as before. Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
+**Smart collections** (stage 3c): rows of `collections` with `rule` (JSON — the client's raw tree, not the wire form;
+≤ 64 000 chars, `_rule_json`) and no members (`add_to_collection` ignores them; nothing nests in one; `parent_id`
+forced NULL for ShotGrid ones). A ShotGrid one also has `sg_site` (host) + `sg_project` and is drawn under its project
+in `renderSgSource`, not under Collections. `/api/state` → `rule`, `sgSite`, `sgProject`; `POST /api/collections`
+takes them, `PATCH {rule}` changes a smart one's rule only. Client: `state.filter.smart` (library) / `sgSmartOn` +
+`sgSrc.setSmart(tree)` (ShotGrid) — while set, `libTree()` / `sgSrc.where` return the smart rule, so Filter ▾ and
+`params()` use it and edits go to `saveSmartRule` (PATCHes serialised; `smartPending` keeps the local rule over a
+stale `/api/state` until the server returns the same). The free tree (`state.filter.where` / sgSrc's own) waits
+underneath; *Save as smart collection* moves it into the new row (`saveAsSmart`). Counts are not shown on smart rows
+(each would cost a filtered COUNT on every `/api/state`).
 Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
 
 **Sequence** (index.html, `openSequence` … `bindSeqBar`) — selected videos played back to back in the

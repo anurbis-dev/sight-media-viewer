@@ -3,7 +3,8 @@
 // (letterboxed to the frame's aspect); the inspector shows a Version's fields; the top search box filters by name;
 // a double-click downloads the Version's media as a library file, links its review and opens it; the lightbox's
 // arrows step through the Versions (each downloaded in turn); a library row returns to the library. Filter ▾ (stage
-// 3b): conditions on Version fields (sent to ShotGrid as hash filters) and on library fields (the server's).
+// 3b): conditions on Version fields (sent to ShotGrid as hash filters) and on library fields (the server's). Smart
+// collections (stage 3c): conditions saved under the project / under Collections, opened, edited, renamed, deleted.
 // Run by tests/test_shotgrid.py:  node tests/sg_view_e2e.cjs <sightBase> <fakeSite>
 const { chromium } = require("playwright");
 const assert = require("assert");
@@ -70,6 +71,48 @@ const [base] = process.argv.slice(2);
   await cards(3);
   await p.keyboard.press("Escape");
   assert.ok(await p.isHidden("#filterPop"));
+  // a ShotGrid smart collection: Status is Approved saved under the project
+  const btnText = async () => (await p.textContent("#filterBtn")).replace("›", "").trim();
+  const smartOf = async (name) => (await (await fetch(base + "/api/collections")).json()).find((c) => c.name === name);
+  await p.click("#filterBtn"); await p.waitForSelector("#filterPop [data-act=add]");
+  assert.ok(await p.isDisabled("#filterPop [data-act=smart]"), "nothing to save yet");
+  await p.click("#filterPop [data-act=add]");
+  await p.selectOption("#filterPop .flt-row .flt-f", "sg_status_list");
+  await p.selectOption("#filterPop .flt-row .flt-v", "apr");
+  await cards(1);
+  await p.click("#filterPop [data-act=smart]");
+  await p.fill("#filterPop .flt-name", "Approved");
+  await p.press("#filterPop .flt-name", "Enter");
+  await p.waitForSelector(".sg-smart.on", { timeout: 5000 });
+  assert.ok(await p.isHidden("#filterPop"));
+  assert.strictEqual((await p.textContent(".sg-smart.on")).replace("×", "").trim(), "Approved");
+  assert.ok(!(await p.$(".sg-proj[data-sgp='70'].on")), "the smart row is the current one, not the project");
+  const sgs = await smartOf("Approved");
+  assert.deepStrictEqual([sgs.sgProject, sgs.rule.c[0].v], [70, "apr"]);
+  assert.ok(!(await p.$(`.col-row[data-cid='${sgs.id}']`)), "not under Collections");
+  assert.strictEqual(await btnText(), "Filter · 1");
+  // the project itself: its own conditions (cleared by the save) → all three; the smart row again → one
+  await p.click(".sg-proj[data-sgp='70']"); await cards(3);
+  assert.strictEqual(await btnText(), "Filter");
+  await p.click(".sg-smart"); await cards(1);
+  assert.deepStrictEqual(await ids(), ["sg:79"]);
+  // Filter ▾ edits the smart collection while it is open
+  await p.click("#filterBtn"); await p.waitForSelector("#filterPop .flt-smart");
+  assert.ok(/Approved/.test(await p.textContent("#filterPop .flt-smart")));
+  await p.selectOption("#filterPop .flt-row .flt-o", "is_not");
+  await cards(2);
+  for (let k = 0; k < 20 && (await smartOf("Approved")).rule.c[0].o !== "is_not"; k++) await p.waitForTimeout(150);
+  assert.strictEqual((await smartOf("Approved")).rule.c[0].o, "is_not", "saved with the collection");
+  await p.keyboard.press("Escape");
+  // rename by double-click, then delete: the project's own conditions again
+  await p.dblclick(".sg-smart");
+  await p.waitForSelector(".sg-smart input");
+  await p.fill(".sg-smart input", "Not approved"); await p.press(".sg-smart input", "Enter");
+  await p.waitForFunction(() => /Not approved/.test(document.querySelector(".sg-smart")?.textContent || ""), null, { timeout: 5000 });
+  await p.click(".sg-smart [data-act=del]");
+  await p.waitForFunction(() => !document.querySelector(".sg-smart"), null, { timeout: 5000 });
+  await cards(3);
+  assert.strictEqual(await btnText(), "Filter");
   // open the middle one, then → steps to the next Version
   const names = async () => (await (await fetch(base + "/api/assets?limit=50")).json()).items.map((x) => x.name);
   await p.dblclick(".card[data-id='sg:79']");
@@ -108,6 +151,31 @@ const [base] = process.argv.slice(2);
   await cards(1);
   await p.click("#filterPop [data-act=clear]");
   await cards(1);
+  assert.strictEqual((await p.textContent("#filterBtn")).replace("›", "").trim(), "Filter");
+  // a library smart collection: Name contains "no such name" saved under Collections (the downloaded Versions are
+  // library files too: "All" shows more than one)
+  const some = () => p.waitForFunction(() => document.querySelectorAll(".card").length > 0, null, { timeout: 8000 });
+  await p.click("#filterPop [data-act=add]");
+  await p.selectOption("#filterPop .flt-row .flt-f", "name");
+  await p.fill("#filterPop .flt-row .flt-v", "no such name");
+  await cards(0);
+  await p.click("#filterPop [data-act=smart]");
+  await p.click("#filterPop [data-act=save]");   // (no name typed: a default one)
+  await p.waitForSelector(".col-row.smart-row.on", { timeout: 5000 });
+  assert.strictEqual((await p.textContent(".col-row.smart-row.on")).replace("×", "").trim(), "Smart collection");
+  assert.strictEqual(await p.$$eval(".col-row.smart-row [data-act=add], .col-row.smart-row .badge", (x) => x.length), 0, "no members, nothing nests");
+  await cards(0);
+  await p.click("#nav .row:has-text('All')"); await some();
+  assert.strictEqual((await p.textContent("#filterBtn")).replace("›", "").trim(), "Filter", "leaving it: the free conditions (none)");
+  await p.click("#filterBtn"); await p.waitForSelector("#filterPop [data-act=add]");
+  assert.strictEqual(await p.$$eval("#filterPop .flt-row", (x) => x.length), 0, "the free conditions went into the smart collection");
+  await p.keyboard.press("Escape");
+  await p.click(".col-row.smart-row"); await cards(0);
+  assert.strictEqual((await p.textContent("#filterBtn")).replace("›", "").trim(), "Filter · 1");
+  await p.click(".col-row.smart-row [data-act=del]");
+  await p.waitForFunction(() => !document.querySelector(".col-row.smart-row"), null, { timeout: 5000 });
+  await some();   // (back to All)
+  assert.ok(await p.$("#nav .row.on:has-text('All')"));
   assert.strictEqual((await p.textContent("#filterBtn")).replace("›", "").trim(), "Filter");
   assert.deepStrictEqual(errs, []);
   console.log("sg_view: ok");

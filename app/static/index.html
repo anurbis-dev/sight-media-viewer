@@ -239,6 +239,12 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 #filterPop button { width: auto; height: 30px; display: inline-flex; padding: 0 10px; font-size: 12px; }
 #filterPop button.flt-x { width: 30px; justify-content: center; padding: 0; color: var(--subtle); }
 #filterPop .flt-clear { margin-left: auto; }
+#filterPop .flt-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+#filterPop .flt-foot:empty { display: none; }
+#filterPop .flt-foot .flt-name { flex: 1 1 180px; }
+#filterPop .flt-smart { display: inline-flex; align-items: center; gap: 6px; color: var(--subtle); font-size: 12px; }
+#filterPop .flt-smart b { color: var(--fg); font-weight: 600; }
+#filterPop .flt-note { color: var(--subtle); font-size: 12px; }
 @media (pointer: coarse) { #filterPop select, #filterPop input, #filterPop button { height: 38px; } #filterPop button.flt-x { width: 38px; } }
 /* a narrow window: across the window under the top bar (the top tools may run past its edge); top set on open */
 @media (max-width: 720px) { #filterPop { position: fixed; left: 8px; right: 8px; width: auto; } }
@@ -1150,7 +1156,8 @@ async function openUserPanel(anchor){
 // a project shows its Versions in the library grid (sg-source.js).
 // sgSrc: the item source (sg-source.js), made once; sgList: the grid shows a project's Versions while set
 // ({page, more, seq, loading}); sgLight: the Version the lightbox shows {item, asset} (arrows step through Versions).
-let sgStat = null, sgProjects = null, sgSrcOpen = false, sgSrc = null, sgProjectOn = null, sgList = null, sgLight = null;
+// sgSmartOn: the ShotGrid smart collection whose rule filters the project on screen (stage 3c; null: its own conditions).
+let sgStat = null, sgProjects = null, sgSrcOpen = false, sgSrc = null, sgProjectOn = null, sgList = null, sgLight = null, sgSmartOn = null;
 const sgOn = () => !!sgList;
 const normFsPath = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 async function refreshSgStatus(){
@@ -1177,17 +1184,53 @@ function renderSgSource(wrap){
   wrap.append(b);
   if (!sgSrcOpen || !sgProjects) return;
   if (!sgProjects.length){ const n = document.createElement("div"); n.className = "row folder-row sg-proj"; n.style.paddingLeft = "28px"; n.innerHTML = "<span>No projects</span>"; wrap.append(n); }
+  const host = sgHost(), smarts = (state.meta.collections || []).filter((c) => c.rule && c.sgSite === host);
   sgProjects.forEach((p) => {
     const r = document.createElement("div");
-    r.className = "row folder-row sg-proj" + (sgOn() && sgProjectOn === p.id ? " on" : "");
+    r.className = "row folder-row sg-proj" + (sgOn() && sgProjectOn === p.id && !sgSmartOn ? " on" : "");
     r.style.paddingLeft = "28px";
     r.dataset.sgp = String(p.id);
     r.innerHTML = `<span>${esc(p.name || "#" + p.id)}</span>`;
     r.onclick = () => openSgProject(p);
     wrap.append(r);
+    // its smart collections (saved Filter ▾ conditions): a click opens the project filtered by one
+    smarts.filter((c) => c.sgProject === p.id).forEach((col) => {
+      const b = document.createElement("div");
+      b.className = "row folder-row sg-proj sg-smart smart-row" + (sgOn() && sgSmartOn === col.id ? " on" : "");
+      b.style.paddingLeft = "40px";
+      b.dataset.cid = col.id;
+      b.title = "Smart collection: a saved filter — Filter ▾ edits it while it is open";
+      b.innerHTML = `${state.showIcons ? iconSpan(col.icon || "funnel", col.color || "var(--subtle)", 15) : ""}<span>${esc(col.name)}</span><button class="tiny" data-act="del" type="button" aria-label="Delete">×</button>`;
+      b.onclick = (e) => {
+        if (e.target.dataset?.act === "del"){
+          e.stopPropagation();
+          deleteCollection(col.id);
+          return;
+        }
+        if (navDblClick("col:" + col.id)){ renameCollectionRow(b, col); return; }
+        openSgProject(p, col.id);
+      };
+      b.addEventListener("contextmenu", (e) => { e.preventDefault(); showCollectionCtx(e.clientX, e.clientY, col.id); });
+      wrap.append(b);
+    });
+  });
+  // smart collections of a project no longer listed (archived, no access): still there to delete
+  const pids = new Set(sgProjects.map((p) => p.id));
+  smarts.filter((c) => !pids.has(c.sgProject)).forEach((col) => {
+    const b = document.createElement("div");
+    b.className = "row folder-row sg-proj sg-smart smart-row orphan";
+    b.style.paddingLeft = "28px";
+    b.dataset.cid = col.id;
+    b.title = `Smart collection of project #${col.sgProject}, which this site no longer lists`;
+    b.innerHTML = `${state.showIcons ? iconSpan(col.icon || "funnel", col.color || "var(--subtle)", 15) : ""}<span>${esc(col.name)} · project #${esc(col.sgProject)}</span><button class="tiny" data-act="del" type="button" aria-label="Delete">×</button>`;
+    b.onclick = (e) => {
+      if (e.target.dataset?.act === "del"){ e.stopPropagation(); deleteCollection(col.id); return; }
+      flash(`Project #${col.sgProject} is not listed on this site any more`, 3000);
+    };
+    wrap.append(b);
   });
 }
-function openSgProject(p){
+function openSgProject(p, smartId = null){
   if (!sgSrc){
     sgSrc = createSgSource({
       bar: $("sgBar"), client: () => sgClient(sgStat.site), host: () => sgHost(), putSetting,
@@ -1204,6 +1247,9 @@ function openSgProject(p){
   clearTimeout(qTimer);   // (a library search still waiting must not land in the project)
   if (topPopOpen === "filterPop") closeTopPops();   // (a value still typed applies to the list it was typed for)
   sgProjectOn = p.id;
+  const sc = smartCol(smartId);
+  sgSmartOn = sc ? sc.id : null;
+  sgSrc.setSmart(sc ? smartRule(sc) : null);
   // loading until the project's entities are read: no page asked for meanwhile; the grid empty at once (a library
   // page still on its way is dropped by pull)
   const L = sgList = { page: 0, more: true, seq: 0, loading: true };
@@ -1223,6 +1269,7 @@ function closeSgList(reload){
   if (!sgList) return;
   clearTimeout(qTimer);   // (a project search still waiting must not land in the library)
   sgList = null; sgLight = null;
+  sgSmartOn = null; sgSrc?.setSmart(null);
   selectOnly(null);   // no "sg:" id stays selected for the library's actions
   state.items = []; loadedIds = new Set(); state.total = null;   // (no Version tile left on screen until the library's list lands)
   scheduleRender();
@@ -1426,7 +1473,7 @@ const state = {
   selected: null,
   selectedIds: [],
   anchor: null,
-  filter: { q:"", kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", where: loadWhere() },
+  filter: { q:"", kind:"", source:"", tag:"", missing:false, collection:"", smart:"", folder:"", review:"", where: loadWhere() },
   sort: loadSort(),
   meta: { sources:[], counts:{}, pending:0, scanning:false, ffmpeg:true, scanned:0, tags:[], collections:[] },
   tile: clampTile(Number(localStorage.getItem(TILE_KEY)) || RUNTIME_DEFAULT_TILE),
@@ -1927,6 +1974,7 @@ const ICONS = {
   target: `<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.2"/><circle cx="12" cy="12" r="1.4"/>`,
   key: `<circle cx="7" cy="12" r="4"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="17" y1="12" x2="17" y2="16"/><line x1="20" y1="12" x2="20" y2="15"/>`,
   bolt: `<polygon points="14,2 6,13 11,13 9,22 19,10 13,10"/>`,
+  funnel: `<polygon points="3,4 21,4 14,12.5 14,20 10,18 10,12.5"/>`,
   users: `<circle cx="8.5" cy="8" r="3"/><path d="M3 20v-2a5.5 5.5 0 0 1 11 0v2"/><circle cx="17" cy="9.5" r="2.2"/><path d="M15 20v-1.5a4 4 0 0 1 6-3.5"/>`,
   shield: `<path d="M12 3l7 3v6c0 5-3.5 8-7 9-3.5-1-7-4-7-9V6z"/>`,
   palette: `<circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="9.5" r="1.3"/><circle cx="12" cy="7.5" r="1.3"/><circle cx="15.5" cy="9.5" r="1.3"/><circle cx="9" cy="15" r="1.3"/><circle cx="15" cy="15" r="1.3"/>`,
@@ -2914,8 +2962,10 @@ function navDblClick(key, threshold = 400){
 }
 
 function applyFilter(patch){
+  if (topPopOpen === "filterPop") closeTopPops();   // (a value still typed applies to the list it was typed for, first)
   closeSgList(false);  // a library filter leaves a ShotGrid project's Versions (its own reset below)
-  state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", where: state.filter.where, ...patch };
+  state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", smart:"", folder:"", review:"", where: state.filter.where, ...patch };
+  fltSeq++; renderFilterBtn();   // (a smart collection picked or left: other conditions are in effect)
   renderNav();
   resetList();
 }
@@ -3100,7 +3150,7 @@ function renderTypes(set){
   bindSectionDrag(wrap, "types");
   nav.append(wrap);
   if (state.navCollapse.types) return;
-  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.folder && !f.review, () => set({}), "layers"));
+  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.smart && !f.folder && !f.review, () => set({}), "layers"));
   for (const k of Object.keys(KIND)){
     wrap.append(row(KIND[k], c[k] || 0, f.kind === k, () => set({ kind: k }), KIND_ICON[k]));
   }
@@ -3484,6 +3534,74 @@ async function moveCollection(draggingId, targetId, zone){
   await refreshMeta();
 }
 
+// ---- Smart collections (docs/PLAN-trackers.md stage 3c): a saved Filter ▾ tree, no members. A library one is a row
+// under Collections (state.filter.smart while it is on), a ShotGrid one a row under its project (sgSmartOn). While one
+// is on, Filter ▾ edits its rule (saved with it); the free conditions (state.filter.where / sgSrc's) wait underneath.
+// smartPending: id → the rule last edited here until a meta refresh brings the same one back (a refresh that left
+// before the save landed must not put the old rule back).
+const smartPending = new Map(), smartMade = new Map();
+let smartSaveChain = Promise.resolve();
+function smartCol(id){ return id ? (state.meta.collections || []).find((c) => c.id === id && c.rule) || null : null; }
+function smartRule(col){ return SightFilter.sanitize(smartPending.has(col.id) ? smartPending.get(col.id) : col.rule); }
+function saveSmartRule(id, tree){
+  smartPending.set(id, tree);
+  const col = smartCol(id);
+  if (col) col.rule = tree;
+  smartSaveChain = smartSaveChain   // (one at a time, in order: the last edit is the one kept)
+    .then(() => api("/api/collections/" + id, { method:"PATCH", headers:{ "content-type":"application/json" }, body: JSON.stringify({ rule: tree }) }))
+    .catch((e) => { if (smartPending.get(id) === tree) smartPending.delete(id); flash("Smart collection: " + e.message, 4000); });
+}
+// After /api/state: edits not yet on the server stay; a smart collection that is gone (deleted here or in another
+// window) is left — the library falls back to All, a ShotGrid project to its own conditions.
+function syncSmart(){
+  // just made here: a refresh sent before the save may lack it — kept (put back) for a while; once listed, the server has it
+  const listed = new Set((state.meta.collections || []).map((c) => c.id));
+  for (const [id, m] of smartMade){
+    if (listed.has(id) || Date.now() - m.at > 10000) smartMade.delete(id);
+    else (state.meta.collections ||= []).push(m.col);
+  }
+  for (const [id, t] of smartPending){
+    const col = (state.meta.collections || []).find((c) => c.id === id);
+    if (!col) smartPending.delete(id);
+    else if (JSON.stringify(col.rule) === JSON.stringify(t)) smartPending.delete(id);
+    else col.rule = t;
+  }
+  if (state.filter.smart && !smartCol(state.filter.smart)){
+    if (sgOn()) state.filter = { ...state.filter, smart: "" };   // (the library's list is read again when it is shown)
+    else applyFilter({});
+  }
+  if (sgSmartOn && !smartCol(sgSmartOn)){
+    if (topPopOpen === "filterPop") closeTopPops();   // (first: a value still typed must not land in the free conditions)
+    fltSeq++;
+    sgSmartOn = null;
+    if (sgSrc) sgSrc.setSmart(null); renderFilterBtn(); renderNav(); sgReload();
+  }
+}
+function deleteCollection(id){
+  smartMade.delete(id);   // (gone on purpose: the view leaves it as soon as the list comes back without it)
+  api("/api/collections/" + id, { method:"DELETE" }).then(refreshMeta);
+}
+// Double-click / double-tap on a collection row: its name becomes a field (Enter / leaving it saves, Esc cancels).
+function renameCollectionRow(b, col){
+  const span = b.querySelector("span:not(.row-icon)");
+  if (!span) return;
+  const inp = document.createElement("input");
+  inp.value = col.name;
+  inp.style.cssText = "flex:1;min-width:0;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);padding:0 6px";
+  inp.onclick = (ev) => ev.stopPropagation();
+  span.replaceWith(inp);
+  inp.focus();
+  inp.select();
+  const done = () => {
+    api("/api/collections/" + col.id, { method:"PATCH", headers:{ "content-type":"application/json" }, body: JSON.stringify({ name: inp.value }) }).then(refreshMeta);
+  };
+  inp.onblur = done;
+  inp.onkeydown = (ev) => {
+    if (hotkey(ev, "Enter")) inp.blur();
+    else if (hotkey(ev, "Escape")) { inp.onblur = null; inp.blur(); refreshMeta(); }
+  };
+}
+
 function renderCollections(set){
   const wrap = document.createElement("div");
   const head = sectionHeader("Collections", "collections", `<button type="button" aria-label="New collection">+</button>`, "layers");
@@ -3494,7 +3612,7 @@ function renderCollections(set){
   };
   wrap.append(head);
   bindSectionDrag(wrap, "collections");
-  const cols = state.meta.collections || [];
+  const cols = (state.meta.collections || []).filter((c) => !c.sgSite);   // (a ShotGrid smart collection sits under its project)
   // Dropping a dragged collection on the section header (rather than on a row) moves it back
   // to the root level, out of whatever collection it was nested under.
   head.addEventListener("dragover", (e) => {
@@ -3526,29 +3644,14 @@ function renderCollections(set){
   }
   const addRow = (col, depth) => {
     const b = document.createElement("div");
-    b.className = "row col-row" + (state.filter.collection === col.id ? " on" : "");
+    const smart = !!col.rule;   // a saved filter: no members, nothing nests in it
+    b.className = "row col-row" + (smart ? " smart-row" : "") + ((smart ? state.filter.smart : state.filter.collection) === col.id ? " on" : "");
     b.dataset.cid = col.id;
     b.style.paddingLeft = (8 + depth * 12) + "px";
-    const iconHtml = state.showIcons ? iconSpan(col.icon || "folder", col.color || "var(--subtle)", 15) : "";
-    b.innerHTML = `${iconHtml}<span>${esc(col.name)}</span><em class="badge">${col.count||0}</em><button class="tiny" data-act="add">+</button><button class="tiny" data-act="del">×</button>`;
-    const startRename = () => {
-      const span = b.querySelector("span:not(.row-icon)");
-      const inp = document.createElement("input");
-      inp.value = col.name;
-      inp.style.cssText = "flex:1;min-width:0;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);padding:0 6px";
-      inp.onclick = (ev) => ev.stopPropagation();
-      span.replaceWith(inp);
-      inp.focus();
-      inp.select();
-      const done = () => {
-        api("/api/collections/" + col.id, { method:"PATCH", headers:{ "content-type":"application/json" }, body: JSON.stringify({ name: inp.value }) }).then(refreshMeta);
-      };
-      inp.onblur = done;
-      inp.onkeydown = (ev) => {
-        if (ev.key === "Enter") inp.blur();
-        if (ev.key === "Escape") { inp.onblur = null; inp.blur(); refreshMeta(); }
-      };
-    };
+    if (smart) b.title = "Smart collection: a saved filter — Filter ▾ edits it while it is open";
+    const iconHtml = state.showIcons ? iconSpan(col.icon || (smart ? "funnel" : "folder"), col.color || "var(--subtle)", 15) : "";
+    b.innerHTML = `${iconHtml}<span>${esc(col.name)}</span>${smart ? "" : `<em class="badge">${col.count||0}</em><button class="tiny" data-act="add">+</button>`}<button class="tiny" data-act="del" aria-label="Delete">×</button>`;
+    const startRename = () => renameCollectionRow(b, col);
     b.onclick = (e) => {
       const act = e.target.dataset?.act;
       if (act === "add"){
@@ -3558,11 +3661,11 @@ function renderCollections(set){
       }
       if (act === "del"){
         e.stopPropagation();
-        api("/api/collections/" + col.id, { method:"DELETE" }).then(refreshMeta);
+        deleteCollection(col.id);
         return;
       }
       if (navDblClick("col:" + col.id)){ startRename(); return; }
-      set({ collection: col.id });
+      set(smart ? { smart: col.id } : { collection: col.id });
     };
     // Two independent drags land on a collection row: files/assets (application/x-sight-ids,
     // dropped anywhere on the row to file them into this collection) and another collection
@@ -3570,6 +3673,7 @@ function renderCollections(set){
     // the row inserts as a sibling before/after, the middle half nests it inside this collection).
     b.addEventListener("dragover", (e) => {
       if (e.dataTransfer.types.includes("application/x-sight-ids")){
+        if (smart) return;   // (files are not filed into a saved filter)
         e.preventDefault();
         b.style.outline = "1px solid var(--accent)";
         return;
@@ -3583,12 +3687,13 @@ function renderCollections(set){
         e.dataTransfer.dropEffect = "move";
         const rect = b.getBoundingClientRect();
         const frac = (e.clientY - rect.top) / rect.height;
-        b.classList.add(frac < 0.25 ? "drop-before" : frac > 0.75 ? "drop-after" : "drop-into");
+        b.classList.add(smart ? (frac < 0.5 ? "drop-before" : "drop-after") : frac < 0.25 ? "drop-before" : frac > 0.75 ? "drop-after" : "drop-into");
       }
     });
     b.addEventListener("dragleave", () => { b.style.outline = ""; b.classList.remove("drop-before", "drop-after", "drop-into"); });
     b.addEventListener("drop", async (e) => {
       if (e.dataTransfer.types.includes("application/x-sight-ids")){
+        if (smart) return;
         e.preventDefault();
         b.style.outline = "";
         let ids = [];
@@ -3602,7 +3707,7 @@ function renderCollections(set){
       }
       if (e.dataTransfer.types.includes("application/x-sight-collection")){
         e.preventDefault();
-        const zone = b.classList.contains("drop-before") ? "before" : b.classList.contains("drop-after") ? "after" : "into";
+        const zone = b.classList.contains("drop-before") ? "before" : b.classList.contains("drop-after") || smart ? "after" : "into";
         b.classList.remove("drop-before", "drop-after", "drop-into");
         const draggingId = e.dataTransfer.getData("application/x-sight-collection");
         if (draggingId && draggingId !== col.id) await moveCollection(draggingId, col.id, zone);
@@ -8462,7 +8567,7 @@ function showCtx(x, y, id){
   menu.className = "ctx";
   if (!state.selectedIds.includes(id)) selectOnly(id);
   const ids = state.selectedIds.length ? state.selectedIds.slice() : [id];
-  const cols = state.meta.collections || [];
+  const cols = (state.meta.collections || []).filter((c) => !c.rule);   // (a smart collection has no members)
   menu.innerHTML = `
     <button type="button" data-act="open">Open</button>
     ${seqCandidates(ids).length >= 2 ? `<button type="button" data-act="seq">▶▶ Play in sequence (${seqCandidates(ids).length})</button>` : ""}
@@ -8712,7 +8817,7 @@ function showCollectionCtx(x, y, cid){
     const col = (state.meta.collections || []).find((c) => c.id === cid);
     if (!col) return;
     showIconPicker(x, y, {
-      icon: col.icon || "",
+      icon: col.icon || (col.rule ? "funnel" : ""),
       color: col.color || "",
       mode: "collection",
       onPick: async (icon, color) => {
@@ -8891,8 +8996,9 @@ function lightStepRow(dir, e){
 function isFilterEmpty(f){
   return !f.q && !f.kind && !f.source && !f.tag && !f.collection && !f.folder && !f.review && !libWhere(f);
 }
-// The builder's conditions as /api/assets sends them (null: none complete).
-function libWhere(f){ return f.where ? SightFilter.toLibWire(f.where, libFilterFields()) : null; }
+// The builder's conditions as /api/assets sends them (null: none complete) — a smart collection's rule while one is on.
+function libTree(f){ if (f.smart){ const c = smartCol(f.smart); return c ? smartRule(c) : SightFilter.empty(); } return f.where; }
+function libWhere(f){ const t = libTree(f); return t ? SightFilter.toLibWire(t, libFilterFields()) : null; }
 
 function filterParams(f){
   const p = new URLSearchParams();
@@ -9024,6 +9130,7 @@ async function refreshMeta(){
   const ign = $("scanIgnore");
   if (ign && document.activeElement !== ign && !ign.dataset.dirty) ign.value = state.meta.scanIgnore || "";
   renderBuildTag(); // version + build stamp come with the state; the first call at boot runs before it is loaded
+  syncSmart();
   renderNav();
   renderStatus();
   renderFfmpeg();
@@ -9325,8 +9432,8 @@ function paletteKinds(){
   return items;
 }
 function paletteCollections(){
-  return (state.meta.collections || []).map((c) => ({
-    label: c.name, hint: String(c.count || 0), run: () => applyFilter({ collection: c.id }),
+  return (state.meta.collections || []).filter((c) => !c.sgSite).map((c) => ({
+    label: c.name, hint: c.rule ? "smart" : String(c.count || 0), run: () => applyFilter(c.rule ? { smart: c.id } : { collection: c.id }),
   }));
 }
 function paletteBoards(){
@@ -9912,14 +10019,19 @@ function libFilterFields(){
 function filterCtx(){
   // (an edit that leaves the conditions in effect as they were — a new empty row, All / Any over one row — only saves)
   const same = (a, b, f) => JSON.stringify(SightFilter.clean(a, f)) === JSON.stringify(SightFilter.clean(b, f));
-  if (sgOn()) return { fields: sgSrc.filterFields(), tree: sgSrc.where, set: (t) => {
+  // (while a smart collection is on, its rule is what is edited — and saved with it)
+  if (sgOn()) return { fields: sgSrc.filterFields(), tree: sgSrc.where, smart: smartCol(sgSmartOn), set: (t) => {
     const f = sgSrc.filterFields() || [], was = sgSrc.where;
     sgSrc.setWhere(t); renderFilterBtn();
+    if (sgSmartOn) saveSmartRule(sgSmartOn, sgSrc.where);
     if (!same(was, t, f)) sgReload();
   } };
-  return { fields: libFilterFields(), tree: state.filter.where, set: (t) => {
-    const was = state.filter.where;
-    state.filter.where = t; putSetting(WHERE_KEY, JSON.stringify(t)); renderFilterBtn();
+  const sc = smartCol(state.filter.smart);
+  return { fields: libFilterFields(), tree: libTree(state.filter), smart: sc, set: (t) => {
+    const was = libTree(state.filter);
+    if (sc) saveSmartRule(sc.id, SightFilter.sanitize(t));
+    else { state.filter.where = t; putSetting(WHERE_KEY, JSON.stringify(t)); }
+    renderFilterBtn();
     if (!same(was, t, libFilterFields())) resetList();
   } };
 }
@@ -9938,14 +10050,76 @@ function renderFilterPop(){
     pop.innerHTML = "";
     const host = document.createElement("div");
     pop.append(host);
-    fltBuilder = SightFilter.mountBuilder(host, { fields, tree: c.tree, onChange: (t) => { if (my === fltSeq) c.set(t); },
+    const foot = document.createElement("div");
+    foot.className = "flt-foot";
+    pop.append(foot);
+    fltBuilder = SightFilter.mountBuilder(host, { fields, tree: c.tree, onChange: (t) => { if (my === fltSeq){ c.set(t); paintFilterFoot(foot, c, fields, t); } },
       suggest: (f) => f.suggest || null });
+    paintFilterFoot(foot, c, fields, c.tree);
   };
   if (c.fields){ mount(c.fields); return; }
   pop.innerHTML = `<div class="flt-none">Loading the Version fields…</div>`;
   fltBuilder = null;
   sgSrc.loadFilterFields().then((f) => { if (my === fltSeq && topPopOpen === "filterPop" && sgOn()){ mount(f); renderFilterBtn(); } })
     .catch((e) => { if (my === fltSeq) pop.innerHTML = `<div class="flt-none">${esc(e.message)}</div>`; });
+}
+// The popup's last line: which smart collection is being edited, or "Save as smart collection…" (a name, then Save)
+// for the conditions now in effect. Disabled until one condition is complete.
+function paintFilterFoot(foot, c, fields, tree){
+  if (c.smart){
+    foot.innerHTML = `<span class="flt-smart">${state.showIcons ? iconSpan("funnel", "var(--subtle)", 13) : ""}Smart collection <b>${esc(c.smart.name)}</b> — changes are saved to it</span>`;
+    return;
+  }
+  if (foot.querySelector(".flt-name")) return;   // (a name being typed stays)
+  const n = SightFilter.count(tree, fields), had = foot.querySelector("[data-act=smart]");
+  // (the same button stays: a value's change on blur lands between the press and the click, and a new button there
+  // would swallow the click)
+  if (had){ had.disabled = !n; return; }
+  const f = state.filter, scoped = !sgOn() && (f.kind || f.source || f.tag || f.missing || f.collection || f.folder || f.review);
+  foot.innerHTML = `<button type="button" class="btn ghost" data-act="smart" ${n ? "" : "disabled"} title="Keep these conditions as a smart collection in the sidebar">Save as smart collection…</button>` +
+    (scoped ? `<span class="flt-note">Saves these conditions only — not the sidebar pick</span>` : "");
+  foot.querySelector("[data-act=smart]").onclick = () => {
+    foot.innerHTML = `<input class="flt-name" type="text" maxlength="200" spellcheck="false" placeholder="Smart collection name" aria-label="Smart collection name"><button type="button" class="btn" data-act="save">Save</button><button type="button" class="btn ghost" data-act="cancel">Cancel</button>`;
+    const inp = foot.querySelector(".flt-name");
+    const cancel = () => { foot.innerHTML = ""; paintFilterFoot(foot, filterCtx(), fields, filterCtx().tree); };
+    const save = () => saveAsSmart(inp.value.trim() || "Smart collection");
+    inp.addEventListener("keydown", (e) => {
+      if (hotkey(e, "Enter")){ e.preventDefault(); e.stopPropagation(); save(); }
+      else if (hotkey(e, "Escape")){ e.preventDefault(); e.stopPropagation(); cancel(); }
+    });
+    foot.querySelector("[data-act=save]").onclick = save;
+    foot.querySelector("[data-act=cancel]").onclick = cancel;
+    inp.focus();
+  };
+}
+// The conditions in effect become a smart collection (under Collections, or under the open ShotGrid project) and
+// that collection is opened; the free conditions are cleared (they live in it now).
+let smartSaving = false;
+async function saveAsSmart(name){
+  if (smartSaving) return;
+  fltBuilder?.flush();
+  const sg = sgOn(), c = filterCtx(), tree = SightFilter.sanitize(c.tree);
+  if (c.smart || !SightFilter.count(tree, c.fields || [])) return;
+  const body = { name, rule: tree };
+  if (sg){ body.sgSite = sgHost(); body.sgProject = sgSrc.project.id; }
+  smartSaving = true;
+  let col;
+  try { col = await api("/api/collections", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body) }); }
+  catch (e){ flash("Smart collection: " + e.message, 4000); return; }
+  finally { smartSaving = false; }
+  smartMade.set(col.id, { at: Date.now(), col });
+  (state.meta.collections ||= []).push(col);
+  closeTopPops();
+  if (sg && sgOn() && sgSrc.project?.id === body.sgProject){
+    sgSrc.setWhere(SightFilter.empty());   // (the free conditions: before the smart one takes over)
+    sgSmartOn = col.id; sgSrc.setSmart(tree);
+    fltSeq++; renderFilterBtn(); renderNav();   // (the same conditions: the list stays)
+  } else if (!sg && !sgOn()){   // (a ShotGrid project opened meanwhile stays: the free conditions too)
+    state.filter.where = SightFilter.empty(); putSetting(WHERE_KEY, JSON.stringify(state.filter.where));
+    applyFilter({ smart: col.id });
+  }
+  flash(`Saved smart collection “${col.name}”`, 2500);
+  refreshMeta();
 }
 $("filterBtn").onclick = () => toggleTopPop("filterPop", renderFilterPop);
 // typing in it is not a grid shortcut; Esc closes it

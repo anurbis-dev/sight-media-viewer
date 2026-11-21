@@ -147,6 +147,84 @@ class WhereSqlTest(unittest.TestCase):
         self.assertEqual(c.get("/api/assets", params={"where": json.dumps({"op": "and", "c": [{"f": "x", "o": "is", "v": 1}]})}).status_code, 400)
 
 
+class SmartCollectionTest(unittest.TestCase):
+    """Smart collections (stage 3c): a collection row holding a saved Filter ▾ tree, no members."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="sight-smart-"))
+        self.lib = Library(self.tmp / "home")
+
+    def tearDown(self) -> None:
+        self.lib.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_store_and_rules(self):
+        tree = {"op": "and", "c": [{"f": "kind", "o": "is", "v": "image"}]}
+        plain = self.lib.add_collection("Plain")
+        sm = self.lib.add_collection("Images", rule=tree)
+        self.assertEqual(sm["rule"], tree)
+        sg = self.lib.add_collection("Approved", plain["id"], {"op": "or", "c": []}, "x.shotgrid.autodesk.com", 70)
+        self.assertIsNone(sg["parentId"], "a ShotGrid one is never nested")
+        by = {c["id"]: c for c in self.lib.collections()}
+        self.assertEqual(by[sm["id"]]["rule"], tree)
+        self.assertIsNone(by[plain["id"]]["rule"])
+        self.assertEqual((by[sg["id"]]["sgSite"], by[sg["id"]]["sgProject"]), ("x.shotgrid.autodesk.com", 70))
+        # nothing nests in a smart collection; a ShotGrid one stays at the top; a smart one takes no members
+        self.lib.move_collection(plain["id"], sm["id"])
+        self.lib.move_collection(sg["id"], plain["id"])
+        child = self.lib.add_collection("Child", sm["id"])
+        self.lib.add_to_collection(sm["id"], ["a1"])
+        by = {c["id"]: c for c in self.lib.collections()}
+        self.assertIsNone(by[plain["id"]]["parentId"])
+        self.assertIsNone(by[sg["id"]]["parentId"])
+        self.assertIsNone(by[child["id"]]["parentId"])
+        self.assertEqual(by[sm["id"]]["assetIds"], [])
+        # the rule changes; a plain collection does not become a smart one
+        t2 = {"op": "or", "c": [{"f": "name", "o": "contains", "v": "Фон"}]}
+        self.lib.set_collection_rule(sm["id"], t2)
+        self.lib.set_collection_rule(plain["id"], t2)
+        by = {c["id"]: c for c in self.lib.collections()}
+        self.assertEqual(by[sm["id"]]["rule"], t2)
+        self.assertIsNone(by[plain["id"]]["rule"])
+        for bad in ([1], "x", {"c": "x" * 70_000}):
+            with self.assertRaises(ValueError):
+                self.lib.set_collection_rule(sm["id"], bad)
+        with self.assertRaises(ValueError):
+            self.lib.add_collection("No project", rule=tree, sg_site="x", sg_project=None)
+        # a corrupt stored rule reads as an empty smart collection, not a crash
+        self.lib.execute("UPDATE collections SET rule='{nope' WHERE id=?", (sm["id"],))
+        self.assertEqual({c["id"]: c for c in self.lib.collections()}[sm["id"]]["rule"], {"op": "and", "c": []})
+        self.lib.delete_collection(sm["id"])
+        self.assertNotIn(sm["id"], {c["id"] for c in self.lib.collections()})
+
+    def test_http(self):
+        try:
+            from starlette.testclient import TestClient
+            from app.server import build_app
+        except Exception as e:  # noqa: BLE001
+            self.skipTest(f"no test client: {e}")
+        c = TestClient(build_app(self.lib))
+        tree = {"op": "and", "c": [{"f": "tags", "o": "has", "v": "comp"}]}
+        r = c.post("/api/collections", json={"name": "Comp", "rule": tree})
+        self.assertEqual(r.status_code, 200)
+        cid = r.json()["id"]
+        self.assertEqual(c.patch(f"/api/collections/{cid}", json={"rule": {"op": "or", "c": []}}).status_code, 200)
+        self.assertEqual(c.patch(f"/api/collections/{cid}", json={"rule": [1]}).status_code, 400)
+        self.assertEqual(c.post("/api/collections", json={"name": "x", "rule": "nope"}).status_code, 400)
+        self.assertEqual(c.post("/api/collections", json={"name": "x", "rule": tree, "sgSite": "h", "sgProject": "7"}).status_code, 400)
+        for bad in ({"sgSite": ["h"], "sgProject": 7}, {"sgSite": "h", "sgProject": 2 ** 70}, {"sgSite": "h" * 300, "sgProject": 7}):
+            self.assertEqual(c.post("/api/collections", json={"name": "x", "rule": tree, **bad}).status_code, 400, bad)
+        self.assertEqual(c.post("/api/collections", content='{"name":"x","rule":{"v":"\\ud800"}}',
+                                headers={"content-type": "application/json"}).status_code, 400, "a lone surrogate")
+        self.assertEqual(c.patch(f"/api/collections/{cid}", json={"name": "Renamed", "rule": [1]}).status_code, 400)
+        self.assertNotEqual({x["id"]: x for x in c.get("/api/state").json()["collections"]}[cid]["name"], "Renamed",
+                            "a refused rule changes nothing else")
+        r = c.post("/api/collections", json={"name": "SG", "rule": tree, "sgSite": "h", "sgProject": 7})
+        self.assertEqual((r.json()["sgSite"], r.json()["sgProject"]), ("h", 7))
+        st = {x["id"]: x for x in c.get("/api/state").json()["collections"]}
+        self.assertEqual(st[cid]["rule"], {"op": "or", "c": []})
+
+
 class FilterCoreJsTest(unittest.TestCase):
     def test_unit(self):
         if not NODE:

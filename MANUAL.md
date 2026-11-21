@@ -338,6 +338,14 @@
   project is open the same button filters its Versions by the site's Version fields (Status is…, Link contains…,
   Date Created in the last … days, any text / number / date / checkbox field) — kept apart from the library's.
   Works with a mouse or a finger; Esc closes it.
+- **Smart collections** — *Save as smart collection…* at the bottom of Filter ▾ keeps the conditions as a row with a
+  funnel icon: under **Collections** for the library, under its project (Sources → ShotGrid) for a ShotGrid project.
+  Click / tap the row to show what its conditions match; while it is open, Filter ▾ shows and edits *its*
+  conditions (changes are saved to it at once), and your own conditions come back when you pick another row. The
+  conditions you saved move into the smart collection (Filter ▾ is empty again elsewhere). A smart collection has
+  no members — files cannot be dropped into it and nothing nests in it, but it can be dragged up / down among the
+  collections. Double-click / double-tap renames it, *×* deletes it, right-click changes its icon. The search box
+  and the ShotGrid bar's type / entity / status still apply on top of it.
 - **ShotGrid on the phone's home screen** — two pages, *Reviews* and *ShotGrid* (tap the tabs in the bar, or swipe
   sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
   pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name; *Fields*

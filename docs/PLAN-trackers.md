@@ -16,6 +16,8 @@ mark it done here, add the RECENT entry as usual.
 | 7 | Filmstrip | Like ShotGrid: a video's filmstrip thumbnail plays under the pointer on hover (a finger dragged sideways on touch). |
 | 8 | Filter UI (owner 2026-11-21) | A **popup on a button** (Filter ▾ in the top bar), conditions field · operator · value in **AND / OR groups**; one builder for the library and ShotGrid; the phone gets the same as a sheet. |
 | 9 | Presets | **Smart collections in the sidebar**: a saved filter is a row under Collections (a ShotGrid one under its project); a click applies it; rename by double-click like collections. |
+| 10 | Visibility (owner 2026-11-21) | **Tracker UI shows only for a connected tracker.** Not connected = no trace of it: no sidebar source, no row in the You panel, no SG ▾ in the review panel, no ShotGrid tab / "ShotGrid…" item on the phone, no tracker fields in Filter ▾. The one place that offers connecting is Settings → Trackers (*Connect a tracker…*; on the phone its settings sheet). |
+| 11 | Several trackers (owner 2026-11-21) | **Several trackers can be connected at once, with one UI for all.** Structurally they are the same: tables of entities and their fields, plain ones and link entities that tie entities together. So the UI is generic over a tracker adapter (entities, fields / schema, links, versions-like media entities, notes); ShotGrid is the first adapter, ftrack / Coreline etc. plug into the same sidebar source rows, Filter ▾ fields, tile Fields ▾, You-panel rows, review-panel link & sync, phone pages. No ShotGrid-only UI paths in new code. |
 
 ## Stages
 
@@ -39,6 +41,7 @@ mark it done here, add the RECENT entry as usual.
 ### 3. The filter builder (+ the ShotGrid view onto the library grid)
 - **3a done in 0.102.0** (see RECENT): Versions are items of the library grid (`sgList`, `pullSg` paging as the grid nears its end, `sg-source.js`); sg-view.js is gone.
 - **3b done in 0.103.0** (see RECENT): Filter ▾ in the top bar → popup builder (app/static/filter-core.js): rows field · operator · value, All / Any, nested groups (3 levels); library fields evaluated by the server (`where_sql`), ShotGrid Version fields sent as REST hash filters (`logical_operator` and / or — the REST counterpart of `filter_operator` all / any). The ShotGrid bar's quick filters (type / entity / status) stay and are ANDed with it. Next: 3c (saved filters = smart collections), 3d (the phone sheet; filter-core.js is a plain script ready for build_pwa).
+- **3c done in 0.104.0** (see RECENT): smart collections — *Save as smart collection…* in Filter ▾; library ones under Collections, ShotGrid ones under their project; a click opens it, Filter ▾ then edits its rule; rename by double-click, × deletes, icon by right-click. Next: 3d (the phone sheet).
 - Blocks, each reviewed on its own: **3a** the ShotGrid view on the library grid; **3b** the filter builder (popup, AND / OR groups; library fields evaluated by the server, ShotGrid fields sent as `_search` filters with `filter_operator` all / any); **3c** smart collections; **3d** the phone.
 - **Owner 2026-11-21:** in this stage the ShotGrid view moves onto the library's own grid (a pluggable item source: library rows / ShotGrid Versions — shared virtualisation, tile size, layout, selection, keys; the inspector shows a Version's fields) and app/static/sg-view.js goes.
 - A row of conditions above the grid: field ▾ · operator ▾ · value (chips for statuses / entities read from the
@@ -50,6 +53,18 @@ mark it done here, add the RECENT entry as usual.
 - As built: the home screen has two pages, Reviews | ShotGrid (tabs in the bar; a swipe sideways anywhere but on a review card). ShotGrid page: project · All / Shots / Assets / Sequences · entity · status · name filter (kept in localStorage `sight-review:sgfilter`), Versions newest first in pages of 60, thumbnails in Cache Storage `sight-review-sgthumbs` keyed by Version id + updated_at; a Version with a review here is outlined; a tap opens that review (media kept) or downloads the web proxy (`sg_uploaded_movie`, else the thumbnail picture), opens it as a review linked to the Version and keeps the file on the device.
 - Reviews screen: the user panel (stage 1), a ShotGrid tab with projects → Versions (thumbnails cached in
   IndexedDB), opening a Version downloads its proxy (decision 3 of PLAN-mobile: proxy by default, original on a button).
+
+### 5. Trackers: only when connected, several at once (decisions 10, 11)
+- **5a** visibility: hide every tracker control while it is not connected (today visible regardless: the You panel's
+  "ShotGrid · not connected / Set up…" row, the review panel's SG ▾, the phone's ShotGrid tab, its person sheet's
+  ShotGrid block, the review "More → ShotGrid…" item); Settings → ShotGrid becomes Settings → Trackers with a list of
+  connected trackers + *Connect a tracker…* (the only entry point while none is connected). Re-check on connect /
+  disconnect without a reload.
+- **5b** the adapter: a tracker-neutral interface (connect / status, projects, entity types, schema fields incl.
+  link fields, browse media entities with filters, thumbnails, media download, notes sync) that sg-source.js /
+  shotgrid-core.js implement; index.html, annotate.js and the phone talk to "the trackers" (a list), keyed by
+  tracker id + site — sidebar rows, smart collections (`sg_site` → a tracker key), links per tracker.
+- **5c** a second adapter (ftrack or Coreline — owner to pick) proves the interface.
 
 ## Open questions (ask when the stage comes)
 - Which Version fields the owner wants on the tiles (code + status + author by default?).

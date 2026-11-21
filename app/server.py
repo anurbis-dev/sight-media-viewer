@@ -835,11 +835,22 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         body = await json_body(request)
         name = str(body.get("name") or "Untitled")
         parent = body.get("parentId") or body.get("parent_id")
-        return lib.add_collection(name, str(parent) if parent else None)
+        site = body.get("sgSite") or None
+        if site is not None and not isinstance(site, str):
+            raise HTTPException(400, "sgSite must be a string")
+        try:
+            return lib.add_collection(name, str(parent) if parent else None, body.get("rule"), site, body.get("sgProject"))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.patch("/api/collections/{cid}")
     async def rename_collection(cid: str, request: Request) -> dict:
         body = await json_body(request)
+        if "rule" in body:   # (first: a refused rule changes nothing else)
+            try:
+                lib.set_collection_rule(cid, body.get("rule"))
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
         if "name" in body:
             lib.rename_collection(cid, str(body.get("name") or "Untitled"))
         if "parentId" in body:
