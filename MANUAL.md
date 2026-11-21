@@ -318,14 +318,16 @@
   of the sidebar, and the same button in the review panel's header: your reviewer name (stored with every note) and
   a row per tracker (ShotGrid: connected or not, *Set up…*). On the phone it sits at the left of the home bar.
 - **ShotGrid in the sidebar** — once ShotGrid is set up, *ShotGrid · <site>* is the last row under Sources; open it
-  for the projects and click one: its Versions fill the main area, newest first (scroll for more). Narrow them with
-  All / Shots / Assets / Sequences, an entity, a status or part of the name; **Fields ▾** lists the site's Version
-  fields — tick the ones the tiles should show. Move the pointer over a video's tile to play through its frames (on a
-  touch screen: drag a finger sideways over it). Double-click a Version (Enter, or a tap on touch) to open it: its
-  playable copy is downloaded into Sight's cache and opens in the preview with its review linked to the Version
-  (*SG ▾ → Sync now*). Settings → ShotGrid → *Media cache limit* caps that cache (empty = Auto: as much as the disk
-  holds, 2 GB kept free; the oldest opened go first) and *Clear cache* empties it. Any other sidebar row returns to
-  the library.
+  for the projects and click one: its Versions fill the library grid as tiles, newest first (more load as you
+  scroll), at the grid's own tile size and layout. A bar above the grid narrows them — All / Shots / Assets /
+  Sequences, an entity, a status — and the top search box finds part of a name; **Fields ▾** lists the site's Version
+  fields: tick the ones the tiles show. Click a Version for its fields in the inspector. Move the pointer over a
+  video's tile to play through its frames (on a touch screen: drag a finger sideways over its picture). Double-click
+  a Version (Space, or *Open* in the inspector) to open it: its playable copy is downloaded into Sight's cache and
+  opens in the preview with its review linked (*SG ▾ → Sync now*); ← / → in the preview step to the next Version
+  (downloading it). Settings → ShotGrid → *Media cache limit* caps that cache (empty = Auto: as much as the disk
+  holds, 2 GB kept free; the oldest opened go first) and *Clear cache* empties it. Any library row in the sidebar
+  returns to the library.
 - **ShotGrid on the phone's home screen** — two pages, *Reviews* and *ShotGrid* (tap the tabs in the bar, or swipe
   sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
   pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name; *Fields*

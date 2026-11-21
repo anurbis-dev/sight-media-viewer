@@ -14,6 +14,8 @@ mark it done here, add the RECENT entry as usual.
 | 5 | Cache | Version thumbnails on disk in SIGHT_HOME like file thumbnails, refreshed by the Version's `updated_at`. Proxies in their own cache with oldest-first eviction over a size limit (Settings). **Owner 2026-11-21:** the limit's default is **Auto** = download while the disk has room. |
 | 6 | Tile fields | **Read from ShotGrid** (the Version schema); a **Fields ▾** button lets the user pick which fields the tiles show. |
 | 7 | Filmstrip | Like ShotGrid: a video's filmstrip thumbnail plays under the pointer on hover (a finger dragged sideways on touch). |
+| 8 | Filter UI (owner 2026-11-21) | A **popup on a button** (Filter ▾ in the top bar), conditions field · operator · value in **AND / OR groups**; one builder for the library and ShotGrid; the phone gets the same as a sheet. |
+| 9 | Presets | **Smart collections in the sidebar**: a saved filter is a row under Collections (a ShotGrid one under its project); a click applies it; rename by double-click like collections. |
 
 ## Stages
 
@@ -35,6 +37,8 @@ mark it done here, add the RECENT entry as usual.
   asset under a hidden "ShotGrid cache" source, linked (`sg_links`) to the Version, opened in the lightbox.
 
 ### 3. The filter builder (+ the ShotGrid view onto the library grid)
+- **3a done in 0.102.0** (see RECENT): Versions are items of the library grid (`sgList`, `pullSg` paging as the grid nears its end, `sg-source.js`); sg-view.js is gone.
+- Blocks, each reviewed on its own: **3a** the ShotGrid view on the library grid; **3b** the filter builder (popup, AND / OR groups; library fields evaluated by the server, ShotGrid fields sent as `_search` filters with `filter_operator` all / any); **3c** smart collections; **3d** the phone.
 - **Owner 2026-11-21:** in this stage the ShotGrid view moves onto the library's own grid (a pluggable item source: library rows / ShotGrid Versions — shared virtualisation, tile size, layout, selection, keys; the inspector shows a Version's fields) and app/static/sg-view.js goes.
 - A row of conditions above the grid: field ▾ · operator ▾ · value (chips for statuses / entities read from the
   site's schema: `/schema/{entity}/fields`), AND between rows; saved presets per source type.

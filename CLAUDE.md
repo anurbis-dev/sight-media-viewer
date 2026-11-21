@@ -73,6 +73,9 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   send the fixes back to **the same reviewer agent** (SendMessage to its id: it knows its own findings)
   and ask it to confirm each fix is right and introduced nothing new; repeat until it confirms them all,
   and say so in the RECENT entry. One review per block — do not batch several blocks into one late review.
+- **How to continue (owner's request):** end every finished piece of work with one line on how best to go on — in a
+  new session, in this one after a compact, or in this one as is — and why (context size, a reviewer agent that lives
+  only in this session, whether the docs already carry the state).
 - **Builds:** no local build is needed before a push or a merge — builds are made by releases.
 - **Testing UI:** run the dev server (`SIGHT_DEV=1 ~/.sight/runtime/Scripts/python.exe Sight.py --dev
   --no-browser --port NNNN`, pick a fresh port) and drive it with Playwright. Tests must create their

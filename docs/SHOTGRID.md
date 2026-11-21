@@ -25,7 +25,7 @@ one): everything runs against a fake (`tests/sg_fake.cjs`). See "To check on a r
 | `app/static/index.html` | Settings → ShotGrid (site, script name, key, post as reviewer, reviewer logins, note status codes; Test / Forget key / Save). |
 | `app/static/annotate.js` | Review panel **SG ▾**: link (Version from the notes, or project + search), Sync now, link to another, Unlink. |
 | `mobile/js/shotgrid.js` | Phone: Settings → *ShotGrid connection…* (same fields + **Proxy**), *Export and more → ShotGrid…* (link / Sync / Unlink). |
-| `app/static/sg-view.js` | Sight's ShotGrid view (a project's Versions: filter, Fields ▾, filmstrip scrub, open). Server side: `/api/sg/thumb/{id}?kind=image|filmstrip&u=<updated_at>` (local Host only; disk cache), `POST /api/sg/open/{id}` (proxy → media cache → library file), `GET /api/sg/cache`, `POST /api/sg/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). |
+| `app/static/sg-source.js` | ShotGrid Versions in the library grid (0.102; replaced sg-view.js): filter bar, Fields ▾ captions, filmstrip scrub, the inspector's fields, open (index.html `pullSg`, `openSgItem`, `toggleLight` / `showInLight` / `lightStep` hooks). Server side: `/api/sg/thumb/{id}?kind=image|filmstrip&u=<updated_at>` (local Host only; disk cache), `POST /api/sg/open/{id}` (proxy → media cache → library file), `GET /api/sg/cache`, `POST /api/sg/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). |
 | `tools/sg-proxy-worker.js` | Cloudflare Worker pass-through for the phone when the site does not answer browsers (CORS). Same protocol as `/api/sg/fetch`. |
 
 ### Transport
@@ -77,3 +77,5 @@ files only); no auto sync (a button).
 - Attachment `this_file.url` (signed S3 link, or a site link that redirects — both handled).
 - The `annot*.<frame>` naming of ShotGrid's own review annotations.
 - CORS: whether the site answers the phone app's origin; if not, deploy `tools/sg-proxy-worker.js`.
+
+**Owner 2026-11-21:** the media cache's files show in the library's All and type filters like every source's files (the viewer's shared logic); only the cache source's row is hidden from Sources.

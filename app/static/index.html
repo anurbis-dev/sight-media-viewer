@@ -407,38 +407,27 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
 .stt-row[hidden] { display: none !important; }
-/* ShotGrid view (sg-view.js): a project's Versions */
-.sg-view { flex: 1; min-width: 0; overflow: auto; padding: 10px 14px 30px; position: relative; }
-.sg-view[hidden] { display: none; }
-.sgv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
-.sgv-title { font-size: 14px; font-weight: 600; margin-right: 6px; }
-.sgv-seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
-.sgv-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
-.sgv-seg button.on { background: var(--surface, #222); color: var(--fg); }
-.sgv-bar select, .sgv-bar input { height: 28px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
-.sgv-bar select[hidden] { display: none; }
-.sgv-bar .sgv-q { width: 200px; }
-.sgv-fpop { position: absolute; right: 14px; top: 46px; z-index: 30; width: 300px; max-height: 60vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
-.sgv-fpop[hidden] { display: none; }
-.sgv-fpop input[type=search] { height: 28px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
-.sgv-flist { overflow: auto; display: flex; flex-direction: column; }
-.sgv-flist label { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
-.sgv-flist small { margin-left: auto; color: var(--subtle); }
-.sgv-facts { display: flex; justify-content: flex-end; }
-.sgv-msg { color: var(--subtle); font-size: 12px; margin: 4px 0 8px; } .sgv-msg:empty { display: none; }
-.sgv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--sgv-tile, 180px), 1fr)); gap: 10px; }
-.sgv-tile { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-2); cursor: pointer; outline: none; }
-.sgv-tile.on, .sgv-tile:focus-visible { border-color: var(--accent); }
-.sgv-tile.busy { opacity: .6; }
-.sgv-tile .th { position: relative; aspect-ratio: 16 / 9; background: #0003; overflow: hidden; touch-action: pan-y; }
-.sgv-tile .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-.sgv-tile .strip { position: absolute; inset: 0; background-repeat: no-repeat; opacity: 0; }
-.sgv-tile.scrub .strip { opacity: 1; }
-.sgv-tile.scrub .th img { opacity: 0; }
-.sgv-tile .cap { padding: 5px 8px 7px; display: flex; flex-direction: column; min-width: 0; font-size: 12px; }
-.sgv-tile .cap b, .sgv-tile .cap small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sgv-tile .cap small { color: var(--subtle); }
-.sgv-end { height: 1px; }
+/* ShotGrid Versions in the library grid (sg-source.js): the filter bar, the filmstrip on a tile */
+.sgbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); position: relative; }
+.sgbar[hidden] { display: none; }
+.sgb-title { font-size: 14px; font-weight: 600; margin-right: 6px; }
+.sgb-seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
+.sgb-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+.sgb-seg button.on { background: var(--surface, #222); color: var(--fg); }
+.sgbar select { height: 28px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.sgbar select[hidden] { display: none; }
+.sgb-fpop { position: absolute; right: 14px; top: 100%; z-index: 30; width: 300px; max-height: 60vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
+.sgb-fpop[hidden] { display: none; }
+.sgb-fpop input[type=search] { height: 28px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.sgb-flist { overflow: auto; display: flex; flex-direction: column; }
+.sgb-flist label { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
+.sgb-flist small { margin-left: auto; color: var(--subtle); }
+.sgb-facts { display: flex; justify-content: flex-end; }
+.card .sg-strip { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); background-repeat: no-repeat; opacity: 0; pointer-events: none; }  /* (its height from the frame's aspect: set on load) */
+.card.sg-scrub .sg-strip { opacity: 1; }
+.card.sg-scrub .thumb img { opacity: 0; }
+.card.sg-video .thumb { touch-action: pan-y; }
+.card.sg-busy { opacity: .6; }
 .sg-codes { display: flex; gap: 4px; }
 .sg-codes input { flex: 1; min-width: 0; }
 .light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
@@ -817,11 +806,11 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
         <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
     </div>
+    <div class="sgbar" id="sgBar" hidden></div>
     <div class="main-body" id="mainBody">
       <div class="grid" id="grid"></div>
       <div class="split-handle" id="splitHandle" hidden title="Drag to resize · double-click to switch side-by-side / stacked"></div>
       <div class="canvas-view" id="canvasView" hidden></div>
-      <div class="sg-view" id="sgView" hidden></div>
       <div class="light-slot" id="lightSlot" hidden></div>
     </div>
   </section>
@@ -837,7 +826,7 @@ import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
-import { createSgView } from "/static/sg-view.js";
+import { createSgSource, SG_PAGE } from "/static/sg-source.js";
 import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → ShotGrid test; annotate.js syncs)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -1135,8 +1124,11 @@ async function openUserPanel(anchor){
   } catch { $("userSg").textContent = "not available"; }
 }
 // ---- ShotGrid as a source (docs/PLAN-trackers.md stage 2): "ShotGrid · <site>" under Sources, its projects below;
-// a project opens the ShotGrid view (sg-view.js) in the main area.
-let sgStat = null, sgProjects = null, sgSrcOpen = false, sgViewCtl = null, sgProjectOn = null;
+// a project shows its Versions in the library grid (sg-source.js).
+// sgSrc: the item source (sg-source.js), made once; sgList: the grid shows a project's Versions while set
+// ({page, more, seq, loading}); sgLight: the Version the lightbox shows {item, asset} (arrows step through Versions).
+let sgStat = null, sgProjects = null, sgSrcOpen = false, sgSrc = null, sgProjectOn = null, sgList = null, sgLight = null;
+const sgOn = () => !!sgList;
 const normFsPath = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 async function refreshSgStatus(){
   try { sgStat = await api("/api/sg/status"); } catch { sgStat = null; }
@@ -1147,7 +1139,7 @@ function sgHost(){ try { return new URL(sgStat.site).host; } catch { return sgSt
 function renderSgSource(wrap){
   if (!sgStat?.configured) return;
   const b = document.createElement("div");
-  b.className = "row src-row sg-src" + (state.view === "sg" ? " on" : "");
+  b.className = "row src-row sg-src" + (sgOn() ? " on" : "");
   b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span>ShotGrid · ${esc(sgHost())}</span><button class="tiny tree-chev${sgSrcOpen ? " open" : ""}" data-act="expand" type="button" aria-expanded="${sgSrcOpen}" aria-label="${sgSrcOpen ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
   const toggle = async () => {
     sgSrcOpen = !sgSrcOpen;
@@ -1164,7 +1156,7 @@ function renderSgSource(wrap){
   if (!sgProjects.length){ const n = document.createElement("div"); n.className = "row folder-row sg-proj"; n.style.paddingLeft = "28px"; n.innerHTML = "<span>No projects</span>"; wrap.append(n); }
   sgProjects.forEach((p) => {
     const r = document.createElement("div");
-    r.className = "row folder-row sg-proj" + (state.view === "sg" && sgProjectOn === p.id ? " on" : "");
+    r.className = "row folder-row sg-proj" + (sgOn() && sgProjectOn === p.id ? " on" : "");
     r.style.paddingLeft = "28px";
     r.dataset.sgp = String(p.id);
     r.innerHTML = `<span>${esc(p.name || "#" + p.id)}</span>`;
@@ -1173,22 +1165,108 @@ function renderSgSource(wrap){
   });
 }
 function openSgProject(p){
-  if (!sgViewCtl){
-    sgViewCtl = createSgView({
-      mount: $("sgView"), client: () => sgClient(sgStat.site), host: () => sgHost(),
-      openAsset: async (a) => { if (light) showInLight(a); else toggleLight(a); },
-      toast: (t, ms) => flash(htmlToText(t), ms), putSetting, registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
-      onQuery: (v) => { if (state.view === "sg") $("q").value = v; },   // the view's name box and the top search box show one text
-      // the first open makes the media cache source: its id now known, the list hides it by id
-      onOpened: async () => { if (sgStat?.cacheSource) return; try { const st = await api("/api/sg/status"); if (sgStat) sgStat.cacheSource = st.cacheSource; renderNav(); } catch {} },
+  if (!sgSrc){
+    sgSrc = createSgSource({
+      bar: $("sgBar"), client: () => sgClient(sgStat.site), host: () => sgHost(), putSetting,
+      registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+      onChange: (what) => {
+        if (!sgOn()) return;
+        if (what === "labels"){ renderInsp(); return; }
+        if (what === "fields" && !sgSrc.needsReload(state.items)){ cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); return; }
+        sgReload();
+      },
     });
-    sgViewCtl.setTile(state.tile);
   }
+  if (state.view !== "library") setView("library");
+  clearTimeout(qTimer);   // (a library search still waiting must not land in the project)
   sgProjectOn = p.id;
-  setView("sg");
-  sgViewCtl.open(p);
-  $("q").value = sgViewCtl.query;
+  // loading until the project's entities are read: no page asked for meanwhile; the grid empty at once (a library
+  // page still on its way is dropped by pull)
+  const L = sgList = { page: 0, more: true, seq: 0, loading: true };
+  state.items = []; loadedIds = new Set(); state.total = null;
+  cardPool.forEach((el) => el.remove()); cardPool.clear();
+  $("sgBar").hidden = false;
+  $("sortBtn").hidden = true;
+  $("q").value = sgSrc.query;
+  selectOnly(null);
+  renderNav(); scheduleRender(); renderStatus();
+  sgSrc.open(p).finally(() => { if (sgList === L){ L.loading = false; sgReload(); } });
+}
+function sgReload(){ if (!sgOn()) return; grid.scrollTop = 0; pullSg(true); }
+// Back to the library (a sidebar row, a board): the library's own list and search again.
+function closeSgList(reload){
+  if (!sgList) return;
+  clearTimeout(qTimer);   // (a project search still waiting must not land in the library)
+  sgList = null; sgLight = null;
+  selectOnly(null);   // no "sg:" id stays selected for the library's actions
+  state.items = []; loadedIds = new Set(); state.total = null;   // (no Version tile left on screen until the library's list lands)
+  scheduleRender();
+  $("sgBar").hidden = true;
+  $("sortBtn").hidden = false;
+  $("q").value = state.filter.q || "";
+  cardPool.forEach((el) => el.remove()); cardPool.clear();
   renderNav();
+  if (reload) resetList();
+}
+// One page of Versions past the loaded ones (fromStart: the list again from page 1). Further pages come as the grid
+// nears its end (sgMaybeMore), not eagerly like library rows.
+async function pullSg(fromStart){
+  const L = sgList;
+  if (!L) return;
+  if (fromStart){ L.seq++; L.page = 0; L.more = true; L.loading = false; state.items = []; loadedIds = new Set(); state.total = null; cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); }
+  if (L.loading || !L.more) return;
+  const my = L.seq;
+  L.loading = true;
+  try {
+    const { items, more } = await sgSrc.page(L.page + 1);
+    if (sgList !== L || my !== L.seq) return;
+    L.page++; L.more = more;
+    for (const a of items) if (!loadedIds.has(a.id)){ state.items.push(a); loadedIds.add(a.id); }
+    if (!more) state.total = state.items.length;
+    scheduleRender(); renderStatus();
+  } catch (e){
+    if (sgList === L && my === L.seq){ L.more = false; state.total = state.items.length; flash("ShotGrid: " + e.message, 4000); renderStatus(); }
+  } finally {
+    if (sgList === L && my === L.seq){ L.loading = false; scheduleRender(); }
+  }
+}
+function sgMaybeMore(W){
+  const L = sgList;
+  if (!L || L.loading || !L.more || !grid.offsetParent) return;
+  const shownEnd = W.mode === "masonry" ? (W.lastShown ?? -1) : W.end;   // masonry: the highest index on screen
+  if (shownEnd >= state.items.length - Math.max(20, (W.cols || 4) * 3)) pullSg(false);
+}
+// Opening a Version (double-click, Space, Enter, the lightbox's arrows): its media downloads into Sight's cache as a
+// library file, then that file opens.
+let sgOpening = null;
+async function openSgItem(a, viaShow){
+  if (sgOpening) return;
+  sgOpening = a.id;
+  const L = sgList;
+  const card = cardPool.get(a.id);
+  card?.classList.add("sg-busy");
+  flash(`Downloading ${a.name}…`, 120000);
+  try {
+    const j = await sgSrc.open1(a);
+    if (sgList !== L || !L) return;   // left the project meanwhile: nothing opens over what is on screen now
+    if (!sgStat?.cacheSource){ try { const st = await api("/api/sg/status"); if (sgStat) sgStat.cacheSource = st.cacheSource; renderNav(); } catch {} }
+    flash(`${a.name} — the review panel's SG ▾ syncs its notes`, 2500);
+    sgLight = { item: a.id, asset: j.asset.id };
+    if (light && viaShow) showInLight(j.asset); else if (!light) toggleLight(j.asset); else showInLight(j.asset);
+  } catch (e){ flash("Could not open the Version: " + e.message, 5000); }
+  finally { sgOpening = null; cardPool.get(a.id)?.classList.remove("sg-busy"); }
+}
+// The grid item the lightbox stands on: the Version it was opened from (or the file itself).
+function lightItemId(){ return sgLight && light && light.id === sgLight.asset ? sgLight.item : light?.id; }
+// The inspector for one Version: its picture and fields, Open.
+function renderSgInsp(a){
+  const rows = sgSrc.details(a);
+  insp.innerHTML = `<div class="sec open"><span class="sec-title">ShotGrid Version</span></div>
+    <div class="preview"><div class="insp-thumb"><img src="${sgSrc.thumbUrl(a)}" alt=""></div></div>
+    <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:10px 0 6px;overflow-wrap:anywhere">${esc(a.name)}</h2>
+    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd style="overflow-wrap:anywhere">${esc(v)}</dd>`).join("")}</dl>
+    <div class="theme-actions"><button class="btn" id="sgInspOpen" type="button">Open</button></div>`;
+  $("sgInspOpen").onclick = () => openSgItem(a);
 }
 // The page's ShotGrid client: everything goes through Sight's server, which holds the key (app/shotgrid.py).
 function sgClient(site){
@@ -1992,7 +2070,6 @@ function setTile(n){
     state.tile = next;
     putSetting(TILE_KEY, String(next));
   }
-  sgViewCtl?.setTile(state.tile);  // the ShotGrid view's tiles follow the library's tile size
   scheduleRender();
 }
 
@@ -2049,7 +2126,7 @@ function computeMasonry(L){
   const thumbW = Math.max(24, L.cell - 2 * L.cardPad);
   for (let i = extend ? c.n : 0; i < n; i++){
     const a = state.items[i];
-    const ar = a.width && a.height ? a.width / a.height : 1;
+    const ar = a.width && a.height ? a.width / a.height : a.sg ? 16 / 9 : 1;
     // Clamped so one extreme panorama/strip scan can't blow out a column (and the virtualizer's
     // overscan window) with a single absurdly tall or wide card.
     const imgH = Math.min(Math.round(thumbW * 2.5), Math.max(Math.round(thumbW * 0.4), Math.round(thumbW / ar)));
@@ -2163,6 +2240,7 @@ function ensureCard(a, i, L, pos){
     });
     el.addEventListener("dragstart", (ev) => {
       const id = el.dataset.id;
+      if (id.startsWith("sg:")){ ev.preventDefault(); return; }   // a ShotGrid Version is no file to drag (yet)
       const ids = state.selectedIds.includes(id) ? state.selectedIds : [id];
       if (!state.selectedIds.includes(id)) selectOnly(id);
       ev.dataTransfer.setData("application/x-sight-ids", JSON.stringify(ids));
@@ -2178,6 +2256,7 @@ function ensureCard(a, i, L, pos){
     el.addEventListener("dragend", () => { el.draggable = false; });
     cardPool.set(a.id, el);
     fillThumb(el, a, false, pos);
+    if (a.sg) sgSrc.bindFilmstrip(el, el.querySelector(".thumb"), () => assetById(el.dataset.id));
   }
   el.dataset.i = String(i);
   const on = state.selectedIds.includes(a.id);
@@ -2193,7 +2272,7 @@ function ensureCard(a, i, L, pos){
   const capb = !L.compact && L.meta > 0;
   const pack = L.compact || capb || !extras || 19 + (o.name ? nameH : 0) + extras * lineH <= room ? ""
     : o.name && 13 + nameH + lineH <= room ? " pack2" : " pack1";
-  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + (capb ? " capb" : "") + pack;
+  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (sgOpening === a.id ? " sg-busy" : "") + (el.classList.contains("sg-scrub") ? " sg-scrub" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + (capb ? " capb" : "") + pack;
   if (masonry && pos){
     el.style.left = pos.x + "px";
     el.style.top = pos.y + "px";
@@ -2219,6 +2298,16 @@ function ensureCard(a, i, L, pos){
   s.hidden = !o.size;
   el.querySelector(".j").textContent = pack || capb ? [k, c, r, s].filter((x) => !x.hidden && x.textContent).map((x) => x.textContent).join(" · ") : "";
   el.querySelector(".meta").hidden = !showMeta;
+  if (a.sg){
+    // a Version: the fields ticked in Fields ▾ — the first as the name, the rest on the info line
+    const lines = sgSrc.caption(a);
+    el.querySelector(".n").textContent = lines[0]; el.querySelector(".n").hidden = false;
+    k.textContent = lines.slice(1).join(" · "); k.hidden = lines.length < 2;
+    c.hidden = r.hidden = s.hidden = true;
+    el.querySelector(".j").textContent = pack || capb ? k.textContent : "";
+    el.querySelector(".meta").hidden = !!L.compact;
+    el.classList.toggle("sg-video", !!a.sgVideo);
+  }
   // Review state / open notes from the lightbox review panel.
   const rv = el.querySelector(".rv");
   const rvText = [a.review ? REVIEW_LABEL[a.review] || "" : "", a.open_notes ? `${a.open_notes} open` : ""].filter(Boolean).join(" · ");
@@ -2234,7 +2323,8 @@ function renderGrid(){
   if (!state.items.length){
     cardPool.clear();
     sliceEl = spaceEl = null;
-    grid.innerHTML = `<div class="empty">Empty. Add a folder — files stay where they are.</div>`;
+    grid.innerHTML = sgOn() ? `<div class="empty">${sgList.loading || sgList.more ? "Loading Versions…" : "No Version matches."}</div>`
+      : `<div class="empty">Empty. Add a folder — files stay where they are.</div>`;
     renderInsp();
     return;
   }
@@ -2265,6 +2355,7 @@ function renderGrid(){
       if (p.y + p.h < W.viewTop || p.y > W.viewBottom) continue;
       want.add(a.id);
       visItems.push(a);
+      W.lastShown = i;
       ordered.push(ensureCard(a, i, W, p));
     }
   } else {
@@ -2294,12 +2385,13 @@ function renderGrid(){
   }
   reportVisible(visItems);
   refreshStaleVisible(visItems);
+  if (sgOn()) sgMaybeMore(W);
 }
 
 function reportVisible(items){
   clearTimeout(visTimer);
   visTimer = setTimeout(() => {
-    const pending = items.filter(a => !a.has_thumb && !seenThumb.has(a.id));
+    const pending = items.filter(a => !a.sg && !a.has_thumb && !seenThumb.has(a.id));
     // The server has no headless GL to thumbnail 3D models — render those client-side instead
     // of asking it to (it would just keep 202-ing forever).
     for (const a of pending) if (a.kind === "model3d") ensureModelThumb(a);
@@ -2789,7 +2881,7 @@ function navDblClick(key, threshold = 400){
 }
 
 function applyFilter(patch){
-  if (state.view === "sg"){ setView("library"); $("q").value = state.filter.q || ""; }  // a library filter leaves the ShotGrid view (the box: the library's search again)
+  closeSgList(false);  // a library filter leaves a ShotGrid project's Versions (its own reset below)
   state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", ...patch };
   renderNav();
   resetList();
@@ -2823,6 +2915,8 @@ function renderNav(){
   const set = (patch) => applyFilter(patch);
   const sectionRenderers = { types: renderTypes, sources: renderSources, collections: renderCollections, tags: renderTags, canvas: renderCanvasBoards };
   for (const key of state.navOrder) sectionRenderers[key]?.(set);
+  // a ShotGrid project on screen: no library row is the current one
+  if (sgOn()) nav.querySelectorAll(".row.on:not(.sg-src):not(.sg-proj)").forEach((r) => r.classList.remove("on"));
   sideScrollEl.scrollTop = y;
 }
 
@@ -3000,13 +3094,12 @@ const REVIEW_LABEL = { review: "Needs review", changes: "Changes", approved: "Ap
 // the drag source for placing files onto the board — splitBtn lets it be hidden for a full-width
 // board when not needed.
 function applyViewDom(){
-  const showCanvas = state.view === "canvas", showSg = state.view === "sg";
-  $("sgView").hidden = !showSg || lightSplitOn();   // (the library beside the lightbox shows the library grid)
+  const showCanvas = state.view === "canvas";
   // The library beside the lightbox (Tab): the grid shows at its own ratio whatever the main view is; the board
   // (or an empty slot) stays behind the lightbox, which starts right of the divider.
   const ls = lightSplitOn();
   const split = ls || (showCanvas && state.canvasSplit);
-  grid.hidden = (!ls && showCanvas && !state.canvasSplit) || (showSg && !ls);
+  grid.hidden = !ls && showCanvas && !state.canvasSplit;
   syncTouchSel(); // the touch selection bar belongs to the grid
   canvasView.hidden = !showCanvas;
   lightSlot.hidden = !ls || showCanvas;
@@ -3136,6 +3229,7 @@ function selectAllInActivePane(){
   else selectSet(state.items.map((a) => a.id));
 }
 function setView(mode){
+  if (mode !== "library") closeSgList(true);   // a board: the library list behind it again
   state.view = mode;
   applyViewDom();
 }
@@ -3599,6 +3693,7 @@ function bindTagHold(el, name){
 // The file counter ("N files" / the shimmering "scanning · N") lives in the Sources header; renderNav
 // builds it with statusHtml(), renderStatus() repaints it in place when only the numbers change.
 function statusHtml(){
+  if (sgOn()) return `${state.items.length}${sgList.more ? "+" : ""} Version${state.items.length === 1 ? "" : "s"}`;
   const n = state.total || state.meta.counts?.all || 0;
   return state.meta.scanning ? `<span class="shimmer">scanning · ${n}</span>` : n + " files";
 }
@@ -3634,6 +3729,7 @@ function shared(vals){
 // The server serves thumbnails as immutable, so a regenerated one only shows up under a new URL:
 // thumb_v (the cached file's mtime, from the asset list / the "thumb" event) is the cache-buster.
 function thumbUrl(a){
+  if (a.sg) return sgSrc.thumbUrl(a);
   return "/api/thumb/" + a.id + (a.thumb_v ? "?v=" + a.thumb_v : "");
 }
 function thumbSrc(a){
@@ -3645,7 +3741,7 @@ function thumbSrc(a){
 // backdrop from before models were rendered transparent). Cards go back to their placeholder
 // first, so a "thumb" event that races the request can't be wiped afterwards.
 async function refreshThumbs(){
-  const ids = state.selectedIds.slice();
+  const ids = state.selectedIds.filter((id) => !String(id).startsWith("sg:"));   // (a ShotGrid Version has no library thumbnail)
   if (!ids.length) return;
   for (const id of ids){
     const a = assetById(id);
@@ -3689,10 +3785,12 @@ function renderInsp(){
     return;
   }
   if (sel.length > 1){
+    if (sel.some((x) => x.sg)){ insp.innerHTML = `<div class="sub" style="padding:24px 8px">${sel.length} Versions selected</div>`; return; }
     renderInspMany(sel);
     return;
   }
   const a = sel[0];
+  if (a.sg) return renderSgInsp(a);
   const thumb = thumbSrc(a);
   // The inspector preview is only the thumbnail, for every kind: players, waveforms, font/text
   // stages, PSD layers and the live 3D viewer (all full-file downloads) live in the lightbox alone.
@@ -3807,7 +3905,7 @@ function renderInspMany(sel){
 
 function canRemoveFromFolder(){
   const cid = state.filter.collection;
-  if (!cid || !state.selectedIds.length) return false;
+  if (!cid || !state.selectedIds.length || sgOn()) return false;
   const col = (state.meta.collections || []).find((c) => c.id === cid);
   return !!(col && col.count > 0);
 }
@@ -7128,6 +7226,10 @@ function bindSeqBar(bar){
 }
 
 function toggleLight(a){
+  if (a && a.sg){   // a ShotGrid Version: downloaded first; the one already in the lightbox closes it
+    if (light && sgLight && sgLight.item === a.id && light.id === sgLight.asset){ closeLight(); return; }
+    openSgItem(a); return;
+  }
   if (!a || a.status === "missing") return;
   if (light && light.id === a.id){ closeLight(); return; }
   if (light){ showInLight(a); return; }
@@ -7289,6 +7391,7 @@ function syncLightTools(kind){
 
 function showInLight(a, opts = {}){
   if (!light) return;
+  if (a && a.sg){ openSgItem(a, true); return; }
   flushRotatedThumb();
   // Sequence: follow the clip being shown; any other file (versions, compare's "open") ends the sequence.
   if (light.seq){
@@ -8322,7 +8425,7 @@ registerAutoClose($("ctx"), hideCtx);
 
 function showCtx(x, y, id){
   const menu = $("ctx");
-  if (!id){ menu.hidden = true; return; }
+  if (!id || String(id).startsWith("sg:")){ menu.hidden = true; return; }   // (a ShotGrid Version: no file actions)
   menu.className = "ctx";
   if (!state.selectedIds.includes(id)) selectOnly(id);
   const ids = state.selectedIds.length ? state.selectedIds.slice() : [id];
@@ -8433,7 +8536,7 @@ function showCanvasCtx(x, y){
 
 // Selected assets of whichever pane the palette/shortcut is aimed at: the board or the grid.
 function activeSelectionAssetIds(){
-  return canvasPaneActive() ? (canvasCtl?.selectedAssetIds() || []) : state.selectedIds.slice();
+  return canvasPaneActive() ? (canvasCtl?.selectedAssetIds() || []) : state.selectedIds.filter((id) => !String(id).startsWith("sg:"));
 }
 
 // One file-manager window per folder, each with all of that folder's selected files selected.
@@ -8704,6 +8807,7 @@ function showIconPicker(x, y, { icon, color, mode = "collection", onPick, onColo
 // lets missing files be cleaned up without hunting down the sidebar row or the palette.
 function showGridCtx(x, y){
   const menu = $("ctx");
+  if (sgOn()){ menu.hidden = true; return; }   // (its actions are the library's: none for a ShotGrid project)
   menu.className = "ctx";
   const narrowed = !isFilterEmpty(state.filter);
   menu.innerHTML = `<button type="button" data-act="purgeMissing">🧹 Remove missing files${narrowed ? " (current view)" : ""}</button>`;
@@ -8723,8 +8827,10 @@ function showGridCtx(x, y){
 
 function lightStep(dir, e){
   if (!light) return;
-  const i = state.items.findIndex(x => x.id === light.id);
+  const cur = lightItemId();
+  const i = state.items.findIndex(x => x.id === cur);
   if (i < 0) return;
+  if (sgOn() && i + dir >= state.items.length - 3) pullSg(false);   // stepping towards the end: the next page
   const next = state.items[i + dir];
   if (next && !heavyKeyBlocked(e, next)) showInLight(next);
 }
@@ -8735,9 +8841,11 @@ function lightStep(dir, e){
 function lightStepRow(dir, e){
   if (!light) return;
   const n = state.items.length;
-  const i = state.items.findIndex(x => x.id === light.id);
+  const cur = lightItemId();
+  const i = state.items.findIndex(x => x.id === cur);
   if (i < 0) return;
   const cols = layout().cols;
+  if (sgOn() && i + dir * cols >= state.items.length - cols) pullSg(false);
   let j = i + dir * cols;
   if (j < 0) return;
   if (j >= n){
@@ -8923,6 +9031,9 @@ function params(){
 
 let wantReset = false;
 async function pull(fromStart){
+  // A ShotGrid project's Versions load through pullSg / sgReload only: library events and actions (scans, batches,
+  // the library's own resets) leave its list alone.
+  if (sgOn()) return;
   if (fromStart) wantReset = true;
   if (state.pulling) return;
   state.pulling = true;
@@ -8935,6 +9046,7 @@ async function pull(fromStart){
       p.set("offset", String(state.items.length));
       p.set("limit", "400");
       const data = await api("/api/assets?" + p);
+      if (sgOn()) break;   // a ShotGrid project opened meanwhile: this page is not its list
       const items = data.items || [];
       if (data.total != null) state.total = data.total;
       if (reset){ state.items = items; loadedIds = new Set(items.map(x => x.id)); staleIds.clear(); }
@@ -8980,7 +9092,7 @@ function scheduleRefreshItems(){
   refreshItemsT = setTimeout(refreshItems, 150);
 }
 async function refreshItems(){
-  if (!state.items.length) return;
+  if (!state.items.length || sgOn()) return;
   for (const x of state.items) staleIds.add(x.id);
   const p = params();
   p.set("offset", "0");
@@ -9092,7 +9204,7 @@ function paletteActions(){
     ...(seqSelection().length >= 2 ? [{ label: "Play selected videos in sequence", hint: "Space", run: () => openSequence(seqSelection()) }] : []),
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
-    ...(state.selectedIds.length ? [{ label: "Refresh thumbnails of selection", hint: String(state.selectedIds.length), run: refreshThumbs }] : []),
+    ...((() => { const n = state.selectedIds.filter((id) => !String(id).startsWith("sg:")).length; return n ? [{ label: "Refresh thumbnails of selection", hint: String(n), run: refreshThumbs }] : []; })()),
     ...((sel) => sel.length ? [
       { label: "Reveal in File System", hint: String(sel.length), run: () => revealAssets(sel) },
       { label: "Find in Folder", hint: String(sel.length), run: () => findInFolder(sel) },
@@ -9295,7 +9407,7 @@ document.addEventListener("visibilitychange", () => {
 
 function clearSearch(){
   $("q").value = "";
-  if (state.view === "sg" && sgViewCtl){ sgViewCtl.setQuery(""); return; }   // the ShotGrid view's own name filter
+  if (sgOn()){ if (sgSrc.query){ sgSrc.setQuery(""); sgReload(); } return; }   // a ShotGrid project's name filter
   if (state.filter.q){
     state.filter.q = "";
     resetList();
@@ -9997,9 +10109,9 @@ function setViewMode(mode){
 }
 let qTimer;
 $("q").oninput = () => {
-  if (state.view === "sg" && sgViewCtl){ sgViewCtl.setQuery($("q").value); return; }  // the ShotGrid view's name filter
+  if (sgOn()){ clearTimeout(qTimer); qTimer = setTimeout(() => { if (!sgOn()) return; sgSrc.setQuery($("q").value); sgReload(); }, 300); return; }  // a ShotGrid project's name filter
   clearTimeout(qTimer);
-  qTimer = setTimeout(() => { state.filter.q = $("q").value; resetList(); }, 120);
+  qTimer = setTimeout(() => { if (sgOn()) return; state.filter.q = $("q").value; resetList(); }, 120);
 };
 // Guard for the keys that start loading a heavy asset: Space (open/close) and the arrows (step
 // onto the next one). Opening a heavy asset starts a fetch + a parse that can't be cancelled and
@@ -10013,7 +10125,7 @@ const HEAVY_COOLDOWN_MS = 700;
 const HEAVY_STALE_MS = 250;
 let heavyLockUntil = 0;
 function isHeavyAsset(a){
-  return !!a && (a.kind === "model3d" || a.ext === ".psd" || a.size >= HEAVY_BYTES);
+  return !!a && (!!a.sg || a.kind === "model3d" || a.ext === ".psd" || a.size >= HEAVY_BYTES);
 }
 // The grid is virtualised and cards are recycled, so :hover state can't be trusted (it goes stale
 // after a scroll without mouse movement) — remember the last pointer position and hit-test it
@@ -10128,7 +10240,7 @@ document.addEventListener("keydown", (e) => {
     const settingsShown = state.settingsOpen && !!opts?.offsetParent && (!typing || inOpts);
     const closeSettings = () => { if (inOpts) document.activeElement.blur(); $("settingsHead").click(); };
     if (settingsShown && inOpts){ closeSettings(); return; }
-    if (document.activeElement === $("q") || state.filter.q){ clearSearch(); $("q").blur(); return; }
+    if (document.activeElement === $("q") || (sgOn() ? sgSrc.query : state.filter.q)){ clearSearch(); $("q").blur(); return; }
     if (settingsShown){ closeSettings(); return; }
     if (!typing && state.selectedIds.length) selectOnly(null);
     $("side").classList.remove("open");

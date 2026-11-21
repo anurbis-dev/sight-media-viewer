@@ -20,7 +20,7 @@ app/static/index.html    the whole UI: one inline <script type="module"> (no bui
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
-app/static/sg-view.js    Sight's ShotGrid view: a project's Versions (filter, Fields ▾, filmstrip scrub, open as a library file)
+app/static/sg-source.js  ShotGrid Versions as an item source of the library grid: filter bar, Fields ▾ captions, filmstrip, open as a library file
 app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version, shared with the phone app (docs/SHOTGRID.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
