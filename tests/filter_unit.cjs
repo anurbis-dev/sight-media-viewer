@@ -92,5 +92,14 @@ assert.deepStrictEqual(F.toSgConditions({ op: "and", c: [
   { path: "code", relation: "not_contains", values: ["wip"] },
 ] });
 assert.strictEqual(F.toSgConditions({ op: "and", c: [{ f: "code", o: "is", v: "" }] }, S), null);
+// a list field without schema choices: the values seen on the records plus the ones the conditions name
+const seenS = F.sgFields(schema, { seen: { sg_kind: new Set(["plate", "comp"]), sg_status_list: ["x"] },
+  tree: { op: "and", c: [{ op: "or", c: [{ f: "sg_kind", o: "is", v: "anim" }] }, { f: "code", o: "is", v: "plate" }] } });
+assert.deepStrictEqual(F.fieldOf(seenS, "sg_kind").values, [["anim", "anim"], ["comp", "comp"], ["plate", "plate"]]);
+assert.strictEqual(F.fieldOf(seenS, "sg_kind").type, "enum");
+assert.deepStrictEqual(F.fieldOf(seenS, "sg_status_list").values, [["rev", "Pending Review"], ["apr", "Approved"]], "schema choices win");
+assert.strictEqual(F.fieldOf(F.sgFields(schema, { seen: { sg_kind: [] } }), "sg_kind").type, "text", "nothing seen or named: typed");
+assert.deepStrictEqual(F.fieldOf(F.sgFields(schema, { seen: { sg_kind: ["__proto__"] }, tree: { op: "and", c: [{ f: "sg_kind", o: "is", v: "constructor" }] } }), "sg_kind").values,
+  [["__proto__", "__proto__"], ["constructor", "constructor"]], "values that are Object.prototype names stay values");
 
 console.log("filter_unit: ok");

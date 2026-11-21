@@ -107,11 +107,7 @@ export function createSgSource(opts){
   // The schema's fields as the builder's; a status field with no listed choices offers the statuses seen so far and
   // the ones the conditions name (a status filtered out never shows on a Version, yet its condition must hold).
   function filterFields(){
-    if (!fieldsAll) return null;
-    const named = new Set(statuses);
-    (function walk(g){ g.c.forEach((x) => { if (SF().isGroup(x)) walk(x); else if (x.f === "sg_status_list" && x.v) named.add(String(x.v)); }); })(smart || where);
-    return SF().sgFields(fieldsAll.map((f) => f.name === "sg_status_list" && !(f.values || []).length && named.size
-      ? Object.assign({}, f, { values: [...named].sort() }) : f));
+    return fieldsAll ? SF().sgFields(fieldsAll, { seen: { sg_status_list: statuses }, tree: smart || where }) : null;
   }
   function setFields(){
     opts.putSetting(FIELDS_KEY, JSON.stringify(fields));

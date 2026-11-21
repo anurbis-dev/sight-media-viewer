@@ -367,7 +367,28 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .sgb-tile .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .sgb-tile .strip { position: absolute; inset: 0; background-repeat: no-repeat; opacity: 0; pointer-events: none; }
 .sgb-tile.scrub .strip { opacity: 1; } .sgb-tile.scrub .th img { opacity: 0; }
-.sgb-row .sgb-fields { flex: none; }
+.sgb-acts .btn { flex: 1; min-height: 40px; }
+.sgb-where.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* the filter builder (core/filter-core.js mountBuilder) in the ShotGrid page's Filter sheet */
+.flt-sheet .flt .flt-group { display: flex; flex-direction: column; gap: 8px; }
+.flt-sheet .flt .flt-group:not(.root) { padding: 8px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px; }
+.flt-sheet .flt .flt-ghead { display: flex; align-items: center; gap: 8px; }
+.flt-sheet .flt .flt-ghead span { color: var(--muted); font-size: 13.5px; flex: 1; }
+.flt-sheet .flt .flt-ghead .flt-join { width: auto; flex: none; }
+.flt-sheet .flt select, .flt-sheet .flt input { margin: 0; min-width: 0; min-height: 40px; }
+.flt-sheet .flt .flt-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.flt-sheet .flt .flt-row .flt-f, .flt-sheet .flt .flt-row .flt-o { flex: 1 1 0; width: auto; }
+.flt-sheet .flt .flt-row .flt-x { order: 0; }
+.flt-sheet .flt .flt-row > .flt-v, .flt-sheet .flt .flt-row > .flt-days { order: 1; flex: 1 1 100%; width: 100%; }
+.flt-sheet .flt .flt-days { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.flt-sheet .flt .flt-days .flt-v { flex: 1; width: auto; }
+.flt-sheet .flt .flt-row.incomplete .flt-v { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.flt-sheet .flt .flt-x { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: var(--chip); color: var(--muted); cursor: pointer; padding: 0; }
+.flt-sheet .flt .flt-none { color: var(--muted); font-size: 13.5px; padding: 4px 2px; }
+.flt-sheet .flt .flt-gacts { display: flex; flex-wrap: wrap; gap: 8px; }
+.flt-sheet .flt .flt-gacts .btn { min-height: 40px; }
+.flt-sheet .flt .flt-clear { margin-left: auto; color: var(--red); }
+.flt-sheet .acts { margin-top: 14px; }
 .sheet .sgb-flist { display: flex; flex-direction: column; max-height: 55vh; overflow: auto; margin-bottom: 12px; }
 .sgb-tile .cap { padding: 6px 8px 8px; display: flex; flex-direction: column; min-width: 0; }
 .sgb-tile .cap b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -407,6 +428,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <script src="core/review-core.js"></script>
 <script src="core/review-draw.js"></script>
 <script src="core/shotgrid-core.js"></script>
+<script src="core/filter-core.js"></script>
 <script>window.SIGHT_REVIEW_VERSION = "%%VERSION%%";</script>
 <script type="module" src="js/app.js"></script>
 </body>

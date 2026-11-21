@@ -241,17 +241,30 @@ export async function sgSync(ctx){
 }
 
 // ---- the Versions browser (the home screen's second page, docs/PLAN-trackers.md) ------------------------------
-// A filter (project · entity type · entity · status) over the project's Versions, newest first, as a grid of
-// thumbnails. Thumbnails are cached in Cache Storage by Version id + its updated_at (a newer Version replaces it), so
+// A filter (project · entity type · entity · status · name, and Filter: the filter builder's conditions on the
+// Version fields — core/filter-core.js, the same as Sight's Filter ▾) over the project's Versions, newest first, as a
+// grid of thumbnails. Thumbnails are cached in Cache Storage by Version id + its updated_at (a newer Version replaces it), so
 // the grid draws again without downloading. A tap opens the Version: its review on this device if there is one with
 // the media kept, else its web proxy (the uploaded movie / picture) is downloaded and opened as a review linked to it.
 // ctx: {el, btn, toast, busy, settings(), reviews(): [meta], openReview(key), openFile(file, link)}
-const FILTER_KEY = "sight-review:sgfilter", FIELDS_KEY = "sight-review:sgfields";
+const FILTER_KEY = "sight-review:sgfilter", FIELDS_KEY = "sight-review:sgfields", WHERE_KEY = "sight-review:sgwhere";
+const SF = () => globalThis.SightFilter;
 const THUMBS = "sight-review-sgthumbs";
 const PAGE = 60;
 const ENTITY_TYPES = [["", "All"], ["Shot", "Shots"], ["Asset", "Assets"], ["Sequence", "Sequences"]];
 function loadFilter(){ try { const f = JSON.parse(localStorage.getItem(FILTER_KEY) || "null"); return f && typeof f === "object" ? f : {}; } catch { return {}; } }
 function saveFilter(f){ try { localStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch {} }
+// The filter builder's conditions, one tree per project ("<site host> <project id>" → tree), the newest 100 kept.
+function loadWheres(){ try { const w = JSON.parse(localStorage.getItem(WHERE_KEY) || "null"); return w && typeof w === "object" && !Array.isArray(w) ? w : {}; } catch { return {}; } }
+const loadWhere = (k) => SF().sanitize(loadWheres()[k]);
+function saveWhere(k, tree){
+  const all = loadWheres();
+  delete all[k];   // (re-added last: the newest at the end)
+  if (tree.c.length) all[k] = tree;
+  const keys = Object.keys(all);
+  keys.slice(0, Math.max(0, keys.length - 100)).forEach((x) => { delete all[x]; });
+  try { localStorage.setItem(WHERE_KEY, JSON.stringify(all)); } catch {}
+}
 const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (x) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[x]);
 
 // One thumbnail: from the cache, else downloaded (at most 4 at a time) and put there.
@@ -319,7 +332,9 @@ export function sgBrowser(ctx, box){
   const q = el("input", "sgb-q"); q.type = "search"; q.placeholder = "Version name contains…"; q.spellcheck = false; q.value = f.q || "";
   bar.appendChild(proj); bar.appendChild(types); bar.appendChild(ent);
   const fbtn = btn("btn sgb-fields", "Fields", () => pickFields(), "Which fields the tiles show");
-  const row = el("div", "sgb-row"); row.appendChild(stat); row.appendChild(q); row.appendChild(fbtn); bar.appendChild(row);
+  const wbtn = btn("btn sgb-where", "Filter", () => openWhere(), "Conditions on the Version fields");
+  const row = el("div", "sgb-row"); row.appendChild(stat); row.appendChild(q); bar.appendChild(row);
+  const row2 = el("div", "sgb-row sgb-acts"); row2.appendChild(wbtn); row2.appendChild(fbtn); bar.appendChild(row2);
   box.appendChild(bar);
   const grid = el("div", "sgb-grid"), more = btn("btn sgb-more", "More", () => { if (!loading) load(true); });
   more.hidden = true;
@@ -345,7 +360,70 @@ export function sgBrowser(ctx, box){
   const statuses = new Set(f.status ? [f.status] : []);
   const paintStat = () => fillSel(stat, [...statuses].sort().map((s) => [s, s]), f.status || "", "Any status");
   paintStat();
-  let page = 0, seq = 0, gridGen = 0;
+  // ---- Filter: the filter builder's conditions on the Version fields (per project, kept on the device), sent with
+  // every page as ShotGrid hash filters (SightFilter.toSgConditions), ANDed with the quick filters above
+  let fieldsAll = null, fieldsP = null;
+  const loadFields = () => fieldsAll ? Promise.resolve(fieldsAll)
+    : (fieldsP = fieldsP || SG().versionFields(cl).then((x) => { fieldsAll = x; return x; }).finally(() => { fieldsP = null; }));
+  const whereKey = () => cl.host + " " + (f.project || "");
+  let where = loadWhere(whereKey());
+  // (a status field with no listed choices offers the statuses seen and the ones the conditions name)
+  const whereFields = () => fieldsAll ? SF().sgFields(fieldsAll, { seen: { sg_status_list: statuses }, tree: where }) : null;
+  const paintWhere = () => {
+    const wf = whereFields(), n = wf ? SF().count(where, wf) : (where.c.length ? 1 : 0);
+    wbtn.textContent = n ? "Filter · " + n : "Filter";
+    wbtn.classList.toggle("on", !!n);
+  };
+  paintWhere();
+  async function openWhere(){
+    if (!f.project){ toast("Pick a project first", 2500); return; }
+    const b = ctx.busy("Reading the fields…");
+    let err = null;
+    try { await loadFields(); }
+    catch (e){ err = e; }
+    finally { b.done(); }
+    if (gone) return;
+    const key = whereKey();
+    if (err){
+      if (!where.c.length){ toast(errText(err) + corsHint(err, c), 5000); return; }
+      // conditions kept but no fields to show them with: they can still be cleared
+      ctx.sheet((sh, close) => {
+        sh.appendChild(el("h2", "", "Filter"));
+        sh.appendChild(el("p", "", "Could not read the Version fields, so the conditions cannot be shown or applied: " + errText(err) + corsHint(err, c)));
+        const a = el("div", "acts");
+        a.appendChild(btn("btn danger", "Clear the filter", () => {
+          close();
+          if (gone || key !== whereKey()) return;
+          where = SF().empty(); saveWhere(key, where); paintWhere(); load();
+        }));
+        a.appendChild(btn("btn primary", "Close", close));
+        sh.appendChild(a);
+      });
+      return;
+    }
+    ctx.sheet((sh, close) => {
+      sh.classList.add("flt-sheet");
+      sh.appendChild(el("h2", "", "Filter"));
+      sh.appendChild(el("p", "", (proj.selectedOptions[0] ? proj.selectedOptions[0].textContent + ": " : "") + "Versions matching these conditions (and the filters above)."));
+      const host = el("div", "flt");
+      sh.appendChild(host);
+      // (an edit that leaves the conditions in effect as they were — a new empty row, All / Any over one row — only
+      // saves; each tree cleaned with its own fields: a status field without schema choices offers the values its tree
+      // names, so the new tree's fields can differ from the old one's)
+      const effective = () => JSON.stringify(SF().clean(where, whereFields() || []));
+      const builder = SF().mountBuilder(host, { fields: whereFields(), tree: where, onChange: (t) => {
+        if (gone || key !== whereKey()) return;   // (a value typed just before the page went / the project changed)
+        const was = effective();
+        where = SF().sanitize(t);
+        saveWhere(key, where); paintWhere();
+        if (effective() !== was) load();
+      } });
+      const a = el("div", "acts");
+      a.appendChild(btn("btn primary", "Done", () => { builder.flush(); close(); }));
+      sh.appendChild(a);
+    });
+  }
+  let page = 0, seq = 0, gridGen = 0, unfiltered = "";  // unfiltered: the warning while the grid holds pages loaded without the conditions
   async function load(append){
     if (!f.project){ ++seq; loading = false; grid.textContent = ""; msg.textContent = "Pick a project."; more.hidden = true; return; }  // (a load in flight lands nowhere)
     const my = ++seq;
@@ -353,11 +431,23 @@ export function sgBrowser(ctx, box){
     if (!append){ gridGen++; page = 0; grid.textContent = ""; urls.splice(0).forEach((u) => URL.revokeObjectURL(u)); }
     msg.textContent = "Loading…";
     try {
-      const vs = await SG().browseVersions(cl, f, fields, page + 1, PAGE);
+      // (a condition needs its field's type; the schema not readable: the page loads without the conditions, says so,
+      // and Filter offers to clear them)
+      let cond = null, warn = "";
+      if (!append) unfiltered = "";
+      if (append && unfiltered) warn = unfiltered;  // (More keeps appending the same unfiltered set, not a filtered page 2)
+      else if (where.c.length){
+        try {
+          if (!fieldsAll){ await loadFields(); if (my !== seq) return; paintWhere(); }
+          cond = SF().toSgConditions(where, whereFields());
+        } catch (e){ if (my !== seq) return; warn = "Filter not applied — could not read the Version fields: " + errText(e) + corsHint(e, c); }
+      }
+      const vs = await SG().browseVersions(cl, f, fields, page + 1, PAGE, cond);
       if (my !== seq) return;
+      if (!append) unfiltered = warn;
       page++;
       vs.forEach((v) => { if (v.sg_status_list && !statuses.has(v.sg_status_list)){ statuses.add(v.sg_status_list); paintStat(); } grid.appendChild(tile(v)); });
-      msg.textContent = grid.childNodes.length ? "" : "No Version matches.";
+      msg.textContent = [warn, grid.childNodes.length ? "" : "No Version matches."].filter(Boolean).join(" · ");
       more.hidden = vs.length < PAGE;
     } catch (e){ if (my === seq){ msg.textContent = errText(e) + corsHint(e, c); more.hidden = true; } }
     finally { if (my === seq) loading = false; }
@@ -369,10 +459,9 @@ export function sgBrowser(ctx, box){
     fields.forEach((k, i) => { const x = SG().fmtField(t._v, k); if (x) cap.appendChild(el(i ? "small" : "b", "", x)); });
     if (!cap.childNodes.length) cap.appendChild(el("b", "", t._v.code || "#" + t._v.id));
   }
-  let fieldsAll = null;
   async function pickFields(){
     const b = ctx.busy("Reading the fields…");
-    try { fieldsAll = fieldsAll || await SG().versionFields(cl); }
+    try { await loadFields(); }
     catch (e){ toast(errText(e) + corsHint(e, c), 5000); return; }
     finally { b.done(); }
     ctx.sheet((sh, close) => {
@@ -472,7 +561,7 @@ export function sgBrowser(ctx, box){
     } catch (e){ b.done(); toast("Could not download the Version: " + errText(e) + corsHint(e, c), 6000); }
   }
 
-  proj.onchange = () => { f.project = proj.value; f.entity = ""; saveFilter(f); loadEntities().then(() => load()); };
+  proj.onchange = () => { f.project = proj.value; f.entity = ""; saveFilter(f); where = loadWhere(whereKey()); paintWhere(); loadEntities().then(() => load()); };
   ent.onchange = () => { f.entity = ent.value; saveFilter(f); load(); };
   stat.onchange = () => { f.status = stat.value; saveFilter(f); load(); };
   let qt = 0;
@@ -482,7 +571,7 @@ export function sgBrowser(ctx, box){
     try {
       const ps = await cl.projects();
       fillSel(proj, ps.map((p) => [p.id, p.name || "#" + p.id]), f.project, "Project…");
-      if (!proj.value) f.project = "";
+      if (!proj.value){ f.project = ""; where = loadWhere(whereKey()); paintWhere(); }
       await loadEntities();
       await load();
     } catch (e){ fillSel(proj, [], "", "No projects"); msg.textContent = errText(e) + corsHint(e, c); }

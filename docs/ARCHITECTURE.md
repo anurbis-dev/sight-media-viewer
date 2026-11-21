@@ -21,7 +21,7 @@ app/static/canvas.js     the Canvas (board) view — ES module imported by index
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
 app/static/sg-source.js  ShotGrid Versions as an item source of the library grid: filter bar, Fields ▾ captions, filmstrip, open as a library file
-app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, ShotGrid hash filters, the UI (SightFilter)
+app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, ShotGrid hash filters, the UI (SightFilter); also the phone's (core/)
 app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version, shared with the phone app (docs/SHOTGRID.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
@@ -743,7 +743,13 @@ conditions; anything else → 400). Also in the scoped "Remove missing" (`/api/m
 ShotGrid project: `sgSrc.where` (`sight.sg.where`), fields from the Version schema (`sgFields`: text, entity,
 status / list with `valid_values`, date / date_time, number, checkbox), sent by `browseVersions` as a REST **hash**
 filter (`toSgConditions`, content type `api3_hash+json`) ANDed with the bar's own filters; without conditions the
-array format is used as before. Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
+array format is used as before. `sgFields(schema, {seen, tree})`: a list / status field with no schema choices offers
+the values seen on loaded Versions plus the ones the tree names (both apps pass `seen: {sg_status_list}`).
+Phone (stage 3d): build_pwa ships filter-core.js as `core/filter-core.js`; the ShotGrid page's *Filter* button opens
+`mountBuilder` in a bottom sheet (`.flt-sheet`, mobile/js/shotgrid.js `openWhere`), the tree per project in
+localStorage `sight-review:sgwhere` (`{"<host> <project id>": tree}`, newest 100), sent through the same
+`toSgConditions` → `browseVersions(…, cond)`. Smart collections are Sight-only (they live in the library DB; the
+phone talks to ShotGrid directly). Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
 **Smart collections** (stage 3c): rows of `collections` with `rule` (JSON — the client's raw tree, not the wire form;
 ≤ 64 000 chars, `_rule_json`) and no members (`add_to_collection` ignores them; nothing nests in one; `parent_id`
 forced NULL for ShotGrid ones). A ShotGrid one also has `sg_site` (host) + `sg_project` and is drawn under its project
@@ -882,7 +888,9 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   the tracker list: `trackers()` / `trackerOn(id)` (connected = `sgReady`: site + script + key), `connectTracker`,
   `trackerDisconnect` (drops the key only); `checkTrackers` fires `sight-trackers` when the list changed (after a
   save, on a `storage` event from another tab, on `visibilitychange`) and app.js re-renders the home screen. The ShotGrid tab / page / swipe, the person sheet's
-  row and the review's *ShotGrid…* exist only while `trackerOn("shotgrid")` (decision 10).
+  row and the review's *ShotGrid…* exist only while `trackerOn("shotgrid")` (decision 10). The ShotGrid page's quick
+  filters live in `sight-review:sgfilter`, its *Filter* sheet's conditions (core/filter-core.js) per project in
+  `sight-review:sgwhere`.
 - **Identity**: a review per media file, `key = assetKey(name, size)` = first 16 hex of SHA-1 of
   `lower(name) + "\n" + size` (mtime deliberately out: iOS reports the pick time for Photos).
   Re-picking the same file finds its review; Sight matches the app's `.srev` by name + size (its

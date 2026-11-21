@@ -348,7 +348,8 @@
   while you move between sources, collections and tags (like the search text) and are remembered. While a ShotGrid
   project is open the same button filters its Versions by the site's Version fields (Status is…, Link contains…,
   Date Created in the last … days, any text / number / date / checkbox field) — kept apart from the library's.
-  Works with a mouse or a finger; Esc closes it.
+  Works with a mouse or a finger (on a narrow window it spans the width under the top bar; a tap outside closes it);
+  Esc closes it.
 - **Smart collections** — *Save as smart collection…* at the bottom of Filter ▾ keeps the conditions as a row with a
   funnel icon: under **Collections** for the library, under its project (Sources → ShotGrid) for a ShotGrid project.
   Click / tap the row to show what its conditions match; while it is open, Filter ▾ shows and edits *its*
@@ -359,8 +360,10 @@
   and the ShotGrid bar's type / entity / status still apply on top of it.
 - **ShotGrid on the phone's home screen** — while ShotGrid is connected, two pages, *Reviews* and *ShotGrid* (tap the
   tabs in the bar, or swipe sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
-  pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name; *Fields*
-  picks what the tiles show, and a finger dragged sideways over a video's tile plays through its frames. Thumbnails
+  pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name; *Filter*
+  opens the same builder as Sight's Filter ▾ in a sheet (field · operator · value rows, All / Any, *+ Group*; the
+  site's Version fields), applied together with the filters above and remembered per project — the button shows
+  how many conditions apply; *Fields* picks what the tiles show, and a finger dragged sideways over a video's tile plays through its frames. Thumbnails
   are kept on the device and only downloaded again when the Version changes. Tap a Version: its review opens (one
   you already have is outlined), or its playable copy is downloaded, kept on the device and opened as a review that
   is linked to the Version — *Export and more → ShotGrid… → Sync now* exchanges the notes.

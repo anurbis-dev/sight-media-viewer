@@ -10166,10 +10166,11 @@ function filterCtx(){
   const same = (a, b, f) => JSON.stringify(SightFilter.clean(a, f)) === JSON.stringify(SightFilter.clean(b, f));
   // (while a smart collection is on, its rule is what is edited — and saved with it)
   if (sgOn()) return { fields: sgSrc.filterFields(), tree: sgSrc.where, smart: smartCol(sgSmartOn), set: (t) => {
-    const f = sgSrc.filterFields() || [], was = sgSrc.where;
+    // (each tree cleaned with its own fields: a status field without schema choices offers the values its tree names)
+    const fWas = sgSrc.filterFields() || [], was = SightFilter.clean(sgSrc.where, fWas);
     sgSrc.setWhere(t); renderFilterBtn();
     if (sgSmartOn) saveSmartRule(sgSmartOn, sgSrc.where);
-    if (!same(was, t, f)) sgReload();
+    if (JSON.stringify(was) !== JSON.stringify(SightFilter.clean(sgSrc.where, sgSrc.filterFields() || []))) sgReload();
   } };
   const sc = smartCol(state.filter.smart);
   return { fields: libFilterFields(), tree: libTree(state.filter), smart: sc, set: (t) => {

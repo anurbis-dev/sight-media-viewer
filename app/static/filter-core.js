@@ -135,14 +135,27 @@ var SightFilter = (function(){
   // The Version schema's fields (shotgrid-core versionFields: {name, label, type, values?}) the builder can filter.
   var SG_TYPE = { text: "text", entity: "entity", multi_entity: "entity", status_list: "enum", list: "enum", date: "date", date_time: "date",
     number: "number", float: "number", duration: "number", percent: "number", checkbox: "bool" };
-  function sgFields(schema){
-    var out = [];
+  // opts.seen: {field name: [values seen on the loaded records]} — a list / status field the schema lists no choices
+  // for offers these plus the ones opts.tree names (a value filtered out never shows on a record, yet its condition
+  // must hold). Sight's ShotGrid view and the phone's ShotGrid page pass the statuses they have seen.
+  function namedIn(tree, name, into){
+    (function walk(g){ if (isGroup(g)) g.c.forEach(function(x){ if (isGroup(x)) walk(x); else if (x && x.f === name && x.v != null && x.v !== "") into[String(x.v)] = 1; }); })(tree);
+    return into;
+  }
+  function sgFields(schema, opts){
+    var out = [], seen = (opts && opts.seen) || {};
     (schema || []).forEach(function(f){
       var t = SG_TYPE[f.type];
       if (!t) return;
       var x = { name: f.name, label: f.label, type: t, sgType: f.type };
       if (t === "enum"){
-        x.values = (f.values || []).map(function(v){ return [v, (f.labels && f.labels[v]) || v]; });
+        var vals = f.values || [];
+        if (!vals.length && seen[f.name]){
+          var have = Object.create(null);   // (a value named "__proto__" stays a value)
+          Array.from(seen[f.name]).forEach(function(v){ if (v != null && v !== "") have[String(v)] = 1; });
+          vals = Object.keys(namedIn(opts.tree, f.name, have)).sort();
+        }
+        x.values = vals.map(function(v){ return [v, (f.labels && f.labels[v]) || v]; });
         if (!x.values.length) x.type = "text";   // no list to pick from: typed
         x.ops = ["is", "is_not", "empty", "not_empty"];
       }

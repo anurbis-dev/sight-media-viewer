@@ -5,7 +5,8 @@
     python tools/build_pwa.py --out _site     -> another folder (the Pages workflow uses _site)
 
 The app is mobile/ plus the scripts it shares with Sight: app/static/review-core.js (drawing
-primitives, merge rules) and app/static/review-draw.js (the drawing canvas) and app/static/shotgrid-core.js (the ShotGrid link) and app/static/keys.js (the one
+primitives, merge rules) and app/static/review-draw.js (the drawing canvas) and app/static/shotgrid-core.js (the ShotGrid link) and app/static/filter-core.js (the filter builder of the
+ShotGrid page) and app/static/keys.js (the one
 shortcut rule) and app/static/caption-plate.js (the text plate over a full-screen picture) and app/static/model3d-core.js
 (3D turns / framing / explode, shared with the lightbox), copied to core/, and the parts of three.js the 3D
 viewer needs (three/). The
@@ -31,6 +32,7 @@ SHARED = {  # published path -> source
     "core/review-core.js": ROOT / "app" / "static" / "review-core.js",
     "core/review-draw.js": ROOT / "app" / "static" / "review-draw.js",
     "core/shotgrid-core.js": ROOT / "app" / "static" / "shotgrid-core.js",
+    "core/filter-core.js": ROOT / "app" / "static" / "filter-core.js",
     "core/keys.js": ROOT / "app" / "static" / "keys.js",
     "core/caption-plate.js": ROOT / "app" / "static" / "caption-plate.js",
     "core/model3d-core.js": ROOT / "app" / "static" / "model3d-core.js",
