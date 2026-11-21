@@ -28,6 +28,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .trackers import TrackerError, _canon_hostname, canonical_hostname, host_of, tracker_key
+
 TIMEOUT_S = 120
 MAX_BODY = 512 * 1048576
 STATES = ("open", "progress", "done")
@@ -58,6 +60,24 @@ def site_url(s: str) -> str:
     return re.sub(r"/api(/v[\d.]+)?$", "", s, flags=re.I)
 
 
+def canonical_site(url: str) -> str:
+    """The site with its hostname spelt as the browser's URL.host spells it ('https://[0:0:0:0:0:0:0:1]' ->
+    'https://[::1]', 'https://0x7f.1' -> 'https://127.0.0.1'), so a site saved before 0.107 in another spelling still
+    saves (valid_site refuses non-canonical hostnames). Anything it cannot read comes back as it was (valid_site
+    judges it). A non-ASCII hostname is left alone (valid_site refuses it, as before 0.107): Python's IDNA 2003 maps
+    some letters (ß, ς, ZWJ) to another domain than the browser's IDNA 2008 would."""
+    try:
+        u = urllib.parse.urlsplit(url)
+        if not urllib.parse.unquote(u.hostname or "").isascii():
+            return url
+        name, port = _canon_hostname(u.hostname), u.port
+    except ValueError:
+        return url
+    if not name or u.username is not None or u.password is not None:
+        return url
+    return urllib.parse.urlunsplit((u.scheme, name + (f":{port}" if port is not None else ""), u.path, u.query, u.fragment))
+
+
 def valid_site(url: str) -> bool:
     if not url or len(url) > 300 or not re.fullmatch(r"[\x21-\x7e]+", url):
         return False
@@ -68,17 +88,21 @@ def valid_site(url: str) -> bool:
         return False
     if not u.hostname or u.username or u.password is not None or u.path not in ("", "/") or u.query:
         return False
+    if not canonical_hostname(u.hostname):
+        return False   # spelt so that the browser's URL.host differs (0x7f.1, [0:0::1], %41…): the tracker key must agree
     # https only; plain http only for a server on this machine (a local test / proxy)
     return u.scheme == "https" or (u.scheme == "http" and u.hostname in _LOCAL)
 
 
-class SgError(Exception):
-    def __init__(self, status: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status = status
+class SgError(TrackerError):
+    pass
 
 
 class ShotGridService:
+    """The ShotGrid tracker adapter (app/trackers.py lists the interface; docs/ARCHITECTURE.md "Tracker adapters")."""
+    kind = "shotgrid"
+    name = "ShotGrid"
+
     def __init__(self, home: Path) -> None:
         self.home = home
         self.path = home / "shotgrid.json"
@@ -108,15 +132,29 @@ class ShotGridService:
             "site": site, "script": c.get("script", ""), "hasKey": bool(c.get("key")),
             "statusMap": c.get("statusMap") or {}, "logins": c.get("logins") or {}, "sudo": bool(c.get("sudo")),
             "cacheLimitGB": float(c.get("cacheLimitGB") or 0), "cacheDir": str(self.media_dir()),
+            # (the tracker interface: another `ident` = another connection — the page reads the projects again)
+            "ident": f"{site}|{c.get('script', '')}",
         }
 
+    def site(self) -> str:
+        return self._load().get("site", "")
+
     def tracker(self) -> dict | None:
-        """This tracker's entry in /api/trackers while it is connected, else None."""
+        """This tracker's entry in /api/trackers while it is connected, else None. `id` is the kind (as before 5b),
+        `key` the tracker key every per-tracker record is filed under, `note` a short state for the You panel."""
         c = self._load()
         if not self._connected(c):
             return None
         site = c["site"]
-        return {"id": "shotgrid", "name": "ShotGrid", "site": site, "host": urllib.parse.urlsplit(site).netloc or site}
+        return {"id": self.kind, "kind": self.kind, "key": tracker_key(self.kind, site), "name": self.name, "site": site,
+                "host": host_of(site) or site, "note": "as reviewer" if c.get("sudo") else ""}
+
+    @staticmethod
+    def parse_media_id(s: str) -> int:
+        """A Version id from a route (a positive integer), else TrackerError 404."""
+        if not isinstance(s, str) or not re.fullmatch(r"[1-9]\d{0,15}", s):
+            raise SgError(404, "no such Version")
+        return int(s)
 
     def configure(self, data: dict) -> bool:
         """Save the settings. A missing "key" keeps the stored one (unless site / script change); "" removes it.
@@ -131,6 +169,8 @@ class ShotGridService:
             return False
         if site is None or not isinstance(script, str) or (key is not None and not isinstance(key, str)):
             return False
+        if site:
+            site = canonical_site(site)   # (an older, non-canonical spelling is rewritten, not refused)
         if site and not valid_site(site):
             return False
         script = script.strip()
@@ -150,7 +190,7 @@ class ShotGridService:
         with self._lock:
             old = self._load()
             if key is None:
-                key = old.get("key", "") if (old.get("site", ""), old.get("script", "")) == (site, script) else ""
+                key = old.get("key", "") if (canonical_site(old.get("site", "")), old.get("script", "")) == (site, script) else ""
             if not site or not script:
                 key = ""
             if limit is None:
@@ -336,6 +376,19 @@ class ShotGridService:
         used = sum(p.stat().st_size for p in files)
         free = shutil.disk_usage(d if d.exists() else self.home).free
         return {"used": used, "files": len(files), "free": free, "limitGB": float(self._load().get("cacheLimitGB") or 0)}
+
+    def clear_cache(self) -> int:
+        """Deletes the downloaded media (a download under way finishes). Returns the number of files removed."""
+        d = self.media_dir()
+        n = 0
+        for p in (d.rglob("*") if d.exists() else []):
+            if p.is_file() and not p.name.endswith(".part"):
+                try:
+                    p.unlink()
+                    n += 1
+                except OSError:
+                    pass
+        return n
 
     def make_room(self, need: int, keep: Path | None = None) -> None:
         d = self.media_dir()

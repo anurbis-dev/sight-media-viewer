@@ -18,19 +18,19 @@ one): everything runs against a fake (`tests/sg_fake.cjs`). See "To check on a r
 
 | File | Role |
 |------|------|
-| `app/static/shotgrid-core.js` | `SightShotGrid`: REST client (`createClient`), `loadVersion`, `linkedVersionOf`, `sync`. Plain script (like review-core), Node-loadable. |
-| `app/shotgrid.py` | Sight's server side: config in `<SIGHT_HOME>/shotgrid.json` (0600; the key is never sent back, dropped when site / script change), the token (per sudo login), `forward()` for `/api/sg/fetch`. |
-| `app/server.py` | `GET /api/trackers` (connected trackers), `GET /api/sg/status`, `PUT /api/sg/config` (JSON only), `GET/POST/PUT/DELETE /api/sg/fetch?url=…[&sudo=]` (header `X-Sight: 1` required: no other site can use the key), `GET/PUT/DELETE /api/sg/link/{asset}`, `GET /api/annotations?asset_id=…&deleted=1` (tombstones too). |
-| `app/library.py` | table `sg_links(asset_id, link JSON, state JSON, updated_at)`; `get_sg_link / set_sg_link / drop_sg_link`. A new link starts a fresh state. |
+| `app/static/shotgrid-core.js` | `SightShotGrid`: REST client (`createClient`), `loadVersion`, `linkedVersionOf`, `sync`, and `SightShotGrid.adapter` — the ShotGrid client adapter the generic UI uses (0.107; interface in trackers-core.js, docs/ARCHITECTURE.md "Tracker adapters"). Plain script (like review-core), Node-loadable. |
+| `app/shotgrid.py` | Sight's server side — the ShotGrid adapter of `app/trackers.py`: config in `<SIGHT_HOME>/shotgrid.json` (0600; the key is never sent back, dropped when site / script change), the token (per sudo login), `forward()` for `…/fetch`. |
+| `app/server.py` | `GET /api/trackers` (connected trackers), and per kind `/api/trackers/shotgrid/…` (0.107): `GET status`, `PUT config` (JSON only), `GET/POST/PUT/DELETE fetch?url=…[&sudo=]` (header `X-Sight: 1` required: no other site can use the key), `GET/PUT/DELETE link/{asset}`; the pre-0.107 `/api/sg/status`, `/api/sg/config`, `/api/sg/fetch`, `/api/sg/link/{asset}` … stay as aliases. `GET /api/annotations?asset_id=…&deleted=1` (tombstones too). |
+| `app/library.py` | table `tracker_links(asset_id, tracker key, link JSON, state JSON, updated_at)` (0.107; a link is filed under `shotgrid:<host>` of the site configured now; the old `sg_links` rows were copied in once); `get_tracker_link / set_tracker_link / drop_tracker_link`. A new link starts a fresh state. |
 | `app/static/index.html` | Settings → Trackers → ShotGrid (site, script name, key, post as reviewer, reviewer logins, note status codes, media cache limit / Clear cache; Test / Save / Disconnect — removes the key). Shown only while connected or being connected (*Connect a tracker…*); every ShotGrid control in the page shows only while `/api/trackers` lists it (docs/PLAN-trackers.md decision 10). |
-| `app/static/annotate.js` | Review panel **SG ▾**: link (Version from the notes, or project + search), Sync now, link to another, Unlink. |
+| `app/static/annotate.js` | Review panel **SG ▾** (since 0.107 the generic link ▾ of each connected tracker, labelled by the adapter): link (Version from the notes, or project + search), Sync now, link to another, Unlink. |
 | `mobile/js/shotgrid.js` | Phone: Settings → *ShotGrid connection…* (same fields + **Proxy**), *Export and more → ShotGrid…* (link / Sync / Unlink). |
-| `app/static/sg-source.js` | ShotGrid Versions in the library grid (0.102; replaced sg-view.js): filter bar, Fields ▾ captions, filmstrip scrub, the inspector's fields, open (index.html `pullSg`, `openSgItem`, `toggleLight` / `showInLight` / `lightStep` hooks). Server side: `/api/sg/thumb/{id}?kind=image|filmstrip&u=<updated_at>` (local Host only; disk cache), `POST /api/sg/open/{id}` (proxy → media cache → library file), `GET /api/sg/cache`, `POST /api/sg/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). |
+| `app/static/tracker-source.js` | ShotGrid Versions in the library grid (0.102 as sg-source.js; tracker-neutral since 0.107, through the adapter): filter bar, Fields ▾ captions, filmstrip scrub, the inspector's fields, open (index.html `pullTrk`, `openTrkItem`, `toggleLight` / `showInLight` / `lightStep` hooks). Server side: `/api/trackers/shotgrid/thumb/{id}?pic=image|filmstrip&u=<updated_at>` (local Host only; disk cache; alias `/api/sg/thumb/{id}?kind=`), `POST …/open/{id}` (proxy → media cache → library file), `GET …/cache`, `POST …/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). |
 | `tools/sg-proxy-worker.js` | Cloudflare Worker pass-through for the phone when the site does not answer browsers (CORS). Same protocol as `/api/sg/fetch`. |
 
 ### Transport
 `createClient({site, script, key, via, serverAuth, headers})`. Every request may go through a proxy as
-`via + encodeURIComponent(targetUrl)`. **Sight**: `via = "/api/sg/fetch?url="`, `serverAuth: true` — the page never
+`via + encodeURIComponent(targetUrl)`. **Sight**: `via = "/api/trackers/shotgrid/fetch?url="` (`adapter.serverClient`; the old `/api/sg/fetch?url=` is the same route), `serverAuth: true` — the page never
 holds the key or a token; the server adds `Authorization` for the site and nothing for other (https) hosts (signed
 storage links); the sudo login goes as `&sudo=`. **Phone**: the core requests tokens itself (key in localStorage
 `sight-review:sg`), directly or through the worker (`proxy` → `<proxy>/?url=`).
@@ -62,7 +62,7 @@ sent creates no duplicates. A review whose notes carry `data.sg.v` offers that V
    edited replies, changed pictures.
 4. Stamp the new ShotGrid ids on the rows (a second import; the merge keeps `sg`).
 5. The host saves `state` (per client: what it last saw / sent — `notes[id] = {sg, at, sgst, pushed, st, pics}`,
-   `replies`, `last`): Sight in `sg_links.state`, the phone in `reviews.meta.sg.state`.
+   `replies`, `last`): Sight in `tracker_links.state`, the phone in `reviews.meta.sg.state`.
 
 **Not done (deliberately, v1):** deletes do not travel either way (a note deleted here stays on ShotGrid and is
 not pulled back; one deleted on ShotGrid stays here); reply pictures / reply drawings are not uploaded; the

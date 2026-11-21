@@ -67,7 +67,8 @@ class ConfigTest(unittest.TestCase):
         self.assertIsNone(self.sg.tracker())
         self.assertFalse(self.sg.status()["configured"])
         self.assertTrue(self.sg.configure({"site": "studio.example:8443", "script": "sight", "key": "k"}))
-        self.assertEqual(self.sg.tracker(), {"id": "shotgrid", "name": "ShotGrid", "site": "https://studio.example:8443", "host": "studio.example:8443"})
+        self.assertEqual(self.sg.tracker(), {"id": "shotgrid", "kind": "shotgrid", "key": "shotgrid:studio.example:8443", "name": "ShotGrid",
+                                             "site": "https://studio.example:8443", "host": "studio.example:8443", "note": ""})
         self.assertTrue(self.sg.configure({"site": "studio.example:8443", "script": "sight", "key": ""}))   # Disconnect
         self.assertIsNone(self.sg.tracker())
         self.assertEqual(self.sg.status()["site"], "https://studio.example:8443", "a disconnect keeps the site for the next connect")

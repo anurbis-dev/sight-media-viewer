@@ -66,11 +66,27 @@ mark it done here, add the RECENT entry as usual.
   ShotGrid block, the review "More → ShotGrid…" item); Settings → ShotGrid becomes Settings → Trackers with a list of
   connected trackers + *Connect a tracker…* (the only entry point while none is connected). Re-check on connect /
   disconnect without a reload.
+- **5b done in 0.107.0 (first part, 5b-1; see RECENT):** the adapter interface written down (docs/ARCHITECTURE.md
+  "Tracker adapters"; server `app/trackers.py`, client `app/static/trackers-core.js`), ShotGrid implements both
+  (`ShotGridService`, `SightShotGrid.adapter`). Server: registry `Trackers`, generic routes `/api/trackers/{kind}/…`
+  (the `/api/sg/…` ones stay as aliases), links per tracker key (`tracker_links`, `sg_links` copied once), smart
+  collections filed under a tracker key (`collections.tracker` / `tracker_project`, `sg_site` rows migrated, old POST
+  form still read). Sight's page: a sidebar source row per connected tracker, the item source (tracker-source.js, was
+  sg-source.js), smart collections, Settings → Trackers blocks, the You panel, and annotate.js's link ▾ (one per
+  connected tracker) all go through the tracker list + adapter; no ShotGrid-only path left there except ShotGrid's own
+  settings form. Phone: the tracker list entries carry kind / key, kinds from the registry, per-kind settings sheet.
+- **5b-2 (remains):** (1) the phone's ShotGrid page (`sgBrowser`) and its review link sheet (`sgSheet`) through the
+  adapter — a home page per connected tracker, the review's link per tracker key instead of `reviews.meta.sg`
+  (keep reading `meta.sg`); (2) the review rows' tracker ids: `data.sg` / reply `sg` (FORMAT.md) are ShotGrid's own — a
+  second adapter needs its own row key and merge rule in both `Library.import_annotations` and review-core.js
+  (decide with 5c); (3) a declarative settings form per adapter (fields + Test / Disconnect) instead of ShotGrid's
+  hand-written block; (4) several sites of one kind (the key allows it; each adapter keeps one configuration);
+  (5) filter-core's `sgFields` / `toSgConditions` are reached through the adapter but still live in filter-core.
 - **5b** the adapter: a tracker-neutral interface (connect / status, projects, entity types, schema fields incl.
   link fields, browse media entities with filters, thumbnails, media download, notes sync) that sg-source.js /
   shotgrid-core.js implement; index.html, annotate.js and the phone talk to "the trackers" (a list), keyed by
   tracker id + site — sidebar rows, smart collections (`sg_site` → a tracker key), links per tracker.
-- **5c** a second adapter (ftrack or Coreline — owner to pick) proves the interface.
+- **5c** a second adapter proves the interface. **Owner 2026-11-21:** it will be **Coreline**, but Coreline is not ready for integration yet — **deferred**; do not start 5c until the owner says so.
 
 ## Open questions (ask when the stage comes)
 - Which Version fields the owner wants on the tiles (code + status + author by default?).

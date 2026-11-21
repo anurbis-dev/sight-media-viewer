@@ -606,7 +606,58 @@ var SightShotGrid = (function(){
     return res;
   }
 
+  // ---- the tracker adapter (trackers-core.js lists the interface; docs/ARCHITECTURE.md "Tracker adapters") ----------
+  // What Sight's page and the phone use to talk to ShotGrid without naming it: the browser, the link, the sync.
+  var SF = function(){ return globalThis.SightFilter; };
+  var adapter = {
+    id: "shotgrid", name: "ShotGrid", short: "SG",
+    media: { one: "Version", many: "Versions" },
+    entityTypes: [["", "All"], ["Shot", "Shots"], ["Asset", "Assets"], ["Sequence", "Sequences"]],
+    statusField: "sg_status_list",
+    defaultTileFields: DEFAULT_TILE_FIELDS,
+    hiddenDetailFields: ["type", "id", "image", "filmstrip_image", "project", "sg_uploaded_movie"],
+    serverClient: function(site, kind){
+      return createClient({ site: site || "x", via: "/api/trackers/" + encodeURIComponent(kind || "shotgrid") + "/fetch?url=", serverAuth: true, headers: { "X-Sight": "1" } });
+    },
+    siteHost: siteHost,   // the host a link / the rows name (what client.host is: links compare by it)
+    projects: function(client){ return client.projects(); },
+    entities: async function(client, projectId, type){
+      var list = await client.search(type, [["project", "is", { type: "Project", id: Number(projectId) }]], ["code"], { sort: "code", limit: 5000 });
+      return list.map(function(x){ return { id: x.id, name: x.code || "#" + x.id }; });
+    },
+    mediaFields: versionFields,
+    filterFields: function(schema, o){ return SF().sgFields(schema, o); },
+    toConditions: function(tree, fields){ return SF().toSgConditions(tree, fields); },
+    browse: browseVersions,
+    recordId: function(v){ return v.id; },
+    recordName: function(v){ return v.code || "#" + v.id; },
+    recordStamp: function(v){ return v.updated_at || ""; },
+    recordTime: function(v){ return Date.parse(v.created_at || "") || 0; },
+    isVideo: function(v){
+      var up = v.sg_uploaded_movie && typeof v.sg_uploaded_movie === "object" ? v.sg_uploaded_movie : null;
+      return !!v.filmstrip_image || !!(up && (/^video\//.test(up.content_type || "") || /\.(mov|mp4|m4v|webm|mkv|avi)$/i.test(up.name || "")));
+    },
+    hasFilmstrip: function(v){ return !!v.filmstrip_image; },
+    filmstripFrames: filmstripFrames, filmstripCss: filmstripCss,
+    fmtField: fmtField,
+    findMedia: function(client, projectId, text){ return client.versions(projectId, text); },
+    loadLink: function(client, id){ return loadVersion(client, Number(id)); },
+    linkOf: linkOf,
+    linkId: function(l){ return l && l.version ? l.version.id : null; },
+    linkLabel: function(l){ return l && l.version ? l.version.code || "#" + l.version.id : ""; },
+    linkProject: function(l){ return l && l.project ? l.project.name || "" : ""; },
+    linkedIdOf: linkedVersionOf,
+    sync: sync,
+    // per-kind page settings keep their pre-0.107 names (nothing to migrate): sight.sg.fields / filter / where / project
+    storeKey: function(n){ return "sight.sg." + n; },
+  };
+  if (typeof globalThis !== "undefined"){
+    var reg = globalThis.SightTrackerAdapters = globalThis.SightTrackerAdapters || [];
+    if (!reg.some(function(a){ return a && a.id === adapter.id; })) reg.push(adapter);
+  }
+
   return {
+    adapter: adapter,
     DEFAULT_STATUS: DEFAULT_STATUS, OUR_PREFIX: OUR_PREFIX,
     siteUrl: siteUrl, siteHost: siteHost, idFor: idFor, flat: flat, statusTo: statusTo, statusFrom: statusFrom, statusMap: statusMap,
     createClient: createClient, loadVersion: loadVersion, linkOf: linkOf, VERSION_FIELDS: VERSION_FIELDS,

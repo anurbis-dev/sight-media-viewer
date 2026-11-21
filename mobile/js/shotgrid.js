@@ -20,18 +20,25 @@ function saveConfig(c){
   checkTrackers();
 }
 
-// ---- the trackers (docs/PLAN-trackers.md decisions 10, 11) -------------------------------------------------------
-// The ones connected on this device: [{id, name, site, host}]; connected = configured and usable (ShotGrid: site,
-// script name and key saved — sgReady). The app shows a tracker's controls (the home screen's ShotGrid page and its
-// swipe, the person sheet's row, the review's "ShotGrid…") only for a tracker listed here; a change fires
-// "sight-trackers" on window (also when another tab of the app changes the connection).
-export const TRACKER_KINDS = [{ id: "shotgrid", name: "ShotGrid" }];
-const hostOf = (site) => { try { return new URL(site).host; } catch { return site || ""; } };
+// ---- the trackers (docs/PLAN-trackers.md decisions 10, 11; docs/ARCHITECTURE.md "Tracker adapters") ---------------
+// The ones connected on this device: [{id, kind, key, name, site, host, note}] — the same entry as Sight's
+// /api/trackers (id = kind, key = the tracker key "<kind>:<host>", SightTrackers.key); connected = configured and
+// usable (ShotGrid: site, script name and key saved — sgReady). The app shows a tracker's controls (the home screen's
+// ShotGrid page and its swipe, the person sheet's row, the review's "ShotGrid…") only for a tracker listed here; a
+// change fires "sight-trackers" on window (also when another tab of the app changes the connection).
+// TRACKER_KINDS: the kinds this app has an adapter for (core/trackers-core.js registry) and a connection form here.
+const TRK = () => globalThis.SightTrackers;
+const FORMS = { shotgrid: (ui) => sgSettings(ui) };   // each kind's connection / settings sheet
+// (core/trackers-core.js missing — a half-updated install — must not blank the app: no kinds, no trackers then)
+export const TRACKER_KINDS = (TRK()?.kinds() || []).filter((k) => FORMS[k.id]);
+export function trackerSettings(kind, ui){ FORMS[kind]?.(ui); }
 export function trackers(){
   const c = sgConfig();
-  return sgReady(c) ? [{ id: "shotgrid", name: "ShotGrid", site: c.site, host: hostOf(c.site) }] : [];
+  if (!sgReady(c) || !TRK()) return [];
+  return [{ id: "shotgrid", kind: "shotgrid", key: TRK().key("shotgrid", c.site), name: "ShotGrid", site: c.site,
+    host: TRK().hostOf(c.site) || c.site, note: c.sudo ? "as reviewer" : "" }];
 }
-export const trackerOn = (id) => trackers().some((t) => t.id === id);
+export const trackerOn = (id) => trackers().some((t) => t.id === id || t.key === id);
 const trackersKey = () => JSON.stringify(trackers());
 // "sight-trackers" only when the list really changed (not on every write of the connection: logins, statuses…):
 // after a save here, a write by another tab (storage event) and when the app comes back to the screen.
@@ -57,7 +64,7 @@ export function connectTracker(ui){
     if (!left.length){ sh.appendChild(el("p", "", "Every tracker Sight Review can link to is connected.")); return; }
     sh.appendChild(el("p", "", "Link reviews to a production tracker: browse its Versions on the home screen and sync notes both ways."));
     const m = el("div", "menu");
-    left.forEach((k) => m.appendChild(btn("", k.name, () => { close(); if (k.id === "shotgrid") sgSettings(ui); })));
+    left.forEach((k) => m.appendChild(btn("", k.name, () => { close(); trackerSettings(k.id, ui); })));
     sh.appendChild(m);
   });
 }
@@ -584,7 +591,7 @@ export function sgBrowser(ctx, box){
 // ui: {sheet, el, btn, toast, who(): name, setName(): Promise<bool>, settings()}
 export function userSheet(ui){
   const { sheet, el, btn } = ui;
-  const c = sgConfig(), list = trackers();
+  const list = trackers();
   sheet((sh, close) => {
     sh.appendChild(el("h2", "", "You"));
     const kv = el("div", "kv");
@@ -593,12 +600,12 @@ export function userSheet(ui){
     nm.title = "Tap to change your name";
     list.forEach((t) => {
       kv.appendChild(el("b", "", t.name));
-      kv.appendChild(el("span", "", "connected · " + t.host + (t.id === "shotgrid" && c.sudo ? " · as reviewer" : "")));
+      kv.appendChild(el("span", "", "connected · " + t.host + (t.note ? " · " + t.note : "")));
     });
     sh.appendChild(kv);
-    if (list.some((t) => t.id === "shotgrid")){
+    if (list.length){
       const a = el("div", "acts");
-      a.appendChild(btn("btn", "ShotGrid connection…", () => { close(); ui.settings(); }));
+      list.forEach((t) => a.appendChild(btn("btn", t.name + " connection…", () => { close(); trackerSettings(t.kind, ui); })));
       sh.appendChild(a);
     }
   });

@@ -441,27 +441,27 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
 .stt-row[hidden] { display: none !important; }
-/* ShotGrid Versions in the library grid (sg-source.js): the filter bar, the filmstrip on a tile */
-.sgbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); position: relative; }
-.sgbar[hidden] { display: none; }
-.sgb-title { font-size: 14px; font-weight: 600; margin-right: 6px; }
-.sgb-seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
-.sgb-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
-.sgb-seg button.on { background: var(--surface, #222); color: var(--fg); }
-.sgbar select { height: 28px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
-.sgbar select[hidden] { display: none; }
-.sgb-fpop { position: absolute; right: 14px; top: 100%; z-index: 30; width: 300px; max-height: 60vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
-.sgb-fpop[hidden] { display: none; }
-.sgb-fpop input[type=search] { height: 28px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
-.sgb-flist { overflow: auto; display: flex; flex-direction: column; }
-.sgb-flist label { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
-.sgb-flist small { margin-left: auto; color: var(--subtle); }
-.sgb-facts { display: flex; justify-content: flex-end; }
-.card .sg-strip { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); background-repeat: no-repeat; opacity: 0; pointer-events: none; }  /* (its height from the frame's aspect: set on load) */
-.card.sg-scrub .sg-strip { opacity: 1; }
-.card.sg-scrub .thumb img { opacity: 0; }
-.card.sg-video .thumb { touch-action: pan-y; }
-.card.sg-busy { opacity: .6; }
+/* A tracker project's media (ShotGrid Versions, …) in the library grid (tracker-source.js): the filter bar, the filmstrip on a tile */
+.trkbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); position: relative; }
+.trkbar[hidden] { display: none; }
+.trkb-title { font-size: 14px; font-weight: 600; margin-right: 6px; }
+.trkb-seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
+.trkb-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+.trkb-seg button.on { background: var(--surface, #222); color: var(--fg); }
+.trkbar select { height: 28px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.trkbar select[hidden] { display: none; }
+.trkb-fpop { position: absolute; right: 14px; top: 100%; z-index: 30; width: 300px; max-height: 60vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
+.trkb-fpop[hidden] { display: none; }
+.trkb-fpop input[type=search] { height: 28px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.trkb-flist { overflow: auto; display: flex; flex-direction: column; }
+.trkb-flist label { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
+.trkb-flist small { margin-left: auto; color: var(--subtle); }
+.trkb-facts { display: flex; justify-content: flex-end; }
+.card .trk-strip { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); background-repeat: no-repeat; opacity: 0; pointer-events: none; }  /* (its height from the frame's aspect: set on load) */
+.card.trk-scrub .trk-strip { opacity: 1; }
+.card.trk-scrub .thumb img { opacity: 0; }
+.card.trk-video .thumb { touch-action: pan-y; }
+.card.trk-busy { opacity: .6; }
 .sg-codes { display: flex; gap: 4px; }
 .sg-codes input { flex: 1; min-width: 0; }
 .light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
@@ -842,7 +842,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
         <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
     </div>
-    <div class="sgbar" id="sgBar" hidden></div>
+    <div class="trkbar" id="trkBar" hidden></div>
     <div class="main-body" id="mainBody">
       <div class="grid" id="grid"></div>
       <div class="split-handle" id="splitHandle" hidden title="Drag to resize · double-click to switch side-by-side / stacked"></div>
@@ -862,8 +862,9 @@ import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
-import { createSgSource, SG_PAGE } from "/static/sg-source.js";
-import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → Trackers → ShotGrid test; annotate.js syncs)
+import { createTrackerSource } from "/static/tracker-source.js";
+import "/static/trackers-core.js";  // globalThis.SightTrackers — the tracker registry (docs/ARCHITECTURE.md "Tracker adapters")
+import "/static/shotgrid-core.js";  // globalThis.SightShotGrid — registers the ShotGrid adapter (annotate.js syncs through it)
 import "/static/filter-core.js";    // globalThis.SightFilter (Filter ▾: the filter builder)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -1041,36 +1042,53 @@ function bindDictationSettings(){
     try { show(await put({ url: saved.url, model: saved.model || "", key: "" })); } catch {}
   };
 }
-// ---- Trackers (docs/PLAN-trackers.md decisions 10, 11) ------------------------------------------------------------
-// `trackers` = the connected ones, from /api/trackers ([{id, name, site, host}]; connected = configured and usable,
-// defined once on the server: ShotGridService._connected). Every tracker control — the sidebar source, the You
-// panel's rows, the review panel's link (annotate.js, host.trackerOn), Filter ▾'s tracker fields (only inside a
-// tracker project) — shows only for a tracker listed here. refreshTrackers() re-reads the list after a connect /
-// disconnect (and when the You panel opens), repaints those places and fires "sight-trackers" on window.
-// Settings → Trackers: a block per connected tracker plus *Connect a tracker…* (the only way in while none is).
-const TRACKER_KINDS = [{ id: "shotgrid", name: "ShotGrid" }];   // the kinds Sight can connect (5b: adapters)
-let trackers = [], trkConnecting = null, trkSeq = 0;   // trkConnecting: the kind whose connect fields are open
-const trackerOn = (id) => trackers.some((t) => t.id === id);
+// ---- Trackers (docs/PLAN-trackers.md decisions 10, 11; docs/ARCHITECTURE.md "Tracker adapters") --------------------
+// `trackers` = the connected ones, from /api/trackers ([{id, kind, key, name, site, host, note}]: id = kind, key =
+// the tracker key "<kind>:<host>" everything per tracker is filed under; connected = configured and usable, defined
+// once on the server by each adapter). Every tracker control — the sidebar source rows, the You panel's rows, the
+// review panel's link (annotate.js, host.trackers / host.trackerOn), Filter ▾'s tracker fields (only inside a tracker
+// project) — shows only for a tracker listed here, and talks to it only through its adapter (trackers-core.js,
+// SightTrackers.adapter(kind); ShotGrid's is in shotgrid-core.js) and the generic routes /api/trackers/<kind>/….
+// refreshTrackers() re-reads the list after a connect / disconnect (and when the You panel opens), repaints those
+// places and fires "sight-trackers" on window. Settings → Trackers: a block per connected tracker (its kind's own
+// settings form, TRACKER_FORMS) plus *Connect a tracker…* (the only way in while none is).
+const TRK = () => globalThis.SightTrackers;
+const adapterOf = (t) => TRK().adapterOf(t);
+// The kinds Sight can connect: the ones both this page (an adapter) and the server (/api/trackers kinds) have.
+const trackerKinds = () => TRK().kinds().filter((k) => !trkSrvKinds || trkSrvKinds.has(k.id));
+let trackers = [], trkConnecting = null, trkSeq = 0, trkRead = false;   // trkConnecting: the kind whose connect fields are open
+let trkStat = {}, trkCacheIds = [], trkSrvKinds = null;   // kind → its /api/trackers/<kind>/status; every media cache source id
+const trackerOn = (id) => trackers.some((t) => t.id === id || t.key === id);   // (a kind or a tracker key)
+const trackerByKey = (key) => trackers.find((t) => t.key === key) || null;
+const trkApi = (kind, path) => `/api/trackers/${encodeURIComponent(kind)}/${path}`;
+// "another connection" for a kind: another site, account (ShotGrid: script) or connected state — its sidebar tree
+// is read again and a project of it on screen closes; a save of logins or statuses keeps both.
+const trkSig = (st) => st ? `${st.key || ""}|${st.ident || ""}|${!!st.configured}` : "";
 // changed: a connect / disconnect / save from Settings (a failure says so). An answer equal to what is shown already
 // repaints nothing (the focus / visibility re-checks below must not disturb a sidebar rename or the settings).
 async function refreshTrackers(changed){
   const my = ++trkSeq;
-  let tl, st;
-  try { [tl, st] = await Promise.all([api("/api/trackers"), api("/api/sg/status")]); }
+  const kinds = TRK().kinds().map((k) => k.id);
+  let tl, sts;
+  try { [tl, ...sts] = await Promise.all([api("/api/trackers"), ...kinds.map((k) => api(trkApi(k, "status")).catch(() => null))]); }
   catch { if (my === trkSeq && changed) flash("Could not read the trackers' state", 3000); return; }
   if (my !== trkSeq) return;   // (an older answer after a newer one)
-  const was = JSON.stringify(trackers), sgWas = sgStat ? `${sgStat.site}|${sgStat.script}|${!!sgStat.configured}` : "";
-  const list = Array.isArray(tl?.trackers) ? tl.trackers.filter((t) => t && typeof t.id === "string") : [];
-  if (!changed && sgStat && JSON.stringify(list) === was && JSON.stringify(st) === JSON.stringify(sgStat)) return;
-  trackers = list;
-  sgStat = st || null;
+  const list = Array.isArray(tl?.trackers) ? tl.trackers.filter((t) => t && typeof t.id === "string" && typeof t.key === "string" && adapterOf(t)) : [];
+  const stats = {};
+  // (a kind whose status could not be read keeps the last one: a failed re-check must not look like another
+  // connection — that would close its project on screen and drop its sidebar tree)
+  kinds.forEach((k, i) => { if (sts[i] && typeof sts[i] === "object") stats[k] = sts[i]; else if (trkStat[k]) stats[k] = trkStat[k]; });
+  const caches = Array.isArray(tl?.cacheSources) ? tl.cacheSources.filter((x) => typeof x === "string") : [];
+  const srvKinds = Array.isArray(tl?.kinds) ? tl.kinds.map((k) => k && k.id).filter((x) => typeof x === "string") : [];
+  const was = JSON.stringify(trackers), statWas = trkStat;
+  if (!changed && trkRead && JSON.stringify(list) === was && JSON.stringify(stats) === JSON.stringify(trkStat)
+      && JSON.stringify(caches) === JSON.stringify(trkCacheIds)) return;
+  trackers = list; trkStat = stats; trkCacheIds = caches; trkSrvKinds = new Set(srvKinds); trkRead = true;
   if (trkConnecting && trackerOn(trkConnecting)) trkConnecting = null;   // connected: its block is a connected one now
-  const sgNow = sgStat ? `${sgStat.site}|${sgStat.script}|${!!sgStat.configured}` : "";
-  // (the projects are read again only for another site / script / connection: a save of logins or statuses keeps
-  // the sidebar's tree as it is)
-  if (sgNow !== sgWas){ sgProjects = null; sgSrcOpen = false; }
-  // a ShotGrid project on screen whose connection went (or moved to another site / script): back to the library
-  if (sgOn() && (!trackerOn("shotgrid") || sgNow !== sgWas)) closeSgList(true);
+  const moved = (kind) => trkSig(statWas[kind]) !== trkSig(stats[kind]);
+  for (const key of [...trkTree.keys()]){ const k = TRK().split(key)?.kind; if (!k || moved(k)) trkTree.delete(key); }
+  // a tracker project on screen whose connection went (or moved to another site / account): back to the library
+  if (trkListOn() && (!trackerByKey(trkSrc.tracker.key) || moved(trkSrc.tracker.kind))) closeTrkList(true);
   renderNav();
   paintTrackerSettings();
   paintUserTrackers();
@@ -1083,19 +1101,20 @@ async function refreshTrackers(changed){
   document.addEventListener("visibilitychange", again);
   window.addEventListener("focus", again);
 }
-// Settings → Trackers: which blocks show, the connected tracker's state line, what Connect a tracker… still offers.
+// Each kind's settings form in Settings → Trackers: its block `.trk-set[data-tracker=<kind>]` (shown while connected
+// or being connected) and {paint(on, tracker), focus()} registered by its bind function (ShotGrid: bindShotGridSettings).
+const TRACKER_FORMS = {};
+const trkBlock = (kind) => document.querySelector(`.trk-set[data-tracker="${CSS.escape(kind)}"]`);
+// Settings → Trackers: which blocks show, each connected tracker's state, what Connect a tracker… still offers.
 function paintTrackerSettings(){
-  const box = $("trkSg");
-  if (!box) return;
-  const on = trackerOn("shotgrid"), t = trackers.find((x) => x.id === "shotgrid");
-  box.hidden = !on && trkConnecting !== "shotgrid";
-  $("sgDot").classList.toggle("ok", on);
-  $("sgState").textContent = $("sgState").title = on ? `${t.host || t.site} · connected${sgStat?.sudo ? " · as reviewer" : ""}` : "not connected — site, script name and key";
-  $("sgDisconnect").hidden = !on;
-  $("sgCancel").hidden = on;
-  $("sgCacheSet").hidden = !on;
-  paintTrackerCache(!on);
-  const left = TRACKER_KINDS.filter((k) => !trackerOn(k.id) && trkConnecting !== k.id);
+  if (!$("trkAddRow")) return;
+  for (const k of TRK().kinds()){
+    const on = trackerOn(k.id), box = trkBlock(k.id);
+    if (box) box.hidden = !on && trkConnecting !== k.id;
+    TRACKER_FORMS[k.id]?.paint(on, trackers.find((x) => x.kind === k.id) || null);
+  }
+  paintTrackerCache();
+  const left = trackerKinds().filter((k) => !trackerOn(k.id) && trkConnecting !== k.id && TRACKER_FORMS[k.id]);
   $("trkAddRow").hidden = !left.length;
   $("trkNone").hidden = trackers.length > 0 || !!trkConnecting;
   const kinds = $("trkKinds");
@@ -1103,33 +1122,34 @@ function paintTrackerSettings(){
     + `<button class="btn ghost" type="button" data-kind="">Cancel</button>`;
   if (!left.length) kinds.hidden = true;
 }
-// Media downloaded from a tracker that is not connected now (opened Versions stay in Sight's cache, the sidebar keeps
-// hiding that source): a line under Trackers with its size and Clear while it holds anything. Connected, the
+// Media downloaded from trackers that are not connected now (opened media stay in Sight's cache, the sidebar keeps
+// hiding those sources): a line under Trackers with their size and Clear while they hold anything. A connected
 // tracker's own block has the cache limit / Clear cache instead.
 let trkCacheSeq = 0;
-function paintTrackerCache(show){
+const trkOffKinds = () => trackerKinds().map((k) => k.id).filter((k) => !trackerOn(k));
+function paintTrackerCache(){
   const row = $("trkCacheRow");
   if (!row) return;
-  const my = ++trkCacheSeq;
-  if (!show){ row.hidden = true; return; }
-  api("/api/sg/cache").then((c) => {
+  const my = ++trkCacheSeq, off = trkOffKinds();
+  if (!off.length){ row.hidden = true; return; }
+  Promise.all(off.map((k) => api(trkApi(k, "cache")).catch(() => null))).then((cs) => {
     if (my !== trkCacheSeq || !$("trkCacheRow")) return;
-    $("trkCacheRow").hidden = !c.files;
-    $("trkCacheInfo").textContent = `Tracker media cache: ${bytes(c.used)} in ${c.files} file${c.files === 1 ? "" : "s"}`;
-  }).catch(() => {});
+    const used = cs.reduce((n, c) => n + (c?.used || 0), 0), files = cs.reduce((n, c) => n + (c?.files || 0), 0);
+    $("trkCacheRow").hidden = !files;
+    $("trkCacheInfo").textContent = `Tracker media cache: ${bytes(used)} in ${files} file${files === 1 ? "" : "s"}`;
+  });
 }
 // Connect a tracker… → a kind: its connect fields open under Trackers.
 function startTrackerConnect(kind){
   trkConnecting = kind;
   paintTrackerSettings();
-  const f = $("sgSite");
-  if (f){ f.scrollIntoView({ block: "center" }); f.focus(); }
+  TRACKER_FORMS[kind]?.focus();
 }
-// The You panel's Settings… (or anything that wants Trackers on screen): opens Settings at that tracker's block.
-function openTrackerSettings(id){
+// The You panel's Settings… (or anything that wants Trackers on screen): opens Settings at that kind's block.
+function openTrackerSettings(kind){
   if (!state.settingsOpen) $("settingsHead").click();
   setTimeout(() => {
-    const b = (id && document.querySelector(`.trk-set[data-tracker="${CSS.escape(id)}"]:not([hidden])`)) || $("trkHead");
+    const b = (kind && document.querySelector(`.trk-set[data-tracker="${CSS.escape(kind)}"]:not([hidden])`)) || $("trkHead");
     b?.scrollIntoView({ block: "start" });
   }, 60);
 }
@@ -1144,18 +1164,20 @@ function bindTrackerSettings(){
     if (b.dataset.kind) startTrackerConnect(b.dataset.kind);
   };
   $("trkCacheClear").onclick = async () => {
-    try { await api("/api/sg/cache/clear", { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
-    paintTrackerCache(!trackerOn("shotgrid"));
+    await Promise.all(trkOffKinds().map((k) => api(trkApi(k, "cache/clear"), { method: "POST", headers: { "X-Sight": "1" } }).catch(() => {})));
+    paintTrackerCache();
   };
   bindShotGridSettings();
   paintTrackerSettings();
 }
-// ShotGrid's block in Settings → Trackers (docs/SHOTGRID.md): site, API script name + key (kept by the server only —
-// the key is never sent back), whether to post as the reviewer, reviewer → login, note status codes; once connected
-// also the media cache limit / Clear cache and Disconnect (removes the key; site, script and logins stay).
+// ShotGrid's block in Settings → Trackers (docs/SHOTGRID.md) — the ShotGrid adapter's own settings form: site, API
+// script name + key (kept by the server only — the key is never sent back), whether to post as the reviewer,
+// reviewer → login, note status codes; once connected also the media cache limit / Clear cache and Disconnect
+// (removes the key; site, script and logins stay).
 function bindShotGridSettings(){
   const msg = $("sgMsg");
   if (!msg) return;
+  const K = "shotgrid";
   let saved = null;
   const show = (st) => {
     if (!st) return;
@@ -1178,16 +1200,16 @@ function bindShotGridSettings(){
     if ($("sgKey").value.trim()) b.key = $("sgKey").value.trim();
     return b;
   };
-  const put = (b) => api("/api/sg/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  const put = (b) => api(trkApi(K, "config"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
   // after a save: still not connected (no key, or the key went with a new site) → the fields stay open to finish
-  const settle = async (st) => { if (st && !st.configured) trkConnecting = "shotgrid"; await refreshTrackers(true); };
-  api("/api/sg/status").then(show).catch(() => {});
-  const cacheInfo = () => api("/api/sg/cache").then((c) => {
+  const settle = async (st) => { if (st && !st.configured) trkConnecting = K; await refreshTrackers(true); };
+  api(trkApi(K, "status")).then(show).catch(() => {});
+  const cacheInfo = () => api(trkApi(K, "cache")).then((c) => {
     $("sgCacheInfo").textContent = `Cache: ${bytes(c.used)} in ${c.files} file${c.files === 1 ? "" : "s"} · ${bytes(c.free)} free on disk`;
   }).catch(() => {});
   cacheInfo();
   $("sgCacheClear").onclick = async () => {
-    try { await api("/api/sg/cache/clear", { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
+    try { await api(trkApi(K, "cache/clear"), { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
     cacheInfo();
   };
   $("sgSave").onclick = async () => {
@@ -1202,7 +1224,7 @@ function bindShotGridSettings(){
   $("sgDisconnect").onclick = async () => {
     let st;
     try {
-      const cur = await api("/api/sg/status");
+      const cur = await api(trkApi(K, "status"));
       if (!cur.site) { await refreshTrackers(true); return; }
       st = await put({ site: cur.site, script: cur.script || "", key: "", sudo: !!cur.sudo, logins: cur.logins || {},
         statusMap: cur.statusMap || {}, cacheLimitGB: Number(cur.cacheLimitGB) || 0 });
@@ -1216,9 +1238,20 @@ function bindShotGridSettings(){
     msg.textContent = "Connecting…";
     try {
       if ($("sgKey").value.trim() || !saved || saved.site !== body().site){ const st = await put(body()); show(st); $("sgKey").value = ""; await settle(st); }
-      const ps = await sgClient().projects();
+      const A = TRK().adapter(K);
+      const ps = await A.projects(A.serverClient($("sgSite").value || "x", K));
       msg.textContent = `Connected — ${ps.length} project${ps.length === 1 ? "" : "s"}`;
     } catch (e){ msg.textContent = e.message || "Could not connect"; }
+  };
+  TRACKER_FORMS[K] = {
+    paint(on, t){
+      $("sgDot").classList.toggle("ok", on);
+      $("sgState").textContent = $("sgState").title = on ? `${t.host || t.site} · connected${t.note ? " · " + t.note : ""}` : "not connected — site, script name and key";
+      $("sgDisconnect").hidden = !on;
+      $("sgCancel").hidden = on;
+      $("sgCacheSet").hidden = !on;
+    },
+    focus(){ const f = $("sgSite"); if (f){ f.scrollIntoView({ block: "center" }); f.focus(); } },
   };
 }
 // ---- You: the user button (sidebar header; the review panel's person icon opens the same panel) -------------
@@ -1279,57 +1312,64 @@ async function openUserPanel(anchor){
 function paintUserTrackers(){
   const box = $("userTrk");
   if (!box) return;
-  box.innerHTML = trackers.length ? "<h3>Trackers</h3>" + trackers.map((t) => `<div class="trk" data-tracker="${esc(t.id)}"><i class="dot ok"></i><b>${esc(t.name)}</b><span>${esc(t.host || t.site || "")}${t.id === "shotgrid" && sgStat?.sudo ? " · as reviewer" : ""}</span><button class="btn ghost" type="button" data-act="trkset">Settings…</button></div>`).join("") : "";
+  box.innerHTML = trackers.length ? "<h3>Trackers</h3>" + trackers.map((t) => `<div class="trk" data-tracker="${esc(t.kind)}" data-key="${esc(t.key)}"><i class="dot ok"></i><b>${esc(t.name)}</b><span>${esc(t.host || t.site || "")}${t.note ? " · " + esc(t.note) : ""}</span><button class="btn ghost" type="button" data-act="trkset">Settings…</button></div>`).join("") : "";
   box.querySelectorAll("[data-act=trkset]").forEach((b) => {
     b.onclick = () => { closeUserPanel(); openTrackerSettings(b.closest("[data-tracker]").dataset.tracker); };
   });
 }
-// ---- ShotGrid as a source (docs/PLAN-trackers.md stage 2): "ShotGrid · <site>" under Sources, its projects below;
-// a project shows its Versions in the library grid (sg-source.js).
-// sgSrc: the item source (sg-source.js), made once; sgList: the grid shows a project's Versions while set
-// ({page, more, seq, loading}); sgLight: the Version the lightbox shows {item, asset} (arrows step through Versions).
-// sgSmartOn: the ShotGrid smart collection whose rule filters the project on screen (stage 3c; null: its own conditions).
-let sgStat = null, sgProjects = null, sgSrcOpen = false, sgSrc = null, sgProjectOn = null, sgList = null, sgLight = null, sgSmartOn = null;
-const sgOn = () => !!sgList;
+// ---- Trackers as sources (docs/PLAN-trackers.md stages 2, 5b): a row "<Tracker> · <site>" per connected tracker under
+// Sources, its projects below; a project shows its media entities (ShotGrid: Versions) in the library grid
+// (tracker-source.js). trkTree: tracker key → {projects, open} (the sidebar's state of each tracker row);
+// trkSources: tracker key → its item source, made once; trkSrc: the source of the project on screen (or the last one);
+// trkList: the grid shows a project's records while set ({page, more, seq, loading}); trkLight: the record the
+// lightbox shows {item, asset} (arrows step through the records). trkSmartOn: the tracker smart collection whose rule
+// filters the project on screen (stage 3c; null: its own conditions).
+const trkTree = new Map(), trkSources = new Map();
+let trkSrc = null, trkProjectOn = null, trkList = null, trkLight = null, trkSmartOn = null;
+const trkListOn = () => !!trkList;
 const normFsPath = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-function sgHost(){ try { return new URL(sgStat.site).host; } catch { return sgStat?.site || ""; } }
-function renderSgSource(wrap){
-  if (!trackerOn("shotgrid") || !sgStat) return;   // not connected: no trace of it (decision 10)
+const trkMedia = () => trkSrc?.adapter.media || { one: "item", many: "items" };
+function renderTrackerSources(wrap){
+  for (const t of trackers) renderTrackerSource(wrap, t);   // (only connected ones are listed: decision 10)
+}
+function renderTrackerSource(wrap, t){
+  const A = adapterOf(t);
+  if (!A) return;
+  let node = trkTree.get(t.key);
+  if (!node){ node = { projects: null, open: false }; trkTree.set(t.key, node); }
+  const here = trkListOn() && trkSrc.tracker.key === t.key;
   const b = document.createElement("div");
-  b.className = "row src-row sg-src" + (sgOn() ? " on" : "");
-  b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span>ShotGrid · ${esc(sgHost())}</span><button class="tiny tree-chev${sgSrcOpen ? " open" : ""}" data-act="expand" type="button" aria-expanded="${sgSrcOpen}" aria-label="${sgSrcOpen ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
+  b.className = "row src-row trk-src" + (here ? " on" : "");
+  b.dataset.tracker = t.key;
+  b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span>${esc(t.name)} · ${esc(t.host)}</span><button class="tiny tree-chev${node.open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${node.open}" aria-label="${node.open ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
   const toggle = async () => {
-    sgSrcOpen = !sgSrcOpen;
-    if (sgSrcOpen && !sgProjects){
-      const site = sgStat.site;
+    node.open = !node.open;
+    if (node.open && !node.projects){
       let ps = null;
-      try { ps = await sgClient(site).projects(); }
-      catch (e){ if (sgStat?.site === site){ sgSrcOpen = false; flash("ShotGrid: " + e.message, 4000); } }
-      if (sgStat?.site !== site || !trackerOn("shotgrid")) return;   // (disconnected / another site meanwhile: refreshTrackers repainted)
-      sgProjects = ps;
-      if (!ps) sgSrcOpen = false;
+      try { ps = await A.projects(A.serverClient(t.site, t.kind)); }
+      catch (e){ if (trkTree.get(t.key) === node){ node.open = false; flash(`${t.name}: ${e.message}`, 4000); } }
+      if (trkTree.get(t.key) !== node || !trackerByKey(t.key)) return;   // (disconnected / another connection meanwhile: refreshTrackers repainted)
+      node.projects = ps;
+      if (!ps) node.open = false;
     }
     renderNav();
   };
   b.onclick = (e) => { if (!e.target.closest("button")) toggle(); };
   b.querySelector("[data-act=expand]").onclick = (e) => { e.stopPropagation(); toggle(); };
   wrap.append(b);
-  if (!sgSrcOpen || !sgProjects) return;
-  if (!sgProjects.length){ const n = document.createElement("div"); n.className = "row folder-row sg-proj"; n.style.paddingLeft = "28px"; n.innerHTML = "<span>No projects</span>"; wrap.append(n); }
-  const host = sgHost(), smarts = (state.meta.collections || []).filter((c) => c.rule && c.sgSite === host);
-  sgProjects.forEach((p) => {
-    const r = document.createElement("div");
-    r.className = "row folder-row sg-proj" + (sgOn() && sgProjectOn === p.id && !sgSmartOn ? " on" : "");
-    r.style.paddingLeft = "28px";
-    r.dataset.sgp = String(p.id);
+  if (!node.open || !node.projects) return;
+  const projRow = (cls, pad) => { const n = document.createElement("div"); n.className = "row folder-row trk-proj" + cls; n.style.paddingLeft = pad + "px"; n.dataset.tracker = t.key; return n; };
+  if (!node.projects.length){ const n = projRow("", 28); n.innerHTML = "<span>No projects</span>"; wrap.append(n); }
+  const smarts = (state.meta.collections || []).filter((c) => c.rule && c.tracker === t.key);
+  node.projects.forEach((p) => {
+    const r = projRow(here && trkProjectOn === p.id && !trkSmartOn ? " on" : "", 28);
+    r.dataset.proj = String(p.id);
     r.innerHTML = `<span>${esc(p.name || "#" + p.id)}</span>`;
-    r.onclick = () => openSgProject(p);
+    r.onclick = () => openTrkProject(t, p);
     wrap.append(r);
     // its smart collections (saved Filter ▾ conditions): a click opens the project filtered by one
-    smarts.filter((c) => c.sgProject === p.id).forEach((col) => {
-      const b = document.createElement("div");
-      b.className = "row folder-row sg-proj sg-smart smart-row" + (sgOn() && sgSmartOn === col.id ? " on" : "");
-      b.style.paddingLeft = "40px";
+    smarts.filter((c) => String(c.trackerProject) === String(p.id)).forEach((col) => {
+      const b = projRow(" trk-smart smart-row" + (here && trkSmartOn === col.id ? " on" : ""), 40);
       b.dataset.cid = col.id;
       b.title = "Smart collection: a saved filter — Filter ▾ edits it while it is open";
       b.innerHTML = `${state.showIcons ? iconSpan(col.icon || "funnel", col.color || "var(--subtle)", 15) : ""}<span>${esc(col.name)}</span><button class="tiny" data-act="del" type="button" aria-label="Delete">×</button>`;
@@ -1340,72 +1380,82 @@ function renderSgSource(wrap){
           return;
         }
         if (navDblClick("col:" + col.id)){ renameCollectionRow(b, col); return; }
-        openSgProject(p, col.id);
+        openTrkProject(t, p, col.id);
       };
       b.addEventListener("contextmenu", (e) => { e.preventDefault(); showCollectionCtx(e.clientX, e.clientY, col.id); });
       wrap.append(b);
     });
   });
   // smart collections of a project no longer listed (archived, no access): still there to delete
-  const pids = new Set(sgProjects.map((p) => p.id));
-  smarts.filter((c) => !pids.has(c.sgProject)).forEach((col) => {
-    const b = document.createElement("div");
-    b.className = "row folder-row sg-proj sg-smart smart-row orphan";
-    b.style.paddingLeft = "28px";
+  const pids = new Set(node.projects.map((p) => String(p.id)));
+  smarts.filter((c) => !pids.has(String(c.trackerProject))).forEach((col) => {
+    const b = projRow(" trk-smart smart-row orphan", 28);
     b.dataset.cid = col.id;
-    b.title = `Smart collection of project #${col.sgProject}, which this site no longer lists`;
-    b.innerHTML = `${state.showIcons ? iconSpan(col.icon || "funnel", col.color || "var(--subtle)", 15) : ""}<span>${esc(col.name)} · project #${esc(col.sgProject)}</span><button class="tiny" data-act="del" type="button" aria-label="Delete">×</button>`;
+    b.title = `Smart collection of project #${col.trackerProject}, which this site no longer lists`;
+    b.innerHTML = `${state.showIcons ? iconSpan(col.icon || "funnel", col.color || "var(--subtle)", 15) : ""}<span>${esc(col.name)} · project #${esc(col.trackerProject)}</span><button class="tiny" data-act="del" type="button" aria-label="Delete">×</button>`;
     b.onclick = (e) => {
       if (e.target.dataset?.act === "del"){ e.stopPropagation(); deleteCollection(col.id); return; }
-      flash(`Project #${col.sgProject} is not listed on this site any more`, 3000);
+      flash(`Project #${col.trackerProject} is not listed on this site any more`, 3000);
     };
     wrap.append(b);
   });
 }
-function openSgProject(p, smartId = null){
-  if (!sgSrc){
-    sgSrc = createSgSource({
-      bar: $("sgBar"), client: () => sgClient(sgStat.site), host: () => sgHost(), putSetting,
+// The item source of one tracker (made once per tracker key; the filter bar above the grid is shared, the source
+// opening a project binds it).
+function trackerSource(t){
+  let s = trkSources.get(t.key);
+  if (s && s.tracker.site !== t.site){ s.dispose(); s = null; }   // (the same key spelt another way in the settings: made again)
+  if (!s){
+    s = createTrackerSource({
+      adapter: adapterOf(t), tracker: { kind: t.kind, key: t.key, site: t.site, host: t.host, name: t.name },
+      bar: $("trkBar"), putSetting,
       registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
       onChange: (what) => {
-        if (!sgOn()) return;
+        if (!trkListOn() || trkSrc !== s) return;
         if (what === "labels"){ renderInsp(); renderFilterBtn(); return; }
-        if (what === "fields" && !sgSrc.needsReload(state.items)){ cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); return; }
-        sgReload();
+        if (what === "fields" && !s.needsReload(state.items)){ cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); return; }
+        trkReload();
       },
     });
+    trkSources.set(t.key, s);
   }
+  return s;
+}
+function openTrkProject(t, p, smartId = null){
+  if (!adapterOf(t)) return;
   if (state.view !== "library") setView("library");
   clearTimeout(qTimer);   // (a library search still waiting must not land in the project)
   if (topPopOpen === "filterPop") closeTopPops();   // (a value still typed applies to the list it was typed for)
-  sgProjectOn = p.id;
+  if (trkSrc && trkSrc.tracker.key !== t.key){ trkSmartOn = null; trkSrc.setSmart(null); }   // (another tracker: the old source lets go)
+  trkSrc = trackerSource(t);
+  trkProjectOn = p.id;
   const sc = smartCol(smartId);
-  sgSmartOn = sc ? sc.id : null;
-  sgSrc.setSmart(sc ? smartRule(sc) : null);
+  trkSmartOn = sc ? sc.id : null;
+  trkSrc.setSmart(sc ? smartRule(sc) : null);
   // loading until the project's entities are read: no page asked for meanwhile; the grid empty at once (a library
   // page still on its way is dropped by pull)
-  const L = sgList = { page: 0, more: true, seq: 0, loading: true };
+  const L = trkList = { page: 0, more: true, seq: 0, loading: true };
   state.items = []; loadedIds = new Set(); state.total = null;
   cardPool.forEach((el) => el.remove()); cardPool.clear();
-  $("sgBar").hidden = false;
+  $("trkBar").hidden = false;
   $("sortBtn").hidden = true;
   fltSeq++; renderFilterBtn();
-  $("q").value = sgSrc.query;
+  $("q").value = trkSrc.query;
   selectOnly(null);
   renderNav(); scheduleRender(); renderStatus();
-  sgSrc.open(p).finally(() => { if (sgList === L){ L.loading = false; sgReload(); } });
+  trkSrc.open(p).finally(() => { if (trkList === L){ L.loading = false; trkReload(); } });
 }
-function sgReload(){ if (!sgOn()) return; grid.scrollTop = 0; pullSg(true); }
+function trkReload(){ if (!trkListOn()) return; grid.scrollTop = 0; pullTrk(true); }
 // Back to the library (a sidebar row, a board): the library's own list and search again.
-function closeSgList(reload){
-  if (!sgList) return;
+function closeTrkList(reload){
+  if (!trkList) return;
   clearTimeout(qTimer);   // (a project search still waiting must not land in the library)
-  sgList = null; sgLight = null;
-  sgSmartOn = null; sgSrc?.setSmart(null);
-  selectOnly(null);   // no "sg:" id stays selected for the library's actions
-  state.items = []; loadedIds = new Set(); state.total = null;   // (no Version tile left on screen until the library's list lands)
+  trkList = null; trkLight = null;
+  trkSmartOn = null; trkSrc?.setSmart(null);
+  selectOnly(null);   // no "trk:" id stays selected for the library's actions
+  state.items = []; loadedIds = new Set(); state.total = null;   // (no tracker tile left on screen until the library's list lands)
   scheduleRender();
-  $("sgBar").hidden = true;
+  $("trkBar").hidden = true;
   $("sortBtn").hidden = false;
   if (topPopOpen === "filterPop") closeTopPops();
   fltSeq++; renderFilterBtn();
@@ -1414,69 +1464,65 @@ function closeSgList(reload){
   renderNav();
   if (reload) resetList();
 }
-// One page of Versions past the loaded ones (fromStart: the list again from page 1). Further pages come as the grid
-// nears its end (sgMaybeMore), not eagerly like library rows.
-async function pullSg(fromStart){
-  const L = sgList;
+// One page of records past the loaded ones (fromStart: the list again from page 1). Further pages come as the grid
+// nears its end (trkMaybeMore), not eagerly like library rows.
+async function pullTrk(fromStart){
+  const L = trkList;
   if (!L) return;
   if (fromStart){ L.seq++; L.page = 0; L.more = true; L.loading = false; state.items = []; loadedIds = new Set(); state.total = null; cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); }
   if (L.loading || !L.more) return;
   const my = L.seq;
   L.loading = true;
   try {
-    const { items, more } = await sgSrc.page(L.page + 1);
-    if (sgList !== L || my !== L.seq) return;
+    const { items, more } = await trkSrc.page(L.page + 1);
+    if (trkList !== L || my !== L.seq) return;
     L.page++; L.more = more;
     for (const a of items) if (!loadedIds.has(a.id)){ state.items.push(a); loadedIds.add(a.id); }
     if (!more) state.total = state.items.length;
     scheduleRender(); renderStatus();
   } catch (e){
-    if (sgList === L && my === L.seq){ L.more = false; state.total = state.items.length; flash("ShotGrid: " + e.message, 4000); renderStatus(); }
+    if (trkList === L && my === L.seq){ L.more = false; state.total = state.items.length; flash(`${trkSrc.tracker.name}: ${e.message}`, 4000); renderStatus(); }
   } finally {
-    if (sgList === L && my === L.seq){ L.loading = false; scheduleRender(); }
+    if (trkList === L && my === L.seq){ L.loading = false; scheduleRender(); }
   }
 }
-function sgMaybeMore(W){
-  const L = sgList;
+function trkMaybeMore(W){
+  const L = trkList;
   if (!L || L.loading || !L.more || !grid.offsetParent) return;
   const shownEnd = W.mode === "masonry" ? (W.lastShown ?? -1) : W.end;   // masonry: the highest index on screen
-  if (shownEnd >= state.items.length - Math.max(20, (W.cols || 4) * 3)) pullSg(false);
+  if (shownEnd >= state.items.length - Math.max(20, (W.cols || 4) * 3)) pullTrk(false);
 }
-// Opening a Version (double-click, Space, Enter, the lightbox's arrows): its media downloads into Sight's cache as a
+// Opening a record (double-click, Space, Enter, the lightbox's arrows): its media downloads into Sight's cache as a
 // library file, then that file opens.
-let sgOpening = null;
-async function openSgItem(a, viaShow){
-  if (sgOpening) return;
-  sgOpening = a.id;
-  const L = sgList;
+let trkOpening = null;
+async function openTrkItem(a, viaShow){
+  if (trkOpening) return;
+  trkOpening = a.id;
+  const L = trkList;
   const card = cardPool.get(a.id);
-  card?.classList.add("sg-busy");
+  card?.classList.add("trk-busy");
   flash(`Downloading ${a.name}…`, 120000);
   try {
-    const j = await sgSrc.open1(a);
-    if (sgList !== L || !L) return;   // left the project meanwhile: nothing opens over what is on screen now
-    if (!sgStat?.cacheSource){ try { const st = await api("/api/sg/status"); if (sgStat) sgStat.cacheSource = st.cacheSource; renderNav(); } catch {} }
-    flash(`${a.name} — the review panel's SG ▾ syncs its notes`, 2500);
-    sgLight = { item: a.id, asset: j.asset.id };
+    const j = await trkSrc.open1(a);
+    if (trkList !== L || !L) return;   // left the project meanwhile: nothing opens over what is on screen now
+    if (!trkCacheIds.includes(j.asset.source_id)) refreshTrackers();   // (the media cache source was just made: hidden from Sources)
+    flash(`${a.name} — the review panel's ${trkSrc.adapter.short} ▾ syncs its notes`, 2500);
+    trkLight = { item: a.id, asset: j.asset.id };
     if (light && viaShow) showInLight(j.asset); else if (!light) toggleLight(j.asset); else showInLight(j.asset);
-  } catch (e){ flash("Could not open the Version: " + e.message, 5000); }
-  finally { sgOpening = null; cardPool.get(a.id)?.classList.remove("sg-busy"); }
+  } catch (e){ flash(`Could not open the ${trkMedia().one}: ${e.message}`, 5000); }
+  finally { trkOpening = null; cardPool.get(a.id)?.classList.remove("trk-busy"); }
 }
-// The grid item the lightbox stands on: the Version it was opened from (or the file itself).
-function lightItemId(){ return sgLight && light && light.id === sgLight.asset ? sgLight.item : light?.id; }
-// The inspector for one Version: its picture and fields, Open.
-function renderSgInsp(a){
-  const rows = sgSrc.details(a);
-  insp.innerHTML = `<div class="sec open"><span class="sec-title">ShotGrid Version</span></div>
-    <div class="preview"><div class="insp-thumb"><img src="${sgSrc.thumbUrl(a)}" alt=""></div></div>
+// The grid item the lightbox stands on: the record it was opened from (or the file itself).
+function lightItemId(){ return trkLight && light && light.id === trkLight.asset ? trkLight.item : light?.id; }
+// The inspector for one record: its picture and fields, Open.
+function renderTrkInsp(a){
+  const rows = trkSrc.details(a);
+  insp.innerHTML = `<div class="sec open"><span class="sec-title">${esc(trkSrc.tracker.name)} ${esc(trkMedia().one)}</span></div>
+    <div class="preview"><div class="insp-thumb"><img src="${trkSrc.thumbUrl(a)}" alt=""></div></div>
     <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:10px 0 6px;overflow-wrap:anywhere">${esc(a.name)}</h2>
     <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd style="overflow-wrap:anywhere">${esc(v)}</dd>`).join("")}</dl>
-    <div class="theme-actions"><button class="btn" id="sgInspOpen" type="button">Open</button></div>`;
-  $("sgInspOpen").onclick = () => openSgItem(a);
-}
-// The page's ShotGrid client: everything goes through Sight's server, which holds the key (app/shotgrid.py).
-function sgClient(site){
-  return globalThis.SightShotGrid.createClient({ site: site || $("sgSite")?.value || "x", via: "/api/sg/fetch?url=", serverAuth: true, headers: { "X-Sight": "1" } });
+    <div class="theme-actions"><button class="btn" id="trkInspOpen" type="button">Open</button></div>`;
+  $("trkInspOpen").onclick = () => openTrkItem(a);
 }
 function putSetting(key, value){
   try { localStorage.setItem(key, value); } catch {}
@@ -1661,7 +1707,8 @@ const annot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
-  trackerOn: (id) => trackerOn(id),  // a tracker's controls (SG ▾) only while it is connected; "sight-trackers" on a change
+  trackerOn: (id) => trackerOn(id),  // a tracker's controls (its link ▾) only while it is connected; "sight-trackers" on a change
+  trackers: () => trackers.slice(),  // the connected trackers [{id, kind, key, name, site, host, note}] (annotate.js: a link ▾ each)
   // (no lightbox, e.g. a review file dropped on the grid: the page's own toast, plain text)
   toast: (text, ms) => { if (light) flashV3DToast(text); else flash(htmlToText(text), ms); },
   appVersion: () => state.meta?.version || "",
@@ -1711,7 +1758,8 @@ const boardAnnot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
-  trackerOn: (id) => trackerOn(id),  // a tracker's controls (SG ▾) only while it is connected; "sight-trackers" on a change
+  trackerOn: (id) => trackerOn(id),  // a tracker's controls (its link ▾) only while it is connected; "sight-trackers" on a change
+  trackers: () => trackers.slice(),  // the connected trackers [{id, kind, key, name, site, host, note}] (annotate.js: a link ▾ each)
   toast: (text) => flashV3DToast(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
@@ -1737,7 +1785,8 @@ const cmpAnnot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
-  trackerOn: (id) => trackerOn(id),  // a tracker's controls (SG ▾) only while it is connected; "sight-trackers" on a change
+  trackerOn: (id) => trackerOn(id),  // a tracker's controls (its link ▾) only while it is connected; "sight-trackers" on a change
+  trackers: () => trackers.slice(),  // the connected trackers [{id, kind, key, name, site, host, note}] (annotate.js: a link ▾ each)
   toast: (text) => flash(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
@@ -2342,7 +2391,7 @@ function computeMasonry(L){
   const thumbW = Math.max(24, L.cell - 2 * L.cardPad);
   for (let i = extend ? c.n : 0; i < n; i++){
     const a = state.items[i];
-    const ar = a.width && a.height ? a.width / a.height : a.sg ? 16 / 9 : 1;
+    const ar = a.width && a.height ? a.width / a.height : a.trk ? 16 / 9 : 1;
     // Clamped so one extreme panorama/strip scan can't blow out a column (and the virtualizer's
     // overscan window) with a single absurdly tall or wide card.
     const imgH = Math.min(Math.round(thumbW * 2.5), Math.max(Math.round(thumbW * 0.4), Math.round(thumbW / ar)));
@@ -2456,7 +2505,7 @@ function ensureCard(a, i, L, pos){
     });
     el.addEventListener("dragstart", (ev) => {
       const id = el.dataset.id;
-      if (id.startsWith("sg:")){ ev.preventDefault(); return; }   // a ShotGrid Version is no file to drag (yet)
+      if (id.startsWith("trk:")){ ev.preventDefault(); return; }   // a tracker record is no file to drag (yet)
       const ids = state.selectedIds.includes(id) ? state.selectedIds : [id];
       if (!state.selectedIds.includes(id)) selectOnly(id);
       ev.dataTransfer.setData("application/x-sight-ids", JSON.stringify(ids));
@@ -2472,7 +2521,7 @@ function ensureCard(a, i, L, pos){
     el.addEventListener("dragend", () => { el.draggable = false; });
     cardPool.set(a.id, el);
     fillThumb(el, a, false, pos);
-    if (a.sg) sgSrc.bindFilmstrip(el, el.querySelector(".thumb"), () => assetById(el.dataset.id));
+    if (a.trk) trkSrc.bindFilmstrip(el, el.querySelector(".thumb"), () => assetById(el.dataset.id));
   }
   el.dataset.i = String(i);
   const on = state.selectedIds.includes(a.id);
@@ -2488,7 +2537,7 @@ function ensureCard(a, i, L, pos){
   const capb = !L.compact && L.meta > 0;
   const pack = L.compact || capb || !extras || 19 + (o.name ? nameH : 0) + extras * lineH <= room ? ""
     : o.name && 13 + nameH + lineH <= room ? " pack2" : " pack1";
-  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (sgOpening === a.id ? " sg-busy" : "") + (el.classList.contains("sg-scrub") ? " sg-scrub" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + (capb ? " capb" : "") + pack;
+  el.className = "card" + (on ? " on" : "") + (a.status === "missing" ? " miss" : "") + (trkOpening === a.id ? " trk-busy" : "") + (el.classList.contains("trk-scrub") ? " trk-scrub" : "") + (L.compact ? " compact" : "") + (masonry ? " masonry" : "") + (capb ? " capb" : "") + pack;
   if (masonry && pos){
     el.style.left = pos.x + "px";
     el.style.top = pos.y + "px";
@@ -2514,15 +2563,15 @@ function ensureCard(a, i, L, pos){
   s.hidden = !o.size;
   el.querySelector(".j").textContent = pack || capb ? [k, c, r, s].filter((x) => !x.hidden && x.textContent).map((x) => x.textContent).join(" · ") : "";
   el.querySelector(".meta").hidden = !showMeta;
-  if (a.sg){
+  if (a.trk){
     // a Version: the fields ticked in Fields ▾ — the first as the name, the rest on the info line
-    const lines = sgSrc.caption(a);
+    const lines = trkSrc.caption(a);
     el.querySelector(".n").textContent = lines[0]; el.querySelector(".n").hidden = false;
     k.textContent = lines.slice(1).join(" · "); k.hidden = lines.length < 2;
     c.hidden = r.hidden = s.hidden = true;
     el.querySelector(".j").textContent = pack || capb ? k.textContent : "";
     el.querySelector(".meta").hidden = !!L.compact;
-    el.classList.toggle("sg-video", !!a.sgVideo);
+    el.classList.toggle("trk-video", !!a.trkVideo);
   }
   // Review state / open notes from the lightbox review panel.
   const rv = el.querySelector(".rv");
@@ -2539,7 +2588,7 @@ function renderGrid(){
   if (!state.items.length){
     cardPool.clear();
     sliceEl = spaceEl = null;
-    grid.innerHTML = sgOn() ? `<div class="empty">${sgList.loading || sgList.more ? "Loading Versions…" : "No Version matches."}</div>`
+    grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.loading || trkList.more ? `Loading ${esc(trkMedia().many)}…` : `No ${esc(trkMedia().one)} matches.`}</div>`
       : `<div class="empty">Empty. Add a folder — files stay where they are.</div>`;
     renderInsp();
     return;
@@ -2601,13 +2650,13 @@ function renderGrid(){
   }
   reportVisible(visItems);
   refreshStaleVisible(visItems);
-  if (sgOn()) sgMaybeMore(W);
+  if (trkListOn()) trkMaybeMore(W);
 }
 
 function reportVisible(items){
   clearTimeout(visTimer);
   visTimer = setTimeout(() => {
-    const pending = items.filter(a => !a.sg && !a.has_thumb && !seenThumb.has(a.id));
+    const pending = items.filter(a => !a.trk && !a.has_thumb && !seenThumb.has(a.id));
     // The server has no headless GL to thumbnail 3D models — render those client-side instead
     // of asking it to (it would just keep 202-ing forever).
     for (const a of pending) if (a.kind === "model3d") ensureModelThumb(a);
@@ -3098,7 +3147,7 @@ function navDblClick(key, threshold = 400){
 
 function applyFilter(patch){
   if (topPopOpen === "filterPop") closeTopPops();   // (a value still typed applies to the list it was typed for, first)
-  closeSgList(false);  // a library filter leaves a ShotGrid project's Versions (its own reset below)
+  closeTrkList(false);  // a library filter leaves a tracker project's records (its own reset below)
   state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", smart:"", folder:"", review:"", where: state.filter.where, ...patch };
   fltSeq++; renderFilterBtn();   // (a smart collection picked or left: other conditions are in effect)
   renderNav();
@@ -3133,8 +3182,8 @@ function renderNav(){
   const set = (patch) => applyFilter(patch);
   const sectionRenderers = { types: renderTypes, sources: renderSources, collections: renderCollections, tags: renderTags, canvas: renderCanvasBoards };
   for (const key of state.navOrder) sectionRenderers[key]?.(set);
-  // a ShotGrid project on screen: no library row is the current one
-  if (sgOn()) nav.querySelectorAll(".row.on:not(.sg-src):not(.sg-proj)").forEach((r) => r.classList.remove("on"));
+  // a tracker project on screen: no library row is the current one
+  if (trkListOn()) nav.querySelectorAll(".row.on:not(.trk-src):not(.trk-proj)").forEach((r) => r.classList.remove("on"));
   sideScrollEl.scrollTop = y;
 }
 
@@ -3447,7 +3496,7 @@ function selectAllInActivePane(){
   else selectSet(state.items.map((a) => a.id));
 }
 function setView(mode){
-  if (mode !== "library") closeSgList(true);   // a board: the library list behind it again
+  if (mode !== "library") closeTrkList(true);   // a board: the library list behind it again
   state.view = mode;
   applyViewDom();
 }
@@ -3570,9 +3619,10 @@ function renderSources(set){
   bindSectionDrag(wrap, "sources");
   nav.append(wrap);
   if (state.navCollapse.sources) return;
-  // The ShotGrid media cache is a source of its own (opened Versions' files) that the list does not show.
-  const sgCache = sgStat?.cacheDir ? normFsPath(sgStat.cacheDir) : "", sgCacheId = sgStat?.cacheSource || "";
-  (state.meta.sources || []).filter((s) => s.id !== sgCacheId && (!sgCache || normFsPath(s.path) !== sgCache)).forEach((s) => {
+  // Each tracker's media cache is a source of its own (opened media's files) that the list does not show — connected
+  // or not (by id from /api/trackers, or by its folder from the kind's status).
+  const cacheDirs = new Set(Object.values(trkStat).map((st) => st?.cacheDir ? normFsPath(st.cacheDir) : "").filter(Boolean));
+  (state.meta.sources || []).filter((s) => !trkCacheIds.includes(s.id) && !cacheDirs.has(normFsPath(s.path))).forEach((s) => {
     const open = state.sourceTree.expandedSources.has(s.id);
     const b = document.createElement("div");
     b.className = "row src-row" + (state.filter.source === s.id ? " on" : "");
@@ -3626,7 +3676,7 @@ function renderSources(set){
     wrap.append(b);
     if (open) renderFolderChildren(s.id, s.path, 1, wrap);
   });
-  renderSgSource(wrap);
+  renderTrackerSources(wrap);
 }
 
 // True if `id` is `ancestorId` itself or nested (at any depth) under it — used to keep a
@@ -3670,8 +3720,8 @@ async function moveCollection(draggingId, targetId, zone){
 }
 
 // ---- Smart collections (docs/PLAN-trackers.md stage 3c): a saved Filter ▾ tree, no members. A library one is a row
-// under Collections (state.filter.smart while it is on), a ShotGrid one a row under its project (sgSmartOn). While one
-// is on, Filter ▾ edits its rule (saved with it); the free conditions (state.filter.where / sgSrc's) wait underneath.
+// under Collections (state.filter.smart while it is on), a tracker one a row under its project (trkSmartOn). While one
+// is on, Filter ▾ edits its rule (saved with it); the free conditions (state.filter.where / trkSrc's) wait underneath.
 // smartPending: id → the rule last edited here until a meta refresh brings the same one back (a refresh that left
 // before the save landed must not put the old rule back).
 const smartPending = new Map(), smartMade = new Map();
@@ -3687,7 +3737,7 @@ function saveSmartRule(id, tree){
     .catch((e) => { if (smartPending.get(id) === tree) smartPending.delete(id); flash("Smart collection: " + e.message, 4000); });
 }
 // After /api/state: edits not yet on the server stay; a smart collection that is gone (deleted here or in another
-// window) is left — the library falls back to All, a ShotGrid project to its own conditions.
+// window) is left — the library falls back to All, a tracker project to its own conditions.
 function syncSmart(){
   // just made here: a refresh sent before the save may lack it — kept (put back) for a while; once listed, the server has it
   const listed = new Set((state.meta.collections || []).map((c) => c.id));
@@ -3702,14 +3752,14 @@ function syncSmart(){
     else col.rule = t;
   }
   if (state.filter.smart && !smartCol(state.filter.smart)){
-    if (sgOn()) state.filter = { ...state.filter, smart: "" };   // (the library's list is read again when it is shown)
+    if (trkListOn()) state.filter = { ...state.filter, smart: "" };   // (the library's list is read again when it is shown)
     else applyFilter({});
   }
-  if (sgSmartOn && !smartCol(sgSmartOn)){
+  if (trkSmartOn && !smartCol(trkSmartOn)){
     if (topPopOpen === "filterPop") closeTopPops();   // (first: a value still typed must not land in the free conditions)
     fltSeq++;
-    sgSmartOn = null;
-    if (sgSrc) sgSrc.setSmart(null); renderFilterBtn(); renderNav(); sgReload();
+    trkSmartOn = null;
+    if (trkSrc) trkSrc.setSmart(null); renderFilterBtn(); renderNav(); trkReload();
   }
 }
 function deleteCollection(id){
@@ -3747,7 +3797,7 @@ function renderCollections(set){
   };
   wrap.append(head);
   bindSectionDrag(wrap, "collections");
-  const cols = (state.meta.collections || []).filter((c) => !c.sgSite);   // (a ShotGrid smart collection sits under its project)
+  const cols = (state.meta.collections || []).filter((c) => !c.tracker && !c.sgSite);   // (a tracker smart collection sits under its project; one an older Sight added without a key yet too)
   // Dropping a dragged collection on the section header (rather than on a row) moves it back
   // to the root level, out of whatever collection it was nested under.
   head.addEventListener("dragover", (e) => {
@@ -3966,7 +4016,7 @@ function bindTagHold(el, name){
 // The file counter ("N files" / the shimmering "scanning · N") lives in the Sources header; renderNav
 // builds it with statusHtml(), renderStatus() repaints it in place when only the numbers change.
 function statusHtml(){
-  if (sgOn()) return `${state.items.length}${sgList.more ? "+" : ""} Version${state.items.length === 1 ? "" : "s"}`;
+  if (trkListOn()) return `${state.items.length}${trkList.more ? "+" : ""} ${esc(state.items.length === 1 ? trkMedia().one : trkMedia().many)}`;
   const n = state.total || state.meta.counts?.all || 0;
   return state.meta.scanning ? `<span class="shimmer">scanning · ${n}</span>` : n + " files";
 }
@@ -4002,7 +4052,7 @@ function shared(vals){
 // The server serves thumbnails as immutable, so a regenerated one only shows up under a new URL:
 // thumb_v (the cached file's mtime, from the asset list / the "thumb" event) is the cache-buster.
 function thumbUrl(a){
-  if (a.sg) return sgSrc.thumbUrl(a);
+  if (a.trk) return trkSrc.thumbUrl(a);
   return "/api/thumb/" + a.id + (a.thumb_v ? "?v=" + a.thumb_v : "");
 }
 function thumbSrc(a){
@@ -4014,7 +4064,7 @@ function thumbSrc(a){
 // backdrop from before models were rendered transparent). Cards go back to their placeholder
 // first, so a "thumb" event that races the request can't be wiped afterwards.
 async function refreshThumbs(){
-  const ids = state.selectedIds.filter((id) => !String(id).startsWith("sg:"));   // (a ShotGrid Version has no library thumbnail)
+  const ids = state.selectedIds.filter((id) => !String(id).startsWith("trk:"));   // (a tracker record has no library thumbnail)
   if (!ids.length) return;
   for (const id of ids){
     const a = assetById(id);
@@ -4058,12 +4108,12 @@ function renderInsp(){
     return;
   }
   if (sel.length > 1){
-    if (sel.some((x) => x.sg)){ insp.innerHTML = `<div class="sub" style="padding:24px 8px">${sel.length} Versions selected</div>`; return; }
+    if (sel.some((x) => x.trk)){ insp.innerHTML = `<div class="sub" style="padding:24px 8px">${sel.length} ${esc(trkMedia().many)} selected</div>`; return; }
     renderInspMany(sel);
     return;
   }
   const a = sel[0];
-  if (a.sg) return renderSgInsp(a);
+  if (a.trk) return renderTrkInsp(a);
   const thumb = thumbSrc(a);
   // The inspector preview is only the thumbnail, for every kind: players, waveforms, font/text
   // stages, PSD layers and the live 3D viewer (all full-file downloads) live in the lightbox alone.
@@ -4178,7 +4228,7 @@ function renderInspMany(sel){
 
 function canRemoveFromFolder(){
   const cid = state.filter.collection;
-  if (!cid || !state.selectedIds.length || sgOn()) return false;
+  if (!cid || !state.selectedIds.length || trkListOn()) return false;
   const col = (state.meta.collections || []).find((c) => c.id === cid);
   return !!(col && col.count > 0);
 }
@@ -7499,9 +7549,9 @@ function bindSeqBar(bar){
 }
 
 function toggleLight(a){
-  if (a && a.sg){   // a ShotGrid Version: downloaded first; the one already in the lightbox closes it
-    if (light && sgLight && sgLight.item === a.id && light.id === sgLight.asset){ closeLight(); return; }
-    openSgItem(a); return;
+  if (a && a.trk){   // a tracker record: downloaded first; the one already in the lightbox closes it
+    if (light && trkLight && trkLight.item === a.id && light.id === trkLight.asset){ closeLight(); return; }
+    openTrkItem(a); return;
   }
   if (!a || a.status === "missing") return;
   if (light && light.id === a.id){ closeLight(); return; }
@@ -7664,7 +7714,7 @@ function syncLightTools(kind){
 
 function showInLight(a, opts = {}){
   if (!light) return;
-  if (a && a.sg){ openSgItem(a, true); return; }
+  if (a && a.trk){ openTrkItem(a, true); return; }
   flushRotatedThumb();
   // Sequence: follow the clip being shown; any other file (versions, compare's "open") ends the sequence.
   if (light.seq){
@@ -8698,7 +8748,7 @@ registerAutoClose($("ctx"), hideCtx);
 
 function showCtx(x, y, id){
   const menu = $("ctx");
-  if (!id || String(id).startsWith("sg:")){ menu.hidden = true; return; }   // (a ShotGrid Version: no file actions)
+  if (!id || String(id).startsWith("trk:")){ menu.hidden = true; return; }   // (a tracker record: no file actions)
   menu.className = "ctx";
   if (!state.selectedIds.includes(id)) selectOnly(id);
   const ids = state.selectedIds.length ? state.selectedIds.slice() : [id];
@@ -8809,7 +8859,7 @@ function showCanvasCtx(x, y){
 
 // Selected assets of whichever pane the palette/shortcut is aimed at: the board or the grid.
 function activeSelectionAssetIds(){
-  return canvasPaneActive() ? (canvasCtl?.selectedAssetIds() || []) : state.selectedIds.filter((id) => !String(id).startsWith("sg:"));
+  return canvasPaneActive() ? (canvasCtl?.selectedAssetIds() || []) : state.selectedIds.filter((id) => !String(id).startsWith("trk:"));
 }
 
 // One file-manager window per folder, each with all of that folder's selected files selected.
@@ -9080,7 +9130,7 @@ function showIconPicker(x, y, { icon, color, mode = "collection", onPick, onColo
 // lets missing files be cleaned up without hunting down the sidebar row or the palette.
 function showGridCtx(x, y){
   const menu = $("ctx");
-  if (sgOn()){ menu.hidden = true; return; }   // (its actions are the library's: none for a ShotGrid project)
+  if (trkListOn()){ menu.hidden = true; return; }   // (its actions are the library's: none for a tracker project)
   menu.className = "ctx";
   const narrowed = !isFilterEmpty(state.filter);
   menu.innerHTML = `<button type="button" data-act="purgeMissing">🧹 Remove missing files${narrowed ? " (current view)" : ""}</button>`;
@@ -9103,7 +9153,7 @@ function lightStep(dir, e){
   const cur = lightItemId();
   const i = state.items.findIndex(x => x.id === cur);
   if (i < 0) return;
-  if (sgOn() && i + dir >= state.items.length - 3) pullSg(false);   // stepping towards the end: the next page
+  if (trkListOn() && i + dir >= state.items.length - 3) pullTrk(false);   // stepping towards the end: the next page
   const next = state.items[i + dir];
   if (next && !heavyKeyBlocked(e, next)) showInLight(next);
 }
@@ -9118,7 +9168,7 @@ function lightStepRow(dir, e){
   const i = state.items.findIndex(x => x.id === cur);
   if (i < 0) return;
   const cols = layout().cols;
-  if (sgOn() && i + dir * cols >= state.items.length - cols) pullSg(false);
+  if (trkListOn() && i + dir * cols >= state.items.length - cols) pullTrk(false);
   let j = i + dir * cols;
   if (j < 0) return;
   if (j >= n){
@@ -9312,9 +9362,9 @@ function params(){
 
 let wantReset = false;
 async function pull(fromStart){
-  // A ShotGrid project's Versions load through pullSg / sgReload only: library events and actions (scans, batches,
+  // A tracker project's records load through pullTrk / trkReload only: library events and actions (scans, batches,
   // the library's own resets) leave its list alone.
-  if (sgOn()) return;
+  if (trkListOn()) return;
   if (fromStart) wantReset = true;
   if (state.pulling) return;
   state.pulling = true;
@@ -9333,11 +9383,11 @@ async function pull(fromStart){
         // "filter" / "where"): say so and show an empty grid — anything else fails as before
         let detail = "";
         try { detail = String(JSON.parse(err.message).detail || ""); } catch {}
-        if (sgOn() || !libWhere(state.filter) || !/^(filter|where)\b/.test(detail)) throw err;
+        if (trkListOn() || !libWhere(state.filter) || !/^(filter|where)\b/.test(detail)) throw err;
         if (reset){ state.total = 0; scheduleRender(); }
         flash("Filter ▾: " + detail.replace(/^(filter|where):\s*/, ""), 6000); renderStatus(); break;
       }
-      if (sgOn()) break;   // a ShotGrid project opened meanwhile: this page is not its list
+      if (trkListOn()) break;   // a tracker project opened meanwhile: this page is not its list
       const items = data.items || [];
       if (data.total != null) state.total = data.total;
       if (reset){ state.items = items; loadedIds = new Set(items.map(x => x.id)); staleIds.clear(); }
@@ -9383,7 +9433,7 @@ function scheduleRefreshItems(){
   refreshItemsT = setTimeout(refreshItems, 150);
 }
 async function refreshItems(){
-  if (!state.items.length || sgOn()) return;
+  if (!state.items.length || trkListOn()) return;
   for (const x of state.items) staleIds.add(x.id);
   const p = params();
   p.set("offset", "0");
@@ -9495,7 +9545,7 @@ function paletteActions(){
     ...(seqSelection().length >= 2 ? [{ label: "Play selected videos in sequence", hint: "Space", run: () => openSequence(seqSelection()) }] : []),
     { label: "Toggle sidebar", run: () => $("side").classList.toggle("open") },
     { label: "Toggle inspector", run: toggleDetails },
-    ...((() => { const n = state.selectedIds.filter((id) => !String(id).startsWith("sg:")).length; return n ? [{ label: "Refresh thumbnails of selection", hint: String(n), run: refreshThumbs }] : []; })()),
+    ...((() => { const n = state.selectedIds.filter((id) => !String(id).startsWith("trk:")).length; return n ? [{ label: "Refresh thumbnails of selection", hint: String(n), run: refreshThumbs }] : []; })()),
     ...((sel) => sel.length ? [
       { label: "Reveal in File System", hint: String(sel.length), run: () => revealAssets(sel) },
       { label: "Find in Folder", hint: String(sel.length), run: () => findInFolder(sel) },
@@ -9567,7 +9617,7 @@ function paletteKinds(){
   return items;
 }
 function paletteCollections(){
-  return (state.meta.collections || []).filter((c) => !c.sgSite).map((c) => ({
+  return (state.meta.collections || []).filter((c) => !c.tracker && !c.sgSite).map((c) => ({
     label: c.name, hint: c.rule ? "smart" : String(c.count || 0), run: () => applyFilter(c.rule ? { smart: c.id } : { collection: c.id }),
   }));
 }
@@ -9698,7 +9748,7 @@ document.addEventListener("visibilitychange", () => {
 
 function clearSearch(){
   $("q").value = "";
-  if (sgOn()){ if (sgSrc.query){ sgSrc.setQuery(""); sgReload(); } return; }   // a ShotGrid project's name filter
+  if (trkListOn()){ if (trkSrc.query){ trkSrc.setQuery(""); trkReload(); } return; }   // a tracker project's name filter
   if (state.filter.q){
     state.filter.q = "";
     resetList();
@@ -10155,7 +10205,7 @@ $("sortPop").onclick = (e) => {
 $("sortBtn").onclick = () => toggleTopPop("sortPop", renderSortPop);
 
 // Filter ▾ — the filter builder (filter-core.js) for what the grid shows: the library's fields (evaluated by the
-// server, state.filter.where) or, while a ShotGrid project is open, its Version fields (sent to ShotGrid, sgSrc.where).
+// server, state.filter.where) or, while a tracker project is open, its media entity's fields (sent to the tracker, trkSrc.where).
 let fltBuilder = null, fltSeq = 0;
 function libFilterFields(){
   const tags = (state.meta.tags || []).map((t) => t.name);
@@ -10165,12 +10215,12 @@ function filterCtx(){
   // (an edit that leaves the conditions in effect as they were — a new empty row, All / Any over one row — only saves)
   const same = (a, b, f) => JSON.stringify(SightFilter.clean(a, f)) === JSON.stringify(SightFilter.clean(b, f));
   // (while a smart collection is on, its rule is what is edited — and saved with it)
-  if (sgOn()) return { fields: sgSrc.filterFields(), tree: sgSrc.where, smart: smartCol(sgSmartOn), set: (t) => {
+  if (trkListOn()) return { fields: trkSrc.filterFields(), tree: trkSrc.where, smart: smartCol(trkSmartOn), set: (t) => {
     // (each tree cleaned with its own fields: a status field without schema choices offers the values its tree names)
-    const fWas = sgSrc.filterFields() || [], was = SightFilter.clean(sgSrc.where, fWas);
-    sgSrc.setWhere(t); renderFilterBtn();
-    if (sgSmartOn) saveSmartRule(sgSmartOn, sgSrc.where);
-    if (JSON.stringify(was) !== JSON.stringify(SightFilter.clean(sgSrc.where, sgSrc.filterFields() || []))) sgReload();
+    const fWas = trkSrc.filterFields() || [], was = SightFilter.clean(trkSrc.where, fWas);
+    trkSrc.setWhere(t); renderFilterBtn();
+    if (trkSmartOn) saveSmartRule(trkSmartOn, trkSrc.where);
+    if (JSON.stringify(was) !== JSON.stringify(SightFilter.clean(trkSrc.where, trkSrc.filterFields() || []))) trkReload();
   } };
   const sc = smartCol(state.filter.smart);
   return { fields: libFilterFields(), tree: libTree(state.filter), smart: sc, set: (t) => {
@@ -10204,9 +10254,9 @@ function renderFilterPop(){
     paintFilterFoot(foot, c, fields, c.tree);
   };
   if (c.fields){ mount(c.fields); return; }
-  pop.innerHTML = `<div class="flt-none">Loading the Version fields…</div>`;
+  pop.innerHTML = `<div class="flt-none">Loading the ${esc(trkMedia().one)} fields…</div>`;
   fltBuilder = null;
-  sgSrc.loadFilterFields().then((f) => { if (my === fltSeq && topPopOpen === "filterPop" && sgOn()){ mount(f); renderFilterBtn(); } })
+  trkSrc.loadFilterFields().then((f) => { if (my === fltSeq && topPopOpen === "filterPop" && trkListOn()){ mount(f); renderFilterBtn(); } })
     .catch((e) => { if (my === fltSeq) pop.innerHTML = `<div class="flt-none">${esc(e.message)}</div>`; });
 }
 // The popup's last line: which smart collection is being edited, or "Save as smart collection…" (a name, then Save)
@@ -10221,7 +10271,7 @@ function paintFilterFoot(foot, c, fields, tree){
   // (the same button stays: a value's change on blur lands between the press and the click, and a new button there
   // would swallow the click)
   if (had){ had.disabled = !n; return; }
-  const f = state.filter, scoped = !sgOn() && (f.kind || f.source || f.tag || f.missing || f.collection || f.folder || f.review);
+  const f = state.filter, scoped = !trkListOn() && (f.kind || f.source || f.tag || f.missing || f.collection || f.folder || f.review);
   foot.innerHTML = `<button type="button" class="btn ghost" data-act="smart" ${n ? "" : "disabled"} title="Keep these conditions as a smart collection in the sidebar">Save as smart collection…</button>` +
     (scoped ? `<span class="flt-note">Saves these conditions only — not the sidebar pick</span>` : "");
   foot.querySelector("[data-act=smart]").onclick = () => {
@@ -10238,16 +10288,16 @@ function paintFilterFoot(foot, c, fields, tree){
     inp.focus();
   };
 }
-// The conditions in effect become a smart collection (under Collections, or under the open ShotGrid project) and
+// The conditions in effect become a smart collection (under Collections, or under the open tracker project) and
 // that collection is opened; the free conditions are cleared (they live in it now).
 let smartSaving = false;
 async function saveAsSmart(name){
   if (smartSaving) return;
   fltBuilder?.flush();
-  const sg = sgOn(), c = filterCtx(), tree = SightFilter.sanitize(c.tree);
+  const src = trkListOn() ? trkSrc : null, c = filterCtx(), tree = SightFilter.sanitize(c.tree);
   if (c.smart || !SightFilter.count(tree, c.fields || [])) return;
   const body = { name, rule: tree };
-  if (sg){ body.sgSite = sgHost(); body.sgProject = sgSrc.project.id; }
+  if (src){ body.tracker = src.tracker.key; body.trackerProject = src.project.id; }   // (filed under its tracker key)
   smartSaving = true;
   let col;
   try { col = await api("/api/collections", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body) }); }
@@ -10256,11 +10306,11 @@ async function saveAsSmart(name){
   smartMade.set(col.id, { at: Date.now(), col });
   (state.meta.collections ||= []).push(col);
   closeTopPops();
-  if (sg && sgOn() && sgSrc.project?.id === body.sgProject){
-    sgSrc.setWhere(SightFilter.empty());   // (the free conditions: before the smart one takes over)
-    sgSmartOn = col.id; sgSrc.setSmart(tree);
+  if (src && trkListOn() && trkSrc === src && trkSrc.project?.id === body.trackerProject){
+    trkSrc.setWhere(SightFilter.empty());   // (the free conditions: before the smart one takes over)
+    trkSmartOn = col.id; trkSrc.setSmart(tree);
     fltSeq++; renderFilterBtn(); renderNav();   // (the same conditions: the list stays)
-  } else if (!sg && !sgOn()){   // (a ShotGrid project opened meanwhile stays: the free conditions too)
+  } else if (!src && !trkListOn()){   // (a tracker project opened meanwhile stays: the free conditions too)
     state.filter.where = SightFilter.empty(); putSetting(WHERE_KEY, JSON.stringify(state.filter.where));
     applyFilter({ smart: col.id });
   }
@@ -10538,9 +10588,9 @@ function setViewMode(mode){
 }
 let qTimer;
 $("q").oninput = () => {
-  if (sgOn()){ clearTimeout(qTimer); qTimer = setTimeout(() => { if (!sgOn()) return; sgSrc.setQuery($("q").value); sgReload(); }, 300); return; }  // a ShotGrid project's name filter
+  if (trkListOn()){ clearTimeout(qTimer); qTimer = setTimeout(() => { if (!trkListOn()) return; trkSrc.setQuery($("q").value); trkReload(); }, 300); return; }  // a tracker project's name filter
   clearTimeout(qTimer);
-  qTimer = setTimeout(() => { if (sgOn()) return; state.filter.q = $("q").value; resetList(); }, 120);
+  qTimer = setTimeout(() => { if (trkListOn()) return; state.filter.q = $("q").value; resetList(); }, 120);
 };
 // Guard for the keys that start loading a heavy asset: Space (open/close) and the arrows (step
 // onto the next one). Opening a heavy asset starts a fetch + a parse that can't be cancelled and
@@ -10554,7 +10604,7 @@ const HEAVY_COOLDOWN_MS = 700;
 const HEAVY_STALE_MS = 250;
 let heavyLockUntil = 0;
 function isHeavyAsset(a){
-  return !!a && (!!a.sg || a.kind === "model3d" || a.ext === ".psd" || a.size >= HEAVY_BYTES);
+  return !!a && (!!a.trk || a.kind === "model3d" || a.ext === ".psd" || a.size >= HEAVY_BYTES);
 }
 // The grid is virtualised and cards are recycled, so :hover state can't be trusted (it goes stale
 // after a scroll without mouse movement) — remember the last pointer position and hit-test it
@@ -10669,7 +10719,7 @@ document.addEventListener("keydown", (e) => {
     const settingsShown = state.settingsOpen && !!opts?.offsetParent && (!typing || inOpts);
     const closeSettings = () => { if (inOpts) document.activeElement.blur(); $("settingsHead").click(); };
     if (settingsShown && inOpts){ closeSettings(); return; }
-    if (document.activeElement === $("q") || (sgOn() ? sgSrc.query : state.filter.q)){ clearSearch(); $("q").blur(); return; }
+    if (document.activeElement === $("q") || (trkListOn() ? trkSrc.query : state.filter.q)){ clearSearch(); $("q").blur(); return; }
     if (settingsShown){ closeSettings(); return; }
     if (!typing && state.selectedIds.length) selectOnly(null);
     $("side").classList.remove("open");

@@ -68,7 +68,7 @@ class Build(unittest.TestCase):
             files = json.loads(sw.split("var FILES = ", 1)[1].split(";\n", 1)[0])
             on_disk = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()} - {"sw.js", ".nojekyll"}
             self.assertEqual(set(files) - {"./"}, on_disk)
-            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "core/model3d-core.js", "core/filter-core.js",
+            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "core/model3d-core.js", "core/filter-core.js", "core/trackers-core.js",
                       "three/three.module.js", "three/jsm/loaders/GLTFLoader.js", "three/jsm/libs/draco/gltf/draco_decoder.wasm",
                       "manifest.webmanifest", "icons/icon-512.png"):
                 self.assertIn(f, files)

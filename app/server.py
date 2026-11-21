@@ -22,7 +22,7 @@ from .library import Bus, Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
 from .stt import SttError, SttService
-from .shotgrid import SgError, ShotGridService
+from .trackers import TrackerError, Trackers, split_key, tracker_key_of_host
 from .version import APP_VERSION
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -835,11 +835,23 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         body = await json_body(request)
         name = str(body.get("name") or "Untitled")
         parent = body.get("parentId") or body.get("parent_id")
-        site = body.get("sgSite") or None
-        if site is not None and not isinstance(site, str):
-            raise HTTPException(400, "sgSite must be a string")
+        # a tracker project's smart collection: {tracker: "<kind>:<host>", trackerProject}; the pre-5b form
+        # {sgSite: host, sgProject} is still read (= tracker "shotgrid:<host>")
+        tkey, tproj = body.get("tracker") or None, body.get("trackerProject")
+        if tkey is None and body.get("sgSite"):
+            if not isinstance(body.get("sgSite"), str):
+                raise HTTPException(400, "sgSite must be a string")
+            if body.get("rule") is not None:   # (without a rule: a plain collection, the sg fields ignored — as before)
+                tproj = body.get("sgProject")
+                if not isinstance(tproj, int) or isinstance(tproj, bool):
+                    raise HTTPException(400, "sgProject must be a number")
+                tkey = tracker_key_of_host("shotgrid", body["sgSite"])   # (a host as URL.host gave it)
+                if not tkey:
+                    raise HTTPException(400, "sgSite must be a host")
+        if tkey is not None and not split_key(tkey):
+            raise HTTPException(400, "tracker must be a tracker key (<kind>:<host>)")
         try:
-            return lib.add_collection(name, str(parent) if parent else None, body.get("rule"), site, body.get("sgProject"))
+            return lib.add_collection(name, str(parent) if parent else None, body.get("rule"), tkey, tproj)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
 
@@ -1634,13 +1646,21 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             return JSONResponse({"error": e.code}, status_code=502 if e.code in ("failed", "offline", "rate") else 412)
         return JSONResponse({"text": text}, headers={"Cache-Control": "no-store"})
 
-    # ShotGrid (app/shotgrid.py, docs/SHOTGRID.md): the key is set here and never read back; the page's sync
-    # (shotgrid-core.js) goes through /api/sg/fetch, which adds the token.
-    sg = ShotGridService(lib.root)
+    # Trackers (app/trackers.py, docs/ARCHITECTURE.md "Tracker adapters"): one adapter per kind (ShotGrid only yet,
+    # app/shotgrid.py, docs/SHOTGRID.md). The generic routes are /api/trackers/{kind}/…; the old /api/sg/… routes stay
+    # as aliases for kind "shotgrid" (the phone's and older pages' paths, the tests). A tracker's credentials are set
+    # here and never read back; the page's client talks to the tracker through …/fetch, which adds them.
+    trk = Trackers(lib.root)
+
+    def _adapter(kind: str):
+        a = trk.get(kind)
+        if a is None:
+            raise HTTPException(404, "no such tracker")
+        return a
 
     def _sg_guard(request: Request) -> None:
         # Only Sight's own page: a custom header needs a CORS preflight, which this server never answers, so
-        # another site open in the browser cannot make ShotGrid calls with the user's key. The Host check stops DNS
+        # another site open in the browser cannot make tracker calls with the user's key. The Host check stops DNS
         # rebinding (a site that points its own name at 127.0.0.1 would be same-origin and could send the header).
         if request.headers.get("x-sight") != "1":
             raise HTTPException(403, "Sight page only")
@@ -1652,31 +1672,41 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if name not in ("127.0.0.1", "localhost", "::1"):
             raise HTTPException(403, "Sight page only")
 
+    def _trk_err(e: TrackerError) -> JSONResponse:
+        return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+
+    def _cache_source_of(a) -> str:
+        d = normpath(Path(a.media_dir()))
+        return next((r["id"] for r in lib.query("SELECT id, path FROM sources") if normpath(Path(r["path"])) == d), "")
+
     # The connected trackers (docs/PLAN-trackers.md decisions 10, 11): the page shows a tracker's controls (sidebar
-    # source, You-panel row, review panel link, Filter ▾ fields) only for an entry here. ShotGrid is the only one yet.
+    # source, You-panel row, review panel link, Filter ▾ fields) only for an entry here. `kinds`: every adapter Sight
+    # has (Settings → Trackers → Connect a tracker…); `cacheSources`: every adapter's media cache source, connected or
+    # not (the sidebar never lists them).
     @app.get("/api/trackers")
     def trackers_list() -> JSONResponse:
-        out = [t for t in (sg.tracker(),) if t]
-        return JSONResponse({"trackers": out}, headers={"Cache-Control": "no-store"})
+        caches = [c for c in (_cache_source_of(a) for a in trk.all()) if c]
+        return JSONResponse({"trackers": trk.connected(), "kinds": trk.kinds, "cacheSources": caches},
+                            headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/sg/status")
-    def sg_status() -> JSONResponse:
-        st = sg.status()
-        # the media cache's source (the sidebar hides it by id — paths may be spelled differently)
-        d = normpath(Path(st["cacheDir"]))
-        st["cacheSource"] = next((r["id"] for r in lib.query("SELECT id, path FROM sources") if normpath(Path(r["path"])) == d), "")
+    def trk_status(kind: str) -> JSONResponse:
+        a = _adapter(kind)
+        st = a.status()
+        st["key"] = trk.key_of(kind)
+        st["cacheSource"] = _cache_source_of(a)   # (the sidebar hides it by id — paths may be spelled differently)
         return JSONResponse(st, headers={"Cache-Control": "no-store"})
 
-    @app.put("/api/sg/config")
-    async def sg_config(request: Request) -> JSONResponse:
+    async def trk_config(kind: str, request: Request) -> JSONResponse:
+        a = _adapter(kind)
         if not request.headers.get("content-type", "").lower().startswith("application/json"):
             raise HTTPException(415, "json required")
         _sg_local(request)
-        if not sg.configure(await json_body(request)):
-            raise HTTPException(400, "invalid ShotGrid settings")
-        return JSONResponse(sg.status(), headers={"Cache-Control": "no-store"})
+        if not a.configure(await json_body(request)):
+            raise HTTPException(400, f"invalid {a.name} settings")
+        return trk_status(kind)
 
-    async def _sg_forward(request: Request, method: str) -> Response:
+    async def trk_forward(kind: str, request: Request, method: str) -> Response:
+        a = _adapter(kind)
         _sg_guard(request)
         url = request.query_params.get("url", "")
         sudo = request.query_params.get("sudo", "")[:200]
@@ -1690,110 +1720,205 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             body = bytes(buf)
         hdrs = {k.lower(): v for k, v in request.headers.items() if k.lower() in ("content-type", "accept")}
         try:
-            status, ctype, data = await asyncio.to_thread(sg.forward, method, url, body, hdrs, sudo)
-        except SgError as e:
-            return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+            status, ctype, data = await asyncio.to_thread(a.forward, method, url, body, hdrs, sudo)
+        except TrackerError as e:
+            return _trk_err(e)
         return Response(data, status_code=status, media_type=ctype or None, headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/sg/fetch")
-    async def sg_fetch_get(request: Request) -> Response:
-        return await _sg_forward(request, "GET")
-
-    @app.post("/api/sg/fetch")
-    async def sg_fetch_post(request: Request) -> Response:
-        return await _sg_forward(request, "POST")
-
-    @app.put("/api/sg/fetch")
-    async def sg_fetch_put(request: Request) -> Response:
-        return await _sg_forward(request, "PUT")
-
-    @app.delete("/api/sg/fetch")
-    async def sg_fetch_delete(request: Request) -> Response:
-        return await _sg_forward(request, "DELETE")
-
-    # Sight's ShotGrid view (docs/PLAN-trackers.md stage 2): thumbnails / filmstrips cached on disk, a Version opened
-    # as a library file (its web proxy downloaded into <SIGHT_HOME>/sg_cache/media, a source of its own that the
-    # sidebar does not list), the media cache's size.
-    @app.get("/api/sg/thumb/{vid}")
-    async def sg_thumb(vid: int, request: Request, kind: str = "image", u: str = "") -> Response:
+    # Media entities (a ShotGrid Version): thumbnails / filmstrips cached on disk, one opened as a library file (its
+    # viewable media downloaded into the adapter's media cache, a source of its own that the sidebar does not list),
+    # the media cache's size.
+    async def trk_thumb(kind: str, mid: str, request: Request, pic: str, u: str) -> Response:
+        a = _adapter(kind)
         _sg_local(request)   # an <img>: no X-Sight header; it only reads pictures (no token leaves the server)
         if request.headers.get("sec-fetch-site") == "cross-site":
-            raise HTTPException(403, "Sight page only")   # another site embedding it (probing Version ids)
+            raise HTTPException(403, "Sight page only")   # another site embedding it (probing ids)
         try:
-            got = await asyncio.to_thread(sg.picture, vid, "filmstrip" if kind == "filmstrip" else "image", u[:64])
-        except SgError as e:
-            return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+            got = await asyncio.to_thread(a.picture, a.parse_media_id(mid), "filmstrip" if pic == "filmstrip" else "image", u[:64])
+        except TrackerError as e:
+            return _trk_err(e)
         if not got:
             return Response(status_code=204)
         return FileResponse(got[0], media_type=got[1], headers={"Cache-Control": "max-age=86400"})
 
-    sg_src: dict = {}   # the media cache's source, added once: {"id", "path", "for"} (path as the library spells it)
+    cache_srcs: dict[str, dict] = {}   # kind -> its media cache's source, added once: {"id", "path", "for"}
 
-    def _sg_cache_source() -> dict:
-        d = sg.media_dir()
-        if sg_src.get("for") != str(d) or not lib.query("SELECT 1 FROM sources WHERE id=?", (sg_src.get("id", ""),)):
+    def _cache_source(a) -> dict:
+        d = a.media_dir()
+        src = cache_srcs.setdefault(a.kind, {})
+        if src.get("for") != str(d) or not lib.query("SELECT 1 FROM sources WHERE id=?", (src.get("id", ""),)):
             d.mkdir(parents=True, exist_ok=True)
             got = lib.add_source(str(d))
-            sg_src.update({"id": got["id"], "path": got["path"], "for": str(d)})
-        return sg_src
+            src.update({"id": got["id"], "path": got["path"], "for": str(d)})
+        return src
 
-    @app.post("/api/sg/open/{vid}")
-    async def sg_open(vid: int, request: Request) -> JSONResponse:
+    async def trk_open(kind: str, mid: str, request: Request) -> JSONResponse:
+        a = _adapter(kind)
         _sg_guard(request)
         from .library import asset_id, kind_of
-        src = await asyncio.to_thread(_sg_cache_source)
         try:
-            path, v = await asyncio.to_thread(sg.fetch_media, vid, Path(src["path"]), lambda n: bool(kind_of(n)))
-        except SgError as e:
-            return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+            ident = a.parse_media_id(mid)
+        except TrackerError as e:
+            return _trk_err(e)
+        src = await asyncio.to_thread(_cache_source, a)
+        try:
+            path, v = await asyncio.to_thread(a.fetch_media, ident, Path(src["path"]), lambda n: bool(kind_of(n)))
+        except TrackerError as e:
+            return _trk_err(e)
         except (OSError, ValueError) as e:
-            return JSONResponse({"errors": [{"title": f"Could not save the Version's media ({type(e).__name__})"}]}, status_code=500)
-        kind = kind_of(str(path))
-        await asyncio.to_thread(lib._touch_one, src["id"], str(path), kind)
-        a = lib.get_asset(asset_id(str(path)))
-        if not a:
+            return JSONResponse({"errors": [{"title": f"Could not save the media ({type(e).__name__})"}]}, status_code=500)
+        kind_ = kind_of(str(path))
+        await asyncio.to_thread(lib._touch_one, src["id"], str(path), kind_)
+        got = lib.get_asset(asset_id(str(path)))
+        if not got:
             return JSONResponse({"errors": [{"title": "The downloaded media could not be added to the library"}]}, status_code=500)
-        return JSONResponse({"asset": a, "version": v})
+        return JSONResponse({"asset": got, "version": v, "record": v})
 
-    @app.get("/api/sg/cache")
-    def sg_cache(request: Request) -> JSONResponse:
-        return JSONResponse(sg.cache_info(), headers={"Cache-Control": "no-store"})
+    def trk_cache(kind: str) -> JSONResponse:
+        return JSONResponse(_adapter(kind).cache_info(), headers={"Cache-Control": "no-store"})
 
-    @app.post("/api/sg/cache/clear")
-    def sg_cache_clear(request: Request) -> dict:
+    def trk_cache_clear(kind: str, request: Request) -> dict:
+        a = _adapter(kind)
         _sg_guard(request)
-        d = sg.media_dir()
-        n = 0
-        for p in (d.rglob("*") if d.exists() else []):
-            if p.is_file() and not p.name.endswith(".part"):   # (a download under way finishes)
-                try:
-                    p.unlink()
-                    n += 1
-                except OSError:
-                    pass
-        return {"ok": True, "removed": n}
+        return {"ok": True, "removed": a.clear_cache()}
 
-    @app.get("/api/sg/link/{aid}")
-    def sg_link_get(aid: str) -> JSONResponse:
-        return JSONResponse(lib.get_sg_link(aid) or {"link": None, "state": {}}, headers={"Cache-Control": "no-store"})
+    # A file's link to a media entity, per tracker: filed under the tracker key of the site configured now
+    # ("<kind>:<host>", Library tracker_links) — a link made on another site is not this one's.
+    def trk_link_get(kind: str, aid: str) -> JSONResponse:
+        _adapter(kind)
+        key = trk.key_of(kind)
+        got = lib.get_tracker_link(aid, key) if key else None
+        return JSONResponse(got or {"link": None, "state": {}}, headers={"Cache-Control": "no-store"})
 
-    @app.put("/api/sg/link/{aid}")
-    async def sg_link_put(aid: str, request: Request) -> dict:
+    async def trk_link_put(kind: str, aid: str, request: Request) -> dict:
+        a = _adapter(kind)
         _sg_guard(request)
         body = await json_body(request)
         link, state = body.get("link"), body.get("state")
         if (link is not None and not isinstance(link, dict)) or (state is not None and not isinstance(state, dict)):
             raise HTTPException(400, "link / state must be objects")
+        key = trk.key_of(kind)
+        if not key:
+            raise HTTPException(412, f"{a.name} has no site set (Settings → Trackers)")
         if not lib.get_asset(aid):
             raise HTTPException(404)
-        lib.set_sg_link(aid, link, state)
+        lib.set_tracker_link(aid, key, link, state)
         return {"ok": True}
+
+    def trk_link_drop(kind: str, aid: str, request: Request) -> dict:
+        _adapter(kind)
+        _sg_guard(request)
+        key = trk.key_of(kind)
+        if key:
+            lib.drop_tracker_link(aid, key)
+        return {"ok": True}
+
+    # ---- the routes: /api/trackers/{kind}/… and the /api/sg/… aliases (kind "shotgrid") ----
+    @app.get("/api/trackers/{kind}/status")
+    def r_trk_status(kind: str) -> JSONResponse:
+        return trk_status(kind)
+
+    @app.put("/api/trackers/{kind}/config")
+    async def r_trk_config(kind: str, request: Request) -> JSONResponse:
+        return await trk_config(kind, request)
+
+    @app.get("/api/trackers/{kind}/fetch")
+    async def r_trk_fetch_get(kind: str, request: Request) -> Response:
+        return await trk_forward(kind, request, "GET")
+
+    @app.post("/api/trackers/{kind}/fetch")
+    async def r_trk_fetch_post(kind: str, request: Request) -> Response:
+        return await trk_forward(kind, request, "POST")
+
+    @app.put("/api/trackers/{kind}/fetch")
+    async def r_trk_fetch_put(kind: str, request: Request) -> Response:
+        return await trk_forward(kind, request, "PUT")
+
+    @app.delete("/api/trackers/{kind}/fetch")
+    async def r_trk_fetch_delete(kind: str, request: Request) -> Response:
+        return await trk_forward(kind, request, "DELETE")
+
+    @app.get("/api/trackers/{kind}/thumb/{mid}")
+    async def r_trk_thumb(kind: str, mid: str, request: Request, pic: str = "image", u: str = "") -> Response:
+        return await trk_thumb(kind, mid, request, pic, u)
+
+    @app.post("/api/trackers/{kind}/open/{mid}")
+    async def r_trk_open(kind: str, mid: str, request: Request) -> JSONResponse:
+        return await trk_open(kind, mid, request)
+
+    @app.get("/api/trackers/{kind}/cache")
+    def r_trk_cache(kind: str) -> JSONResponse:
+        return trk_cache(kind)
+
+    @app.post("/api/trackers/{kind}/cache/clear")
+    def r_trk_cache_clear(kind: str, request: Request) -> dict:
+        return trk_cache_clear(kind, request)
+
+    @app.get("/api/trackers/{kind}/link/{aid}")
+    def r_trk_link_get(kind: str, aid: str) -> JSONResponse:
+        return trk_link_get(kind, aid)
+
+    @app.put("/api/trackers/{kind}/link/{aid}")
+    async def r_trk_link_put(kind: str, aid: str, request: Request) -> dict:
+        return await trk_link_put(kind, aid, request)
+
+    @app.delete("/api/trackers/{kind}/link/{aid}")
+    def r_trk_link_drop(kind: str, aid: str, request: Request) -> dict:
+        return trk_link_drop(kind, aid, request)
+
+    # Compatibility (kept on purpose): the pre-5b ShotGrid paths, used by the phone's docs / proxy worker protocol,
+    # older pages and the tests. Same handlers, kind "shotgrid"; /api/sg/thumb keeps its old `kind=` parameter.
+    @app.get("/api/sg/status")
+    def sg_status() -> JSONResponse:
+        return trk_status("shotgrid")
+
+    @app.put("/api/sg/config")
+    async def sg_config(request: Request) -> JSONResponse:
+        return await trk_config("shotgrid", request)
+
+    @app.get("/api/sg/fetch")
+    async def sg_fetch_get(request: Request) -> Response:
+        return await trk_forward("shotgrid", request, "GET")
+
+    @app.post("/api/sg/fetch")
+    async def sg_fetch_post(request: Request) -> Response:
+        return await trk_forward("shotgrid", request, "POST")
+
+    @app.put("/api/sg/fetch")
+    async def sg_fetch_put(request: Request) -> Response:
+        return await trk_forward("shotgrid", request, "PUT")
+
+    @app.delete("/api/sg/fetch")
+    async def sg_fetch_delete(request: Request) -> Response:
+        return await trk_forward("shotgrid", request, "DELETE")
+
+    @app.get("/api/sg/thumb/{vid}")
+    async def sg_thumb(vid: str, request: Request, kind: str = "image", u: str = "") -> Response:
+        return await trk_thumb("shotgrid", vid, request, kind, u)
+
+    @app.post("/api/sg/open/{vid}")
+    async def sg_open(vid: str, request: Request) -> JSONResponse:
+        return await trk_open("shotgrid", vid, request)
+
+    @app.get("/api/sg/cache")
+    def sg_cache() -> JSONResponse:
+        return trk_cache("shotgrid")
+
+    @app.post("/api/sg/cache/clear")
+    def sg_cache_clear(request: Request) -> dict:
+        return trk_cache_clear("shotgrid", request)
+
+    @app.get("/api/sg/link/{aid}")
+    def sg_link_get(aid: str) -> JSONResponse:
+        return trk_link_get("shotgrid", aid)
+
+    @app.put("/api/sg/link/{aid}")
+    async def sg_link_put(aid: str, request: Request) -> dict:
+        return await trk_link_put("shotgrid", aid, request)
 
     @app.delete("/api/sg/link/{aid}")
     def sg_link_drop(aid: str, request: Request) -> dict:
-        _sg_guard(request)
-        lib.drop_sg_link(aid)
-        return {"ok": True}
+        return trk_link_drop("shotgrid", aid, request)
 
     @app.get("/api/settings")
     def get_settings() -> JSONResponse:

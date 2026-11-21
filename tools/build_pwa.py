@@ -31,6 +31,7 @@ SRC = ROOT / "mobile"
 SHARED = {  # published path -> source
     "core/review-core.js": ROOT / "app" / "static" / "review-core.js",
     "core/review-draw.js": ROOT / "app" / "static" / "review-draw.js",
+    "core/trackers-core.js": ROOT / "app" / "static" / "trackers-core.js",
     "core/shotgrid-core.js": ROOT / "app" / "static" / "shotgrid-core.js",
     "core/filter-core.js": ROOT / "app" / "static" / "filter-core.js",
     "core/keys.js": ROOT / "app" / "static" / "keys.js",

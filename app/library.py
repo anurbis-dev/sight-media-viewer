@@ -1428,6 +1428,17 @@ class Library:
               state TEXT NOT NULL DEFAULT '{}',
               updated_at INTEGER NOT NULL
             );
+            -- 0.107+: an asset's link to a tracker's media entity (docs/ARCHITECTURE.md "Tracker adapters"), one per
+            -- tracker key "<kind>:<host>". sg_links (above) is the pre-0.107 ShotGrid-only table: copied in once
+            -- (_migrate_tracker_links), then left as it was (never written again; an older Sight still reads it).
+            CREATE TABLE IF NOT EXISTS tracker_links (
+              asset_id TEXT NOT NULL,
+              tracker TEXT NOT NULL,
+              link TEXT NOT NULL,
+              state TEXT NOT NULL DEFAULT '{}',
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (asset_id, tracker)
+            );
             """
         )
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(assets)")}
@@ -1463,6 +1474,22 @@ class Library:
             self.conn.execute("ALTER TABLE collections ADD COLUMN sg_site TEXT")
         if "sg_project" not in ccols:
             self.conn.execute("ALTER TABLE collections ADD COLUMN sg_project INTEGER")
+        # 0.107+ (stage 5b): a tracker project's smart collection is filed under its tracker key ("<kind>:<host>") and
+        # project id (text: not every tracker's ids are numbers). A ShotGrid one still writes sg_site / sg_project too
+        # (an older Sight reads those); rows from before 0.107 are given their key here (idempotent: only rows with
+        # sg_site and no tracker yet — every launch, so a row an older Sight added meanwhile is picked up too; a row whose
+        # host cannot be read stays without a key: the page keeps it out of Collections all the same).
+        if "tracker" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN tracker TEXT")
+        if "tracker_project" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN tracker_project TEXT")
+        from .trackers import tracker_key_of_host
+        for r in self.conn.execute("SELECT id, sg_site, sg_project FROM collections WHERE sg_site IS NOT NULL AND tracker IS NULL").fetchall():
+            key = tracker_key_of_host("shotgrid", r["sg_site"])   # (a host as URL.host gave it: its port kept)
+            if key:
+                self.conn.execute("UPDATE collections SET tracker=?, tracker_project=? WHERE id=?",
+                                  (key, None if r["sg_project"] is None else str(r["sg_project"]), r["id"]))
+        self._migrate_tracker_links()
         if "sort_order" not in ccols:
             self.conn.execute("ALTER TABLE collections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
             # Backfill from creation order so existing collections keep their current order on upgrade.
@@ -3870,7 +3897,8 @@ class Library:
 
     def collections(self) -> list[dict]:
         cols = [dict(r) for r in self.query(
-            "SELECT id, name, parent_id, created_at, icon, color, rule, sg_site, sg_project FROM collections ORDER BY sort_order, created_at")]
+            "SELECT id, name, parent_id, created_at, icon, color, rule, sg_site, sg_project, tracker, tracker_project"
+            " FROM collections ORDER BY sort_order, created_at")]
         counts = {
             r["collection_id"]: int(r["c"])
             for r in self.query("SELECT collection_id, COUNT(*) c FROM collection_assets GROUP BY collection_id")
@@ -3887,33 +3915,50 @@ class Library:
                 c["rule"] = json.loads(rule) if rule else None
             except ValueError:
                 c["rule"] = {"op": "and", "c": []}   # (a smart collection stays one: its rule is just empty)
+            c["tracker"] = c["tracker"] or None
+            proj = c.pop("tracker_project")
+            c["trackerProject"] = proj if c["tracker"] else None
+            # (pre-0.107 names, still sent for an older page: a ShotGrid one's host and project)
             c["sgSite"] = c.pop("sg_site")
             c["sgProject"] = c.pop("sg_project")
         return cols
 
     def add_collection(self, name: str, parent_id: str | None = None, rule: object = None,
-                       sg_site: str | None = None, sg_project: int | None = None) -> dict:
-        """A collection; with `rule` a smart one (a saved filter, no members). A ShotGrid smart collection
-        (`sg_site` + `sg_project`) lives under its project in Sources, never nested in a collection."""
+                       tracker: str | None = None, tracker_project: object = None) -> dict:
+        """A collection; with `rule` a smart one (a saved filter, no members). A tracker project's smart collection
+        (`tracker` = the tracker key "<kind>:<host>" + `tracker_project` = the project's id, a positive integer or a
+        short id string) lives under its project in Sources, never nested in a collection."""
+        from .trackers import split_key
         rule_s = _rule_json(rule) if rule is not None else None
         if rule_s is None:
-            sg_site, sg_project = None, None
-        if sg_site or sg_project:
-            if (not isinstance(sg_site, str) or not sg_site.strip() or len(sg_site) > 255
-                    or not isinstance(sg_project, int) or isinstance(sg_project, bool) or not 0 < sg_project < 2 ** 53):
-                raise ValueError("a ShotGrid smart collection needs its site and project")
+            tracker, tracker_project = None, None
+        sg_site, sg_project, proj = None, None, None
+        if tracker or tracker_project is not None:
+            ok_proj = ((isinstance(tracker_project, int) and not isinstance(tracker_project, bool) and 0 < tracker_project < 2 ** 53)
+                       or (isinstance(tracker_project, str) and 0 < len(tracker_project) <= 200 and tracker_project.isprintable()
+                           and tracker_project.strip() == tracker_project))
+            parts = split_key(tracker)
+            if not parts or not ok_proj:
+                raise ValueError("a tracker smart collection needs its tracker and project")
+            proj = str(tracker_project)
+            if parts[0] == "shotgrid":   # (also the pre-0.107 columns: an older Sight lists it under its project)
+                if not re.fullmatch(r"[1-9]\d{0,15}", proj) or int(proj) >= 2 ** 53:
+                    raise ValueError("a ShotGrid project id is a number")
+                sg_site, sg_project = parts[1], int(proj)
             parent_id = None
-        if parent_id and self.query("SELECT 1 FROM collections WHERE id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL)", (parent_id,)):
+        if parent_id and self.query("SELECT 1 FROM collections WHERE id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL OR tracker IS NOT NULL)", (parent_id,)):
             parent_id = None   # (nothing nests inside a smart collection)
         cid = asset_id(f"col:{time.time_ns()}:{secrets.token_hex(8)}:{name}")
         nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM collections")[0]["n"]
         self.execute(
-            "INSERT INTO collections(id, name, parent_id, created_at, sort_order, rule, sg_site, sg_project) VALUES (?,?,?,?,?,?,?,?)",
-            (cid, name.strip() or "Untitled", parent_id or None, int(time.time() * 1000), nxt, rule_s, sg_site or None, sg_project),
+            "INSERT INTO collections(id, name, parent_id, created_at, sort_order, rule, sg_site, sg_project, tracker, tracker_project)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (cid, name.strip() or "Untitled", parent_id or None, int(time.time() * 1000), nxt, rule_s, sg_site, sg_project,
+             tracker or None, proj),
         )
         return {"id": cid, "name": name.strip() or "Untitled", "parentId": parent_id or None, "assetIds": [], "count": 0,
                 "icon": None, "color": None, "rule": json.loads(rule_s) if rule_s else None,
-                "sgSite": sg_site or None, "sgProject": sg_project}
+                "tracker": tracker or None, "trackerProject": proj, "sgSite": sg_site, "sgProject": sg_project}
 
     def set_collection_rule(self, cid: str, rule: object) -> None:
         """A smart collection's saved filter (a plain collection never becomes a smart one this way)."""
@@ -3930,8 +3975,8 @@ class Library:
             return
         if parent_id:
             # nothing nests inside a smart collection, and a ShotGrid one stays at the top (under its project)
-            bad = self.query("SELECT 1 FROM collections WHERE (id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL))"
-                             " OR (id=? AND sg_site IS NOT NULL)", (parent_id, cid))
+            bad = self.query("SELECT 1 FROM collections WHERE (id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL OR tracker IS NOT NULL))"
+                             " OR (id=? AND (sg_site IS NOT NULL OR tracker IS NOT NULL))", (parent_id, cid))
             if bad:
                 return
         # Walking up from the proposed parent must never reach cid, or the move would turn cid
@@ -4411,9 +4456,30 @@ class Library:
         )
         return [{"id": r["id"], "deleted_at": r["deleted_at"]} for r in rows]
 
-    # ---- ShotGrid links (app/shotgrid.py, docs/SHOTGRID.md) ------------------------------------------
-    def get_sg_link(self, aid: str) -> dict | None:
-        rows = self.query("SELECT link, state, updated_at FROM sg_links WHERE asset_id=?", (aid,))
+    # ---- tracker links (app/trackers.py; ShotGrid: docs/SHOTGRID.md) -----------------------------------
+    # An asset's link to a tracker's media entity (a ShotGrid Version) and the sync state, one per tracker key
+    # "<kind>:<host>". The link JSON is the adapter's own (ShotGrid: {site, project, version, task, entity, firstFrame}).
+    def _migrate_tracker_links(self) -> None:
+        """Once: the pre-0.107 ShotGrid links (sg_links, one per asset) become tracker_links rows under
+        "shotgrid:<the link's site>" (`host_norm`: no scheme guessed, its port kept). Run once only (a meta mark): a link dropped later must not come back from the
+        old table, which stays as it was for an older Sight."""
+        if self.conn.execute("SELECT 1 FROM meta WHERE key='tracker_links_from_sg'").fetchone():
+            return
+        from .trackers import tracker_key_of_host
+        for r in self.conn.execute("SELECT asset_id, link, state, updated_at FROM sg_links").fetchall():
+            try:
+                link = json.loads(r["link"])
+            except (TypeError, ValueError):
+                continue
+            # link.site is a host as the page's URL.host gave it (no scheme): its port is kept as it is
+            key = tracker_key_of_host("shotgrid", link["site"]) if isinstance(link, dict) and isinstance(link.get("site"), str) else ""
+            if key:
+                self.conn.execute("INSERT OR IGNORE INTO tracker_links(asset_id, tracker, link, state, updated_at) VALUES (?,?,?,?,?)",
+                                  (r["asset_id"], key, r["link"], r["state"] or "{}", r["updated_at"]))
+        self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('tracker_links_from_sg', '1')")
+
+    def get_tracker_link(self, aid: str, tracker: str) -> dict | None:
+        rows = self.query("SELECT link, state, updated_at FROM tracker_links WHERE asset_id=? AND tracker=?", (aid, tracker))
         if not rows:
             return None
         try:
@@ -4421,11 +4487,11 @@ class Library:
         except json.JSONDecodeError:
             return None
 
-    def set_sg_link(self, aid: str, link: dict | None = None, state: dict | None = None) -> None:
+    def set_tracker_link(self, aid: str, tracker: str, link: dict | None = None, state: dict | None = None) -> None:
         """Store the link and / or the sync state (None keeps what is there; a new link starts a fresh state)."""
         now = int(time.time() * 1000)
         with self.lock:
-            cur = self.conn.execute("SELECT link, state FROM sg_links WHERE asset_id=?", (aid,)).fetchone()
+            cur = self.conn.execute("SELECT link, state FROM tracker_links WHERE asset_id=? AND tracker=?", (aid, tracker)).fetchone()
             if cur is None and link is None:
                 return
             new_link = json.dumps(link) if link is not None else cur["link"]
@@ -4436,15 +4502,15 @@ class Library:
             else:
                 new_state = cur["state"]
             self.conn.execute(
-                "INSERT INTO sg_links(asset_id, link, state, updated_at) VALUES (?,?,?,?) "
-                "ON CONFLICT(asset_id) DO UPDATE SET link=excluded.link, state=excluded.state, updated_at=excluded.updated_at",
-                (aid, new_link, new_state, now),
+                "INSERT INTO tracker_links(asset_id, tracker, link, state, updated_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(asset_id, tracker) DO UPDATE SET link=excluded.link, state=excluded.state, updated_at=excluded.updated_at",
+                (aid, tracker, new_link, new_state, now),
             )
             self.conn.commit()
 
-    def drop_sg_link(self, aid: str) -> None:
+    def drop_tracker_link(self, aid: str, tracker: str) -> None:
         with self.lock:
-            self.conn.execute("DELETE FROM sg_links WHERE asset_id=?", (aid,))
+            self.conn.execute("DELETE FROM tracker_links WHERE asset_id=? AND tracker=?", (aid, tracker))
             self.conn.commit()
 
     @staticmethod

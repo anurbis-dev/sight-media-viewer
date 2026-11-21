@@ -11,7 +11,8 @@ app/server.py            HTTP API + UI server; routes are closures inside build_
 app/web.py               FastAPI-shaped router on plain Starlette (@app.get on plain functions; see below)
 app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db, scanning, thumbs, CRUD
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
-app/shotgrid.py          ShotGrid link, server side: shotgrid.json (key never read back), token, /api/sg/fetch pass-through (docs/SHOTGRID.md)
+app/trackers.py          the tracker-neutral layer: tracker keys, the adapter interface, the registry (Trackers) — see "Tracker adapters"
+app/shotgrid.py          the ShotGrid adapter, server side: shotgrid.json (key never read back), token, …/fetch pass-through (docs/SHOTGRID.md)
 app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package,
                          HTML page for reviewers without Sight
 app/settings.py          settings.json store (UI prefs) + defaults
@@ -20,9 +21,10 @@ app/static/index.html    the whole UI: one inline <script type="module"> (no bui
 app/static/canvas.js     the Canvas (board) view — ES module imported by index.html
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
-app/static/sg-source.js  ShotGrid Versions as an item source of the library grid: filter bar, Fields ▾ captions, filmstrip, open as a library file
+app/static/tracker-source.js  a tracker project's media entities (ShotGrid Versions) as an item source of the library grid: filter bar, Fields ▾ captions, filmstrip, open as a library file (through the adapter)
+app/static/trackers-core.js  the client tracker registry (SightTrackers: keys, adapter lookup) + the client adapter interface; also the phone's (core/)
 app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, ShotGrid hash filters, the UI (SightFilter); also the phone's (core/)
-app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version, shared with the phone app (docs/SHOTGRID.md)
+app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version + the ShotGrid client adapter (SightShotGrid.adapter), shared with the phone app (docs/SHOTGRID.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
                          buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers, ENV_PRESETS,
@@ -740,7 +742,7 @@ differ. Library: `LIB_FIELDS` (name, kind, ext, tags, rating, mtime, added, path
 `GET /api/assets?where=<json>` in the wire form (`toLibWire`: incomplete rows dropped, dates resolved to local
 epoch-ms bounds) and ANDed in `Library._clause` by `where_sql` (whitelisted fields / ops, ≤ 4 levels, ≤ 100
 conditions; anything else → 400). Also in the scoped "Remove missing" (`/api/missing/purge` body `where`).
-ShotGrid project: `sgSrc.where` (`sight.sg.where`), fields from the Version schema (`sgFields`: text, entity,
+ShotGrid project: `trkSrc.where` (`sight.sg.where`, the adapter's `storeKey("where")`), fields from the Version schema (`sgFields`: text, entity,
 status / list with `valid_values`, date / date_time, number, checkbox), sent by `browseVersions` as a REST **hash**
 filter (`toSgConditions`, content type `api3_hash+json`) ANDed with the bar's own filters; without conditions the
 array format is used as before. `sgFields(schema, {seen, tree})`: a list / status field with no schema choices offers
@@ -752,32 +754,87 @@ localStorage `sight-review:sgwhere` (`{"<host> <project id>": tree}`, newest 100
 phone talks to ShotGrid directly). Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
 **Smart collections** (stage 3c): rows of `collections` with `rule` (JSON — the client's raw tree, not the wire form;
 ≤ 64 000 chars, `_rule_json`) and no members (`add_to_collection` ignores them; nothing nests in one; `parent_id`
-forced NULL for ShotGrid ones). A ShotGrid one also has `sg_site` (host) + `sg_project` and is drawn under its project
-in `renderSgSource`, not under Collections. `/api/state` → `rule`, `sgSite`, `sgProject`; `POST /api/collections`
-takes them, `PATCH {rule}` changes a smart one's rule only. Client: `state.filter.smart` (library) / `sgSmartOn` +
-`sgSrc.setSmart(tree)` (ShotGrid) — while set, `libTree()` / `sgSrc.where` return the smart rule, so Filter ▾ and
-`params()` use it and edits go to `saveSmartRule` (PATCHes serialised; `smartPending` keeps the local rule over a
-stale `/api/state` until the server returns the same). The free tree (`state.filter.where` / sgSrc's own) waits
+forced NULL for tracker ones). A tracker project's one also has `tracker` (the tracker key "<kind>:<host>") +
+`tracker_project` (TEXT) and is drawn under its project in `renderTrackerSource`, not under Collections; a ShotGrid one
+also fills the pre-0.107 `sg_site` (host) / `sg_project` (int) for an older Sight, and rows with only those get their
+key on every launch (idempotent UPDATE in `_migrate`). `/api/state` → `rule`, `tracker`, `trackerProject` (string),
+plus `sgSite` / `sgProject` (compat); `POST /api/collections` takes `tracker` + `trackerProject` (or the old `sgSite` +
+numeric `sgProject` → `shotgrid:<host>`), `PATCH {rule}` changes a smart one's rule only. Client: `state.filter.smart`
+(library) / `trkSmartOn` + `trkSrc.setSmart(tree)` (tracker project) — while set, `libTree()` / `trkSrc.where` return
+the smart rule, so Filter ▾ and `params()` use it and edits go to `saveSmartRule` (PATCHes serialised; `smartPending`
+keeps the local rule over a stale `/api/state` until the server returns the same). The free tree (`state.filter.where` / trkSrc's own) waits
 underneath; *Save as smart collection* moves it into the new row (`saveAsSmart`). Counts are not shown on smart rows
 (each would cost a filtered COUNT on every `/api/state`).
-**Trackers: UI only while connected** (docs/PLAN-trackers.md decisions 10, 11; stage 5a). `GET /api/trackers` →
-`{trackers: [{id, name, site, host}]}` lists the *connected* trackers — ShotGrid's entry comes from
-`ShotGridService.tracker()`, connected = `_connected()` (site + script name + key saved), the same test as
-`status().configured` and `forward()`'s refusal. Page: `trackers` / `trackerOn(id)` / `refreshTrackers(changed)` in
-index.html (reads `/api/trackers` + `/api/sg/status` together; runs at start, after Save / Test / Disconnect in
-Settings → Trackers, on every opening of the You panel and on `visibilitychange` / `focus`; an unchanged answer
-repaints nothing; the ShotGrid projects are re-read only when site / script / connected changed); it repaints the sidebar source (`renderSgSource`), the
-You panel's rows (`paintUserTrackers`), Settings → Trackers (`paintTrackerSettings`), closes a ShotGrid project on
-screen whose connection went / changed site (`closeSgList(true)` — Filter ▾'s tracker fields only exist inside one),
-and fires `sight-trackers` on window when the list changed; annotate.js listens and shows SG ▾ only when
-`host.trackerOn("shotgrid")` (every createAnnotator host passes it; a host without it shows none). Disconnect = the
-key removed (the stored settings re-read from `/api/sg/status`, PUT back with `key: ""`): site, script, logins and
-statuses stay for the next connect. While ShotGrid is not connected and `/api/sg/cache` holds files, `#trkCacheRow`
-(*Tracker media cache … Clear*) keeps the hidden media cache clearable.
-Settings → Trackers: a block per connected tracker (`.trk-set[data-tracker]`) + *Connect a tracker…* listing the
-`TRACKER_KINDS` not connected; `trkConnecting` keeps a kind's fields open while it is being connected (also after a
-save that left it unconnected). Data of a disconnected tracker (ShotGrid smart collections, `sg_links`, the media
-cache source) stays and is just not shown.
+**Tracker adapters** (docs/PLAN-trackers.md decision 11, stage 5b). Several trackers can be connected at once; the
+UI is one for all and talks to a tracker only through its **adapter** — one per *kind* ("shotgrid"; ShotGrid is the only
+one yet). A tracker is kind + site; the **tracker key** `"<kind>:<host>"` (host = `URL.host`: lowercased, default port
+dropped — `app/trackers.py host_of / tracker_key / split_key` and `SightTrackers.hostOf / key / split` follow the same
+rule — WHATWG canonical hostnames: IPv6 compressed without a dotted tail, IPv4 in any spelling as a dotted quad, punycode,
+percent-decoded; http(s) only —, tests/test_trackers.py checks they agree; `valid_site` refuses a hostname the browser
+would spell differently (ShotGrid's `configure` first rewrites a saved site to that spelling with `canonical_site`; a non-ASCII
+hostname is refused, never converted — Python's IDNA 2003 differs from the browser's for ß / ς), and a host stored *without* a scheme (a link's `site`, an old `sg_site`) goes through
+`host_norm` / `tracker_key_of_host`, which keep its port and guess no scheme) files everything kept per tracker: sidebar source rows
+(`data-tracker`), smart collections (`collections.tracker` + `tracker_project`), a file's link (`tracker_links`).
+- *Server* (`app/trackers.py`): `Trackers(home)` is the registry (kind → adapter, made once in `build_app`). The
+  adapter interface (duck-typed, listed in the module docstring; `ShotGridService` implements it): `kind`, `name`,
+  `tracker()` (its `/api/trackers` entry while connected), `site()`, `status()` (never a secret; `configured`,
+  `ident` = "another connection" when it changes), `configure(data)`, `forward(method, url, body, headers, sudo)`
+  (the page's client goes through it; the server adds the credentials), `parse_media_id(str)`, `picture(id, kind,
+  stamp)`, `fetch_media(id, root, can_open)`, `media_dir()`, `cache_info()`, `clear_cache()`; errors are
+  `TrackerError(status, detail)` (`SgError` is ShotGrid's subclass). Routes: `GET /api/trackers` →
+  `{trackers: [{id, kind, key, name, site, host, note}], kinds: [{id, name}], cacheSources: [source id]}` (id = kind,
+  as before 0.107; `note` e.g. "as reviewer"; every adapter's media cache source, connected or not);
+  `/api/trackers/{kind}/status | config | fetch (GET/POST/PUT/DELETE) | thumb/{id}?pic=image|filmstrip&u= |
+  open/{id} | cache | cache/clear | link/{asset}` (an unknown kind → 404; the same guards as before: `X-Sight: 1` +
+  a local Host for anything that acts, a local Host for thumbnails). **Compatibility:** every pre-0.107
+  `/api/sg/…` route stays as an alias of kind "shotgrid" (same handlers; `/api/sg/thumb` keeps `kind=`), for the
+  tests, scripts and the proxy-worker protocol; `/api/sg/open` answers `{asset, version, record}`.
+- *Links* (`Library.get_tracker_link / set_tracker_link / drop_tracker_link`, table `tracker_links(asset_id,
+  tracker, link, state, updated_at)`, PK asset + tracker key): the route files a link under the key of the kind's
+  **current** site, so a link made on another site is not shown (nor synced against the wrong site) and comes back
+  when that site is configured again. Migration: the pre-0.107 `sg_links` rows are copied once under
+  `"shotgrid:" + host_of(link.site)` (meta `tracker_links_from_sg`; once only, so a link dropped later is not revived;
+  a row whose link JSON is unreadable is left behind); `sg_links` itself is left as it was and never written again.
+- *Client* (`app/static/trackers-core.js`, plain script, global `SightTrackers`, Node-loadable, shipped to the phone
+  as `core/trackers-core.js`): `hostOf`, `key`, `split`, `adapter(kind)`, `adapterOf(entry)`, `kinds()`. Adapters
+  register by pushing onto `globalThis.SightTrackerAdapters` (load order free). The client adapter interface is listed
+  at the top of trackers-core.js (id / name / short / media names, the browser bar's entity types and status field,
+  `serverClient(site, kind)`, `projects`, `entities`, `mediaFields`, `filterFields`, `toConditions`, `browse`,
+  record accessors, filmstrip, `fmtField`, `siteHost(site)` (the host links and rows carry — every link is built and
+  compared with it, never with the server's entry host), `findMedia`, `loadLink`, `linkOf`, link accessors, `linkedIdOf`, `sync`,
+  `storeKey(name)`). ShotGrid's is `SightShotGrid.adapter` (shotgrid-core.js); its `storeKey` keeps the pre-0.107
+  setting names `sight.sg.fields / filter / where / project` (nothing to migrate).
+- *Stored as before, mapped at the boundary:* the review rows' ShotGrid ids (`data.sg`, reply `sg`, FORMAT.md) are the
+  ShotGrid adapter's own; the phone keeps its ShotGrid connection (`sight-review:sg`), browser filters
+  (`sight-review:sgfilter` / `sgwhere`) and a review's link (`reviews.meta.sg`) as before; the media / thumbnail caches
+  stay under `<SIGHT_HOME>/sg_cache/`.
+- *Page* (index.html): `trackers` (connected entries) / `trackerOn(kind or key)` / `trackerByKey` / `trkStat` (kind →
+  status) / `trkCacheIds`; the sidebar draws a source row per connected tracker (`renderTrackerSources` →
+  `renderTrackerSource(wrap, t)`, state per key in `trkTree`), a project opens through `openTrkProject(t, p, smartId)`
+  with that tracker's item source (`trackerSource(t)`: one `createTrackerSource` per key, the bar `#trkBar` shared);
+  grid items are `{id: "trk:<id>", trk: record, kind: "trkmedia"}`. annotate.js shows a link ▾ per connected tracker
+  (`host.trackers()`; label = `adapter.short` + " ▾", ShotGrid "SG ▾") with one popover `.an-trk` (`trkState.kind`).
+  Settings → Trackers: each kind's own settings form (ShotGrid's: `bindShotGridSettings`) registers
+  `TRACKER_FORMS[kind] = {paint(on, t), focus()}`; the blocks, Connect a tracker… and the disconnected-cache line are
+  generic. Phone: `trackers()` entries carry `kind` / `key` / `note` like Sight's; `TRACKER_KINDS` = the registry's
+  kinds with a connection form (`trackerSettings(kind, ui)`).
+**Trackers: UI only while connected** (docs/PLAN-trackers.md decisions 10, 11; stage 5a). `GET /api/trackers` lists
+the *connected* trackers — an adapter's `tracker()`; ShotGrid: connected = `_connected()` (site + script name + key
+saved), the same test as `status().configured` and `forward()`'s refusal. Page: `refreshTrackers(changed)` in
+index.html (reads `/api/trackers` + every kind's `/api/trackers/<kind>/status` together; runs at start, after Save /
+Test / Disconnect in Settings → Trackers, on every opening of the You panel and on `visibilitychange` / `focus`; an
+unchanged answer repaints nothing; a kind's projects are re-read only when its `key` / `ident` / connected changed —
+`trkSig`); it repaints the sidebar sources, the You panel's rows (`paintUserTrackers`), Settings → Trackers
+(`paintTrackerSettings`), closes a tracker project on screen whose connection went / changed (`closeTrkList(true)` —
+Filter ▾'s tracker fields only exist inside one), and fires `sight-trackers` on window when the list changed;
+annotate.js listens and repaints its link buttons (`paintTrkBtns`; a host without `trackers` shows none).
+Disconnect (ShotGrid) = the key removed (the stored settings re-read from its status, PUT back with `key: ""`): site,
+script, logins and statuses stay for the next connect. While a kind is not connected and its cache holds files,
+`#trkCacheRow` (*Tracker media cache … Clear*) keeps the hidden media caches clearable.
+Settings → Trackers: a block per connected tracker (`.trk-set[data-tracker=<kind>]`) + *Connect a tracker…* listing
+the kinds (page adapter + server adapter + a settings form) not connected; `trkConnecting` keeps a kind's fields open
+while it is being connected (also after a save that left it unconnected). Data of a disconnected tracker (its smart
+collections, links, the media cache source) stays and is just not shown.
 Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
 
 **Sequence** (index.html, `openSequence` … `bindSeqBar`) — selected videos played back to back in the
@@ -885,7 +942,9 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   layout; `pdf.js` the PDF writer; `model3d.js` the 3D viewer (below). review-core / review-draw are classic scripts loaded first
   (globals `SightReviewCore`, `SightReviewDraw`); keys go through `core/keys.js` `runHotkeys`.
   `shotgrid.js` the ShotGrid connection (localStorage `sight-review:sg`), link / sync, the home screen's browser and
-  the tracker list: `trackers()` / `trackerOn(id)` (connected = `sgReady`: site + script + key), `connectTracker`,
+  the tracker list: `trackers()` (entries like Sight's `/api/trackers`: id, kind, key, name, site, host, note) /
+  `trackerOn(kind or key)` (connected = `sgReady`: site + script + key), `TRACKER_KINDS` (core/trackers-core.js
+  registry ∩ a connection form), `trackerSettings(kind, ui)`, `connectTracker`,
   `trackerDisconnect` (drops the key only); `checkTrackers` fires `sight-trackers` when the list changed (after a
   save, on a `storage` event from another tab, on `visibilitychange`) and app.js re-renders the home screen. The ShotGrid tab / page / swipe, the person sheet's
   row and the review's *ShotGrid…* exist only while `trackerOn("shotgrid")` (decision 10). The ShotGrid page's quick

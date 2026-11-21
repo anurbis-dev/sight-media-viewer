@@ -163,7 +163,7 @@ class SmartCollectionTest(unittest.TestCase):
         plain = self.lib.add_collection("Plain")
         sm = self.lib.add_collection("Images", rule=tree)
         self.assertEqual(sm["rule"], tree)
-        sg = self.lib.add_collection("Approved", plain["id"], {"op": "or", "c": []}, "x.shotgrid.autodesk.com", 70)
+        sg = self.lib.add_collection("Approved", plain["id"], {"op": "or", "c": []}, "shotgrid:x.shotgrid.autodesk.com", 70)
         self.assertIsNone(sg["parentId"], "a ShotGrid one is never nested")
         by = {c["id"]: c for c in self.lib.collections()}
         self.assertEqual(by[sm["id"]]["rule"], tree)
@@ -190,7 +190,7 @@ class SmartCollectionTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.lib.set_collection_rule(sm["id"], bad)
         with self.assertRaises(ValueError):
-            self.lib.add_collection("No project", rule=tree, sg_site="x", sg_project=None)
+            self.lib.add_collection("No project", rule=tree, tracker="shotgrid:x", tracker_project=None)
         # a corrupt stored rule reads as an empty smart collection, not a crash
         self.lib.execute("UPDATE collections SET rule='{nope' WHERE id=?", (sm["id"],))
         self.assertEqual({c["id"]: c for c in self.lib.collections()}[sm["id"]]["rule"], {"op": "and", "c": []})

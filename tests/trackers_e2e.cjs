@@ -17,7 +17,7 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   await p.waitForSelector(".card[data-id]", { timeout: 20000 });
   await p.waitForSelector("#trkAdd", { state: "attached" });
   await p.waitForTimeout(500);   // (refreshTrackers' first answer)
-  assert.strictEqual(await p.locator(".sg-src").count(), 0, "no ShotGrid source while not connected");
+  assert.strictEqual(await p.locator(".trk-src").count(), 0, "no ShotGrid source while not connected");
   // You panel: the name, no Trackers part
   await p.click("#userBtn"); await p.waitForSelector("#userPop:not([hidden])");
   assert.strictEqual(await p.locator("#userPop .trk").count(), 0);
@@ -29,20 +29,20 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   await p.waitForTimeout(400);
   if (!(await p.locator(".an-panel:not([hidden])").count())){ await p.keyboard.press("c"); }
   await p.waitForSelector(".an-panel:not([hidden])");
-  assert.ok(await p.locator(".an-panel [data-act=sg]").isHidden(), "no SG ▾ while not connected");
+  assert.ok(await p.locator(".an-panel [data-act=trk]").isHidden(), "no SG ▾ while not connected");
   // connected elsewhere (the API) → the You panel's re-check → SG ▾ comes live, the You panel lists ShotGrid
   await put({ site, script: "sight", key: "secret", logins: { "Bob Smith": "bob" }, sudo: true });
   await p.click(".an-panel .an-user");
-  await p.waitForSelector(".an-panel [data-act=sg]", { state: "visible", timeout: 5000 });
+  await p.waitForSelector(".an-panel [data-act=trk]", { state: "visible", timeout: 5000 });
   await p.waitForSelector("#userPop .trk[data-tracker='shotgrid']");
   assert.ok(/as reviewer/.test(await p.textContent("#userPop .trk")));
   await p.click(".an-panel .an-user"); await p.waitForSelector("#userPop", { state: "hidden" });
   // the SG ▾ popover open, then disconnected → both go
-  await p.click(".an-panel [data-act=sg]"); await p.waitForSelector(".an-panel .an-sg:not([hidden])");
+  await p.click(".an-panel [data-act=trk]"); await p.waitForSelector(".an-panel .an-trk:not([hidden])");
   await put({ site, script: "sight", key: "", logins: { "Bob Smith": "bob" }, sudo: true });
   await p.click(".an-panel .an-user");
-  await p.waitForSelector(".an-panel [data-act=sg]", { state: "hidden", timeout: 5000 });
-  assert.ok(await p.locator(".an-panel .an-sg").isHidden());
+  await p.waitForSelector(".an-panel [data-act=trk]", { state: "hidden", timeout: 5000 });
+  assert.ok(await p.locator(".an-panel .an-trk").isHidden());
   await p.click(".an-panel .an-user"); await p.waitForSelector("#userPop", { state: "hidden" });
   await p.keyboard.press("Escape"); await p.waitForSelector(".light", { state: "detached", timeout: 5000 }).catch(() => {});
   // Settings → Trackers: none connected, Connect a tracker… → ShotGrid → its fields → Save → the source comes live
@@ -57,31 +57,31 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   assert.strictEqual(await p.inputValue("#sgSite"), site, "a disconnect kept the site");
   await p.fill("#sgKey", "secret");
   await p.click("#sgSave");
-  await p.waitForSelector(".sg-src", { timeout: 5000 });
+  await p.waitForSelector(".trk-src", { timeout: 5000 });
   await p.waitForSelector("#sgDisconnect", { state: "visible" });
   assert.ok(/connected/.test(await p.textContent("#sgState")) && await p.locator("#sgCacheSet").isVisible());
   // saving only the logins keeps the sidebar's open tree (the projects are not dropped)
   await p.click("#settingsHead");   // (the open Settings cover the sources)
-  await p.click(".sg-src"); await p.waitForSelector(".sg-proj[data-sgp='70']");
+  await p.click(".trk-src"); await p.waitForSelector(".trk-proj[data-proj='70']");
   await p.click("#settingsHead"); await p.waitForSelector("#sgSave", { state: "visible" });
   await p.fill("#sgLogins", "Bob Smith = bob\nAnn Lee = ann");
   await p.click("#sgSave");
   await p.waitForFunction(() => /Saved/.test(document.querySelector("#sgMsg").textContent), null, { timeout: 5000 });
-  assert.strictEqual(await p.locator(".sg-proj[data-sgp='70']").count(), 1, "a logins-only save keeps the projects listed");
+  assert.strictEqual(await p.locator(".trk-proj[data-proj='70']").count(), 1, "a logins-only save keeps the projects listed");
   // a Version downloaded (the tracker media cache), a project open → Disconnect → back to the library, no source,
   // Filter ▾ on library fields; an unsaved form edit is not saved by the Disconnect
   const opened = await fetch(base + "/api/sg/open/78", { method: "POST", headers: { "X-Sight": "1" } });
   assert.strictEqual(opened.status, 200);
   await p.click("#settingsHead");
-  await p.click(".sg-proj[data-sgp='70']");
-  await p.waitForSelector(".card[data-id^='sg:']", { timeout: 10000 });
+  await p.click(".trk-proj[data-proj='70']");
+  await p.waitForSelector(".card[data-id^='trk:']", { timeout: 10000 });
   await p.click("#settingsHead"); await p.waitForSelector("#sgDisconnect", { state: "visible" });
   assert.ok(await p.locator("#trkCacheRow").isHidden(), "connected: the cache is in ShotGrid's block");
   await p.fill("#sgScript", "not-saved");
   await p.click("#sgDisconnect");
-  await p.waitForSelector(".sg-src", { state: "detached", timeout: 5000 });
-  await p.waitForFunction(() => !document.querySelector(".card[data-id^='sg:']") && document.querySelectorAll(".card[data-id]").length > 0, null, { timeout: 8000 });
-  assert.ok(await p.locator("#sgBar").isHidden());
+  await p.waitForSelector(".trk-src", { state: "detached", timeout: 5000 });
+  await p.waitForFunction(() => !document.querySelector(".card[data-id^='trk:']") && document.querySelectorAll(".card[data-id]").length > 0, null, { timeout: 8000 });
+  assert.ok(await p.locator("#trkBar").isHidden());
   assert.ok(await p.locator("#trkSg").isHidden() && await p.locator("#trkAdd").isVisible());
   const st = await (await fetch(base + "/api/sg/status")).json();
   assert.deepStrictEqual([st.configured, st.script, st.logins["Ann Lee"]], [false, "sight", "ann"], "Disconnect kept the stored settings, not the form's edit");
@@ -101,17 +101,17 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   // a connect / disconnect made elsewhere shows when the window comes back (visibilitychange / focus)
   await put({ site, script: "sight", key: "secret", logins: { "Bob Smith": "bob" }, sudo: true });
   await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await p.waitForSelector(".sg-src", { timeout: 5000 });
+  await p.waitForSelector(".trk-src", { timeout: 5000 });
   await put({ site, script: "sight", key: "", logins: { "Bob Smith": "bob" }, sudo: true });
   await p.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await p.waitForSelector(".sg-src", { state: "detached", timeout: 5000 });
+  await p.waitForSelector(".trk-src", { state: "detached", timeout: 5000 });
   // a phone-size window: none of it either
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const m = await ctx.newPage(); m.on("pageerror", (e) => errs.push("phone: " + e.message));
   await m.goto(base + "/");
   await m.waitForSelector("#trkAdd", { state: "attached", timeout: 20000 });
   await m.waitForTimeout(500);
-  assert.strictEqual(await m.locator(".sg-src").count(), 0);
+  assert.strictEqual(await m.locator(".trk-src").count(), 0);
   assert.ok(await m.locator("#trkSg").isHidden());
   assert.deepStrictEqual(errs, []);
   console.log(JSON.stringify({ ok: true }));

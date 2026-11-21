@@ -15,7 +15,7 @@ import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
-import { sgSheet, sgSettings, sgBrowser, userSheet, trackers, trackerOn, trackerDisconnect, connectTracker, TRACKER_KINDS } from "./shotgrid.js";
+import { sgSheet, sgSettings, sgBrowser, userSheet, trackers, trackerOn, trackerDisconnect, connectTracker, trackerSettings, TRACKER_KINDS } from "./shotgrid.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -1403,7 +1403,7 @@ async function settings(){
     const trA = el("div", "acts");
     tl.forEach((t) => {
       trA.appendChild(btn("btn", "Disconnect " + t.name, () => { close(); trackerDisconnect(t.id); toast(t.name + " disconnected"); }));
-      if (t.id === "shotgrid") trA.appendChild(btn("btn", "ShotGrid settings…", () => { close(); sgSettings(ui); }));
+      trA.appendChild(btn("btn", t.name + " settings…", () => { close(); trackerSettings(t.kind, ui); }));
     });
     if (TRACKER_KINDS.some((k) => !trackerOn(k.id))) trA.appendChild(btn("btn", "Connect a tracker…", () => { close(); connectTracker(ui); }));
     sh.appendChild(trA);
