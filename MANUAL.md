@@ -302,8 +302,18 @@
     stays in that browser until *Download reply*; importing that `.srev` file brings it all in. *Download page*
     saves the same page with your changes in it (it opens in any browser, with the replies, notes and drawings
     already there, and can be answered and downloaded again); Sight does not import that file — send the `.srev` back for that. *Copy notes as text* puts a numbered list with timecodes on the clipboard.
-- **ShotGrid** — sync a file's notes with a ShotGrid (Flow Production Tracking) Version, both ways. Set it up once in
-  Settings → ShotGrid: the site, an API script's name and key (a ShotGrid admin makes one: Admin → Scripts; Sight's
+- **Trackers** — Sight shows a production tracker's controls only while that tracker is connected: until then
+  there is no trace of it (no sidebar source, no row in the You panel, no SG ▾ in the review panel, no ShotGrid page
+  on the phone). **Settings → Trackers** lists the connected trackers — each with its site, state, its settings and
+  *Disconnect* (removes the key; the site, script name and logins stay for the next time) — and *Connect a
+  tracker…*, the one way to add one (ShotGrid for now: it opens ShotGrid's fields below). Connecting or
+  disconnecting shows / hides the controls at once, no reload; a ShotGrid project open in the grid goes back to the
+  library on a disconnect (a change made in another window shows when you come back to this one). Smart
+  collections and links made for a tracker stay and come back when it is connected again; Versions already
+  downloaded stay in Sight's cache — with no tracker connected a *Tracker media cache … Clear* line under the list
+  empties it. The phone app: Settings → *Trackers* (*Connect a tracker…*, *Disconnect ShotGrid*, *ShotGrid settings…*).
+- **ShotGrid** — sync a file's notes with a ShotGrid (Flow Production Tracking) Version, both ways. Connect it once in
+  Settings → Trackers → *Connect a tracker…* → ShotGrid: the site, an API script's name and key (a ShotGrid admin makes one: Admin → Scripts; Sight's
   server keeps the key and never shows it again), optionally *Post as the reviewer* with a *Reviewer logins* list
   (`Name in Sight = ShotGrid login`, one per line) and the studio's note status codes for Open / In progress / Done
   (empty = `opn` / `ip` / `clsd`); *Test* lists the projects. Then in the review panel **SG ▾** → pick the project
@@ -311,13 +321,14 @@
   → *Sync now*. A sync brings ShotGrid's notes, replies and pictures in (as notes here, a picture named like
   `annot….1025.png` lands on that frame), and sends the notes written here — text, state, the frame / view with the
   drawings burned in, attached pictures — and their replies. Later edits travel on the next sync (the later edit
-  wins). Deleting a note does not delete it on the other side. The phone app has the same: Settings → *ShotGrid
-  connection…* and *Export and more → ShotGrid…*; if the site does not answer the phone app, put a proxy's address in
+  wins). Deleting a note does not delete it on the other side. The phone app has the same: Settings → Trackers → *Connect a tracker…* → ShotGrid
+  (later *ShotGrid settings…*) and *Export and more → ShotGrid…*; if the site does not answer the phone app, put a proxy's address in
   the connection (`tools/sg-proxy-worker.js`, a Cloudflare Worker). Details: `docs/SHOTGRID.md`.
 - **You (reviewer name, tracker logins)** — the round person button (your initials once you have a name) at the top
   of the sidebar, and the same button in the review panel's header: your reviewer name (stored with every note) and
-  a row per tracker (ShotGrid: connected or not, *Set up…*). On the phone it sits at the left of the home bar.
-- **ShotGrid in the sidebar** — once ShotGrid is set up, *ShotGrid · <site>* is the last row under Sources; open it
+  a row per connected tracker (ShotGrid: its site, *Settings…* opens it in Settings → Trackers); with none
+  connected it holds only the name. On the phone it sits at the left of the home bar.
+- **ShotGrid in the sidebar** — once ShotGrid is connected, *ShotGrid · <site>* is the last row under Sources; open it
   for the projects and click one: its Versions fill the library grid as tiles, newest first (more load as you
   scroll), at the grid's own tile size and layout. A bar above the grid narrows them — All / Shots / Assets /
   Sequences, an entity, a status — and the top search box finds part of a name; **Fields ▾** lists the site's Version
@@ -325,7 +336,7 @@
   video's tile to play through its frames (on a touch screen: drag a finger sideways over its picture). Double-click
   a Version (Space, or *Open* in the inspector) to open it: its playable copy is downloaded into Sight's cache and
   opens in the preview with its review linked (*SG ▾ → Sync now*); ← / → in the preview step to the next Version
-  (downloading it). Settings → ShotGrid → *Media cache limit* caps that cache (empty = Auto: as much as the disk
+  (downloading it). Settings → Trackers → ShotGrid → *Media cache limit* caps that cache (empty = Auto: as much as the disk
   holds, 2 GB kept free; the oldest opened go first) and *Clear cache* empties it. Any library row in the sidebar
   returns to the library.
 - **Filter ▾** — the button next to the search box narrows what the grid shows by fields: *+ Condition* adds a row
@@ -346,8 +357,8 @@
   no members — files cannot be dropped into it and nothing nests in it, but it can be dragged up / down among the
   collections. Double-click / double-tap renames it, *×* deletes it, right-click changes its icon. The search box
   and the ShotGrid bar's type / entity / status still apply on top of it.
-- **ShotGrid on the phone's home screen** — two pages, *Reviews* and *ShotGrid* (tap the tabs in the bar, or swipe
-  sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
+- **ShotGrid on the phone's home screen** — while ShotGrid is connected, two pages, *Reviews* and *ShotGrid* (tap the
+  tabs in the bar, or swipe sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
   pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name; *Fields*
   picks what the tiles show, and a finger dragged sideways over a video's tile plays through its frames. Thumbnails
   are kept on the device and only downloaded again when the Version changes. Tap a Version: its review opens (one

@@ -9,9 +9,24 @@ const [base, site, out] = process.argv.slice(2);
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const p = await ctx.newPage(); const errs = []; p.on("pageerror", (e) => errs.push(e.message));
   await p.goto(base);
-  await p.evaluate((site) => { localStorage.setItem("sight-review:name", "Ann Lee"); localStorage.setItem("sight-review:fs", "0");
-    localStorage.setItem("sight-review:sg", JSON.stringify({ site, script: "sight", key: "secret" })); }, site);
+  await p.evaluate(() => { localStorage.setItem("sight-review:name", "Ann Lee"); localStorage.setItem("sight-review:fs", "0"); });
   await p.reload();
+  // not connected: no ShotGrid page / tab, no tracker row in the person sheet (docs/PLAN-trackers.md decision 10)
+  await p.waitForSelector(".bar .you");
+  assert.strictEqual(await p.locator(".hometabs").count(), 0, "no tabs while no tracker is connected");
+  assert.strictEqual(await p.textContent(".bar .ttl b"), "Sight Review");
+  await p.tap(".bar .you"); await p.waitForSelector(".sheet .kv");
+  assert.ok(!/ShotGrid/.test(await p.textContent(".sheet")), "the person sheet has no ShotGrid part");
+  await p.evaluate(() => document.querySelector(".back")?.click()); await p.waitForSelector(".sheet", { state: "detached" });
+  // Settings → Trackers → Connect a tracker… → ShotGrid: the tab comes at once (no reload)
+  await p.tap('.bar button[title="Settings"]');
+  await p.waitForSelector('.sheet button:has-text("Connect a tracker…")');
+  assert.ok(/None connected/.test(await p.textContent(".sheet")));
+  await p.tap('.sheet button:has-text("Connect a tracker…")');
+  await p.tap('.sheet .menu button:has-text("ShotGrid")');
+  await p.waitForSelector(".sheet form.sgform");
+  await p.fill(".sgform input[name=site]", site); await p.fill(".sgform input[name=script]", "sight"); await p.fill(".sgform input[name=key]", "secret");
+  await p.tap('.sgform button:has-text("Save")');
   await p.waitForSelector(".hometabs");
   assert.strictEqual(await p.textContent(".bar .you"), "AL");
   // swipe left on empty area → ShotGrid page
@@ -74,6 +89,16 @@ const [base, site, out] = process.argv.slice(2);
   await p.evaluate(() => { const t = document.querySelector(".sgb-tile[data-ver='78']"); t.click(); t.click(); });
   await p.waitForFunction((k) => window.__sightReview.R && window.__sightReview.R.meta.key === k && window.__sightReview.R.file, key, { timeout: 15000 });
   assert.strictEqual(await count(), n0, "no second review for the same Version");
+  // Disconnect (Settings → Trackers) on the home screen: the ShotGrid tab goes at once, the swipe does nothing
+  await p.goto(base); await p.waitForSelector(".hometabs");
+  await p.tap('.bar button[title="Settings"]');
+  await p.tap('.sheet button:has-text("Disconnect ShotGrid")');
+  await p.waitForSelector(".hometabs", { state: "detached" });
+  assert.ok(await p.evaluate(() => document.querySelector("main.sgb").hidden), "the ShotGrid page is hidden");
+  await touch("touchStart", [[300, 600]]); for (let i = 1; i <= 8; i++){ await touch("touchMove", [[300 - 25 * i, 600]]); await p.waitForTimeout(16); } await touch("touchEnd", []);
+  await p.waitForTimeout(300);
+  assert.ok(await p.evaluate(() => document.querySelector("main.sgb").hidden && !document.querySelector("main:not(.sgb)").hidden), "no swipe to ShotGrid");
+  assert.strictEqual(await p.evaluate(() => JSON.parse(localStorage.getItem("sight-review:sg")).site), site, "a disconnect keeps the site");
   assert.deepStrictEqual(errs, []);
   console.log(JSON.stringify({ ok: true }));
   await b.close();

@@ -15,7 +15,7 @@ import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
-import { sgSheet, sgSettings, sgBrowser, userSheet } from "./shotgrid.js";
+import { sgSheet, sgSettings, sgBrowser, userSheet, trackers, trackerOn, trackerDisconnect, connectTracker, TRACKER_KINDS } from "./shotgrid.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -613,6 +613,11 @@ async function openLinked(key, file){
   await rebind(file);
 }
 try { if (sessionStorage.getItem("sight-review:page") === "sg") homePage = "sg"; } catch {}
+// A tracker connected / disconnected (Settings → Trackers, the connection form, another tab): the home screen's
+// tracker parts come / go at once. Elsewhere nothing to redo: a review's ⋯ menu is built when it opens.
+window.addEventListener("sight-trackers", () => {
+  if (root.classList.contains("home")){ try { homePage = sessionStorage.getItem("sight-review:page") === "sg" ? "sg" : "reviews"; } catch {} renderHome(); }
+});
 const initials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 // A horizontal swipe on the home screen: not on a review card (its own swipes), a field, a sheet or the filter bar's
 // controls; clearly sideways (≥ 60 px, twice its height).
@@ -659,17 +664,22 @@ async function renderHome(){
   const you = btn("ib you", "", () => userSheet({ sheet, el, btn, toast, who: () => who,
     setName: async () => { const ok = await setName(); paintYou(); return ok; }, settings: () => sgSettings({ sheet, el, btn, toast }) }), "You: reviewer name and tracker logins");
   paintYou();
+  // The ShotGrid page, its tab and the swipe to it only while ShotGrid is connected (docs/PLAN-trackers.md decision
+  // 10); otherwise the plain title. A connect / disconnect re-renders the home screen ("sight-trackers" below).
+  const sgOk = trackerOn("shotgrid");
+  if (!sgOk) homePage = "reviews";   // (the remembered page is kept for when it is connected again)
   const tabs = el("div", "seg hometabs");
   [["reviews", "Reviews"], ["sg", "ShotGrid"]].forEach(([k, label]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; tabs.appendChild(b); });
-  ttl.textContent = ""; ttl.appendChild(tabs);
+  if (sgOk){ ttl.textContent = ""; ttl.appendChild(tabs); }
   bar.appendChild(you); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
   const sgMain = el("main", "sgb");
   if (sgView){ sgView.dispose(); sgView = null; }  // the previous render's browser: its thumbnails revoked, its queue dropped
-  const setHomePage = (k, dir) => {
+  const setHomePage = (k, dir, keep) => {
+    if (!sgOk) k = "reviews";
     const changed = homePage !== k;
     homePage = k;
-    try { sessionStorage.setItem("sight-review:page", k); } catch {}
+    if (!keep) try { sessionStorage.setItem("sight-review:page", k); } catch {}
     tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.p === k));
     main.hidden = k !== "reviews"; sgMain.hidden = k !== "sg";
     mini.classList.toggle("off", k !== "reviews");
@@ -679,7 +689,7 @@ async function renderHome(){
       reviews: () => homeMetas, openReview: (key, file) => openLinked(key, file), openFile: (file, link) => openMedia(file, null, link) }, sgMain);
     if (changed) window.scrollTo(0, 0);
   };
-  homeSwipe = (dx) => { if (dx < 0 && homePage === "reviews") setHomePage("sg", 1); else if (dx > 0 && homePage === "sg") setHomePage("reviews", -1); };
+  homeSwipe = sgOk ? (dx) => { if (dx < 0 && homePage === "reviews") setHomePage("sg", 1); else if (dx > 0 && homePage === "sg") setHomePage("reviews", -1); } : null;
   const main = el("main");
   const opens = el("div", "opens");
   const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
@@ -717,7 +727,7 @@ async function renderHome(){
   main.appendChild(foot);
   root.appendChild(main);
   root.appendChild(sgMain);
-  setHomePage(homePage);
+  setHomePage(homePage, 0, true);
   const all = await DB.all("reviews").catch(() => []);
   homeMetas = all;
   if (!main.isConnected) return;  // another screen took over meanwhile
@@ -1380,10 +1390,23 @@ async function settings(){
       sh.appendChild(fs); paintFs();
       sh.appendChild(el("p", "", "Auto: the app goes full screen at your first tap, and again after you leave it."));
     } else sh.appendChild(el("p", "", isStandalone() ? "The installed app is full screen already." : isIOS() ? "Safari on iPhone / iPad does not keep a page full screen. Add the app to the Home Screen: it then runs full screen." : "This browser cannot show a page full screen. Add the app to the Home Screen: it then runs full screen."));
-    sh.appendChild(el("b", "lab", "ShotGrid"));
-    const sgA = el("div", "acts");
-    sgA.appendChild(btn("btn", "ShotGrid connection…", () => { close(); sgSettings({ sheet, el, btn, toast }); }));
-    sh.appendChild(sgA);
+    // Trackers (docs/PLAN-trackers.md decision 10): the connected ones — site, Disconnect, its settings — and
+    // Connect a tracker…, the only way in while none is connected.
+    sh.appendChild(el("b", "lab", "Trackers"));
+    const ui = { sheet, el, btn, toast };
+    const tl = trackers();
+    if (tl.length){
+      const tkv = el("div", "kv trackers");
+      tl.forEach((t) => { tkv.appendChild(el("b", "", t.name)); tkv.appendChild(el("span", "", "connected · " + t.host)); });
+      sh.appendChild(tkv);
+    } else sh.appendChild(el("p", "", "None connected. A tracker (ShotGrid) adds its Versions to the home screen and syncs a review's notes both ways."));
+    const trA = el("div", "acts");
+    tl.forEach((t) => {
+      trA.appendChild(btn("btn", "Disconnect " + t.name, () => { close(); trackerDisconnect(t.id); toast(t.name + " disconnected"); }));
+      if (t.id === "shotgrid") trA.appendChild(btn("btn", "ShotGrid settings…", () => { close(); sgSettings(ui); }));
+    });
+    if (TRACKER_KINDS.some((k) => !trackerOn(k.id))) trA.appendChild(btn("btn", "Connect a tracker…", () => { close(); connectTracker(ui); }));
+    sh.appendChild(trA);
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
     if (u && !u.persisted) a.appendChild(btn("btn", "Keep storage", async () => { close(); toast(await DB.persist() ? "Storage will be kept" : "The browser did not allow it (install the app first)", 3500); }));
@@ -5077,7 +5100,7 @@ function reviewActions(){
     { label: "PDF report", note: "share / save", fn: () => exportReport("pdf") },
     { label: "Web page (HTML)", note: "opens anywhere", fn: () => exportReport("html") },
     { label: "Review file for Sight (.srev)", fn: exportSrev },
-    { label: "ShotGrid…", note: R.meta.sg && R.meta.sg.link ? R.meta.sg.link.version.code : "link & sync", fn: () => sgSheet(sgCtx()) },
+    trackerOn("shotgrid") ? { label: "ShotGrid…", note: R.meta.sg && R.meta.sg.link ? R.meta.sg.link.version.code : "link & sync", fn: () => sgSheet(sgCtx()) } : null,
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,

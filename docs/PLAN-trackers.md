@@ -55,6 +55,11 @@ mark it done here, add the RECENT entry as usual.
   IndexedDB), opening a Version downloads its proxy (decision 3 of PLAN-mobile: proxy by default, original on a button).
 
 ### 5. Trackers: only when connected, several at once (decisions 10, 11)
+- **5a done in 0.105.0** (see RECENT): `GET /api/trackers` lists the connected trackers (ShotGrid: site + script + key,
+  `ShotGridService._connected`); the page's `trackers` / `trackerOn` / `refreshTrackers` and the phone's
+  `trackers()` / `trackerOn` gate the sidebar source, the You panel / person sheet rows, SG ▾, the phone's ShotGrid
+  tab + swipe and its review's *ShotGrid…*; `sight-trackers` on window repaints live. Settings → Trackers (both apps):
+  connected trackers (site, state, settings, Disconnect = key removed) + *Connect a tracker…*. Next: 5b (the adapter).
 - **5a** visibility: hide every tracker control while it is not connected (today visible regardless: the You panel's
   "ShotGrid · not connected / Set up…" row, the review panel's SG ▾, the phone's ShotGrid tab, its person sheet's
   ShotGrid block, the review "More → ShotGrid…" item); Settings → ShotGrid becomes Settings → Trackers with a list of

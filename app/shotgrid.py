@@ -94,15 +94,29 @@ class ShotGridService:
             return {}
         return raw if isinstance(raw, dict) else {}
 
+    @staticmethod
+    def _connected(c: dict) -> bool:
+        # The one definition of "connected" (configured and usable): site + script name + key saved. The UI shows
+        # ShotGrid's controls only while this holds (docs/PLAN-trackers.md decision 10; /api/trackers).
+        return bool(c.get("site") and c.get("script") and c.get("key"))
+
     def status(self) -> dict:
         c = self._load()
         site = c.get("site", "")
         return {
-            "configured": bool(site and c.get("script") and c.get("key")),
+            "configured": self._connected(c),
             "site": site, "script": c.get("script", ""), "hasKey": bool(c.get("key")),
             "statusMap": c.get("statusMap") or {}, "logins": c.get("logins") or {}, "sudo": bool(c.get("sudo")),
             "cacheLimitGB": float(c.get("cacheLimitGB") or 0), "cacheDir": str(self.media_dir()),
         }
+
+    def tracker(self) -> dict | None:
+        """This tracker's entry in /api/trackers while it is connected, else None."""
+        c = self._load()
+        if not self._connected(c):
+            return None
+        site = c["site"]
+        return {"id": "shotgrid", "name": "ShotGrid", "site": site, "host": urllib.parse.urlsplit(site).netloc or site}
 
     def configure(self, data: dict) -> bool:
         """Save the settings. A missing "key" keeps the stored one (unless site / script change); "" removes it.
@@ -194,8 +208,8 @@ class ShotGridService:
         """One request on the page's behalf -> (status, content type, body). Raises SgError for refusals."""
         c = self._load()
         site = c.get("site", "")
-        if not (site and c.get("script") and c.get("key")):
-            raise SgError(412, "ShotGrid is not set up (Settings → ShotGrid)")
+        if not self._connected(c):
+            raise SgError(412, "ShotGrid is not connected (Settings → Trackers)")
         if method not in ("GET", "POST", "PUT", "DELETE"):
             raise SgError(405, "method")
         try:

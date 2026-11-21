@@ -163,9 +163,17 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .user-pop[hidden] { display: none; }
 .user-pop h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--subtle); text-transform: uppercase; letter-spacing: .04em; }
 .user-pop input { width: 100%; height: 30px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; outline: none; box-sizing: border-box; }
-.user-pop .trk { display: flex; align-items: center; gap: 8px; }
-.user-pop .trk b { font-weight: 600; } .user-pop .trk span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
-.user-pop .trk .dot { flex: none; width: 8px; height: 8px; border-radius: 4px; background: var(--subtle); } .user-pop .trk .dot.ok { background: #34c759; }
+.user-pop .user-trk { display: flex; flex-direction: column; gap: 8px; } .user-pop .user-trk:empty { display: none; }
+/* a tracker's row (the You panel, Settings → Trackers) */
+.trk { display: flex; align-items: center; gap: 8px; }
+.trk b { font-weight: 600; } .trk span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
+.trk .dot { flex: none; width: 8px; height: 8px; border-radius: 4px; background: var(--subtle); } .trk .dot.ok { background: #34c759; }
+.settings-body .trk { padding: 6px 8px 2px; font-size: 12px; }
+.settings-body .trk .btn { height: 30px; padding: 0 10px; font-size: 11px; flex: none; }
+.trk-set[hidden], .trk-kinds[hidden], #trkAddRow[hidden], #trkCacheRow[hidden], .trk .btn[hidden], #trkNone[hidden], #sgCacheSet[hidden] { display: none; }
+.trk-kinds { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 8px 2px; }
+.trk-kinds .btn { height: 30px; padding: 0 12px; font-size: 11px; }
+@media (pointer: coarse){ .settings-body .trk .btn, .trk-kinds .btn { height: 38px; } }
 .brand #add { margin-left: auto; flex: none; height: 26px; padding: 0 10px; font-size: calc(var(--text-size) - 1px); }
 .sub { font-size: 11px; color: var(--subtle); }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: var(--ctl-h); padding: 0 12px; border-radius: var(--radius-sm); background: var(--primary); color: var(--bg); font-weight: 500; transition: opacity var(--motion-quick) var(--ease), transform var(--motion-quick) var(--ease); }
@@ -855,7 +863,7 @@ import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { createSgSource, SG_PAGE } from "/static/sg-source.js";
-import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → ShotGrid test; annotate.js syncs)
+import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → Trackers → ShotGrid test; annotate.js syncs)
 import "/static/filter-core.js";    // globalThis.SightFilter (Filter ▾: the filter builder)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -1033,8 +1041,118 @@ function bindDictationSettings(){
     try { show(await put({ url: saved.url, model: saved.model || "", key: "" })); } catch {}
   };
 }
-// Settings → ShotGrid (docs/SHOTGRID.md): site, API script name + key (kept by the server only — the key is never
-// sent back), whether to post as the reviewer, reviewer → login, note status codes.
+// ---- Trackers (docs/PLAN-trackers.md decisions 10, 11) ------------------------------------------------------------
+// `trackers` = the connected ones, from /api/trackers ([{id, name, site, host}]; connected = configured and usable,
+// defined once on the server: ShotGridService._connected). Every tracker control — the sidebar source, the You
+// panel's rows, the review panel's link (annotate.js, host.trackerOn), Filter ▾'s tracker fields (only inside a
+// tracker project) — shows only for a tracker listed here. refreshTrackers() re-reads the list after a connect /
+// disconnect (and when the You panel opens), repaints those places and fires "sight-trackers" on window.
+// Settings → Trackers: a block per connected tracker plus *Connect a tracker…* (the only way in while none is).
+const TRACKER_KINDS = [{ id: "shotgrid", name: "ShotGrid" }];   // the kinds Sight can connect (5b: adapters)
+let trackers = [], trkConnecting = null, trkSeq = 0;   // trkConnecting: the kind whose connect fields are open
+const trackerOn = (id) => trackers.some((t) => t.id === id);
+// changed: a connect / disconnect / save from Settings (a failure says so). An answer equal to what is shown already
+// repaints nothing (the focus / visibility re-checks below must not disturb a sidebar rename or the settings).
+async function refreshTrackers(changed){
+  const my = ++trkSeq;
+  let tl, st;
+  try { [tl, st] = await Promise.all([api("/api/trackers"), api("/api/sg/status")]); }
+  catch { if (my === trkSeq && changed) flash("Could not read the trackers' state", 3000); return; }
+  if (my !== trkSeq) return;   // (an older answer after a newer one)
+  const was = JSON.stringify(trackers), sgWas = sgStat ? `${sgStat.site}|${sgStat.script}|${!!sgStat.configured}` : "";
+  const list = Array.isArray(tl?.trackers) ? tl.trackers.filter((t) => t && typeof t.id === "string") : [];
+  if (!changed && sgStat && JSON.stringify(list) === was && JSON.stringify(st) === JSON.stringify(sgStat)) return;
+  trackers = list;
+  sgStat = st || null;
+  if (trkConnecting && trackerOn(trkConnecting)) trkConnecting = null;   // connected: its block is a connected one now
+  const sgNow = sgStat ? `${sgStat.site}|${sgStat.script}|${!!sgStat.configured}` : "";
+  // (the projects are read again only for another site / script / connection: a save of logins or statuses keeps
+  // the sidebar's tree as it is)
+  if (sgNow !== sgWas){ sgProjects = null; sgSrcOpen = false; }
+  // a ShotGrid project on screen whose connection went (or moved to another site / script): back to the library
+  if (sgOn() && (!trackerOn("shotgrid") || sgNow !== sgWas)) closeSgList(true);
+  renderNav();
+  paintTrackerSettings();
+  paintUserTrackers();
+  if (JSON.stringify(trackers) !== was) window.dispatchEvent(new CustomEvent("sight-trackers", { detail: trackers.slice() }));
+}
+// A change made in another window / tab (a disconnect there): re-checked when this one comes back to the front.
+{
+  let t = 0;
+  const again = () => { clearTimeout(t); t = setTimeout(() => { if (document.visibilityState === "visible") refreshTrackers(); }, 250); };
+  document.addEventListener("visibilitychange", again);
+  window.addEventListener("focus", again);
+}
+// Settings → Trackers: which blocks show, the connected tracker's state line, what Connect a tracker… still offers.
+function paintTrackerSettings(){
+  const box = $("trkSg");
+  if (!box) return;
+  const on = trackerOn("shotgrid"), t = trackers.find((x) => x.id === "shotgrid");
+  box.hidden = !on && trkConnecting !== "shotgrid";
+  $("sgDot").classList.toggle("ok", on);
+  $("sgState").textContent = $("sgState").title = on ? `${t.host || t.site} · connected${sgStat?.sudo ? " · as reviewer" : ""}` : "not connected — site, script name and key";
+  $("sgDisconnect").hidden = !on;
+  $("sgCancel").hidden = on;
+  $("sgCacheSet").hidden = !on;
+  paintTrackerCache(!on);
+  const left = TRACKER_KINDS.filter((k) => !trackerOn(k.id) && trkConnecting !== k.id);
+  $("trkAddRow").hidden = !left.length;
+  $("trkNone").hidden = trackers.length > 0 || !!trkConnecting;
+  const kinds = $("trkKinds");
+  kinds.innerHTML = left.map((k) => `<button class="btn ghost" type="button" data-kind="${esc(k.id)}">${esc(k.name)}</button>`).join("")
+    + `<button class="btn ghost" type="button" data-kind="">Cancel</button>`;
+  if (!left.length) kinds.hidden = true;
+}
+// Media downloaded from a tracker that is not connected now (opened Versions stay in Sight's cache, the sidebar keeps
+// hiding that source): a line under Trackers with its size and Clear while it holds anything. Connected, the
+// tracker's own block has the cache limit / Clear cache instead.
+let trkCacheSeq = 0;
+function paintTrackerCache(show){
+  const row = $("trkCacheRow");
+  if (!row) return;
+  const my = ++trkCacheSeq;
+  if (!show){ row.hidden = true; return; }
+  api("/api/sg/cache").then((c) => {
+    if (my !== trkCacheSeq || !$("trkCacheRow")) return;
+    $("trkCacheRow").hidden = !c.files;
+    $("trkCacheInfo").textContent = `Tracker media cache: ${bytes(c.used)} in ${c.files} file${c.files === 1 ? "" : "s"}`;
+  }).catch(() => {});
+}
+// Connect a tracker… → a kind: its connect fields open under Trackers.
+function startTrackerConnect(kind){
+  trkConnecting = kind;
+  paintTrackerSettings();
+  const f = $("sgSite");
+  if (f){ f.scrollIntoView({ block: "center" }); f.focus(); }
+}
+// The You panel's Settings… (or anything that wants Trackers on screen): opens Settings at that tracker's block.
+function openTrackerSettings(id){
+  if (!state.settingsOpen) $("settingsHead").click();
+  setTimeout(() => {
+    const b = (id && document.querySelector(`.trk-set[data-tracker="${CSS.escape(id)}"]:not([hidden])`)) || $("trkHead");
+    b?.scrollIntoView({ block: "start" });
+  }, 60);
+}
+function bindTrackerSettings(){
+  const add = $("trkAdd"), kinds = $("trkKinds");
+  if (!add) return;
+  add.onclick = () => { kinds.hidden = !kinds.hidden; };
+  kinds.onclick = (e) => {
+    const b = e.target.closest("[data-kind]");
+    if (!b) return;
+    kinds.hidden = true;
+    if (b.dataset.kind) startTrackerConnect(b.dataset.kind);
+  };
+  $("trkCacheClear").onclick = async () => {
+    try { await api("/api/sg/cache/clear", { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
+    paintTrackerCache(!trackerOn("shotgrid"));
+  };
+  bindShotGridSettings();
+  paintTrackerSettings();
+}
+// ShotGrid's block in Settings → Trackers (docs/SHOTGRID.md): site, API script name + key (kept by the server only —
+// the key is never sent back), whether to post as the reviewer, reviewer → login, note status codes; once connected
+// also the media cache limit / Clear cache and Disconnect (removes the key; site, script and logins stay).
 function bindShotGridSettings(){
   const msg = $("sgMsg");
   if (!msg) return;
@@ -1048,7 +1166,7 @@ function bindShotGridSettings(){
     $("sgLogins").value = Object.entries(st.logins || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
     $("sgCacheLimit").value = st.cacheLimitGB ? String(st.cacheLimitGB) : "";
     $("sgStOpen").value = st.statusMap?.open || ""; $("sgStProgress").value = st.statusMap?.progress || ""; $("sgStDone").value = st.statusMap?.done || "";
-    msg.textContent = !st.configured ? "Not set up" : `Linked to ${(() => { try { return new URL(st.site).host; } catch { return st.site; } })()}${lost ? " · the key was removed with the old site — enter it again" : ""}`;
+    msg.textContent = lost ? "The key was removed with the old site — enter it again" : "";
   };
   const body = () => {
     const logins = {};
@@ -1061,6 +1179,8 @@ function bindShotGridSettings(){
     return b;
   };
   const put = (b) => api("/api/sg/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  // after a save: still not connected (no key, or the key went with a new site) → the fields stay open to finish
+  const settle = async (st) => { if (st && !st.configured) trkConnecting = "shotgrid"; await refreshTrackers(true); };
   api("/api/sg/status").then(show).catch(() => {});
   const cacheInfo = () => api("/api/sg/cache").then((c) => {
     $("sgCacheInfo").textContent = `Cache: ${bytes(c.used)} in ${c.files} file${c.files === 1 ? "" : "s"} · ${bytes(c.free)} free on disk`;
@@ -1071,25 +1191,39 @@ function bindShotGridSettings(){
     cacheInfo();
   };
   $("sgSave").onclick = async () => {
-    try { show(await put(body())); $("sgKey").value = ""; refreshSgStatus(); }
-    catch { msg.textContent = "Check the site address (https://…) and the script name / key"; }
+    let st;
+    try { st = await put(body()); show(st); $("sgKey").value = ""; }
+    catch { msg.textContent = "Check the site address (https://…) and the script name / key"; return; }
+    await settle(st);
+    if (!msg.textContent) msg.textContent = st.configured ? "Saved" : "Saved — not connected yet: the site, script name and key are all needed";
   };
-  $("sgForget").onclick = async () => {
-    if (!saved?.site) return;
-    try { show(await put({ ...body(), key: "" })); } catch {}
+  // Disconnect: the stored settings as the server has them now (not the form's unsaved edits, not a stale `saved`),
+  // only the key cleared.
+  $("sgDisconnect").onclick = async () => {
+    let st;
+    try {
+      const cur = await api("/api/sg/status");
+      if (!cur.site) { await refreshTrackers(true); return; }
+      st = await put({ site: cur.site, script: cur.script || "", key: "", sudo: !!cur.sudo, logins: cur.logins || {},
+        statusMap: cur.statusMap || {}, cacheLimitGB: Number(cur.cacheLimitGB) || 0 });
+      show(st); $("sgKey").value = "";
+    } catch { msg.textContent = "Could not disconnect"; return; }
+    trkConnecting = null;
+    await refreshTrackers(true);
   };
+  $("sgCancel").onclick = () => { trkConnecting = null; $("sgKey").value = ""; show(saved); paintTrackerSettings(); };
   $("sgTest").onclick = async () => {
     msg.textContent = "Connecting…";
     try {
-      if ($("sgKey").value.trim() || !saved || saved.site !== body().site) { show(await put(body())); $("sgKey").value = ""; refreshSgStatus(); }
+      if ($("sgKey").value.trim() || !saved || saved.site !== body().site){ const st = await put(body()); show(st); $("sgKey").value = ""; await settle(st); }
       const ps = await sgClient().projects();
       msg.textContent = `Connected — ${ps.length} project${ps.length === 1 ? "" : "s"}`;
     } catch (e){ msg.textContent = e.message || "Could not connect"; }
   };
 }
 // ---- You: the user button (sidebar header; the review panel's person icon opens the same panel) -------------
-// The reviewer name (stored with every note; no login needed) and one row per tracker: logged in or not, Set up…
-// (Settings → ShotGrid holds the fields). docs/PLAN-trackers.md stage 1.
+// The reviewer name (stored with every note; no login needed) and a row per connected tracker with Settings…
+// (Settings → Trackers holds the fields). No tracker connected: no Trackers part at all (decision 10).
 const userInitials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 function paintUserBtns(root){
   const n = reviewerName(), ini = userInitials(n);
@@ -1126,17 +1260,12 @@ async function openUserPanel(anchor){
   if (pop.parentElement !== document.body) document.body.appendChild(pop);
   pop.innerHTML = `<h3>You</h3>
     <label>Reviewer name <input id="userName" placeholder="Your name" spellcheck="false" autocomplete="name"></label>
-    <h3>Trackers</h3>
-    <div class="trk"><i class="dot" id="userSgDot"></i><b>ShotGrid</b><span id="userSg">…</span><button class="btn ghost" id="userSgSet" type="button">Set up…</button></div>`;
+    <div class="user-trk" id="userTrk"></div>`;
   const inp = $("userName");
   inp.value = reviewerName();
   inp.addEventListener("change", () => setReviewerName(inp.value));
   inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter") || hotkey(e, "Escape")) closeUserPanel(); });
-  $("userSgSet").onclick = () => {
-    closeUserPanel();
-    if (!state.settingsOpen) $("settingsHead").click();
-    setTimeout(() => { const s = $("sgSite"); if (s){ s.scrollIntoView({ block: "center" }); s.focus(); } }, 60);
-  };
+  paintUserTrackers();
   const r = anchor.getBoundingClientRect(), w = 280;
   pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + "px";
   pop.style.top = Math.min(innerHeight - 200, r.bottom + 6) + "px";
@@ -1144,13 +1273,16 @@ async function openUserPanel(anchor){
   // one entry per element: point it at the button that opened the panel this time (the other may be gone)
   const ent = registerAutoClose(pop, closeUserPanel, anchor);
   ent.anchor = anchor; ent.armed = false;
-  try {
-    const st = await api("/api/sg/status");
-    let host = st.site; try { host = new URL(st.site).host; } catch {}
-    $("userSg").textContent = st.configured ? host + (st.sudo ? " · as reviewer" : "") : "not connected";
-    $("userSgDot").classList.toggle("ok", !!st.configured);
-    $("userSgSet").textContent = st.configured ? "Settings…" : "Set up…";
-  } catch { $("userSg").textContent = "not available"; }
+  refreshTrackers();   // (a re-check: repaints the rows below when the list changed)
+}
+// The You panel's tracker rows: one per connected tracker, Settings… opens its block in Settings → Trackers.
+function paintUserTrackers(){
+  const box = $("userTrk");
+  if (!box) return;
+  box.innerHTML = trackers.length ? "<h3>Trackers</h3>" + trackers.map((t) => `<div class="trk" data-tracker="${esc(t.id)}"><i class="dot ok"></i><b>${esc(t.name)}</b><span>${esc(t.host || t.site || "")}${t.id === "shotgrid" && sgStat?.sudo ? " · as reviewer" : ""}</span><button class="btn ghost" type="button" data-act="trkset">Settings…</button></div>`).join("") : "";
+  box.querySelectorAll("[data-act=trkset]").forEach((b) => {
+    b.onclick = () => { closeUserPanel(); openTrackerSettings(b.closest("[data-tracker]").dataset.tracker); };
+  });
 }
 // ---- ShotGrid as a source (docs/PLAN-trackers.md stage 2): "ShotGrid · <site>" under Sources, its projects below;
 // a project shows its Versions in the library grid (sg-source.js).
@@ -1160,22 +1292,22 @@ async function openUserPanel(anchor){
 let sgStat = null, sgProjects = null, sgSrcOpen = false, sgSrc = null, sgProjectOn = null, sgList = null, sgLight = null, sgSmartOn = null;
 const sgOn = () => !!sgList;
 const normFsPath = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-async function refreshSgStatus(){
-  try { sgStat = await api("/api/sg/status"); } catch { sgStat = null; }
-  sgProjects = null; sgSrcOpen = false;   // (the projects are read again when it is opened)
-  renderNav();
-}
 function sgHost(){ try { return new URL(sgStat.site).host; } catch { return sgStat?.site || ""; } }
 function renderSgSource(wrap){
-  if (!sgStat?.configured) return;
+  if (!trackerOn("shotgrid") || !sgStat) return;   // not connected: no trace of it (decision 10)
   const b = document.createElement("div");
   b.className = "row src-row sg-src" + (sgOn() ? " on" : "");
   b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span>ShotGrid · ${esc(sgHost())}</span><button class="tiny tree-chev${sgSrcOpen ? " open" : ""}" data-act="expand" type="button" aria-expanded="${sgSrcOpen}" aria-label="${sgSrcOpen ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
   const toggle = async () => {
     sgSrcOpen = !sgSrcOpen;
     if (sgSrcOpen && !sgProjects){
-      try { sgProjects = await sgClient(sgStat.site).projects(); }
-      catch (e){ sgProjects = null; sgSrcOpen = false; flash("ShotGrid: " + e.message, 4000); }
+      const site = sgStat.site;
+      let ps = null;
+      try { ps = await sgClient(site).projects(); }
+      catch (e){ if (sgStat?.site === site){ sgSrcOpen = false; flash("ShotGrid: " + e.message, 4000); } }
+      if (sgStat?.site !== site || !trackerOn("shotgrid")) return;   // (disconnected / another site meanwhile: refreshTrackers repainted)
+      sgProjects = ps;
+      if (!ps) sgSrcOpen = false;
     }
     renderNav();
   };
@@ -1529,6 +1661,7 @@ const annot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
+  trackerOn: (id) => trackerOn(id),  // a tracker's controls (SG ▾) only while it is connected; "sight-trackers" on a change
   // (no lightbox, e.g. a review file dropped on the grid: the page's own toast, plain text)
   toast: (text, ms) => { if (light) flashV3DToast(text); else flash(htmlToText(text), ms); },
   appVersion: () => state.meta?.version || "",
@@ -1578,6 +1711,7 @@ const boardAnnot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
+  trackerOn: (id) => trackerOn(id),  // a tracker's controls (SG ▾) only while it is connected; "sight-trackers" on a change
   toast: (text) => flashV3DToast(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
@@ -1603,6 +1737,7 @@ const cmpAnnot = createAnnotator({
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
+  trackerOn: (id) => trackerOn(id),  // a tracker's controls (SG ▾) only while it is connected; "sight-trackers" on a change
   toast: (text) => flash(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
@@ -9878,22 +10013,32 @@ function renderOptions(){
         <input type="password" id="sttKey" autocomplete="off" spellcheck="false" placeholder="none"></label>
       <div class="theme-actions stt-row"><span class="ign-msg" id="sttMsg"></span><button class="btn ghost" id="sttForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sttSave" type="button">Save</button></div>
 
-      <div class="settings-sub">ShotGrid</div>
-      <label class="field" title="Your studio's ShotGrid (Flow Production Tracking) address, e.g. mystudio.shotgrid.autodesk.com">Site
-        <input type="url" id="sgSite" autocomplete="off" spellcheck="false" placeholder="mystudio.shotgrid.autodesk.com"></label>
-      <label class="field" title="An API script made by a ShotGrid admin (Admin → Scripts): its Script Name">Script name
-        <input type="text" id="sgScript" autocomplete="off" spellcheck="false" placeholder="sight"></label>
-      <label class="field" title="The script's Application Key. Kept by the Sight server only (shotgrid.json in Sight's own data folder), never shown again. Changing the site or the script name drops the saved key.">Script key
-        <input type="password" id="sgKey" autocomplete="off" spellcheck="false" placeholder="none"></label>
-      <label class="opt" title="Notes and replies are posted as the reviewer's own ShotGrid user (the login below). Needs the script to be allowed to act as users. Off: posted by the script, the reviewer's name goes into the note's subject / the reply's text.">Post as the reviewer <input type="checkbox" id="sgSudo"></label>
-      <label class="field" title="Reviewer name in Sight = ShotGrid login, one per line, e.g.&#10;Ann Lee = ann.lee@studio.com">Reviewer logins
-        <textarea id="sgLogins" spellcheck="false" placeholder="Ann Lee = ann.lee@studio.com"></textarea></label>
-      <label class="field" title="The ShotGrid note status codes for Open / In progress / Done (Admin → Status list). Empty = opn / ip / clsd.">Note statuses
-        <span class="sg-codes"><input type="text" id="sgStOpen" placeholder="opn" aria-label="Open"><input type="text" id="sgStProgress" placeholder="ip" aria-label="In progress"><input type="text" id="sgStDone" placeholder="clsd" aria-label="Done"></span></label>
-      <label class="field" title="Disk space for the media of Versions opened from ShotGrid (their web proxies). Empty = Auto: as much as the disk holds, keeping 2 GB free. Oldest opened go first.">Media cache limit (GB)
-        <input type="number" id="sgCacheLimit" min="0" step="1" placeholder="Auto"></label>
-      <div class="theme-actions"><span class="ign-msg" id="sgCacheInfo"></span><button class="btn ghost" id="sgCacheClear" type="button" title="Delete the downloaded Version media (they download again when opened)">Clear cache</button></div>
-      <div class="theme-actions"><span class="ign-msg" id="sgMsg"></span><button class="btn ghost" id="sgForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sgTest" type="button" title="Connect and list the projects">Test</button><button class="btn ghost" id="sgSave" type="button">Save</button></div>
+      <div class="settings-sub" id="trkHead">Trackers</div>
+      <!-- Connected trackers only (docs/PLAN-trackers.md decision 10): a tracker's block shows while it is connected or
+           being connected (Connect a tracker… → its kind); paintTrackerSettings() fills / shows them. -->
+      <div class="trk-set" id="trkSg" data-tracker="shotgrid" hidden>
+        <div class="trk"><i class="dot" id="sgDot"></i><b>ShotGrid</b><span id="sgState"></span><button class="btn ghost" id="sgDisconnect" type="button" title="Remove the saved key: ShotGrid's controls go until it is connected again (the site, script name and logins stay for that)">Disconnect</button><button class="btn ghost" id="sgCancel" type="button" title="Do not connect ShotGrid now">Cancel</button></div>
+        <label class="field" title="Your studio's ShotGrid (Flow Production Tracking) address, e.g. mystudio.shotgrid.autodesk.com">Site
+          <input type="url" id="sgSite" autocomplete="off" spellcheck="false" placeholder="mystudio.shotgrid.autodesk.com"></label>
+        <label class="field" title="An API script made by a ShotGrid admin (Admin → Scripts): its Script Name">Script name
+          <input type="text" id="sgScript" autocomplete="off" spellcheck="false" placeholder="sight"></label>
+        <label class="field" title="The script's Application Key. Kept by the Sight server only (shotgrid.json in Sight's own data folder), never shown again. Changing the site or the script name drops the saved key.">Script key
+          <input type="password" id="sgKey" autocomplete="off" spellcheck="false" placeholder="none"></label>
+        <label class="opt" title="Notes and replies are posted as the reviewer's own ShotGrid user (the login below). Needs the script to be allowed to act as users. Off: posted by the script, the reviewer's name goes into the note's subject / the reply's text.">Post as the reviewer <input type="checkbox" id="sgSudo"></label>
+        <label class="field" title="Reviewer name in Sight = ShotGrid login, one per line, e.g.&#10;Ann Lee = ann.lee@studio.com">Reviewer logins
+          <textarea id="sgLogins" spellcheck="false" placeholder="Ann Lee = ann.lee@studio.com"></textarea></label>
+        <label class="field" title="The ShotGrid note status codes for Open / In progress / Done (Admin → Status list). Empty = opn / ip / clsd.">Note statuses
+          <span class="sg-codes"><input type="text" id="sgStOpen" placeholder="opn" aria-label="Open"><input type="text" id="sgStProgress" placeholder="ip" aria-label="In progress"><input type="text" id="sgStDone" placeholder="clsd" aria-label="Done"></span></label>
+        <div id="sgCacheSet">
+          <label class="field" title="Disk space for the media of Versions opened from ShotGrid (their web proxies). Empty = Auto: as much as the disk holds, keeping 2 GB free. Oldest opened go first.">Media cache limit (GB)
+            <input type="number" id="sgCacheLimit" min="0" step="1" placeholder="Auto"></label>
+          <div class="theme-actions"><span class="ign-msg" id="sgCacheInfo"></span><button class="btn ghost" id="sgCacheClear" type="button" title="Delete the downloaded Version media (they download again when opened)">Clear cache</button></div>
+        </div>
+        <div class="theme-actions"><span class="ign-msg" id="sgMsg"></span><button class="btn ghost" id="sgTest" type="button" title="Connect and list the projects">Test</button><button class="btn ghost" id="sgSave" type="button">Save</button></div>
+      </div>
+      <div class="theme-actions" id="trkAddRow"><span class="ign-msg" id="trkNone">None connected</span><button class="btn ghost" id="trkAdd" type="button" title="Link Sight to a production tracker: its projects become a source, reviews sync with it">Connect a tracker…</button></div>
+      <div class="trk-kinds" id="trkKinds" hidden></div>
+      <div class="theme-actions" id="trkCacheRow" hidden><span class="ign-msg" id="trkCacheInfo"></span><button class="btn ghost" id="trkCacheClear" type="button" title="Delete the media downloaded from trackers (opened Versions); they download again when opened after a connect">Clear</button></div>
 
       <div class="settings-sub">Colors</div>
       <label class="opt">Backdrop <input type="color" data-color="bg" value="${t.bg}"></label>
@@ -9965,7 +10110,7 @@ function renderOptions(){
   $("zoomAxisSel").onchange = () => { state.theme.zoomAxis = $("zoomAxisSel").value; saveTheme(); };
   $("scanIgnoreApply").onclick = applyScanIgnore;
   bindDictationSettings();
-  bindShotGridSettings();
+  bindTrackerSettings();
   $("scanDefaults").onclick = dfOpen;
   $("scanIgnore").oninput = (e) => { e.target.dataset.dirty = "1"; };
   renderThemeList();
@@ -10361,7 +10506,7 @@ async function aboutCopy(){
 $("aboutBtn").onclick = aboutOpen;
 $("userBtn").onclick = () => openUserPanel($("userBtn"));
 paintUserBtns();
-refreshSgStatus();
+refreshTrackers();
 $("aboutClose").onclick = aboutClose;
 $("aboutCopy").onclick = aboutCopy;
 $("aboutOverlay").addEventListener("pointerdown", (e) => { if (e.target === $("aboutOverlay")) aboutClose(); });

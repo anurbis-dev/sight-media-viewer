@@ -60,6 +60,18 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(self.sg.configure({}))
         self.assertFalse((self.dir / "shotgrid.json").exists())
 
+    def test_tracker_entry_only_while_connected(self):
+        # docs/PLAN-trackers.md decision 10: /api/trackers lists ShotGrid only while it is usable (site + script + key)
+        self.assertIsNone(self.sg.tracker())
+        self.assertTrue(self.sg.configure({"site": "studio.example:8443", "script": "sight"}))   # no key yet
+        self.assertIsNone(self.sg.tracker())
+        self.assertFalse(self.sg.status()["configured"])
+        self.assertTrue(self.sg.configure({"site": "studio.example:8443", "script": "sight", "key": "k"}))
+        self.assertEqual(self.sg.tracker(), {"id": "shotgrid", "name": "ShotGrid", "site": "https://studio.example:8443", "host": "studio.example:8443"})
+        self.assertTrue(self.sg.configure({"site": "studio.example:8443", "script": "sight", "key": ""}))   # Disconnect
+        self.assertIsNone(self.sg.tracker())
+        self.assertEqual(self.sg.status()["site"], "https://studio.example:8443", "a disconnect keeps the site for the next connect")
+
     def test_sudo_only_when_on_and_no_token_path(self):
         from unittest import mock
         self.sg.configure({"site": "https://studio.example", "script": "s", "key": "k", "sudo": False})
@@ -224,6 +236,24 @@ class SightPathTest(unittest.TestCase):
         self.assertEqual(a1["version"]["code"], "sh020_anim_v001")
         a3 = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/sg/open/79", method="POST", headers={"X-Sight": "1"})).read())
         self.assertTrue(a3["asset"]["name"].endswith(".jpg"), "no uploaded movie: the Version's picture")
+
+    def test_tracker_ui_only_while_connected(self):
+        # docs/PLAN-trackers.md stage 5a: the page starts with ShotGrid disconnected (no key), connects / disconnects live
+        if subprocess.run([NODE, "-e", "require('playwright')"], capture_output=True, cwd=ROOT / "tests").returncode:
+            self.skipTest("Playwright is not available")
+        svc = ShotGridService(self.lib.root)
+        svc.configure({"site": self.site, "script": "sight", "key": "", "logins": {"Bob Smith": "bob"}, "sudo": True})
+        try:
+            r = subprocess.run([NODE, str(ROOT / "tests" / "trackers_e2e.cjs"), f"http://127.0.0.1:{self.port}", self.site],
+                               capture_output=True, text=True, timeout=180, cwd=ROOT / "tests")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        finally:   # the other tests of this class need it connected
+            svc.configure({"site": self.site, "script": "sight", "key": "secret", "logins": {"Bob Smith": "bob"}, "sudo": True})
+
+    def test_trackers_endpoint(self):
+        got = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/trackers").read())
+        self.assertEqual([(t["id"], t["site"]) for t in got["trackers"]], [("shotgrid", self.site)])
+        self.assertNotIn("secret", json.dumps(got))
 
     def test_sync_through_sight(self):
         r = subprocess.run([NODE, str(ROOT / "tests" / "sg_sight.cjs"), f"http://127.0.0.1:{self.port}", self.aid, self.site],

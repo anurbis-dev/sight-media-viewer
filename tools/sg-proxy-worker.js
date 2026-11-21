@@ -1,7 +1,7 @@
 // A pass-through proxy for the phone app's ShotGrid link (docs/SHOTGRID.md) — only needed when the studio's
 // ShotGrid site does not answer browser requests from the app's address (CORS). Deploy it as a Cloudflare Worker
 // (Workers → Create → paste this file), set ALLOWED_SITES (and ALLOWED_ORIGIN if you like), then put the worker's
-// address into the app: Settings → ShotGrid connection → Proxy.
+// address into the app: Settings → Trackers → ShotGrid (Connect a tracker… / ShotGrid settings…) → Proxy.
 //
 // The protocol is the one Sight's own server speaks (/api/sg/fetch): GET/POST/PUT/DELETE <worker>/?url=<target>.
 // It forwards the method, the body and the Authorization / Content-Type / Accept headers, adds CORS headers to the

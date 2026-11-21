@@ -2876,9 +2876,13 @@ export function createAnnotator(host){
     el.classList.toggle("an-board", b);
     el.querySelectorAll("[data-ex]:not([data-ex=text])").forEach((x) => { x.hidden = b; });
     el.querySelector(".an-menu:not(.an-sg) > hr").hidden = b;
-    el.querySelector("[data-act=sg]").hidden = b;   // a board has no Version
-    if (b) el.querySelector(".an-sg").hidden = true;
+    // SG ▾: not on a board (no Version), and only while ShotGrid is connected (docs/PLAN-trackers.md decision 10)
+    const sg = !b && !!host.trackerOn?.("shotgrid");
+    el.querySelector("[data-act=sg]").hidden = !sg;
+    if (!sg) el.querySelector(".an-sg").hidden = true;
   }
+  // a tracker connected / disconnected in Settings → Trackers (index.html refreshTrackers): SG ▾ comes / goes live
+  window.addEventListener("sight-trackers", () => { if (S.ui) paintBoardPanel(); });
 
   // ---- ShotGrid (docs/SHOTGRID.md) ------------------------------------------------------------------
   // The SG ▾ popover: link this file to a Version (project + search, or the Version its notes already name), then
@@ -2895,7 +2899,7 @@ export function createAnnotator(host){
   }
   async function sgClient(){
     const st = await sgApi("/api/sg/status");
-    if (!st.configured) throw new Error("Set up ShotGrid first: Settings → ShotGrid");
+    if (!st.configured) throw new Error("ShotGrid is not connected: Settings → Trackers");
     return { st, client: SGC().createClient({ site: st.site, via: "/api/sg/fetch?url=", serverAuth: true, headers: sgHeaders }) };
   }
   async function sgPaint(){
@@ -2908,7 +2912,7 @@ export function createAnnotator(host){
     catch (e){ box.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; return; }
     if (S.asset?.id !== aid) return;
     const msg = sgState.msg ? `<div class="an-sgmsg">${sgState.msg}</div>` : "";
-    if (!st.configured){ box.innerHTML = `<div class="an-mlbl">ShotGrid is not set up — Settings → ShotGrid (site, API script name and key).</div>`; return; }
+    if (!st.configured){ box.innerHTML = `<div class="an-mlbl">ShotGrid is not connected — Settings → Trackers.</div>`; return; }
     const L = cur.link;
     if (L && !sgState.picking){
       const last = cur.state?.last ? fmtDate(cur.state.last) : "never";
@@ -5068,6 +5072,7 @@ function injectStyles(){
 .an-ib { height: 26px; min-width: 26px; padding: 0 6px; border-radius: 6px; color: var(--muted); display: inline-grid; place-items: center; font-size: 11px; white-space: nowrap; }
 .an-ib:hover { background: var(--surface-2); color: var(--fg); }
 .an-ib.on { color: #34c759; }
+.an-ph .an-ib[hidden] { display: none; }   /* (SG ▾ off: a board, no tracker connected) */
 .an-ib.sm { height: 22px; min-width: 22px; padding: 0; }
 .an-ib.sm svg { width: 14px; height: 14px; }
 .an-menu { position: absolute; right: 40px; top: 42px; z-index: 22; display: flex; flex-direction: column; padding: 4px; min-width: 210px; border-radius: 10px; background: rgb(22 22 25 / .97); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .5); }

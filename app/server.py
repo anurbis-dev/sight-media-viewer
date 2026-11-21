@@ -1652,6 +1652,13 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if name not in ("127.0.0.1", "localhost", "::1"):
             raise HTTPException(403, "Sight page only")
 
+    # The connected trackers (docs/PLAN-trackers.md decisions 10, 11): the page shows a tracker's controls (sidebar
+    # source, You-panel row, review panel link, Filter ▾ fields) only for an entry here. ShotGrid is the only one yet.
+    @app.get("/api/trackers")
+    def trackers_list() -> JSONResponse:
+        out = [t for t in (sg.tracker(),) if t]
+        return JSONResponse({"trackers": out}, headers={"Cache-Control": "no-store"})
+
     @app.get("/api/sg/status")
     def sg_status() -> JSONResponse:
         st = sg.status()

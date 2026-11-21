@@ -41,10 +41,16 @@ const [base, pic, site] = process.argv.slice(2);
   await p.tap(".newbar .send");
   await p.waitForFunction(() => window.__sightReview.R.rows.some((x) => x.kind === "note"));
 
-  // ShotGrid… (no connection yet → the connection form)
+  // No connection yet: no "ShotGrid…" in the menu (docs/PLAN-trackers.md decision 10); Settings → Trackers →
+  // Connect a tracker… → ShotGrid → the connection form
   const more = async () => { await p.locator('button[title="Export and more"]').first().evaluate((e) => e.click()); await p.waitForSelector(".sheet .menu"); };
   await more();
-  await p.tap('.sheet .menu button:has-text("ShotGrid…")');
+  assert.strictEqual(await p.locator('.sheet .menu button:has-text("ShotGrid…")').count(), 0, "no ShotGrid item while not connected");
+  await p.tap('.sheet .menu button:has-text("Settings")');
+  await p.waitForSelector('.sheet button:has-text("Connect a tracker…")');
+  await p.tap('.sheet button:has-text("Connect a tracker…")');
+  await p.waitForSelector('.sheet .menu button:has-text("ShotGrid")');
+  await p.tap('.sheet .menu button:has-text("ShotGrid")');
   await p.waitForSelector(".sheet form.sgform");
   await p.fill(".sgform input[name=site]", site);
   await p.fill(".sgform input[name=script]", "sight");

@@ -754,6 +754,24 @@ takes them, `PATCH {rule}` changes a smart one's rule only. Client: `state.filte
 stale `/api/state` until the server returns the same). The free tree (`state.filter.where` / sgSrc's own) waits
 underneath; *Save as smart collection* moves it into the new row (`saveAsSmart`). Counts are not shown on smart rows
 (each would cost a filtered COUNT on every `/api/state`).
+**Trackers: UI only while connected** (docs/PLAN-trackers.md decisions 10, 11; stage 5a). `GET /api/trackers` →
+`{trackers: [{id, name, site, host}]}` lists the *connected* trackers — ShotGrid's entry comes from
+`ShotGridService.tracker()`, connected = `_connected()` (site + script name + key saved), the same test as
+`status().configured` and `forward()`'s refusal. Page: `trackers` / `trackerOn(id)` / `refreshTrackers(changed)` in
+index.html (reads `/api/trackers` + `/api/sg/status` together; runs at start, after Save / Test / Disconnect in
+Settings → Trackers, on every opening of the You panel and on `visibilitychange` / `focus`; an unchanged answer
+repaints nothing; the ShotGrid projects are re-read only when site / script / connected changed); it repaints the sidebar source (`renderSgSource`), the
+You panel's rows (`paintUserTrackers`), Settings → Trackers (`paintTrackerSettings`), closes a ShotGrid project on
+screen whose connection went / changed site (`closeSgList(true)` — Filter ▾'s tracker fields only exist inside one),
+and fires `sight-trackers` on window when the list changed; annotate.js listens and shows SG ▾ only when
+`host.trackerOn("shotgrid")` (every createAnnotator host passes it; a host without it shows none). Disconnect = the
+key removed (the stored settings re-read from `/api/sg/status`, PUT back with `key: ""`): site, script, logins and
+statuses stay for the next connect. While ShotGrid is not connected and `/api/sg/cache` holds files, `#trkCacheRow`
+(*Tracker media cache … Clear*) keeps the hidden media cache clearable.
+Settings → Trackers: a block per connected tracker (`.trk-set[data-tracker]`) + *Connect a tracker…* listing the
+`TRACKER_KINDS` not connected; `trkConnecting` keeps a kind's fields open while it is being connected (also after a
+save that left it unconnected). Data of a disconnected tracker (ShotGrid smart collections, `sg_links`, the media
+cache source) stays and is just not shown.
 Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
 
 **Sequence** (index.html, `openSequence` … `bindSeqBar`) — selected videos played back to back in the
@@ -860,6 +878,11 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   grabbing; `mp4.js` fps from the MP4 container; `report.js` report content + static HTML + PDF
   layout; `pdf.js` the PDF writer; `model3d.js` the 3D viewer (below). review-core / review-draw are classic scripts loaded first
   (globals `SightReviewCore`, `SightReviewDraw`); keys go through `core/keys.js` `runHotkeys`.
+  `shotgrid.js` the ShotGrid connection (localStorage `sight-review:sg`), link / sync, the home screen's browser and
+  the tracker list: `trackers()` / `trackerOn(id)` (connected = `sgReady`: site + script + key), `connectTracker`,
+  `trackerDisconnect` (drops the key only); `checkTrackers` fires `sight-trackers` when the list changed (after a
+  save, on a `storage` event from another tab, on `visibilitychange`) and app.js re-renders the home screen. The ShotGrid tab / page / swipe, the person sheet's
+  row and the review's *ShotGrid…* exist only while `trackerOn("shotgrid")` (decision 10).
 - **Identity**: a review per media file, `key = assetKey(name, size)` = first 16 hex of SHA-1 of
   `lower(name) + "\n" + size` (mtime deliberately out: iOS reports the pick time for Photos).
   Re-picking the same file finds its review; Sight matches the app's `.srev` by name + size (its

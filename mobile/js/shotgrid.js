@@ -1,4 +1,4 @@
-// ShotGrid on the phone (docs/SHOTGRID.md): the connection (Settings → ShotGrid), linking the open review to a
+// ShotGrid on the phone (docs/SHOTGRID.md): the connection (Settings → Trackers → ShotGrid), linking the open review to a
 // Version, and Sync — the same SightShotGrid.sync as Sight (core/shotgrid-core.js), with this app's merge
 // (app.js mergeInto) and report pictures (report.js gatherReport). The app talks to the studio's site itself
 // (script key on this device) or through a pass-through proxy (tools/sg-proxy-worker.js) when the site does not
@@ -13,17 +13,63 @@ const KEY = "sight-review:sg";
 export function sgConfig(){
   try { const c = JSON.parse(localStorage.getItem(KEY) || "null"); return c && typeof c === "object" ? c : {}; } catch { return {}; }
 }
-function saveConfig(c){ try { localStorage.setItem(KEY, JSON.stringify(c)); } catch {} }
 export const sgReady = (c = sgConfig()) => !!(c.site && c.script && c.key);
+// A save that connects / disconnects (or changes the site) tells the app: its tracker controls come / go live.
+function saveConfig(c){
+  try { localStorage.setItem(KEY, JSON.stringify(c)); } catch {}
+  checkTrackers();
+}
+
+// ---- the trackers (docs/PLAN-trackers.md decisions 10, 11) -------------------------------------------------------
+// The ones connected on this device: [{id, name, site, host}]; connected = configured and usable (ShotGrid: site,
+// script name and key saved — sgReady). The app shows a tracker's controls (the home screen's ShotGrid page and its
+// swipe, the person sheet's row, the review's "ShotGrid…") only for a tracker listed here; a change fires
+// "sight-trackers" on window (also when another tab of the app changes the connection).
+export const TRACKER_KINDS = [{ id: "shotgrid", name: "ShotGrid" }];
+const hostOf = (site) => { try { return new URL(site).host; } catch { return site || ""; } };
+export function trackers(){
+  const c = sgConfig();
+  return sgReady(c) ? [{ id: "shotgrid", name: "ShotGrid", site: c.site, host: hostOf(c.site) }] : [];
+}
+export const trackerOn = (id) => trackers().some((t) => t.id === id);
+const trackersKey = () => JSON.stringify(trackers());
+// "sight-trackers" only when the list really changed (not on every write of the connection: logins, statuses…):
+// after a save here, a write by another tab (storage event) and when the app comes back to the screen.
+let lastTrackers = trackersKey();
+function checkTrackers(){
+  const k = trackersKey();
+  if (k === lastTrackers) return;
+  lastTrackers = k;
+  window.dispatchEvent(new CustomEvent("sight-trackers", { detail: trackers() }));
+}
+window.addEventListener("storage", (e) => { if (e.key === KEY || e.key === null) checkTrackers(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkTrackers(); });
+// Disconnect: the key goes (the site, script name, proxy and logins stay for the next connect).
+export function trackerDisconnect(id){
+  if (id === "shotgrid") saveConfig({ ...sgConfig(), key: "" });
+}
+// Connect a tracker…: the kinds not connected yet; a pick opens that tracker's connection form.
+export function connectTracker(ui){
+  const { sheet, el, btn } = ui;
+  const left = TRACKER_KINDS.filter((k) => !trackerOn(k.id));
+  sheet((sh, close) => {
+    sh.appendChild(el("h2", "", "Connect a tracker"));
+    if (!left.length){ sh.appendChild(el("p", "", "Every tracker Sight Review can link to is connected.")); return; }
+    sh.appendChild(el("p", "", "Link reviews to a production tracker: browse its Versions on the home screen and sync notes both ways."));
+    const m = el("div", "menu");
+    left.forEach((k) => m.appendChild(btn("", k.name, () => { close(); if (k.id === "shotgrid") sgSettings(ui); })));
+    sh.appendChild(m);
+  });
+}
 function client(c = sgConfig()){
   return SG().createClient({ site: c.site, script: c.script, key: c.key, via: c.proxy ? proxyPrefix(c.proxy) : "" });
 }
 // "https://sg-proxy.example.workers.dev" -> "https://sg-proxy.example.workers.dev/?url=" (a prefix ending in = is kept)
 function proxyPrefix(p){ p = String(p).trim(); return /[=]$/.test(p) ? p : p.replace(/\/?$/, "/") + "?url="; }
 const errText = (e) => (e && e.message) || String(e);
-const corsHint = (e, c) => (!c.proxy && e instanceof TypeError) ? " — the site may not answer this app directly: set a proxy in Settings → ShotGrid" : "";
+const corsHint = (e, c) => (!c.proxy && e instanceof TypeError) ? " — the site may not answer this app directly: set a proxy in Settings → Trackers → ShotGrid" : "";
 
-// ---- Settings → ShotGrid --------------------------------------------------------------------------
+// ---- Settings → Trackers → ShotGrid: the connection form -----------------------------------------------------------
 // ui: {sheet, el, btn, toast}
 export function sgSettings(ui){
   const { sheet, el, btn, toast } = ui;
@@ -65,7 +111,7 @@ export function sgSettings(ui){
       return n;
     };
     const a = el("div", "acts");
-    a.appendChild(btn("btn", "Forget", () => { saveConfig({}); toast("ShotGrid connection removed"); close(); }));
+    if (c.site || c.script || c.key) a.appendChild(btn("btn", "Forget", () => { saveConfig({}); toast("ShotGrid connection removed"); close(); }));
     a.appendChild(btn("btn", "Test", async () => {
       const n = read();
       if (!sgReady(n)){ msg.textContent = "Site, script name and key are needed."; return; }
@@ -75,7 +121,7 @@ export function sgSettings(ui){
     }));
     const s = el("button", "btn primary", "Save"); s.type = "submit"; a.appendChild(s);
     f.appendChild(a);
-    f.onsubmit = (e) => { e.preventDefault(); saveConfig(read()); toast("ShotGrid saved"); close(); };
+    f.onsubmit = (e) => { e.preventDefault(); const n = read(); saveConfig(n); toast(sgReady(n) ? "ShotGrid connected" : "ShotGrid saved — not connected: site, script name and key are needed", sgReady(n) ? 2000 : 4000); close(); };
     sh.appendChild(f);
   });
 }
@@ -444,23 +490,27 @@ export function sgBrowser(ctx, box){
   return { refresh(){ load(); }, dispose(){ gone = true; seq++; urls.splice(0).forEach((u) => URL.revokeObjectURL(u)); } };
 }
 
-// The user sheet (the home screen's person button): the reviewer name and the tracker rows.
+// The user sheet (the home screen's person button): the reviewer name and a row per connected tracker (none
+// connected: no tracker part at all — Settings → Trackers is where one is connected).
 // ui: {sheet, el, btn, toast, who(): name, setName(): Promise<bool>, settings()}
 export function userSheet(ui){
   const { sheet, el, btn } = ui;
-  const c = sgConfig();
+  const c = sgConfig(), list = trackers();
   sheet((sh, close) => {
     sh.appendChild(el("h2", "", "You"));
     const kv = el("div", "kv");
     kv.appendChild(el("b", "", "Reviewer name"));
     const nm = kv.appendChild(btn("tapedit", ui.who() || "—", async () => { if (await ui.setName()) nm.textContent = ui.who(); }));
     nm.title = "Tap to change your name";
-    kv.appendChild(el("b", "", "ShotGrid"));
-    let host = c.site || ""; try { host = new URL(c.site).host; } catch {}
-    kv.appendChild(el("span", "", sgReady(c) ? "connected · " + host + (c.sudo ? " · as reviewer" : "") : "not connected"));
+    list.forEach((t) => {
+      kv.appendChild(el("b", "", t.name));
+      kv.appendChild(el("span", "", "connected · " + t.host + (t.id === "shotgrid" && c.sudo ? " · as reviewer" : "")));
+    });
     sh.appendChild(kv);
-    const a = el("div", "acts");
-    a.appendChild(btn("btn", sgReady(c) ? "ShotGrid connection…" : "Connect ShotGrid…", () => { close(); ui.settings(); }));
-    sh.appendChild(a);
+    if (list.some((t) => t.id === "shotgrid")){
+      const a = el("div", "acts");
+      a.appendChild(btn("btn", "ShotGrid connection…", () => { close(); ui.settings(); }));
+      sh.appendChild(a);
+    }
   });
 }
