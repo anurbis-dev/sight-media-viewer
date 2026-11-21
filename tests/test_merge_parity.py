@@ -104,6 +104,10 @@ class MergeParity(unittest.TestCase):
         stats, rows = py_merge(self.lib, by["new rows are added"])
         self.assertEqual(stats["added"], 3)
         self.assertEqual(rows["00000000000000a4"]["data"]["reply"], "00000000000000a7")
+        _, rows = py_merge(self.lib, by["lasso hatch width rides with the row"])
+        self.assertEqual(rows["00000000000000a3"]["data"]["hatchWidth"], 1.5)    # newer copy brings it
+        self.assertNotIn("hatchWidth", rows["00000000000000a4"]["data"])          # newer copy set it back to Auto
+        self.assertEqual(rows["00000000000000a5"]["data"]["hatchWidth"], 4)
 
     def test_restore_deleted_here(self) -> None:
         """Sight only: rows of the file deleted here later than their content stay deleted and are

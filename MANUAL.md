@@ -86,8 +86,9 @@
     active, it takes the place of Ctrl + right-drag explode. On a phone or tablet: press and hold with
     the tool, then drag (the phone app and the review page's drawing canvas).
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
-    `M` highlighter · `E` eraser (whole object, or *Partial* to cut through strokes; the pen's
-    eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) · `R` / `O` the shape tool as
+    `M` highlighter · `L` lasso (a closed stroke filled with a pattern) · `E` eraser (whole object, or *Partial* to
+    cut through strokes; the pen's eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) ·
+    `Shift+W` stroke arrows (arrows along a freehand stroke) · `R` / `O` the shape tool as
     a rectangle / an ellipse (its *Shape* switch ▭ / ◯ in the styles bar does the same by touch) · `T` text ·
     `N` number pin: a click puts a numbered circle there, a drag draws a line from where you pressed and puts the
     circle where you let go (a callout). A small field then asks for the number — type it and Enter (or tap
@@ -111,15 +112,19 @@
   - Shapes: width, dash (solid / dashed / dotted), fill on/off (off by default, 50 % when on), fill colour and
     opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
     (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the
-    middle handle of a selected line to bend it. The arrow tool's *Stroke* button (wave with arrows; the
-    tool's icon follows it) draws a freehand stroke with arrows along it, each turned to the stroke's normal —
+    middle handle of a selected line to bend it. **Stroke arrows** (`Shift+W`, its own toolbar button: a wave
+    with arrows) draws a freehand stroke with arrows along it, each turned to the stroke's normal —
     *Every* (distance between them), *Length*, *Tip* (head) and three icon buttons that step through their
     states on each click / tap: direction (away from the stroke / toward it), side (left / right / both,
-    relative to the direction you drew in), guide (draw the stroke itself; its dash). Brush: *Close* (lasso icon)
-    joins the stroke's end to its start like a lasso and fills it — *Fill* none / solid / a pattern (lines in
-    four directions, grid, cross-hatch, dots, dashes) or *Random* (a different pattern each stroke), fill
-    colour, *Fill α*, *Spacing* (pattern density). A selected closed stroke changes them too; erasing a piece
-    out of it opens it. Text: font, size, colour, bold / italic / underline,
+    relative to the direction you drew in), guide (draw the stroke itself; its dash). **Lasso** (`L`, its own
+    toolbar button: a hatched loop) draws a stroke whose end joins its start and fills it — *Fill* is a row of
+    icons, the same set as the phone app's: none, solid, a pattern (lines in four directions, grid, cross-hatch,
+    dots, dashes) or *?* Random (a different pattern each stroke) — then fill colour, *Fill α*, *Spacing*
+    (pattern density) and *Lines* (the hatch lines' thickness, for dots their size; *Auto* follows the spacing as
+    before — type 0 or right-click it to go back to Auto). A selected lasso (also one drawn before these tools,
+    with the brush's old *Close* switch) shows the same settings; erasing a piece out of it opens it. (The brush's
+    *Close* switch and the arrow tool's *Stroke* button are gone: these two tools replace them.) Text: font, size,
+    colour, bold / italic / underline,
     alignment, background box (colour, opacity), outline; double-click a text to edit it again
     (`Ctrl+Enter` or Esc finishes).
   - While drawing: `Shift` keeps lines, arrows, a pin's line and straight brush strokes horizontal or vertical
@@ -444,7 +449,9 @@
   with an outlined shape in hand takes its filled kind): tap one to draw with it, or just
   draw — the row folds and the tool stays. The brush has such a row too: brush, or lasso (the end
   joins the start and the inside is filled in the line's colour, half see-through) with its pattern
-  button — a second row of patterns (none, solid, lines, grid, cross-hatch, dots, dashes, random); tapping the slot again with its row up puts the tool
+  button — a second row of patterns (none, solid, lines, grid, cross-hatch, dots, dashes, random) — and,
+  for a pattern with lines or dots, a tap-to-cycle switch for the hatch lines: auto / thin / thick. With a
+  keyboard, `L` takes the lasso and `Shift+W` arrows along a stroke, as in Sight; tapping the slot again with its row up puts the tool
   down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; switched on, the box shows its colours in a second
   row above (tap it again: no box), the font button opens the fonts there (sans, serif, mono,

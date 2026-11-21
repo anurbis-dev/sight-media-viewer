@@ -247,5 +247,33 @@ class DrawClipboard(unittest.TestCase):
         self.assertEqual((res["btnPaste"], res["btnCut"]), (2, 1))
 
 
+@unittest.skipUnless(has_playwright(), "node with Playwright is not available")
+class DrawLasso(unittest.TestCase):
+    """0.109: the lasso's hatch width in review-core's renderer (old data unchanged) and the drawing canvas (the HTML
+    page, the phone): L / Shift+W, the shared pattern icons, the hatch switch."""
+
+    def test_lasso_and_stroke_arrows(self) -> None:
+        r = subprocess.run([NODE, str(ROOT / "tests" / "draw_lasso.cjs"), str(ROOT)],
+                           capture_output=True, text=True, timeout=120, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertEqual(res["log"], [])
+        g = res["render"]
+        self.assertAlmostEqual(g["oldSw"], 1.8)       # no hatchWidth: 0.18 · gap, as before
+        self.assertAlmostEqual(g["zeroSw"], 1.8)      # 0 = auto
+        self.assertEqual((g["newSw"], g["gridSw"]), (3, 1.5))
+        self.assertEqual((g["oldDot"], g["newDot"]), (2, 3))   # dots: 0.2 · gap radius / hatchWidth diameter
+        self.assertEqual((g["scaled"], g["gapScaled"]), (6, 20))  # transformItem scales it like gap
+        self.assertTrue(g["icons"] and g["toolIcons"])
+        self.assertTrue(res["lassoIcon"] and res["arrowsIcon"])
+        self.assertEqual(res["patRow"], 11)           # none, solid, 8 patterns, random
+        self.assertEqual((res["hatchShown"], res["hatchSolid"], res["hatchGrid"]), (True, False, True))
+        self.assertEqual(res["hatchTitle"], "Hatch lines: thick")
+        lasso, arrows = res["items"]
+        self.assertEqual((lasso["shape_kind"], lasso["data"]["close"], lasso["data"]["pattern"]), ("brush", True, "grid"))
+        self.assertAlmostEqual(lasso["data"]["hatchWidth"], lasso["data"]["gap"] * 0.18 * 2, delta=0.02)
+        self.assertEqual(arrows["shape_kind"], "arrows")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -497,7 +497,16 @@ the HTML page, the mobile app and the owner's tracker). A drawing made on a repl
 `Library.import_annotations`). annotate.js imports it for its side effect and destructures the
 global; `review.build_html` inlines it verbatim into the HTML page (`core_js()` refuses a source
 containing a closing script tag or an HTML comment opener). `tests/test_merge_parity.py` runs the
-Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every row.
+Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every row. It also holds the
+pickers' shared look: `PATTERN_LABELS` / `patternIcon(id)` (the lasso's fill patterns, inner SVG of a 24 × 24
+currentColor icon) and `TOOL_ICONS` (lasso, stroke arrows) — Sight's props bar and toolbar and review-draw.js both
+draw from them (review-draw reads them on open: RC is looked up then, not at its load).
+
+**Tool vs. stored type** — a tool id is not always a drawing type: Sight's *Lasso* tool (`lasso`) makes a
+`stroke` / `brush` row with `data.close` (FORMAT.md), and annotate.js maps such a drawing back to the lasso's props
+with `propType(it)` (props bar, Ctrl + right-drag, `setProp`'s "does this key apply" check); everything that draws or
+hit-tests keeps using `typeOf` (= brush). The *Stroke arrows* tool's id `arrows` is the stored type itself.
+review-draw.js keeps both as kinds of its brush / arrows slots (`BRUSHES` lasso, `ARROWS` stroke).
 `ctxVisible(c, at)` is the one visibility rule for a context on a frame (`{t, fps}` video, `{vk}`
 3D, null = picture); annotate.js `visibleNow` goes through it. `drawingRow(it, at)` makes a
 FORMAT.md row (bbox columns from `boundsOf`) from an editor item.

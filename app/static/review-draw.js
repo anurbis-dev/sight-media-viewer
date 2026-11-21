@@ -163,7 +163,8 @@ var SightReviewDraw = (function(){
     { k: "line", label: "Line", line: true, h0: "none", h1: "none", dash: "solid", ico: '<path d="M5 19 19 5"/>' },
     // Arrows along a freehand stroke (FORMAT.md `stroke` arrows); its row adds side / direction /
     // guide switches (pen.astroke). Spacing and length follow the size: every 10, 6 long.
-    { k: "stroke", label: "Arrows along a stroke", stroke: true, h0: "none", h1: "triangle", dash: "solid", ico: '<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>' },
+    // (Its icon is review-core's, the same as Sight's Stroke arrows tool: read once RC is there, on open.)
+    { k: "stroke", label: "Arrows along a stroke", stroke: true, h0: "none", h1: "triangle", dash: "solid", get ico(){ return RC.TOOL_ICONS.arrows; } },
   ];
   // Arrows-along-a-stroke switches: tap cycles. [value, title, icon].
   var ASTROKE_OPTS = [
@@ -183,30 +184,24 @@ var SightReviewDraw = (function(){
   // its start and the inside takes a pattern in the line's colour at 0.5; spacing follows the size).
   var BRUSHES = [
     { k: "brush", label: "Brush", ico: '<path d="M19.5 3.5a2.1 2.1 0 0 1 3 3L13 16l-3-3z"/><path d="M10 13c-3 0-4.5 2-4.5 4.2 0 1.4-1 2.3-2.5 2.8 5 1.2 9.5-.2 9.5-4.3z"/>' },
-    { k: "lasso", label: "Lasso: closes and fills", close: true, ico: '<path d="M12 4c5 0 9 2.5 9 6s-4 6-9 6-9-2.5-9-6 4-6 9-6z" stroke-dasharray="3 2.2"/><path d="M8 15.5c-1 2-.5 3.5 1.5 4.5"/>' },
+    { k: "lasso", label: "Lasso: closes and fills", close: true, get ico(){ return RC.TOOL_ICONS.lasso; } },
   ];
   // Lasso fill patterns (review-core's PATTERNS — RC is looked up only on open — plus random: a
-  // real one picked at each stroke).
+  // real one picked at each stroke). Their names and icons are review-core's (PATTERN_LABELS /
+  // patternIcon), shared with Sight's props bar.
   var PATTERNS = ["none", "solid", "diag", "diag2", "horiz", "vert", "grid", "cross", "dots", "dashes"];
   var LASSO_PATS = PATTERNS.concat(["random"]);
-  var PAT_LABEL = { none: "No fill", solid: "Solid", diag: "Lines ╱", diag2: "Lines ╲", horiz: "Lines ─", vert: "Lines │", grid: "Grid", cross: "Cross-hatch", dots: "Dots", dashes: "Dashes", random: "Random pattern" };
   var RANDOM_PATS = PATTERNS.filter(function(x){ return x !== "none" && x !== "solid"; });
-  function patIco(id){
-    var box = '<rect x="4" y="4" width="16" height="16" rx="3"/>', g = function(d){ return box + '<path d="' + d + '" stroke-width="1.3"/>'; };
-    switch (id){
-      case "solid": return '<rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor" fill-opacity=".55"/>';
-      case "diag": return g("M4 12 12 4M4 20 20 4M12 20l8-8");
-      case "diag2": return g("M12 4l8 8M4 4l16 16M4 12l8 8");
-      case "horiz": return g("M4 8.5h16M4 12h16M4 15.5h16");
-      case "vert": return g("M8.5 4v16M12 4v16M15.5 4v16");
-      case "grid": return g("M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16");
-      case "cross": return g("M4 12 12 4M4 20 20 4M12 20l8-8M12 4l8 8M4 4l16 16M4 12l8 8");
-      case "dots": return box + '<g fill="currentColor" stroke="none"><circle cx="8.5" cy="8.5" r="1.3"/><circle cx="15.5" cy="8.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="8.5" cy="15.5" r="1.3"/><circle cx="15.5" cy="15.5" r="1.3"/></g>';
-      case "dashes": return g("M6 9h4M14 9h4M8 15h4M16 15h2");
-      case "random": return box + '<text x="12" y="16.5" font-size="12" fill="currentColor" stroke="none" text-anchor="middle" font-family="system-ui, sans-serif">?</text>';
-      default: return box;
-    }
-  }
+  var patLabel = function(id){ return RC.PATTERN_LABELS[id] || id; };
+  var patIco = function(id){ return RC.patternIcon(id); };
+  // The lasso's hatch lines (FORMAT.md hatchWidth; dots: their size): auto (no field: the spacing's
+  // own look), thin or thick (0.4 / 2 times auto, stored in doc units). Tap cycles.
+  var HATCH_OPTS = [
+    ["auto", "Hatch lines: auto", '<path d="M5 8h14M5 12h14M5 16h14"/>'],
+    ["thin", "Hatch lines: thin", '<path d="M5 8h14M5 12h14M5 16h14" stroke-width=".8"/>'],
+    ["thick", "Hatch lines: thick", '<path d="M5 7.5h14M5 12h14M5 16.5h14" stroke-width="3.2"/>'],
+  ];
+  var HATCH_MUL = { thin: 0.4, thick: 2 };
   var SHAPES = [
     { k: "rect", label: "Rectangle", tool: "rect", ico: '<rect x="4" y="6" width="16" height="12"/>' },
     { k: "round", label: "Rounded rectangle", tool: "rect", round: true, ico: '<rect x="4" y="6" width="16" height="12" rx="4"/>' },
@@ -245,7 +240,7 @@ var SightReviewDraw = (function(){
   var OPAC0 = { brush: 1, marker: 0.4, arrow: 1, rect: 1, ellipse: 1, text: 1 };
   var OPAC = clone(OPAC0);
   // pen.fill: a filled shape's fill colour, null = the line's own (lighter).
-  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, brush: 0, lasso: "diag", astroke: clone(ASTROKE0), fill: null, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
+  var pen = { tool: "brush", color: COLORS[0], arrow: 0, shape: 0, brush: 0, lasso: "diag", hatch: "auto", astroke: clone(ASTROKE0), fill: null, text: clone(TEXT0) }, lastTool = "brush";  // tool null: none (tap the active one)
   try {
     var ps = JSON.parse(localStorage.getItem("sight-review:pen"));
     if (ps && TOOLS.some(function(t){ return t[0] === ps.tool; })) pen.tool = lastTool = ps.tool;
@@ -254,6 +249,7 @@ var SightReviewDraw = (function(){
     if (ps && SHAPES[ps.shape]) pen.shape = ps.shape;
     if (ps && BRUSHES[ps.brush]) pen.brush = ps.brush;
     if (ps && LASSO_PATS.indexOf(ps.lasso) >= 0) pen.lasso = ps.lasso;
+    if (ps && HATCH_OPTS.some(function(h){ return h[0] === ps.hatch; })) pen.hatch = ps.hatch;
     if (ps && ps.astroke) ASTROKE_OPTS.forEach(function(x){ if (x.opts.some(function(v){ return v[0] === ps.astroke[x.k]; })) pen.astroke[x.k] = ps.astroke[x.k]; });
     if (ps && typeof ps.fill === "string" && /^#[0-9a-f]{6}$/i.test(ps.fill)) pen.fill = ps.fill;
     if (ps && (ps.tool === "rect" || ps.tool === "ellipse") && SHAPES[pen.shape].tool !== ps.tool) pen.shape = ps.tool === "rect" ? 0 : 2;
@@ -265,7 +261,7 @@ var SightReviewDraw = (function(){
       if (ok) pen.text[k] = v;
     });
   } catch (e) {}
-  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, brush: pen.brush, lasso: pen.lasso, astroke: pen.astroke, fill: pen.fill, text: pen.text })); } catch (e) {} }
+  function savePen(){ if (pen.tool) lastTool = pen.tool; try { localStorage.setItem("sight-review:pen", JSON.stringify({ tool: lastTool, color: pen.color, sizes: SIZE, opac: OPAC, arrow: pen.arrow, shape: pen.shape, brush: pen.brush, lasso: pen.lasso, hatch: pen.hatch, astroke: pen.astroke, fill: pen.fill, text: pen.text })); } catch (e) {} }
   // Two fingers: zoom by their distance and turn by their angle from the view at the start of the
   // pinch (g: {z, r, d, a}); a quarter turn snaps within 6°.
   function pinch(g, a, b, zmin, zmax){
@@ -278,6 +274,7 @@ var SightReviewDraw = (function(){
   // cannot import).
   function plain(e, code){ return e.code === code && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey; }
   function ctrlOnly(e, code){ return e.code === code && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey; }
+  function shiftOnly(e, code){ return e.code === code && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey; }
   // Ctrl+C / Ctrl+X keep copies here (doc units), shared by every canvas opened on this page, so a
   // drawing copied on one frame / picture pastes on another.
   // clipCut: the items just cut — the first paste after a cut lands in place, unless an undo has
@@ -464,7 +461,7 @@ var SightReviewDraw = (function(){
           vb.classList.toggle("on", i === pick);
           return vb;
         }).concat(s === "shapes" ? [fillButton()] : s === "arrows" && !inSel && ARROWS[pen.arrow].stroke ? astrokeButtons()
-          : s === "brush" && BRUSHES[pen.brush].close ? [patternButton()] : []));
+          : s === "brush" && BRUSHES[pen.brush].close ? [patternButton(), hatchButton()] : []));
       });
       b.dataset.t = s; trow.appendChild(b);
       if (s === "text") b.addEventListener("mousedown", keepField);
@@ -502,12 +499,14 @@ var SightReviewDraw = (function(){
     }
     // The lasso's pattern: a second row of them (and random).
     function patternButton(){
-      var pb = tbtn("Fill pattern: " + PAT_LABEL[pen.lasso], ico(patIco(pen.lasso)), function(){
+      var pb = tbtn("Fill pattern: " + patLabel(pen.lasso), ico(patIco(pen.lasso)), function(){
         if (sub && sub.k === "pattern"){ closeSub(); return; }
         subRow("pattern", pb, LASSO_PATS.map(function(id){
-          var q = tbtn(PAT_LABEL[id], ico(patIco(id)), function(){
+          var q = tbtn(patLabel(id), ico(patIco(id)), function(){
             pen.lasso = id; savePen(); closeSub();
-            pb.innerHTML = ico(patIco(id)); pb.title = "Fill pattern: " + PAT_LABEL[id]; pb.setAttribute("aria-label", pb.title);
+            pb.innerHTML = ico(patIco(id)); pb.title = "Fill pattern: " + patLabel(id); pb.setAttribute("aria-label", pb.title);
+            var hb = fly && fly.el.querySelector("[data-hatch]");
+            if (hb) hb.hidden = !hatchShown();
           });
           q.classList.toggle("on", id === pen.lasso);
           return q;
@@ -515,6 +514,21 @@ var SightReviewDraw = (function(){
       });
       pb.dataset.pat = "1";
       return pb;
+    }
+    // The hatch lines' thickness (pen.hatch), shown while the pattern has lines / dots.
+    function hatchShown(){ return pen.lasso !== "none" && pen.lasso !== "solid"; }
+    function hatchButton(){
+      var hb = tbtn("", "", function(){
+        var i = HATCH_OPTS.findIndex(function(h){ return h[0] === pen.hatch; });
+        pen.hatch = HATCH_OPTS[(Math.max(0, i) + 1) % HATCH_OPTS.length][0];
+        savePen(); show();
+      });
+      function show(){
+        var cur = HATCH_OPTS.find(function(h){ return h[0] === pen.hatch; }) || HATCH_OPTS[0];
+        hb.innerHTML = ico(cur[2]); hb.title = cur[1]; hb.setAttribute("aria-label", cur[1]);
+      }
+      hb.dataset.hatch = "1"; hb.hidden = !hatchShown(); show();
+      return hb;
     }
     function setTool(t){
       closeFly();  // a tool from elsewhere (a key, a hold): the row would show a stale pick
@@ -936,7 +950,7 @@ var SightReviewDraw = (function(){
     // The thickness key of an item: arrows along a stroke keep theirs in width.
     function wkey(it){ return RC.typeOf(it) === "arrows" ? "width" : WKEY[it.kind]; }
     // Lengths that follow the thickness (as RC.transformItem scales them).
-    var WFOLLOW = ["gap", "step", "len"];
+    var WFOLLOW = ["gap", "step", "len", "hatchWidth"];
     function showSelSize(){
       if (!sel.length) return;
       var it = sel[0], d = it.data, w = d[wkey(it)] || 0;
@@ -1213,6 +1227,7 @@ var SightReviewDraw = (function(){
         if (t === "brush" && BRUSHES[pen.brush].close){
           var pat = pen.lasso === "random" ? RANDOM_PATS[Math.floor(Math.random() * RANDOM_PATS.length)] : pen.lasso;
           d.close = true; d.pattern = pat; d.fill = c; d.fillOpacity = 0.5; d.gap = RC.r2(Math.max(5, SIZE.brush * 1.7) * k);
+          if (HATCH_MUL[pen.hatch] && pat !== "none" && pat !== "solid") d.hatchWidth = RC.r2(d.gap * (pat === "dots" ? 0.4 : 0.18) * HATCH_MUL[pen.hatch]);
         }
         cur = { kind: "stroke", shape_kind: t, z: ++zc, data: d };
       } else if (t === "arrow" && ARROWS[pen.arrow].stroke){
@@ -1318,7 +1333,7 @@ var SightReviewDraw = (function(){
     function roundItem(it){
       var d = it.data;
       if (Array.isArray(d.pts)) d.pts = d.pts.map(RC.r2);
-      ["x", "y", "w", "h", "size", "width", "rot", "bend", "radius", "outline", "gap", "step", "len"].forEach(function(key){ if (typeof d[key] === "number") d[key] = RC.r2(d[key]); });
+      ["x", "y", "w", "h", "size", "width", "rot", "bend", "radius", "outline", "gap", "step", "len", "hatchWidth"].forEach(function(key){ if (typeof d[key] === "number") d[key] = RC.r2(d[key]); });
     }
     function abort(){
       if (stroke && stroke.t === "eraser") items = stroke.before;
@@ -1413,6 +1428,9 @@ var SightReviewDraw = (function(){
       else if (ctrlOnly(e, "KeyC")){ if (!copySel(false)) return; }
       else if (ctrlOnly(e, "KeyX")){ if (!copySel(true)) return; }
       else if (ctrlOnly(e, "KeyV")){ if (!pasteClip()) return; }
+      // Sight's keys for its Lasso / Stroke arrows tools take those kinds of the brush / arrows slots.
+      else if (plain(e, "KeyL")){ pen.brush = BRUSHES.findIndex(function(v){ return v.close; }); setTool("brush"); }
+      else if (shiftOnly(e, "KeyW")){ pen.arrow = ARROWS.findIndex(function(v){ return v.stroke; }); setTool("arrow"); }
       else {
         var tl = TOOLS.find(function(x){ return plain(e, x[3]); });
         if (!tl) return;
