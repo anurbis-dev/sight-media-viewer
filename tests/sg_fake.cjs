@@ -48,7 +48,22 @@ function createFakeShotGrid(opts){
     }
     if (op === "type_is") return !!(v && v.type === val);
     if (op === "contains") return String(v || "").toLowerCase().includes(String(val).toLowerCase());
+    if (op === "not_contains") return !String(v || "").toLowerCase().includes(String(val).toLowerCase());
+    if (op === "is_not") return !match(r, [field, "is", val]);
+    if (op === "name_contains" || op === "name_is" || op === "name_not_contains"){
+      const names = (Array.isArray(v) ? v : v ? [v] : []).map((x) => String(x.name || x.code || "").toLowerCase()), n = String(val).toLowerCase();
+      if (op === "name_is") return names.includes(n);
+      const hit = names.some((x) => x.includes(n));
+      return op === "name_contains" ? hit : !hit;
+    }
+    if (op === "greater_than") return v != null && v > val;
+    if (op === "less_than") return v != null && v < val;
     throw new Error("fake: op " + op);
+  }
+  // the REST hash filter format: {logical_operator, conditions: [{path, relation, values} | group]}
+  function matchHash(r, g){
+    const one = (c) => c.logical_operator ? matchHash(r, c) : match(r, [c.path, c.relation, c.values.length === 1 ? c.values[0] : c.values]);
+    return g.logical_operator === "or" ? g.conditions.some(one) : g.conditions.every(one);
   }
   const json = (status, body) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -81,8 +96,9 @@ function createFakeShotGrid(opts){
     const auth = (h.authorization || "").replace(/^Bearer /, "");
     if (!tokens.has(auth)) return json(401, { errors: [{ title: "Unauthorized" }] });
     if (path.startsWith("/schema/versions/fields")){
-      const fld = (name, data_type) => ({ name: { value: name }, data_type: { value: data_type }, visible: { value: true } });
-      return json(200, { data: { code: fld("Version Name", "text"), sg_status_list: fld("Status", "status_list"), user: fld("Artist", "entity"),
+      const fld = (name, data_type, properties) => ({ name: { value: name }, data_type: { value: data_type }, visible: { value: true }, properties: properties || {} });
+      const statuses = { valid_values: { value: ["rev", "apr", "na"] }, display_values: { value: { rev: "Pending Review", apr: "Approved", na: "N/A" } } };
+      return json(200, { data: { code: fld("Version Name", "text"), sg_status_list: fld("Status", "status_list", statuses), user: fld("Artist", "entity"),
         entity: fld("Link", "entity"), description: fld("Description", "text"), created_at: fld("Date Created", "date_time"),
         image: fld("Thumbnail", "image"), filmstrip_image: fld("Filmstrip Thumbnail", "image"), sg_uploaded_movie: fld("Uploaded Movie", "url"), id: fld("Id", "number") } });
     }
@@ -94,7 +110,10 @@ function createFakeShotGrid(opts){
     if (!type) return json(404, { errors: [{ title: "Unknown entity " + parts[1] }] });
     const fieldsOpt = (qs.get("options[fields]") || qs.get("fields") || "").split(",").filter(Boolean);
     if (parts[2] === "_search" && method === "POST"){
-      let list = [...db[type].values()].filter((r) => (body.filters || []).every((f) => match(r, f)));
+      const hash = body.filters && !Array.isArray(body.filters);
+      if (hash !== /hash/.test(h["content-type"] || "")) return json(400, { errors: [{ title: "filter format and content type disagree" }] });
+      if (hash) log.push("hash " + JSON.stringify(body.filters));
+      let list = [...db[type].values()].filter((r) => hash ? matchHash(r, body.filters) : (body.filters || []).every((f) => match(r, f)));
       if (body.sort){ const desc = body.sort[0] === "-", k = body.sort.replace(/^-/, ""); list.sort((x, y) => (x[k] > y[k] ? 1 : x[k] < y[k] ? -1 : 0) * (desc ? -1 : 1)); }
       const size = (body.page && body.page.size) || 500, num = (body.page && body.page.number) || 1;
       const page = list.slice((num - 1) * size, num * size);

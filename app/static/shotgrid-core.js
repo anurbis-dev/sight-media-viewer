@@ -16,6 +16,7 @@ var SightShotGrid = (function(){
 
   var API = "/api/v1.1";
   var ARRAY_JSON = "application/vnd+shotgun.api3_array+json";
+  var HASH_JSON = "application/vnd+shotgun.api3_hash+json";
   var OUR_PREFIX = "sight-";            // attachments Sight / the phone uploaded: never pulled back as pictures
   var DEFAULT_STATUS = { open: "opn", progress: "ip", done: "clsd" };
 
@@ -231,7 +232,12 @@ var SightShotGrid = (function(){
       if (NO_TILE_TYPE[type] || k === "id" || k === "filmstrip_image" || k === "image") return;
       var vis = f.visible && f.visible.value;
       if (vis === false) return;
-      out.push({ name: k, label: (f.name && f.name.value) || k, type: type });
+      var x = { name: k, label: (f.name && f.name.value) || k, type: type };
+      // a list / status field's choices (the filter builder offers them): properties.valid_values, display_values
+      var pr = f.properties || {}, vv = pr.valid_values && pr.valid_values.value, dv = pr.display_values && pr.display_values.value;
+      if (Array.isArray(vv)) x.values = vv.filter(function(v){ return v != null && v !== ""; }).map(String);
+      if (dv && typeof dv === "object") x.labels = dv;
+      out.push(x);
     });
     out.sort(function(a, b){ return a.label.localeCompare(b.label); });
     return out;
@@ -257,10 +263,17 @@ var SightShotGrid = (function(){
   }
   // A page of Versions (newest first) with the fields a tile needs.
   var BROWSE_FIELDS = VERSION_FIELDS.concat(["image", "filmstrip_image", "updated_at", "created_at", "user", "sg_uploaded_movie"]);
-  async function browseVersions(client, f, fields, page, size){
+  // `where`: the filter builder's conditions as a hash group (SightFilter.toSgConditions) — ANDed with the browser's
+  // own filters, sent in the hash format (the array format has no OR groups).
+  async function browseVersions(client, f, fields, page, size, where){
     var want = BROWSE_FIELDS.slice();
     (fields || []).forEach(function(k){ if (want.indexOf(k) < 0) want.push(k); });
-    var j = await client.api("POST", "/entity/versions/_search", { filters: versionFilters(f), fields: want, sort: "-created_at", page: { size: size || 60, number: page || 1 } }, { contentType: ARRAY_JSON });
+    var base = versionFilters(f), filters = base, type = ARRAY_JSON;
+    if (where && where.conditions && where.conditions.length){
+      filters = { logical_operator: "and", conditions: base.map(function(x){ return { path: x[0], relation: x[1], values: [x[2]] }; }).concat([where]) };
+      type = HASH_JSON;
+    }
+    var j = await client.api("POST", "/entity/versions/_search", { filters: filters, fields: want, sort: "-created_at", page: { size: size || 60, number: page || 1 } }, { contentType: type });
     return ((j && j.data) || []).map(flat);
   }
   // Filmstrip scrubbing (ShotGrid's video thumbnails: one picture of frames side by side, FILMSTRIP_W px each): the

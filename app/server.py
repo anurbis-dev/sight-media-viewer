@@ -374,6 +374,16 @@ class RangeNotSatisfiable(Exception):
     pass
 
 
+def _where_param(raw: str) -> object:
+    """The filter builder's tree from /api/assets?where=<json> (None when absent); 400 when it is not JSON."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError) as e:
+        raise HTTPException(400, "where: not JSON") from e
+
+
 def parse_byte_range(header: str | None, size: int) -> tuple[int, int] | None:
     """Half-open (start, end) of a single ``Range: bytes=…`` request. None means "send it all"
     (no header, or one we don't understand — the spec says to ignore those); RangeNotSatisfiable
@@ -500,10 +510,15 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         sort: str = "",
         order: str = "asc",
         review: str = "",
+        where: str = "",
     ) -> JSONResponse:
         lim = max(1, min(limit, 800))
-        items = lib.list_assets(q, kind, source, tag, bool(missing), collection, offset, lim, folder, sort, order, review)
-        total = lib.count_filtered(q, kind, source, tag, bool(missing), collection, folder, review) if offset == 0 else None
+        cond = _where_param(where)
+        try:
+            items = lib.list_assets(q, kind, source, tag, bool(missing), collection, offset, lim, folder, sort, order, review, cond)
+            total = lib.count_filtered(q, kind, source, tag, bool(missing), collection, folder, review, cond) if offset == 0 else None
+        except (ValueError, RecursionError) as e:  # a malformed filter-builder tree (Library.where_sql)
+            raise HTTPException(400, str(e)) from e
         lib.first_page_served()  # the startup scan waited for this (Library.resume_watchers)
         # JSONResponse directly: the rows are plain JSON types already, and (under FastAPI) the
         # jsonable_encoder walk of a 400-item page cost ~12 ms more than the dump itself.
@@ -581,17 +596,20 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         # An empty body cleans the whole library; filter fields (mirrors GET /api/assets) scope
         # it to the matching view instead — e.g. "just what's missing under the current filter".
         body = await json_body(request)
-        return {
-            "ok": True,
-            **lib.purge_missing(
+        try:
+            done = lib.purge_missing(
                 q=str(body.get("q") or ""),
                 kind=str(body.get("kind") or ""),
                 source_id=str(body.get("source") or ""),
                 tag=str(body.get("tag") or ""),
                 collection_id=str(body.get("collection") or ""),
                 folder=str(body.get("folder") or ""),
-            ),
-        }
+                review=str(body.get("review") or ""),
+                cond=body.get("where") or None,
+            )
+        except (ValueError, RecursionError) as e:  # a malformed filter-builder tree
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, **done}
 
     @app.post("/api/thumbs/refresh")
     async def refresh_thumbs(request: Request) -> dict:

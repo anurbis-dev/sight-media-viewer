@@ -222,6 +222,26 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .top-pop button.dir-btn:disabled { opacity: .4; }
 .top-pop .sep { height: 1px; margin: 4px 6px; background: var(--border); }
 .top-pop .opt { padding: 0 10px; height: 34px; }
+/* Filter ▾ — the filter builder (filter-core.js): rows field · operator · value in All / Any groups */
+#filterPop { left: auto; right: 0; width: min(640px, calc(100vw - 24px)); padding: 8px; }
+#filterPop .flt-group { display: flex; flex-direction: column; gap: 6px; }
+#filterPop .flt-group:not(.root) { padding: 6px 8px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--surface-3) 40%, transparent); }
+#filterPop .flt-ghead, #filterPop .flt-row, #filterPop .flt-gacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#filterPop .flt-ghead span { color: var(--subtle); font-size: 12px; }
+#filterPop select, #filterPop input { height: 30px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
+#filterPop .flt-f { flex: 1 1 120px; max-width: 200px; }
+#filterPop .flt-o { flex: 0 1 140px; }
+#filterPop .flt-v { flex: 1 1 140px; }
+#filterPop .flt-days { flex: 1 1 140px; display: flex; align-items: center; gap: 6px; color: var(--subtle); font-size: 12px; }
+#filterPop .flt-days .flt-v { width: 80px; flex: none; }
+#filterPop .flt-row.incomplete .flt-v { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+#filterPop .flt-none { color: var(--subtle); font-size: 12px; padding: 4px 2px; }
+#filterPop button { width: auto; height: 30px; display: inline-flex; padding: 0 10px; font-size: 12px; }
+#filterPop button.flt-x { width: 30px; justify-content: center; padding: 0; color: var(--subtle); }
+#filterPop .flt-clear { margin-left: auto; }
+@media (pointer: coarse) { #filterPop select, #filterPop input, #filterPop button { height: 38px; } #filterPop button.flt-x { width: 38px; } }
+/* a narrow window: across the window under the top bar (the top tools may run past its edge); top set on open */
+@media (max-width: 720px) { #filterPop { position: fixed; left: 8px; right: 8px; width: auto; } }
 input::placeholder, textarea::placeholder { color: var(--subtle); }
 /* overflow-anchor: none — the grid is virtual: renderGrid() moves .slice and swaps the cards above
    the view itself. With the browser's scroll anchoring on, Chromium "corrected" scrollTop by one
@@ -794,6 +814,8 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
       <button class="btn ghost icon" id="splitBtn" type="button" title="Show the library beside the board (Tab)" hidden>◧</button>
       <input class="search" id="q" placeholder="Search names &amp; tags  /" />
       <div class="top-tools">
+        <button class="btn ghost" id="filterBtn" type="button" title="Filter by fields: conditions in All / Any groups">Filter<span class="chev">›</span></button>
+        <div class="top-pop" id="filterPop" hidden></div>
         <button class="btn ghost" id="sortBtn" type="button">Sort<span class="chev">›</span></button>
         <div class="top-pop" id="sortPop" hidden></div>
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
@@ -828,6 +850,7 @@ import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoom
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { createSgSource, SG_PAGE } from "/static/sg-source.js";
 import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → ShotGrid test; annotate.js syncs)
+import "/static/filter-core.js";    // globalThis.SightFilter (Filter ▾: the filter builder)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
@@ -1171,7 +1194,7 @@ function openSgProject(p){
       registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
       onChange: (what) => {
         if (!sgOn()) return;
-        if (what === "labels"){ renderInsp(); return; }
+        if (what === "labels"){ renderInsp(); renderFilterBtn(); return; }
         if (what === "fields" && !sgSrc.needsReload(state.items)){ cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); return; }
         sgReload();
       },
@@ -1179,6 +1202,7 @@ function openSgProject(p){
   }
   if (state.view !== "library") setView("library");
   clearTimeout(qTimer);   // (a library search still waiting must not land in the project)
+  if (topPopOpen === "filterPop") closeTopPops();   // (a value still typed applies to the list it was typed for)
   sgProjectOn = p.id;
   // loading until the project's entities are read: no page asked for meanwhile; the grid empty at once (a library
   // page still on its way is dropped by pull)
@@ -1187,6 +1211,7 @@ function openSgProject(p){
   cardPool.forEach((el) => el.remove()); cardPool.clear();
   $("sgBar").hidden = false;
   $("sortBtn").hidden = true;
+  fltSeq++; renderFilterBtn();
   $("q").value = sgSrc.query;
   selectOnly(null);
   renderNav(); scheduleRender(); renderStatus();
@@ -1203,6 +1228,8 @@ function closeSgList(reload){
   scheduleRender();
   $("sgBar").hidden = true;
   $("sortBtn").hidden = false;
+  if (topPopOpen === "filterPop") closeTopPops();
+  fltSeq++; renderFilterBtn();
   $("q").value = state.filter.q || "";
   cardPool.forEach((el) => el.remove()); cardPool.clear();
   renderNav();
@@ -1386,6 +1413,12 @@ function loadSort(){
   return { key: "", dir: "asc" };
 }
 function saveSort(){ putSetting(SORT_KEY, JSON.stringify(state.sort)); }
+// The library's filter-builder conditions (Filter ▾), kept like the search text across sidebar picks and launches.
+const WHERE_KEY = "sight.filter.lib";
+function loadWhere(){
+  try { return SightFilter.sanitize(JSON.parse(localStorage.getItem(WHERE_KEY) || "null")); } catch {}
+  return SightFilter.empty();
+}
 
 const state = {
   items: [],
@@ -1393,7 +1426,7 @@ const state = {
   selected: null,
   selectedIds: [],
   anchor: null,
-  filter: { q:"", kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"" },
+  filter: { q:"", kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", where: loadWhere() },
   sort: loadSort(),
   meta: { sources:[], counts:{}, pending:0, scanning:false, ffmpeg:true, scanned:0, tags:[], collections:[] },
   tile: clampTile(Number(localStorage.getItem(TILE_KEY)) || RUNTIME_DEFAULT_TILE),
@@ -2882,7 +2915,7 @@ function navDblClick(key, threshold = 400){
 
 function applyFilter(patch){
   closeSgList(false);  // a library filter leaves a ShotGrid project's Versions (its own reset below)
-  state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", ...patch };
+  state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", where: state.filter.where, ...patch };
   renderNav();
   resetList();
 }
@@ -8856,8 +8889,10 @@ function lightStepRow(dir, e){
 }
 
 function isFilterEmpty(f){
-  return !f.q && !f.kind && !f.source && !f.tag && !f.collection && !f.folder && !f.review;
+  return !f.q && !f.kind && !f.source && !f.tag && !f.collection && !f.folder && !f.review && !libWhere(f);
 }
+// The builder's conditions as /api/assets sends them (null: none complete).
+function libWhere(f){ return f.where ? SightFilter.toLibWire(f.where, libFilterFields()) : null; }
 
 function filterParams(f){
   const p = new URLSearchParams();
@@ -8868,6 +8903,8 @@ function filterParams(f){
   if (f.collection) p.set("collection", f.collection);
   if (f.folder) p.set("folder", f.folder);
   if (f.review) p.set("review", f.review);
+  const w = libWhere(f);
+  if (w) p.set("where", JSON.stringify(w));
   return p;
 }
 
@@ -8901,7 +8938,7 @@ async function purgeMissing(scoped){
     r = await api("/api/missing/purge", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(scoped ? { q: f.q, kind: f.kind, source: f.source, tag: f.tag, collection: f.collection, folder: f.folder } : {}),
+      body: JSON.stringify(scoped ? { q: f.q, kind: f.kind, source: f.source, tag: f.tag, collection: f.collection, folder: f.folder, review: f.review, where: libWhere(f) } : {}),
     });
   } catch (err){
     alert("Could not clean up missing files: " + err.message);
@@ -9025,6 +9062,8 @@ function params(){
   if (f.collection) p.set("collection", f.collection);
   if (f.folder) p.set("folder", f.folder);
   if (f.review) p.set("review", f.review);
+  const w = libWhere(f);
+  if (w) p.set("where", JSON.stringify(w));
   if (state.sort.key){ p.set("sort", state.sort.key); p.set("order", state.sort.dir); }
   return p;
 }
@@ -9045,7 +9084,17 @@ async function pull(fromStart){
       const p = params();
       p.set("offset", String(state.items.length));
       p.set("limit", "400");
-      const data = await api("/api/assets?" + p);
+      let data;
+      try { data = await api("/api/assets?" + p); }
+      catch (err){
+        // a filter-builder tree the server refuses (synced from another version, …; its 400 detail starts with
+        // "filter" / "where"): say so and show an empty grid — anything else fails as before
+        let detail = "";
+        try { detail = String(JSON.parse(err.message).detail || ""); } catch {}
+        if (sgOn() || !libWhere(state.filter) || !/^(filter|where)\b/.test(detail)) throw err;
+        if (reset){ state.total = 0; scheduleRender(); }
+        flash("Filter ▾: " + detail.replace(/^(filter|where):\s*/, ""), 6000); renderStatus(); break;
+      }
       if (sgOn()) break;   // a ShotGrid project opened meanwhile: this page is not its list
       const items = data.items || [];
       if (data.total != null) state.total = data.total;
@@ -9853,6 +9902,58 @@ $("sortPop").onclick = (e) => {
 };
 $("sortBtn").onclick = () => toggleTopPop("sortPop", renderSortPop);
 
+// Filter ▾ — the filter builder (filter-core.js) for what the grid shows: the library's fields (evaluated by the
+// server, state.filter.where) or, while a ShotGrid project is open, its Version fields (sent to ShotGrid, sgSrc.where).
+let fltBuilder = null, fltSeq = 0;
+function libFilterFields(){
+  const tags = (state.meta.tags || []).map((t) => t.name);
+  return SightFilter.LIB_FIELDS.map((f) => f.name === "tags" ? Object.assign({}, f, { suggest: tags }) : f);
+}
+function filterCtx(){
+  // (an edit that leaves the conditions in effect as they were — a new empty row, All / Any over one row — only saves)
+  const same = (a, b, f) => JSON.stringify(SightFilter.clean(a, f)) === JSON.stringify(SightFilter.clean(b, f));
+  if (sgOn()) return { fields: sgSrc.filterFields(), tree: sgSrc.where, set: (t) => {
+    const f = sgSrc.filterFields() || [], was = sgSrc.where;
+    sgSrc.setWhere(t); renderFilterBtn();
+    if (!same(was, t, f)) sgReload();
+  } };
+  return { fields: libFilterFields(), tree: state.filter.where, set: (t) => {
+    const was = state.filter.where;
+    state.filter.where = t; putSetting(WHERE_KEY, JSON.stringify(t)); renderFilterBtn();
+    if (!same(was, t, libFilterFields())) resetList();
+  } };
+}
+function renderFilterBtn(){
+  const c = filterCtx(), n = c.fields ? SightFilter.count(c.tree, c.fields) : (c.tree.c.length ? 1 : 0);
+  const b = $("filterBtn");
+  b.innerHTML = `${n ? `Filter · ${n}` : "Filter"}<span class="chev">›</span>`;
+  b.classList.toggle("on", !!n);
+}
+function renderFilterPop(){
+  const pop = $("filterPop"), c = filterCtx(), my = ++fltSeq;
+  const narrow = matchMedia("(max-width: 720px)").matches, top = Math.round($("filterBtn").getBoundingClientRect().bottom + 6);
+  pop.style.top = narrow ? top + "px" : "";
+  pop.style.maxHeight = narrow ? Math.max(160, window.innerHeight - top - 8) + "px" : "";
+  const mount = (fields) => {
+    pop.innerHTML = "";
+    const host = document.createElement("div");
+    pop.append(host);
+    fltBuilder = SightFilter.mountBuilder(host, { fields, tree: c.tree, onChange: (t) => { if (my === fltSeq) c.set(t); },
+      suggest: (f) => f.suggest || null });
+  };
+  if (c.fields){ mount(c.fields); return; }
+  pop.innerHTML = `<div class="flt-none">Loading the Version fields…</div>`;
+  fltBuilder = null;
+  sgSrc.loadFilterFields().then((f) => { if (my === fltSeq && topPopOpen === "filterPop" && sgOn()){ mount(f); renderFilterBtn(); } })
+    .catch((e) => { if (my === fltSeq) pop.innerHTML = `<div class="flt-none">${esc(e.message)}</div>`; });
+}
+$("filterBtn").onclick = () => toggleTopPop("filterPop", renderFilterPop);
+// typing in it is not a grid shortcut; Esc closes it
+$("filterPop").addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (hotkey(e, "Escape")){ e.preventDefault(); closeTopPops(); $("filterBtn").focus(); }
+});
+
 // Display options (which fields show under each card's thumbnail) — moved out of Settings so
 // they sit next to the search/sort controls they actually affect.
 const VIEW_OPT_FIELDS = [["name", "Name"], ["kind", "Type"], ["created", "Created"], ["res", "Resolution"], ["size", "Size"]];
@@ -9873,14 +9974,18 @@ $("tsCmp").onclick = () => compareIds(state.selectedIds);
 $("tsSeq").onclick = () => openSequence(seqSelection());
 $("tsClose").onclick = () => selectOnly(null);
 
-// Only one of the two top-bar dropdowns is open at a time; tracked by element id so the button
+// Only one of the top-bar dropdowns is open at a time; tracked by element id so the button
 // that owns it can show an "active" state.
 let topPopOpen = null;
+const TOP_POP_BTN = { sortPop: "sortBtn", viewOptPop: "viewOptBtn", filterPop: "filterBtn" };
 function closeTopPops(){
   if (!topPopOpen) return;
-  $(topPopOpen).hidden = true;
+  const id = topPopOpen;
+  if (id === "filterPop") fltBuilder?.flush();   // a value still being typed applies
+  $(id).hidden = true;
   topPopOpen = null;
   $("sortBtn").classList.remove("active");
+  $("filterBtn").classList.remove("active");
 }
 function toggleTopPop(id, render){
   if (topPopOpen === id){ closeTopPops(); return; }
@@ -9888,16 +9993,20 @@ function toggleTopPop(id, render){
   render();
   $(id).hidden = false;
   topPopOpen = id;
-  if (id === "sortPop") $("sortBtn").classList.add("active");
+  if (id === "sortPop" || id === "filterPop") $(TOP_POP_BTN[id]).classList.add("active");
 }
 document.addEventListener("pointerdown", (e) => {
   if (!topPopOpen) return;
   const pop = $(topPopOpen);
-  const btn = topPopOpen === "sortPop" ? $("sortBtn") : $("viewOptBtn");
+  const btn = $(TOP_POP_BTN[topPopOpen]);
   if (pop && !pop.contains(e.target) && !btn.contains(e.target)) closeTopPops();
 }, true);
 registerAutoClose($("sortPop"), closeTopPops, $("sortBtn"));
 registerAutoClose($("viewOptPop"), closeTopPops, $("viewOptBtn"));
+// (not while a value is being typed in it: the pointer wandering off must not drop the field under the caret)
+// (nor while a field / list in it has focus: a native select's list or date picker reaches past it, and the pointer
+// wandering off must not drop the row being edited — a tap or click outside still closes it)
+registerAutoClose($("filterPop"), () => { if (!$("filterPop").contains(document.activeElement)) closeTopPops(); }, $("filterBtn"));
 
 const sideScrollEl = $("sideScroll");
 // Shared middle-click-drag-to-scroll behavior — every scrollable menu/panel gets it, not just
@@ -10479,6 +10588,7 @@ startWindowTracker(serverSettings?.window);
 applyViewDom();
 renderOptions();
 renderSortBtn();
+renderFilterBtn();
 renderNav();
 renderStatus();
 // Reveal the shell now — sources/tags/counts and the asset grid still show their empty state and

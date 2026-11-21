@@ -77,5 +77,9 @@ files only); no auto sync (a button).
 - Attachment `this_file.url` (signed S3 link, or a site link that redirects — both handled).
 - The `annot*.<frame>` naming of ShotGrid's own review annotations.
 - CORS: whether the site answers the phone app's origin; if not, deploy `tools/sg-proxy-worker.js`.
+- The filter builder's hash filters (0.103.0, `toSgConditions`): `Content-Type: application/vnd+shotgun.api3_hash+json`,
+  `{filters: {logical_operator, conditions: [{path, relation, values}]}}`; `name_contains` / `name_is` /
+  `name_not_contains` on entity fields, `is` / `is_not` with `[null]` for empty, `in_last [n, "DAY"]`, `between` on
+  date_time with ISO strings; `properties.valid_values` / `display_values` in `/schema/versions/fields`.
 
 **Owner 2026-11-21:** the media cache's files show in the library's All and type filters like every source's files (the viewer's shared logic); only the cache source's row is hidden from Sources.

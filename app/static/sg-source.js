@@ -11,7 +11,8 @@
 import { hotkey } from "/static/keys.js";
 
 const SG = () => globalThis.SightShotGrid;
-const FIELDS_KEY = "sight.sg.fields", FILTER_KEY = "sight.sg.filter";
+const FIELDS_KEY = "sight.sg.fields", FILTER_KEY = "sight.sg.filter", WHERE_KEY = "sight.sg.where";
+const SF = () => globalThis.SightFilter;
 export const SG_PAGE = 100;
 const ENTITY_TYPES = [["", "All"], ["Shot", "Shots"], ["Asset", "Assets"], ["Sequence", "Sequences"]];
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -27,6 +28,11 @@ export function createSgSource(opts){
   const filter = Object.assign({ type: "", entity: "", status: "", q: "" }, readJson(FILTER_KEY, {}));
   filter.entity = "";
   const statuses = new Set();
+  // the filter builder's conditions on Version fields (Filter ▾ in the top bar), sent with every page
+  let where = SF().sanitize(readJson(WHERE_KEY, null));
+  let fieldsPromise = null;
+  const loadFields = () => fieldsAll ? Promise.resolve(fieldsAll)
+    : (fieldsPromise = fieldsPromise || SG().versionFields(opts.client()).then((f) => { fieldsAll = f; return f; }).finally(() => { fieldsPromise = null; }));
 
   bar.innerHTML = `
     <b class="sgb-title"></b>
@@ -73,7 +79,7 @@ export function createSgSource(opts){
     fpop.innerHTML = `<div class="sgb-fhint">Loading fields…</div>`;
     const e = opts.registerAutoClose?.(fpop, () => { fpop.hidden = true; }, fbtn);
     if (e){ e.anchor = fbtn; e.armed = false; }
-    try { fieldsAll = fieldsAll || await SG().versionFields(opts.client()); }
+    try { await loadFields(); }
     catch (err){ fpop.innerHTML = `<div class="sgb-fhint">${esc(err.message)}</div>`; return; }
     paintFields("");
   };
@@ -97,6 +103,15 @@ export function createSgSource(opts){
     });
     fpop.querySelector("[data-act=def]").onclick = () => { fields = SG().DEFAULT_TILE_FIELDS.slice(); setFields(); paintFields(find.value); };
   }
+  // The schema's fields as the builder's; a status field with no listed choices offers the statuses seen so far and
+  // the ones the conditions name (a status filtered out never shows on a Version, yet its condition must hold).
+  function filterFields(){
+    if (!fieldsAll) return null;
+    const named = new Set(statuses);
+    (function walk(g){ g.c.forEach((x) => { if (SF().isGroup(x)) walk(x); else if (x.f === "sg_status_list" && x.v) named.add(String(x.v)); }); })(where);
+    return SF().sgFields(fieldsAll.map((f) => f.name === "sg_status_list" && !(f.values || []).length && named.size
+      ? Object.assign({}, f, { values: [...named].sort() }) : f));
+  }
   function setFields(){
     opts.putSetting(FIELDS_KEY, JSON.stringify(fields));
     opts.onChange("fields");
@@ -112,12 +127,19 @@ export function createSgSource(opts){
       project = p;
       $(".sgb-title").textContent = p.name || "Project";
       paintSeg(); paintStatuses();
-      if (!fieldsAll) SG().versionFields(opts.client()).then((f) => { fieldsAll = f; opts.onChange("labels"); }).catch(() => {});   // the inspector's field names
+      if (!fieldsAll) loadFields().then(() => opts.onChange("labels"), () => {});   // the inspector's field names
       await loadEntities();
     },
+    // The filter builder: the Version fields it offers (null until read), the conditions, and setting them.
+    filterFields,
+    loadFilterFields(){ return loadFields().then(filterFields); },
+    get where(){ return where; },
+    setWhere(t){ where = SF().sanitize(t); opts.putSetting(WHERE_KEY, JSON.stringify(where)); },
     // One page of Versions (1-based) as grid items; `more` = there may be further pages.
     async page(n){
-      const vs = await SG().browseVersions(opts.client(), Object.assign({ project: project.id }, filter), fields, n, SG_PAGE);
+      if (where.c.length && !fieldsAll){ await loadFields(); opts.onChange("labels"); }   // a condition needs its field's type (an error shows)
+      const cond = where.c.length ? SF().toSgConditions(where, filterFields()) : null;
+      const vs = await SG().browseVersions(opts.client(), Object.assign({ project: project.id }, filter), fields, n, SG_PAGE, cond);
       vs.forEach((v) => { if (v.sg_status_list && !statuses.has(v.sg_status_list)){ statuses.add(v.sg_status_list); paintStatuses(); } });
       return { items: vs.map(toItem), more: vs.length === SG_PAGE };
     },

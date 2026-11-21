@@ -2,7 +2,8 @@
 // project → its Versions as library tiles; Fields ▾ adds a field to the captions; the filmstrip follows the pointer
 // (letterboxed to the frame's aspect); the inspector shows a Version's fields; the top search box filters by name;
 // a double-click downloads the Version's media as a library file, links its review and opens it; the lightbox's
-// arrows step through the Versions (each downloaded in turn); a library row returns to the library.
+// arrows step through the Versions (each downloaded in turn); a library row returns to the library. Filter ▾ (stage
+// 3b): conditions on Version fields (sent to ShotGrid as hash filters) and on library fields (the server's).
 // Run by tests/test_shotgrid.py:  node tests/sg_view_e2e.cjs <sightBase> <fakeSite>
 const { chromium } = require("playwright");
 const assert = require("assert");
@@ -41,6 +42,34 @@ const [base] = process.argv.slice(2);
   await p.selectOption(".sgb-ent", "502"); await p.waitForFunction(() => document.querySelectorAll(".card").length === 1);
   assert.deepStrictEqual(await ids(), ["sg:78"]);
   await p.click(".sgb-seg button[data-t='']"); await p.waitForFunction(() => document.querySelectorAll(".card").length === 3);
+  // Filter ▾ (stage 3b): Status is Approved → 79; Any + Link contains sh020 → 78, 79; Clear → all three
+  const cards = (n) => p.waitForFunction((k) => document.querySelectorAll(".card").length === k, n, { timeout: 8000 });
+  await p.click("#filterBtn"); await p.waitForSelector("#filterPop [data-act=add]");
+  await p.click("#filterPop [data-act=add]");
+  await p.selectOption("#filterPop .flt-row .flt-f", "sg_status_list");
+  assert.strictEqual(await p.$eval("#filterPop .flt-row .flt-o", (e) => e.value), "is");
+  assert.ok((await p.$$eval("#filterPop .flt-row .flt-v option", (x) => x.map((o) => o.textContent))).includes("Approved"), "the schema's status labels");
+  await p.selectOption("#filterPop .flt-row .flt-v", "apr");
+  await cards(1);
+  assert.deepStrictEqual(await ids(), ["sg:79"]);
+  assert.strictEqual((await p.textContent("#filterBtn")).replace("›", "").trim(), "Filter · 1");
+  await p.selectOption("#filterPop .flt-join", "or");
+  await p.click("#filterPop .flt-group.root > .flt-gacts [data-act=add]");
+  const row2 = p.locator("#filterPop .flt-row").nth(1);
+  await row2.locator(".flt-f").selectOption("entity");
+  await row2.locator(".flt-v").fill("sh020");
+  await cards(2);
+  assert.deepStrictEqual((await ids()).sort(), ["sg:78", "sg:79"]);
+  await p.$eval(".card[data-id='sg:78']", (e) => { e.dataset.keep = "1"; });
+  await p.click("#filterPop .flt-group.root > .flt-gacts [data-act=addg]");   // a group of two empty rows: nothing changes
+  assert.strictEqual(await p.$$eval("#filterPop .flt-group:not(.root) .flt-row.incomplete", (x) => x.length), 2);
+  await p.waitForTimeout(400);
+  assert.strictEqual((await ids()).length, 2);
+  assert.ok(await p.$(".card[data-id='sg:78'][data-keep='1']"), "no reload for rows that filter nothing yet");
+  await p.click("#filterPop .flt-group.root > .flt-gacts [data-act=clear]");
+  await cards(3);
+  await p.keyboard.press("Escape");
+  assert.ok(await p.isHidden("#filterPop"));
   // open the middle one, then → steps to the next Version
   const names = async () => (await (await fetch(base + "/api/assets?limit=50")).json()).items.map((x) => x.name);
   await p.dblclick(".card[data-id='sg:79']");
@@ -59,6 +88,27 @@ const [base] = process.argv.slice(2);
   await p.click(".src-row:not(.sg-src)");
   await p.waitForFunction(() => !document.querySelector(".card[data-id^='sg:']"), null, { timeout: 5000 });
   assert.ok(await p.isHidden("#sgBar"));
+  // the library's own conditions (evaluated by Sight's server): Name contains sh0 → sh010.png; doesn't contain → none
+  await p.waitForFunction(() => document.querySelectorAll(".card").length === 1, null, { timeout: 8000 });
+  await p.click("#filterBtn"); await p.waitForSelector("#filterPop [data-act=add]");
+  assert.strictEqual(await p.$$eval("#filterPop .flt-row", (x) => x.length), 0, "the ShotGrid conditions stay with ShotGrid");
+  await p.click("#filterPop [data-act=add]");
+  await p.selectOption("#filterPop .flt-row .flt-f", "name");
+  await p.fill("#filterPop .flt-row .flt-v", "sh0");
+  await p.waitForTimeout(700);
+  assert.strictEqual(await p.$$eval(".card", (x) => x.length), 1);
+  await p.selectOption("#filterPop .flt-row .flt-o", "not_contains");
+  await cards(0);
+  assert.strictEqual(await p.$eval("#filterPop .flt-row .flt-v", (e) => e.value), "sh0", "the value stays when the operator takes the same kind");
+  await p.click("#filterPop [data-act=add]");
+  await p.selectOption("#filterPop .flt-join", "or");
+  const r2 = p.locator("#filterPop .flt-row").nth(1);
+  await r2.locator(".flt-f").selectOption("kind");
+  await r2.locator(".flt-v").selectOption("image");
+  await cards(1);
+  await p.click("#filterPop [data-act=clear]");
+  await cards(1);
+  assert.strictEqual((await p.textContent("#filterBtn")).replace("›", "").trim(), "Filter");
   assert.deepStrictEqual(errs, []);
   console.log("sg_view: ok");
   await b.close();

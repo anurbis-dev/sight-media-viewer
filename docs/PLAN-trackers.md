@@ -38,6 +38,7 @@ mark it done here, add the RECENT entry as usual.
 
 ### 3. The filter builder (+ the ShotGrid view onto the library grid)
 - **3a done in 0.102.0** (see RECENT): Versions are items of the library grid (`sgList`, `pullSg` paging as the grid nears its end, `sg-source.js`); sg-view.js is gone.
+- **3b done in 0.103.0** (see RECENT): Filter ▾ in the top bar → popup builder (app/static/filter-core.js): rows field · operator · value, All / Any, nested groups (3 levels); library fields evaluated by the server (`where_sql`), ShotGrid Version fields sent as REST hash filters (`logical_operator` and / or — the REST counterpart of `filter_operator` all / any). The ShotGrid bar's quick filters (type / entity / status) stay and are ANDed with it. Next: 3c (saved filters = smart collections), 3d (the phone sheet; filter-core.js is a plain script ready for build_pwa).
 - Blocks, each reviewed on its own: **3a** the ShotGrid view on the library grid; **3b** the filter builder (popup, AND / OR groups; library fields evaluated by the server, ShotGrid fields sent as `_search` filters with `filter_operator` all / any); **3c** smart collections; **3d** the phone.
 - **Owner 2026-11-21:** in this stage the ShotGrid view moves onto the library's own grid (a pluggable item source: library rows / ShotGrid Versions — shared virtualisation, tile size, layout, selection, keys; the inspector shows a Version's fields) and app/static/sg-view.js goes.
 - A row of conditions above the grid: field ▾ · operator ▾ · value (chips for statuses / entities read from the

@@ -21,6 +21,7 @@ app/static/canvas.js     the Canvas (board) view — ES module imported by index
 app/static/annotate.js   lightbox annotations + review notes panel — ES module imported by index.html
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
 app/static/sg-source.js  ShotGrid Versions as an item source of the library grid: filter bar, Fields ▾ captions, filmstrip, open as a library file
+app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, ShotGrid hash filters, the UI (SightFilter)
 app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version, shared with the phone app (docs/SHOTGRID.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
@@ -732,6 +733,17 @@ of the package's row ids (`asset_holding_annotations`), then name+size / kind. S
 once the last v/ver/version/rev/r + digits token is cut out), `PUT /api/assets/{id}/review-status`.
 `GET /api/assets` takes `review=open|review|changes|approved` and returns `review` / `open_notes`
 per item (subqueries `_REVIEW_SQL` / `_OPEN_NOTES_SQL`); `/api/state` counts carry `review_*`.
+**Filter builder** (Filter ▾ in the top bar; app/static/filter-core.js, `SightFilter`). A tree
+`{op: "and"|"or", c: [cond | group]}`, cond `{f, o, v}`; one UI (`mountBuilder`) for every source, the fields
+differ. Library: `LIB_FIELDS` (name, kind, ext, tags, rating, mtime, added, path, note, review), the raw tree in
+`state.filter.where` (kept across sidebar picks like `q`, saved as `sight.filter.lib`), sent as
+`GET /api/assets?where=<json>` in the wire form (`toLibWire`: incomplete rows dropped, dates resolved to local
+epoch-ms bounds) and ANDed in `Library._clause` by `where_sql` (whitelisted fields / ops, ≤ 4 levels, ≤ 100
+conditions; anything else → 400). Also in the scoped "Remove missing" (`/api/missing/purge` body `where`).
+ShotGrid project: `sgSrc.where` (`sight.sg.where`), fields from the Version schema (`sgFields`: text, entity,
+status / list with `valid_values`, date / date_time, number, checkbox), sent by `browseVersions` as a REST **hash**
+filter (`toSgConditions`, content type `api3_hash+json`) ANDed with the bar's own filters; without conditions the
+array format is used as before. Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
 Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
 
 **Sequence** (index.html, `openSequence` … `bindSeqBar`) — selected videos played back to back in the

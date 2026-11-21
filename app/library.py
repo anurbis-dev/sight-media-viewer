@@ -115,6 +115,119 @@ _OPEN_NOTES_SQL = (
     "AND COALESCE(json_extract(an.data, '$.status'), 'open') != 'done')"
 )
 
+# The filter builder's conditions (docs/PLAN-trackers.md stage 3b): a tree {"op": "and"|"or", "c": [cond | group]},
+# cond {"f": field, "o": op, "v": value}, as app/static/filter-core.js sends it (`toLibWire`: dates already resolved
+# to epoch ms in the viewer's time zone). Fields and ops are whitelisted here; anything else is a ValueError (400).
+_WHERE_TEXT = {"name": "name", "ext": "ltrim(ext, '.')", "path": "path", "note": "note"}
+_WHERE_DATE = {"mtime": "(mtime * 1000)", "added": "added_at"}
+_WHERE_MAX_DEPTH = 4
+_WHERE_MAX_CONDS = 100
+_TAGS_JSON = "(CASE WHEN json_valid(assets.tags) THEN assets.tags ELSE '[]' END)"
+
+
+def where_sql(tree: object) -> tuple[str, list[object]] | None:
+    """SQL (and its arguments) for a filter-builder tree; None when it has no condition."""
+    count = [0]
+
+    def num(v: object) -> float:
+        try:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise ValueError
+            return float(v)
+        except (ValueError, OverflowError):
+            raise ValueError("filter: a number is expected") from None
+
+    def text(v: object) -> str:
+        if not isinstance(v, str) or len(v) > 500:
+            raise ValueError("filter: a text value is expected")
+        return v.lower()
+
+    def cond(c: dict) -> tuple[str, list[object]]:
+        count[0] += 1
+        if count[0] > _WHERE_MAX_CONDS:
+            raise ValueError("filter: too many conditions")
+        f, o, v = c.get("f"), c.get("o"), c.get("v")
+        if f in _WHERE_TEXT:
+            col = f"ulower(COALESCE({_WHERE_TEXT[f]}, ''))"
+            if o == "empty":
+                return f"{col} = ''", []
+            if o == "not_empty":
+                return f"{col} != ''", []
+            t = text(v)
+            if f == "ext":
+                t = t.lstrip(".")
+                if not t:
+                    raise ValueError("filter: an extension is expected")
+            if o == "contains":
+                return f"instr({col}, ?) > 0", [t]
+            if o == "not_contains":
+                return f"instr({col}, ?) = 0", [t]
+            if o == "is":
+                return f"{col} = ?", [t]
+            if o == "is_not":
+                return f"{col} != ?", [t]
+            if o == "starts_with":
+                return f"substr({col}, 1, ?) = ?", [len(t), t]
+            if o == "ends_with":
+                return (f"substr({col}, -?) = ?", [len(t), t]) if t else ("1", [])
+        elif f in ("kind", "review"):
+            col = "kind" if f == "kind" else f"COALESCE({_REVIEW_SQL}, 'none')"
+            allowed = KIND_LABEL if f == "kind" else REVIEW_STATES + ("none",)
+            if o in ("is", "is_not"):
+                if v not in allowed:
+                    raise ValueError(f"filter: unknown {f} {v!r}")
+                return f"{col} {'=' if o == 'is' else '!='} ?", [v]
+        elif f == "tags":
+            each = f"SELECT 1 FROM json_each({_TAGS_JSON})"
+            if o == "empty":
+                return f"json_array_length({_TAGS_JSON}) = 0", []
+            if o == "not_empty":
+                return f"json_array_length({_TAGS_JSON}) > 0", []
+            if o == "has":
+                return f"EXISTS ({each} WHERE ulower(value) = ?)", [text(v)]
+            if o == "not_has":
+                return f"NOT EXISTS ({each} WHERE ulower(value) = ?)", [text(v)]
+            if o == "contains":
+                return f"EXISTS ({each} WHERE instr(ulower(value), ?) > 0)", [text(v)]
+        elif f == "rating":
+            sql_op = {"is": "=", "is_not": "!=", "gt": ">", "lt": "<"}.get(str(o))
+            if sql_op:
+                return f"COALESCE(rating, 0) {sql_op} ?", [num(v)]
+        elif f in _WHERE_DATE:
+            col = _WHERE_DATE[f]
+            if o == "gte":
+                return f"{col} >= ?", [num(v)]
+            if o == "lt":
+                return f"{col} < ?", [num(v)]
+            if o == "between":
+                if not isinstance(v, list) or len(v) != 2:
+                    raise ValueError("filter: between takes two numbers")
+                return f"({col} >= ? AND {col} < ?)", [num(v[0]), num(v[1])]
+        else:
+            raise ValueError(f"filter: unknown field {f!r}")
+        raise ValueError(f"filter: {f} has no operator {o!r}")
+
+    def group(g: object, depth: int) -> tuple[str, list[object]] | None:
+        if not isinstance(g, dict) or g.get("op") not in ("and", "or") or not isinstance(g.get("c"), list):
+            raise ValueError("filter: a group is {op: and|or, c: [...]}")
+        if depth > _WHERE_MAX_DEPTH:
+            raise ValueError("filter: groups nested too deep")
+        parts: list[str] = []
+        args: list[object] = []
+        for c in g["c"]:
+            if not isinstance(c, dict):
+                raise ValueError("filter: a condition is an object")
+            r = group(c, depth + 1) if "op" in c else cond(c)
+            if r:
+                parts.append(f"({r[0]})")
+                args.extend(r[1])
+        if not parts:
+            return None
+        return (" AND " if g["op"] == "and" else " OR ").join(parts), args
+
+    return group(tree, 1)
+
+
 # A version token in a file name: shot_v003, shot.v3, shot-ver2, shot_rev12, shot_r4 (the last
 # such token wins). Files in one folder whose names are equal once it is cut out are versions of
 # each other; a name without a token counts as version 0 of that group.
@@ -1039,6 +1152,8 @@ class Library:
         self._heavy_failed: set[tuple[str, int]] = set()  # (path, mtime) that timed out / crashed
         self.conn = sqlite3.connect(str(root / "library.db"), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # Unicode lower case for the filter builder (SQLite's own lower() folds ASCII only: "Фон" ≠ "фон")
+        self.conn.create_function("ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA busy_timeout=4000")
@@ -1948,6 +2063,8 @@ class Library:
         tag: str = "",
         collection_id: str = "",
         folder: str = "",
+        review: str = "",
+        cond: object = None,
     ) -> dict:
         """Drops the index entries of files that are gone (moved or deleted) — status='missing'.
         Only the index is touched, never anything on disk. Each entry is re-checked first: a file
@@ -1958,9 +2075,9 @@ class Library:
         files that still exist. Passing any of the filter args (mirrors list_assets/count_filtered)
         scopes the drop to missing entries matching them, e.g. the current view's filter — moves are
         still reconciled library-wide regardless, since that's never destructive."""
+        clause, args = self._clause(q, kind, source_id, tag, True, collection_id, folder, review, cond)  # (a bad filter fails first)
         moved = self._reconcile_moved()
         usable = {r["id"]: Path(r["path"]).is_dir() for r in self.query("SELECT id, path FROM sources")}
-        clause, args = self._clause(q, kind, source_id, tag, True, collection_id, folder)
         gone: list[str] = []
         revived: list[tuple[str]] = []
         skipped = 0
@@ -3597,9 +3714,14 @@ class Library:
         collection_id: str = "",
         folder: str = "",
         review: str = "",
+        cond: object = None,
     ) -> tuple[str, list[object]]:
         where = ["status != 'excluded'"]
         args: list[object] = []
+        built = where_sql(cond) if cond else None  # the filter builder's tree (ValueError when malformed)
+        if built:
+            where.append(f"({built[0]})")
+            args.extend(built[1])
         for tok in [t for t in q.replace(",", " ").split() if t]:
             needle = tok.lower()
             where.append("(instr(lower(name), ?) OR instr(lower(note), ?) OR instr(lower(tags), ?))")
@@ -3667,8 +3789,9 @@ class Library:
         sort: str = "",
         order: str = "asc",
         review: str = "",
+        cond: object = None,
     ) -> list[dict]:
-        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
+        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review, cond)
         order_sql = self._order_by(sort, order)
         sql = f"SELECT {self._LIST_COLS} FROM assets WHERE {clause} {order_sql} LIMIT ? OFFSET ?"
         args.extend([limit, offset])
@@ -3714,8 +3837,9 @@ class Library:
         collection_id: str = "",
         folder: str = "",
         review: str = "",
+        cond: object = None,
     ) -> int:
-        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
+        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review, cond)
         row = self.query(f"SELECT COUNT(*) c FROM assets WHERE {clause}", tuple(args))
         return int(row[0]["c"]) if row else 0
 

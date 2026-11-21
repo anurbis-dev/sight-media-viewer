@@ -328,6 +328,16 @@
   (downloading it). Settings → ShotGrid → *Media cache limit* caps that cache (empty = Auto: as much as the disk
   holds, 2 GB kept free; the oldest opened go first) and *Clear cache* empties it. Any library row in the sidebar
   returns to the library.
+- **Filter ▾** — the button next to the search box narrows what the grid shows by fields: *+ Condition* adds a row
+  field · operator · value (Name contains…, Type is…, Tags has…, Rating greater than…, Modified in the last … days /
+  on / before / after a day, Path, Note, Review state, Extension), *All* / *Any* at the top decides whether every row
+  or one of them must hold, and *+ Group* adds a box of rows with its own All / Any (e.g. *Name contains sh010* AND
+  *(Type is Video OR Rating greater than 3)*). A row still missing its value is outlined and filters nothing; *✕*
+  removes a row or group, *Clear* removes them all. The button shows how many conditions apply. The conditions stay
+  while you move between sources, collections and tags (like the search text) and are remembered. While a ShotGrid
+  project is open the same button filters its Versions by the site's Version fields (Status is…, Link contains…,
+  Date Created in the last … days, any text / number / date / checkbox field) — kept apart from the library's.
+  Works with a mouse or a finger; Esc closes it.
 - **ShotGrid on the phone's home screen** — two pages, *Reviews* and *ShotGrid* (tap the tabs in the bar, or swipe
   sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
   pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name; *Fields*
