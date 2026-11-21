@@ -27,13 +27,31 @@ const [base, site, out] = process.argv.slice(2);
   assert.deepStrictEqual(await p.$$eval(".sgb-tile b", (x) => x.map((e) => e.textContent)), ["sh010_comp_v003", "robot_model_v002", "sh020_anim_v001"]);
   assert.strictEqual(await p.$$eval(".sgb-tile img", (x) => x.length), 3);
   await p.screenshot({ path: out + "/sgb1.png" });
+  // Fields: the site's Version fields; ticking Description shows it on the tiles
+  await p.tap(".sgb-fields");
+  await p.waitForSelector(".sheet .sgb-flist input[data-f='description']");
+  await p.tap(".sheet .sgb-flist input[data-f='description']");
+  await p.tap('.sheet button:has-text("Done")');
+  await p.waitForFunction(() => /Blocking pass/.test(document.querySelector(".sgb-tile[data-ver='78'] .cap").textContent), null, { timeout: 8000 });
+  // a finger dragged sideways over a video tile scrubs its filmstrip and does not open it
+  await p.waitForTimeout(300);
+  const th = await p.locator(".sgb-tile[data-ver='78'] .th").boundingBox();
+  const y = th.y + th.height / 2;
+  await touch("touchStart", [[th.x + 5, y]]); await p.waitForTimeout(400);
+  for (let i = 1; i <= 8; i++){ await touch("touchMove", [[th.x + 5 + (th.width - 15) * i / 8, y]]); await p.waitForTimeout(40); }
+  const scr = await p.evaluate(() => { const t = document.querySelector(".sgb-tile[data-ver='78']"); return [t.classList.contains("scrub"), t.querySelector(".strip").style.backgroundPosition]; });
+  await touch("touchEnd", []);
+  await p.waitForTimeout(500);
+  assert.deepStrictEqual(scr, [true, "100% 0%"], "filmstrip scrubbed to its last frame");
+  assert.strictEqual(await p.evaluate(() => !!(window.__sightReview.R)), false, "a drag does not open the Version");
+  assert.strictEqual(await p.evaluate(() => document.querySelector(".hometabs .on").dataset.p), "sg", "a drag on a tile does not switch the page");
   await p.tap(".sgb-types button[data-t='Shot']");
   await p.waitForTimeout(600);
   assert.deepStrictEqual(await p.$$eval(".sgb-tile b", (x) => x.map((e) => e.textContent)), ["sh010_comp_v003", "sh020_anim_v001"]);
   await p.selectOption(".sgb-ent", "502"); await p.waitForTimeout(600);
   assert.deepStrictEqual(await p.$$eval(".sgb-tile b", (x) => x.map((e) => e.textContent)), ["sh020_anim_v001"]);
   const cached = await p.evaluate(async () => (await (await caches.open("sight-review-sgthumbs")).keys()).length);
-  assert.strictEqual(cached, 3, "thumbnails cached");
+  assert.strictEqual(cached, 4, "3 thumbnails + the filmstrip cached");
   await p.tap(".sgb-tile[data-ver='78']");
   await p.waitForFunction(() => window.__sightReview.R && window.__sightReview.R.meta.sg, null, { timeout: 15000 });
   assert.deepStrictEqual(await p.evaluate(() => [window.__sightReview.R.meta.asset.name, window.__sightReview.R.meta.sg.link.version.code]), ["sh020_anim_v001.png", "sh020_anim_v001"]);

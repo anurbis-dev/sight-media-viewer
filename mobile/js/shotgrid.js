@@ -200,10 +200,9 @@ export async function sgSync(ctx){
 // the grid draws again without downloading. A tap opens the Version: its review on this device if there is one with
 // the media kept, else its web proxy (the uploaded movie / picture) is downloaded and opened as a review linked to it.
 // ctx: {el, btn, toast, busy, settings(), reviews(): [meta], openReview(key), openFile(file, link)}
-const FILTER_KEY = "sight-review:sgfilter";
+const FILTER_KEY = "sight-review:sgfilter", FIELDS_KEY = "sight-review:sgfields";
 const THUMBS = "sight-review-sgthumbs";
 const PAGE = 60;
-const VFIELDS = ["code", "project", "entity", "sg_task", "sg_first_frame", "frame_range", "sg_status_list", "image", "updated_at", "created_at", "user", "sg_uploaded_movie"];
 const ENTITY_TYPES = [["", "All"], ["Shot", "Shots"], ["Asset", "Assets"], ["Sequence", "Sequences"]];
 function loadFilter(){ try { const f = JSON.parse(localStorage.getItem(FILTER_KEY) || "null"); return f && typeof f === "object" ? f : {}; } catch { return {}; } }
 function saveFilter(f){ try { localStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch {} }
@@ -213,8 +212,9 @@ const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (x) => ({ "
 const thumbQ = [];
 let thumbRun = 0;
 // alive(): the grid still on screen (a browser re-made or closed drops its waiting thumbnails)
-function thumbUrl(cl, v, alive){
-  return new Promise((ok) => { thumbQ.push({ cl, v, ok, alive }); pumpThumbs(); });
+// kind: "img" (the thumbnail) or "strip" (the filmstrip of a video, frames side by side)
+function thumbUrl(cl, v, alive, kind = "img"){
+  return new Promise((ok) => { thumbQ.push({ cl, v, ok, alive, kind }); pumpThumbs(); });
 }
 // One cache entry per Version (its updated_at in a header: a changed Version replaces it in place); the cache is
 // trimmed to the newest MAX_THUMBS entries when a browser opens.
@@ -228,18 +228,19 @@ async function trimThumbs(){
 }
 async function pumpThumbs(){
   while (thumbRun < 4 && thumbQ.length){
-    const { cl, v, ok, alive } = thumbQ.shift();
+    const { cl, v, ok, alive, kind } = thumbQ.shift();
     if (alive && !alive()){ ok(null); continue; }
     thumbRun++;
     (async () => {
-      const key = `https://sg-thumb.invalid/${encodeURIComponent(cl.host)}/${v.id}`, upd = String(v.updated_at || "");
+      const key = `https://sg-thumb.invalid/${encodeURIComponent(cl.host)}/${v.id}${kind === "strip" ? "/strip" : ""}`, upd = String(v.updated_at || "");
+      const src = kind === "strip" ? v.filmstrip_image : v.image;
       try {
         const cache = globalThis.caches ? await caches.open(THUMBS) : null;
         let hit = cache ? await cache.match(key) : null;
         if (hit && hit.headers.get("X-Updated") !== upd) hit = null;
         if (!hit){
-          if (!v.image || typeof v.image !== "string") return ok(null);
-          const blob = await cl.download(v.image);
+          if (!src || typeof src !== "string") return ok(null);
+          const blob = await cl.download(src);
           hit = new Response(blob, { headers: { "Content-Type": blob.type || "image/jpeg", "X-Updated": upd } });
           if (cache){ await cache.delete(key); await cache.put(key, hit.clone()); }  // (re-put: the newest at the end)
         }
@@ -261,6 +262,7 @@ export function sgBrowser(ctx, box){
     return { refresh(){}, dispose(){} };
   }
   const cl = client(c), f = loadFilter(), urls = [];
+  let fields = (() => { try { const x = JSON.parse(localStorage.getItem(FIELDS_KEY) || "null"); return Array.isArray(x) ? x : null; } catch { return null; } })() || SG().DEFAULT_TILE_FIELDS.slice();
   let gone = false, opening = false, loading = false;
   trimThumbs();
   const bar = el("div", "sgb-filter");
@@ -270,7 +272,8 @@ export function sgBrowser(ctx, box){
   const stat = el("select", "sgb-stat"); stat.setAttribute("aria-label", "Status");
   const q = el("input", "sgb-q"); q.type = "search"; q.placeholder = "Version name contains…"; q.spellcheck = false; q.value = f.q || "";
   bar.appendChild(proj); bar.appendChild(types); bar.appendChild(ent);
-  const row = el("div", "sgb-row"); row.appendChild(stat); row.appendChild(q); bar.appendChild(row);
+  const fbtn = btn("btn sgb-fields", "Fields", () => pickFields(), "Which fields the tiles show");
+  const row = el("div", "sgb-row"); row.appendChild(stat); row.appendChild(q); row.appendChild(fbtn); bar.appendChild(row);
   box.appendChild(bar);
   const grid = el("div", "sgb-grid"), more = btn("btn sgb-more", "More", () => { if (!loading) load(true); });
   more.hidden = true;
@@ -303,15 +306,9 @@ export function sgBrowser(ctx, box){
     loading = true;
     if (!append){ gridGen++; page = 0; grid.textContent = ""; urls.splice(0).forEach((u) => URL.revokeObjectURL(u)); }
     msg.textContent = "Loading…";
-    const filters = [["project", "is", { type: "Project", id: Number(f.project) }]];
-    if (f.entity && f.type) filters.push(["entity", "is", { type: f.type, id: Number(f.entity) }]);
-    else if (f.type) filters.push(["entity", "type_is", f.type]);
-    if (f.status) filters.push(["sg_status_list", "is", f.status]);
-    if (f.q) filters.push(["code", "contains", f.q]);
     try {
-      const j = await cl.api("POST", "/entity/versions/_search", { filters, fields: VFIELDS, sort: "-created_at", page: { size: PAGE, number: page + 1 } }, { contentType: "application/vnd+shotgun.api3_array+json" });
+      const vs = await SG().browseVersions(cl, f, fields, page + 1, PAGE);
       if (my !== seq) return;
-      const vs = ((j && j.data) || []).map(SG().flat);
       page++;
       vs.forEach((v) => { if (v.sg_status_list && !statuses.has(v.sg_status_list)){ statuses.add(v.sg_status_list); paintStat(); } grid.appendChild(tile(v)); });
       msg.textContent = grid.childNodes.length ? "" : "No Version matches.";
@@ -319,21 +316,89 @@ export function sgBrowser(ctx, box){
     } catch (e){ if (my === seq){ msg.textContent = errText(e) + corsHint(e, c); more.hidden = true; } }
     finally { if (my === seq) loading = false; }
   }
+  // ---- Fields: which Version fields the tiles show (read from the site's schema), kept on the device
+  function paintCap(t, cap){
+    cap = cap || t.querySelector(".cap");
+    cap.textContent = "";
+    fields.forEach((k, i) => { const x = SG().fmtField(t._v, k); if (x) cap.appendChild(el(i ? "small" : "b", "", x)); });
+    if (!cap.childNodes.length) cap.appendChild(el("b", "", t._v.code || "#" + t._v.id));
+  }
+  let fieldsAll = null;
+  async function pickFields(){
+    const b = ctx.busy("Reading the fields…");
+    try { fieldsAll = fieldsAll || await SG().versionFields(cl); }
+    catch (e){ toast(errText(e) + corsHint(e, c), 5000); return; }
+    finally { b.done(); }
+    ctx.sheet((sh, close) => {
+      sh.appendChild(el("h2", "", "Fields on the tiles"));
+      const list = el("div", "sgb-flist");
+      fieldsAll.forEach((fd) => {
+        const l = el("label", "chk"), x = el("input"); x.type = "checkbox"; x.checked = fields.includes(fd.name); x.dataset.f = fd.name;
+        x.onchange = () => {
+          fields = x.checked ? fields.concat(fields.includes(fd.name) ? [] : [fd.name]) : fields.filter((k) => k !== fd.name);
+          saveFields();
+        };
+        l.appendChild(x); l.appendChild(document.createTextNode(" " + fd.label));
+        list.appendChild(l);
+      });
+      sh.appendChild(list);
+      const a = el("div", "acts");
+      a.appendChild(btn("btn", "Default", () => { fields = SG().DEFAULT_TILE_FIELDS.slice(); saveFields(); close(); }));
+      a.appendChild(btn("btn primary", "Done", close));
+      sh.appendChild(a);
+    });
+  }
+  function saveFields(){
+    try { localStorage.setItem(FIELDS_KEY, JSON.stringify(fields)); } catch {}
+    const have = grid.querySelector(".sgb-tile");
+    if (have && fields.some((k) => !(k in have._v))) load();   // a field the loaded Versions lack: load again
+    else grid.querySelectorAll(".sgb-tile").forEach((t) => paintCap(t));
+  }
   function linkedReview(v){
     return ctx.reviews().find((m) => m.sg && m.sg.link && m.sg.link.site === cl.host && Number(m.sg.link.version.id) === Number(v.id));
   }
   function tile(v){
     const t = btn("sgb-tile", "", () => open(v)), gen = gridGen;  // (a new grid drops this tile's waiting thumbnail; "More" keeps it)
     t.dataset.ver = String(v.id);
-    const th = el("div", "th"), cap = el("div", "cap");
-    cap.appendChild(el("b", "", v.code || "#" + v.id));
-    cap.appendChild(el("small", "", [v.entity && v.entity.name, v.sg_status_list].filter(Boolean).join(" · ")));
+    const th = el("div", "th"), cap = el("div", "cap"), strip = el("div", "strip");
+    t._v = v;
+    paintCap(t, cap);
     if (linkedReview(v)) t.classList.add("has");
+    th.appendChild(strip);
     t.appendChild(th); t.appendChild(cap);
-    thumbUrl(cl, v, () => !gone && gen === gridGen).then((u) => { if (!u) return; if (gone){ URL.revokeObjectURL(u); return; } urls.push(u); const im = el("img"); im.alt = ""; im.src = u; th.appendChild(im); });
+    const alive = () => !gone && gen === gridGen;
+    thumbUrl(cl, v, alive).then((u) => { if (!u) return; if (gone){ URL.revokeObjectURL(u); return; } urls.push(u); const im = el("img"); im.alt = ""; im.src = u; th.insertBefore(im, strip); });
+    // Filmstrip (a video's frames side by side): a finger dragged sideways over the picture (or a mouse over it)
+    // shows the frame under it; a drag does not open the Version, a tap does.
+    let frames = 0, asked = false, down = null;
+    const want = () => {
+      if (asked || !v.filmstrip_image) return;
+      asked = true;
+      thumbUrl(cl, v, alive, "strip").then((u) => {
+        if (!u) return; if (gone){ URL.revokeObjectURL(u); return; }
+        urls.push(u);
+        const im = new Image();
+        im.onload = () => { frames = SG().filmstripFrames(im.naturalWidth); if (frames > 1) strip.style.backgroundImage = `url("${u}")`; };
+        im.src = u;
+      });
+    };
+    const scrub = (x) => {
+      if (frames < 2) return;
+      const r = th.getBoundingClientRect(), c2 = SG().filmstripCss(frames, (x - r.left) / Math.max(1, r.width));
+      strip.style.backgroundSize = c2.size; strip.style.backgroundPosition = c2.pos; t.classList.add("scrub");
+    };
+    th.addEventListener("pointerdown", (e) => { want(); down = { x: e.clientX, moved: false, touch: e.pointerType !== "mouse" }; });
+    th.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "mouse"){ want(); scrub(e.clientX); return; }
+      if (down && Math.abs(e.clientX - down.x) > 8){ down.moved = true; scrub(e.clientX); }
+    });
+    const end = () => { if (down && down.moved) t._dragged = performance.now(); down = null; t.classList.remove("scrub"); };
+    th.addEventListener("pointerup", end); th.addEventListener("pointercancel", end);
+    th.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") t.classList.remove("scrub"); });
     return t;
   }
   async function open(v){
+    if (v && grid.querySelector(`.sgb-tile[data-ver="${v.id}"]`)?._dragged > performance.now() - 400) return;  // the end of a filmstrip drag
     if (opening) return;  // (a double tap: one download)
     opening = true;
     try { await open1(v); } finally { opening = false; }

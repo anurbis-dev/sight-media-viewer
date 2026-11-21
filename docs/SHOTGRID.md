@@ -25,6 +25,7 @@ one): everything runs against a fake (`tests/sg_fake.cjs`). See "To check on a r
 | `app/static/index.html` | Settings → ShotGrid (site, script name, key, post as reviewer, reviewer logins, note status codes; Test / Forget key / Save). |
 | `app/static/annotate.js` | Review panel **SG ▾**: link (Version from the notes, or project + search), Sync now, link to another, Unlink. |
 | `mobile/js/shotgrid.js` | Phone: Settings → *ShotGrid connection…* (same fields + **Proxy**), *Export and more → ShotGrid…* (link / Sync / Unlink). |
+| `app/static/sg-view.js` | Sight's ShotGrid view (a project's Versions: filter, Fields ▾, filmstrip scrub, open). Server side: `/api/sg/thumb/{id}?kind=image|filmstrip&u=<updated_at>` (local Host only; disk cache), `POST /api/sg/open/{id}` (proxy → media cache → library file), `GET /api/sg/cache`, `POST /api/sg/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). |
 | `tools/sg-proxy-worker.js` | Cloudflare Worker pass-through for the phone when the site does not answer browsers (CORS). Same protocol as `/api/sg/fetch`. |
 
 ### Transport

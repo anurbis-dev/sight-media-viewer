@@ -80,6 +80,12 @@ function createFakeShotGrid(opts){
     }
     const auth = (h.authorization || "").replace(/^Bearer /, "");
     if (!tokens.has(auth)) return json(401, { errors: [{ title: "Unauthorized" }] });
+    if (path.startsWith("/schema/versions/fields")){
+      const fld = (name, data_type) => ({ name: { value: name }, data_type: { value: data_type }, visible: { value: true } });
+      return json(200, { data: { code: fld("Version Name", "text"), sg_status_list: fld("Status", "status_list"), user: fld("Artist", "entity"),
+        entity: fld("Link", "entity"), description: fld("Description", "text"), created_at: fld("Date Created", "date_time"),
+        image: fld("Thumbnail", "image"), filmstrip_image: fld("Filmstrip Thumbnail", "image"), sg_uploaded_movie: fld("Uploaded Movie", "url"), id: fld("Id", "number") } });
+    }
     const actor = userFor(tokens.get(auth));
     const body = init.body && typeof init.body === "string" ? JSON.parse(init.body) : null;
     const parts = path.split("?")[0].split("/").filter(Boolean);  // entity, <type>, <id|_search>, [_upload]

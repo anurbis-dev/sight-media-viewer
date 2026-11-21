@@ -11,7 +11,9 @@ mark it done here, add the RECENT entry as usual.
 | 2 | Tracker as a source | A connected tracker appears in the sidebar **as a source** (ShotGrid · site), its **projects nested** under it. A project shows its **Versions** in the grid (flat), narrowed by the filter (decision 4) and grouped by entity / task when asked — no Sequence → Shot tree. |
 | 3 | Opening a Version | Double-click: the Version's **web proxy** (uploaded movie / image) downloaded into Sight's cache and opened in the lightbox, the review already linked to that Version (docs/SHOTGRID.md). |
 | 4 | Filter | **One filter builder for every source**: conditions on fields — tracker fields (entity type, entity, task, status, author, date, any field of the Version) for tracker sources, kind / tags / date / name for local files. Presets saved. |
-| 5 | Cache | Version thumbnails on disk in SIGHT_HOME like file thumbnails, refreshed by the Version's `updated_at`. Proxies in their own cache with oldest-first eviction over a size limit (Settings). |
+| 5 | Cache | Version thumbnails on disk in SIGHT_HOME like file thumbnails, refreshed by the Version's `updated_at`. Proxies in their own cache with oldest-first eviction over a size limit (Settings). **Owner 2026-11-21:** the limit's default is **Auto** = download while the disk has room. |
+| 6 | Tile fields | **Read from ShotGrid** (the Version schema); a **Fields ▾** button lets the user pick which fields the tiles show. |
+| 7 | Filmstrip | Like ShotGrid: a video's filmstrip thumbnail plays under the pointer on hover (a finger dragged sideways on touch). |
 
 ## Stages
 
@@ -22,7 +24,8 @@ mark it done here, add the RECENT entry as usual.
 - Review panel: the `.an-who` field goes; the icon opens the same panel. Phone: the same panel (name + ShotGrid connection).
 - Touch: the icon is a button; the panel is a popover on desktop, a bottom sheet on the phone.
 
-### 2. ShotGrid as a source (Sight)
+### 2. ShotGrid as a source (Sight) — done in 0.101.0 (see RECENT)
+- As built: "ShotGrid · <site>" is the last row of Sources (expand → projects); a project opens the ShotGrid view (app/static/sg-view.js) in the main area instead of the grid — All / Shots / Assets / Sequences, entity, status, name, Fields ▾ (schema fields, ticked order, `sight.sg.fields`), tiles at the library's tile size, infinite scroll; thumbnails / filmstrips from `/api/sg/thumb/{id}` (disk cache `<SIGHT_HOME>/sg_cache/thumbs/<host>/`), double-click / Enter / a tap opens via `POST /api/sg/open/{id}` (proxy streamed into `sg_cache/media/<host>/<stem>__v<id>.<ext>`, a library source the sidebar hides, indexed with `_touch_one`) then links the review and opens the lightbox. Cache limit: Settings → ShotGrid → Media cache limit (empty = Auto, 2 GB kept free), Clear cache. No Version paging in the sidebar itself, no grouping by entity / task yet (the filter builder, stage 3, comes next).
 - Sources list gets a tracker row per connected site; expand → projects (`client.projects()`), cached, refresh button.
 - A project in the grid: Versions as virtual assets (no file on disk): code, entity, task, status, author, date,
   thumbnail (`image` field — a signed URL; downloaded once into `<SIGHT_HOME>/sg_thumbs/<site>/<version id>.jpg`,
@@ -31,7 +34,8 @@ mark it done here, add the RECENT entry as usual.
 - Double-click: proxy download (`sg_uploaded_movie`, else `image`) into `<SIGHT_HOME>/sg_media/`, registered as an
   asset under a hidden "ShotGrid cache" source, linked (`sg_links`) to the Version, opened in the lightbox.
 
-### 3. The filter builder
+### 3. The filter builder (+ the ShotGrid view onto the library grid)
+- **Owner 2026-11-21:** in this stage the ShotGrid view moves onto the library's own grid (a pluggable item source: library rows / ShotGrid Versions — shared virtualisation, tile size, layout, selection, keys; the inspector shows a Version's fields) and app/static/sg-view.js goes.
 - A row of conditions above the grid: field ▾ · operator ▾ · value (chips for statuses / entities read from the
   site's schema: `/schema/{entity}/fields`), AND between rows; saved presets per source type.
 - Tracker sources: conditions go to ShotGrid as `_search` filters. Local sources: the same UI on library fields

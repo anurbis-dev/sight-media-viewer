@@ -621,7 +621,7 @@ const initials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2
   document.addEventListener("touchstart", (e) => {
     hs = null;
     if (!root.classList.contains("home") || e.touches.length !== 1) return;
-    if (e.target.closest(".item, .row, input, select, textarea, .sheet, .back, .sgb-types, .selbar")) return;
+    if (e.target.closest(".item, .row, input, select, textarea, .sheet, .back, .sgb-types, .sgb-tile .th, .selbar")) return;  // (a tile's picture: its filmstrip drag)
     hs = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   }, { passive: true });
   document.addEventListener("touchend", (e) => {
@@ -675,7 +675,7 @@ async function renderHome(){
     mini.classList.toggle("off", k !== "reviews");
     const shown = k === "sg" ? sgMain : main;
     if (dir){ shown.classList.remove("in-l", "in-r"); void shown.offsetWidth; shown.classList.add(dir > 0 ? "in-r" : "in-l"); }
-    if (k === "sg" && !sgView) sgView = sgBrowser({ el, btn, toast, busy, settings: () => sgSettings({ sheet, el, btn, toast }),
+    if (k === "sg" && !sgView) sgView = sgBrowser({ el, btn, toast, busy, sheet, settings: () => sgSettings({ sheet, el, btn, toast }),
       reviews: () => homeMetas, openReview: (key, file) => openLinked(key, file), openFile: (file, link) => openMedia(file, null, link) }, sgMain);
     if (changed) window.scrollTo(0, 0);
   };

@@ -407,6 +407,38 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
 .stt-row[hidden] { display: none !important; }
+/* ShotGrid view (sg-view.js): a project's Versions */
+.sg-view { flex: 1; min-width: 0; overflow: auto; padding: 10px 14px 30px; position: relative; }
+.sg-view[hidden] { display: none; }
+.sgv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sgv-title { font-size: 14px; font-weight: 600; margin-right: 6px; }
+.sgv-seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
+.sgv-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+.sgv-seg button.on { background: var(--surface, #222); color: var(--fg); }
+.sgv-bar select, .sgv-bar input { height: 28px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.sgv-bar select[hidden] { display: none; }
+.sgv-bar .sgv-q { width: 200px; }
+.sgv-fpop { position: absolute; right: 14px; top: 46px; z-index: 30; width: 300px; max-height: 60vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
+.sgv-fpop[hidden] { display: none; }
+.sgv-fpop input[type=search] { height: 28px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.sgv-flist { overflow: auto; display: flex; flex-direction: column; }
+.sgv-flist label { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
+.sgv-flist small { margin-left: auto; color: var(--subtle); }
+.sgv-facts { display: flex; justify-content: flex-end; }
+.sgv-msg { color: var(--subtle); font-size: 12px; margin: 4px 0 8px; } .sgv-msg:empty { display: none; }
+.sgv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--sgv-tile, 180px), 1fr)); gap: 10px; }
+.sgv-tile { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-2); cursor: pointer; outline: none; }
+.sgv-tile.on, .sgv-tile:focus-visible { border-color: var(--accent); }
+.sgv-tile.busy { opacity: .6; }
+.sgv-tile .th { position: relative; aspect-ratio: 16 / 9; background: #0003; overflow: hidden; touch-action: pan-y; }
+.sgv-tile .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.sgv-tile .strip { position: absolute; inset: 0; background-repeat: no-repeat; opacity: 0; }
+.sgv-tile.scrub .strip { opacity: 1; }
+.sgv-tile.scrub .th img { opacity: 0; }
+.sgv-tile .cap { padding: 5px 8px 7px; display: flex; flex-direction: column; min-width: 0; font-size: 12px; }
+.sgv-tile .cap b, .sgv-tile .cap small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sgv-tile .cap small { color: var(--subtle); }
+.sgv-end { height: 1px; }
 .sg-codes { display: flex; gap: 4px; }
 .sg-codes input { flex: 1; min-width: 0; }
 .light-info h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
@@ -789,6 +821,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
       <div class="grid" id="grid"></div>
       <div class="split-handle" id="splitHandle" hidden title="Drag to resize · double-click to switch side-by-side / stacked"></div>
       <div class="canvas-view" id="canvasView" hidden></div>
+      <div class="sg-view" id="sgView" hidden></div>
       <div class="light-slot" id="lightSlot" hidden></div>
     </div>
   </section>
@@ -804,6 +837,7 @@ import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
+import { createSgView } from "/static/sg-view.js";
 import "/static/shotgrid-core.js";  // globalThis.SightShotGrid (Settings → ShotGrid test; annotate.js syncs)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
@@ -994,21 +1028,32 @@ function bindShotGridSettings(){
     $("sgSite").value = st.site || ""; $("sgScript").value = st.script || ""; $("sgSudo").checked = !!st.sudo;
     $("sgKey").placeholder = st.hasKey ? "saved (leave empty to keep)" : "none";
     $("sgLogins").value = Object.entries(st.logins || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
+    $("sgCacheLimit").value = st.cacheLimitGB ? String(st.cacheLimitGB) : "";
     $("sgStOpen").value = st.statusMap?.open || ""; $("sgStProgress").value = st.statusMap?.progress || ""; $("sgStDone").value = st.statusMap?.done || "";
     msg.textContent = !st.configured ? "Not set up" : `Linked to ${(() => { try { return new URL(st.site).host; } catch { return st.site; } })()}${lost ? " · the key was removed with the old site — enter it again" : ""}`;
   };
   const body = () => {
     const logins = {};
     $("sgLogins").value.split(/\r?\n/).forEach((l) => { const m = /^(.+?)\s*=\s*(.+)$/.exec(l.trim()); if (m) logins[m[1].trim()] = m[2].trim(); });
+    const lim = Number($("sgCacheLimit").value);
     const b = { site: $("sgSite").value.trim(), script: $("sgScript").value.trim(), sudo: $("sgSudo").checked, logins,
+      cacheLimitGB: Number.isFinite(lim) && lim > 0 ? lim : 0,
       statusMap: { open: $("sgStOpen").value.trim(), progress: $("sgStProgress").value.trim(), done: $("sgStDone").value.trim() } };
     if ($("sgKey").value.trim()) b.key = $("sgKey").value.trim();
     return b;
   };
   const put = (b) => api("/api/sg/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
   api("/api/sg/status").then(show).catch(() => {});
+  const cacheInfo = () => api("/api/sg/cache").then((c) => {
+    $("sgCacheInfo").textContent = `Cache: ${bytes(c.used)} in ${c.files} file${c.files === 1 ? "" : "s"} · ${bytes(c.free)} free on disk`;
+  }).catch(() => {});
+  cacheInfo();
+  $("sgCacheClear").onclick = async () => {
+    try { await api("/api/sg/cache/clear", { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
+    cacheInfo();
+  };
   $("sgSave").onclick = async () => {
-    try { show(await put(body())); $("sgKey").value = ""; }
+    try { show(await put(body())); $("sgKey").value = ""; refreshSgStatus(); }
     catch { msg.textContent = "Check the site address (https://…) and the script name / key"; }
   };
   $("sgForget").onclick = async () => {
@@ -1018,7 +1063,7 @@ function bindShotGridSettings(){
   $("sgTest").onclick = async () => {
     msg.textContent = "Connecting…";
     try {
-      if ($("sgKey").value.trim() || !saved || saved.site !== body().site) { show(await put(body())); $("sgKey").value = ""; }
+      if ($("sgKey").value.trim() || !saved || saved.site !== body().site) { show(await put(body())); $("sgKey").value = ""; refreshSgStatus(); }
       const ps = await sgClient().projects();
       msg.textContent = `Connected — ${ps.length} project${ps.length === 1 ? "" : "s"}`;
     } catch (e){ msg.textContent = e.message || "Could not connect"; }
@@ -1088,6 +1133,62 @@ async function openUserPanel(anchor){
     $("userSgDot").classList.toggle("ok", !!st.configured);
     $("userSgSet").textContent = st.configured ? "Settings…" : "Set up…";
   } catch { $("userSg").textContent = "not available"; }
+}
+// ---- ShotGrid as a source (docs/PLAN-trackers.md stage 2): "ShotGrid · <site>" under Sources, its projects below;
+// a project opens the ShotGrid view (sg-view.js) in the main area.
+let sgStat = null, sgProjects = null, sgSrcOpen = false, sgViewCtl = null, sgProjectOn = null;
+const normFsPath = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+async function refreshSgStatus(){
+  try { sgStat = await api("/api/sg/status"); } catch { sgStat = null; }
+  sgProjects = null; sgSrcOpen = false;   // (the projects are read again when it is opened)
+  renderNav();
+}
+function sgHost(){ try { return new URL(sgStat.site).host; } catch { return sgStat?.site || ""; } }
+function renderSgSource(wrap){
+  if (!sgStat?.configured) return;
+  const b = document.createElement("div");
+  b.className = "row src-row sg-src" + (state.view === "sg" ? " on" : "");
+  b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span>ShotGrid · ${esc(sgHost())}</span><button class="tiny tree-chev${sgSrcOpen ? " open" : ""}" data-act="expand" type="button" aria-expanded="${sgSrcOpen}" aria-label="${sgSrcOpen ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
+  const toggle = async () => {
+    sgSrcOpen = !sgSrcOpen;
+    if (sgSrcOpen && !sgProjects){
+      try { sgProjects = await sgClient(sgStat.site).projects(); }
+      catch (e){ sgProjects = null; sgSrcOpen = false; flash("ShotGrid: " + e.message, 4000); }
+    }
+    renderNav();
+  };
+  b.onclick = (e) => { if (!e.target.closest("button")) toggle(); };
+  b.querySelector("[data-act=expand]").onclick = (e) => { e.stopPropagation(); toggle(); };
+  wrap.append(b);
+  if (!sgSrcOpen || !sgProjects) return;
+  if (!sgProjects.length){ const n = document.createElement("div"); n.className = "row folder-row sg-proj"; n.style.paddingLeft = "28px"; n.innerHTML = "<span>No projects</span>"; wrap.append(n); }
+  sgProjects.forEach((p) => {
+    const r = document.createElement("div");
+    r.className = "row folder-row sg-proj" + (state.view === "sg" && sgProjectOn === p.id ? " on" : "");
+    r.style.paddingLeft = "28px";
+    r.dataset.sgp = String(p.id);
+    r.innerHTML = `<span>${esc(p.name || "#" + p.id)}</span>`;
+    r.onclick = () => openSgProject(p);
+    wrap.append(r);
+  });
+}
+function openSgProject(p){
+  if (!sgViewCtl){
+    sgViewCtl = createSgView({
+      mount: $("sgView"), client: () => sgClient(sgStat.site), host: () => sgHost(),
+      openAsset: async (a) => { if (light) showInLight(a); else toggleLight(a); },
+      toast: (t, ms) => flash(htmlToText(t), ms), putSetting, registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+      onQuery: (v) => { if (state.view === "sg") $("q").value = v; },   // the view's name box and the top search box show one text
+      // the first open makes the media cache source: its id now known, the list hides it by id
+      onOpened: async () => { if (sgStat?.cacheSource) return; try { const st = await api("/api/sg/status"); if (sgStat) sgStat.cacheSource = st.cacheSource; renderNav(); } catch {} },
+    });
+    sgViewCtl.setTile(state.tile);
+  }
+  sgProjectOn = p.id;
+  setView("sg");
+  sgViewCtl.open(p);
+  $("q").value = sgViewCtl.query;
+  renderNav();
 }
 // The page's ShotGrid client: everything goes through Sight's server, which holds the key (app/shotgrid.py).
 function sgClient(site){
@@ -1891,6 +1992,7 @@ function setTile(n){
     state.tile = next;
     putSetting(TILE_KEY, String(next));
   }
+  sgViewCtl?.setTile(state.tile);  // the ShotGrid view's tiles follow the library's tile size
   scheduleRender();
 }
 
@@ -2687,6 +2789,7 @@ function navDblClick(key, threshold = 400){
 }
 
 function applyFilter(patch){
+  if (state.view === "sg"){ setView("library"); $("q").value = state.filter.q || ""; }  // a library filter leaves the ShotGrid view (the box: the library's search again)
   state.filter = { q: state.filter.q, kind:"", source:"", tag:"", missing:false, collection:"", folder:"", review:"", ...patch };
   renderNav();
   resetList();
@@ -2897,12 +3000,13 @@ const REVIEW_LABEL = { review: "Needs review", changes: "Changes", approved: "Ap
 // the drag source for placing files onto the board — splitBtn lets it be hidden for a full-width
 // board when not needed.
 function applyViewDom(){
-  const showCanvas = state.view === "canvas";
+  const showCanvas = state.view === "canvas", showSg = state.view === "sg";
+  $("sgView").hidden = !showSg || lightSplitOn();   // (the library beside the lightbox shows the library grid)
   // The library beside the lightbox (Tab): the grid shows at its own ratio whatever the main view is; the board
   // (or an empty slot) stays behind the lightbox, which starts right of the divider.
   const ls = lightSplitOn();
   const split = ls || (showCanvas && state.canvasSplit);
-  grid.hidden = !ls && showCanvas && !state.canvasSplit;
+  grid.hidden = (!ls && showCanvas && !state.canvasSplit) || (showSg && !ls);
   syncTouchSel(); // the touch selection bar belongs to the grid
   canvasView.hidden = !showCanvas;
   lightSlot.hidden = !ls || showCanvas;
@@ -3154,7 +3258,9 @@ function renderSources(set){
   bindSectionDrag(wrap, "sources");
   nav.append(wrap);
   if (state.navCollapse.sources) return;
-  (state.meta.sources || []).forEach((s) => {
+  // The ShotGrid media cache is a source of its own (opened Versions' files) that the list does not show.
+  const sgCache = sgStat?.cacheDir ? normFsPath(sgStat.cacheDir) : "", sgCacheId = sgStat?.cacheSource || "";
+  (state.meta.sources || []).filter((s) => s.id !== sgCacheId && (!sgCache || normFsPath(s.path) !== sgCache)).forEach((s) => {
     const open = state.sourceTree.expandedSources.has(s.id);
     const b = document.createElement("div");
     b.className = "row src-row" + (state.filter.source === s.id ? " on" : "");
@@ -3208,6 +3314,7 @@ function renderSources(set){
     wrap.append(b);
     if (open) renderFolderChildren(s.id, s.path, 1, wrap);
   });
+  renderSgSource(wrap);
 }
 
 // True if `id` is `ancestorId` itself or nested (at any depth) under it — used to keep a
@@ -9188,6 +9295,7 @@ document.addEventListener("visibilitychange", () => {
 
 function clearSearch(){
   $("q").value = "";
+  if (state.view === "sg" && sgViewCtl){ sgViewCtl.setQuery(""); return; }   // the ShotGrid view's own name filter
   if (state.filter.q){
     state.filter.q = "";
     resetList();
@@ -9514,6 +9622,9 @@ function renderOptions(){
         <textarea id="sgLogins" spellcheck="false" placeholder="Ann Lee = ann.lee@studio.com"></textarea></label>
       <label class="field" title="The ShotGrid note status codes for Open / In progress / Done (Admin → Status list). Empty = opn / ip / clsd.">Note statuses
         <span class="sg-codes"><input type="text" id="sgStOpen" placeholder="opn" aria-label="Open"><input type="text" id="sgStProgress" placeholder="ip" aria-label="In progress"><input type="text" id="sgStDone" placeholder="clsd" aria-label="Done"></span></label>
+      <label class="field" title="Disk space for the media of Versions opened from ShotGrid (their web proxies). Empty = Auto: as much as the disk holds, keeping 2 GB free. Oldest opened go first.">Media cache limit (GB)
+        <input type="number" id="sgCacheLimit" min="0" step="1" placeholder="Auto"></label>
+      <div class="theme-actions"><span class="ign-msg" id="sgCacheInfo"></span><button class="btn ghost" id="sgCacheClear" type="button" title="Delete the downloaded Version media (they download again when opened)">Clear cache</button></div>
       <div class="theme-actions"><span class="ign-msg" id="sgMsg"></span><button class="btn ghost" id="sgForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sgTest" type="button" title="Connect and list the projects">Test</button><button class="btn ghost" id="sgSave" type="button">Save</button></div>
 
       <div class="settings-sub">Colors</div>
@@ -9855,6 +9966,7 @@ async function aboutCopy(){
 $("aboutBtn").onclick = aboutOpen;
 $("userBtn").onclick = () => openUserPanel($("userBtn"));
 paintUserBtns();
+refreshSgStatus();
 $("aboutClose").onclick = aboutClose;
 $("aboutCopy").onclick = aboutCopy;
 $("aboutOverlay").addEventListener("pointerdown", (e) => { if (e.target === $("aboutOverlay")) aboutClose(); });
@@ -9885,6 +9997,7 @@ function setViewMode(mode){
 }
 let qTimer;
 $("q").oninput = () => {
+  if (state.view === "sg" && sgViewCtl){ sgViewCtl.setQuery($("q").value); return; }  // the ShotGrid view's name filter
   clearTimeout(qTimer);
   qTimer = setTimeout(() => { state.filter.q = $("q").value; resetList(); }, 120);
 };

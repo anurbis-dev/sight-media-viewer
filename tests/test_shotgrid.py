@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -73,6 +74,38 @@ class ConfigTest(unittest.TestCase):
                 with self.assertRaises(SgError):
                     self.sg.forward("POST", "https://studio.example" + path, b"", {})
 
+    def test_cache_limit_and_eviction(self):
+        self.sg.configure({"site": "https://studio.example", "script": "s", "key": "k", "cacheLimitGB": 1})
+        self.assertEqual(self.sg.status()["cacheLimitGB"], 1)
+        self.assertTrue(self.sg.configure({"site": "https://studio.example", "script": "s"}))   # missing: kept
+        self.assertEqual(self.sg.status()["cacheLimitGB"], 1)
+        self.assertFalse(self.sg.configure({"site": "https://studio.example", "script": "s", "cacheLimitGB": -1}))
+        d = self.sg.media_dir() / "studio.example"
+        d.mkdir(parents=True)
+        old, new = d / "old.mp4", d / "new.mp4"
+        old.write_bytes(b"x" * 1000); new.write_bytes(b"y" * 1000)
+        os.utime(old, (1, 1))
+        gb = 1024 ** 3
+        from unittest import mock
+        roomy = mock.patch("app.shotgrid.shutil.disk_usage", return_value=mock.Mock(free=100 * gb))
+        roomy.start(); self.addCleanup(roomy.stop)
+        self.sg.make_room(gb - 1500)   # 2000 used + need > 1 GB: the oldest goes, the newer stays
+        self.assertFalse(old.exists()); self.assertTrue(new.exists())
+        from app.shotgrid import SgError
+        with self.assertRaises(SgError):
+            self.sg.make_room(2 * gb)  # more than the limit itself: refused, nothing deleted
+        self.assertTrue(new.exists())
+        # a download under way (.part) and a file opened a minute ago are never evicted; they still count
+        part, recent = d / "x.mp4.part", d / "recent.mp4"
+        part.write_bytes(b"p" * 1000); recent.write_bytes(b"r" * 1000)
+        os.utime(part, (1, 1)); os.utime(recent, (time.time() - 60, 1))
+        with self.assertRaises(SgError):
+            self.sg.make_room(gb - 2500)   # only `new` (recent too) could go: refused before deleting
+        self.assertTrue(part.exists() and recent.exists() and new.exists())
+        self.assertTrue(self.sg.configure({"site": "https://studio.example", "script": "s", "cacheLimitGB": 0}))   # Auto
+        self.sg.make_room(1000)        # room on the disk: nothing goes
+        self.assertTrue(new.exists())
+
     def test_site_rules(self):
         self.assertEqual(site_url("x.shotgunstudio.com/api/v1.1"), "https://x.shotgunstudio.com")
         self.assertTrue(valid_site("http://127.0.0.1:9000"))
@@ -103,11 +136,16 @@ class SightPathTest(unittest.TestCase):
         cls.fake = subprocess.Popen([NODE, str(ROOT / "tests" / "sg_fake_server.cjs")], stdout=subprocess.PIPE, text=True)
         cls.site = json.loads(cls.fake.stdout.readline())["site"]
         cls.lib = Library(cls.tmp / "home")
-        cls.aid = "5" * 16
-        cls.lib.execute(
-            "INSERT INTO assets(id, source_id, path, name, ext, kind, size, mtime, added_at, status) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (cls.aid, "src", "/clips/sh010.mp4", "sh010.mp4", ".mp4", "video", 10, 1.0, 1, "ready"),
-        )
+        # a real file in a real source: the page's library scan (the browser test) must find it there
+        clips = cls.tmp / "clips"
+        clips.mkdir()
+        (clips / "sh010.png").write_bytes(__import__("base64").b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+        sid = cls.lib.add_source(str(clips))["id"]
+        deadline = time.time() + 20
+        while time.time() < deadline and not cls.lib.query("SELECT id FROM assets WHERE source_id=? AND status='ready'", (sid,)):
+            time.sleep(0.1)
+        cls.aid = cls.lib.query("SELECT id FROM assets WHERE source_id=?", (sid,))[0]["id"]
         now = int(time.time() * 1000)
         cls.lib.add_annotation({"id": "a" * 16, "kind": "note", "scope": "asset", "target_asset_id": cls.aid,
                                 "data": {"text": "Mine", "author": "Bob Smith", "created": now - 60000, "status": "open",
@@ -139,7 +177,10 @@ class SightPathTest(unittest.TestCase):
         cls.fake.terminate()
         cls.fake.wait(5)
         cls.fake.stdout.close()
-        cls.lib.conn.close()
+        for w in list(cls.lib._watchers.values()):  # the folder watchers would outlive the database
+            w.stop()
+            w.join(5)
+        cls.lib.close()
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def test_guard(self):
@@ -151,6 +192,38 @@ class SightPathTest(unittest.TestCase):
             except urllib.error.HTTPError as e:
                 code = e.code
             self.assertEqual(code, want, headers)
+
+    def test_sg_view_in_the_browser(self):
+        if subprocess.run([NODE, "-e", "require('playwright')"], capture_output=True, cwd=ROOT / "tests").returncode:
+            self.skipTest("Playwright is not available")
+        r = subprocess.run([NODE, str(ROOT / "tests" / "sg_view_e2e.cjs"), f"http://127.0.0.1:{self.port}", self.site],
+                           capture_output=True, text=True, timeout=180, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_thumb_cache_and_open(self):
+        base = f"http://127.0.0.1:{self.port}"
+        r = urllib.request.urlopen(base + "/api/sg/thumb/78?u=a")
+        self.assertEqual((r.status, r.headers.get("Content-Type")), (200, "image/png"))
+        self.assertEqual(urllib.request.urlopen(base + "/api/sg/thumb/79?kind=filmstrip&u=a").status, 204, "no filmstrip: no content")
+        meta = next((self.lib.root / "sg_cache" / "thumbs").rglob("78_image.json"))
+        self.assertEqual(json.loads(meta.read_text())["u"], "a")
+        post = lambda: json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/sg/open/78", method="POST", headers={"X-Sight": "1"})).read())
+        a1 = post()
+        f1 = Path(a1["asset"]["path"])
+        m1 = f1.stat().st_mtime
+        time.sleep(0.05)
+        a2 = post()
+        self.assertEqual(a1["asset"]["id"], a2["asset"]["id"], "opened twice: one file, one asset")
+        self.assertEqual(f1.stat().st_mtime, m1, "a reopen touches only atime (no re-thumbnail)")
+        req = urllib.request.Request(base + "/api/sg/thumb/78?u=a", headers={"Sec-Fetch-Site": "cross-site"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        self.assertEqual(e.exception.code, 403, "another site cannot embed the thumbnails")
+        st = json.loads(urllib.request.urlopen(base + "/api/sg/status").read())
+        self.assertTrue(st["cacheSource"], "the media cache source is named (the sidebar hides it by id)")
+        self.assertEqual(a1["version"]["code"], "sh020_anim_v001")
+        a3 = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/sg/open/79", method="POST", headers={"X-Sight": "1"})).read())
+        self.assertTrue(a3["asset"]["name"].endswith(".jpg"), "no uploaded movie: the Version's picture")
 
     def test_sync_through_sight(self):
         r = subprocess.run([NODE, str(ROOT / "tests" / "sg_sight.cjs"), f"http://127.0.0.1:{self.port}", self.aid, self.site],

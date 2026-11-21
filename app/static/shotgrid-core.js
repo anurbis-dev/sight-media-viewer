@@ -218,6 +218,60 @@ var SightShotGrid = (function(){
     return null;
   }
 
+  // ---- Versions browser helpers (Sight's ShotGrid view and the phone's ShotGrid page) -------------------------
+  // Fields of the Version entity a tile can show, read from the site's schema: [{name, label, type}], by label.
+  // Pictures / urls / private fields are left out (the tile shows the thumbnail itself).
+  var NO_TILE_TYPE = { image: 1, url: 1, serializable: 1, pivot_column: 1, password: 1, uuid: 1 };
+  var DEFAULT_TILE_FIELDS = ["code", "sg_status_list", "user"];
+  async function versionFields(client){
+    var j = await client.api("GET", "/schema/versions/fields");
+    var d = (j && j.data) || {}, out = [];
+    Object.keys(d).forEach(function(k){
+      var f = d[k] || {}, type = (f.data_type && f.data_type.value) || "";
+      if (NO_TILE_TYPE[type] || k === "id" || k === "filmstrip_image" || k === "image") return;
+      var vis = f.visible && f.visible.value;
+      if (vis === false) return;
+      out.push({ name: k, label: (f.name && f.name.value) || k, type: type });
+    });
+    out.sort(function(a, b){ return a.label.localeCompare(b.label); });
+    return out;
+  }
+  // A field's value as tile text.
+  function fmtField(v, name){
+    var x = v ? v[name] : null;
+    if (x == null || x === "") return "";
+    if (Array.isArray(x)) return x.map(function(e){ return e && typeof e === "object" ? (e.name || e.code || e.type + " " + e.id) : String(e); }).join(", ");
+    if (typeof x === "object") return x.name || x.code || x.content || (x.type ? x.type + " " + x.id : "");
+    if (typeof x === "boolean") return x ? "Yes" : "No";
+    if (typeof x === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(x)){ var t = Date.parse(x); if (isFinite(t)) return new Date(t).toLocaleString(); }
+    return String(x);
+  }
+  // The browser's filter {project, type, entity, status, q} as REST filters.
+  function versionFilters(f){
+    var out = [["project", "is", { type: "Project", id: Number(f.project) }]];
+    if (f.entity && f.type) out.push(["entity", "is", { type: f.type, id: Number(f.entity) }]);
+    else if (f.type) out.push(["entity", "type_is", f.type]);
+    if (f.status) out.push(["sg_status_list", "is", f.status]);
+    if (f.q) out.push(["code", "contains", f.q]);
+    return out;
+  }
+  // A page of Versions (newest first) with the fields a tile needs.
+  var BROWSE_FIELDS = VERSION_FIELDS.concat(["image", "filmstrip_image", "updated_at", "created_at", "user", "sg_uploaded_movie"]);
+  async function browseVersions(client, f, fields, page, size){
+    var want = BROWSE_FIELDS.slice();
+    (fields || []).forEach(function(k){ if (want.indexOf(k) < 0) want.push(k); });
+    var j = await client.api("POST", "/entity/versions/_search", { filters: versionFilters(f), fields: want, sort: "-created_at", page: { size: size || 60, number: page || 1 } }, { contentType: ARRAY_JSON });
+    return ((j && j.data) || []).map(flat);
+  }
+  // Filmstrip scrubbing (ShotGrid's video thumbnails: one picture of frames side by side, FILMSTRIP_W px each): the
+  // frame for a pointer at fraction `fx` (0…1) of the tile, and the CSS background that shows it.
+  var FILMSTRIP_W = 240;
+  function filmstripFrames(stripWidth){ return Math.max(1, Math.round((stripWidth || 0) / FILMSTRIP_W)); }
+  function filmstripCss(frames, fx){
+    var i = Math.min(frames - 1, Math.max(0, Math.floor(fx * frames)));
+    return { size: (frames * 100) + "% 100%", pos: (frames > 1 ? (i / (frames - 1)) * 100 : 0) + "% 0%", frame: i };
+  }
+
   // ---- sync ---------------------------------------------------------------------------------------
   var live = function(rows){ return (rows || []).filter(function(r){ return r && r.deleted_at == null; }); };
   // What a note's pictures depend on: its place, its own drawings (id + last change) and attached pictures / texts.
@@ -542,7 +596,9 @@ var SightShotGrid = (function(){
   return {
     DEFAULT_STATUS: DEFAULT_STATUS, OUR_PREFIX: OUR_PREFIX,
     siteUrl: siteUrl, siteHost: siteHost, idFor: idFor, flat: flat, statusTo: statusTo, statusFrom: statusFrom, statusMap: statusMap,
-    createClient: createClient, loadVersion: loadVersion, linkOf: linkOf, VERSION_FIELDS: VERSION_FIELDS, linkedVersionOf: linkedVersionOf, picSig: picSig, annotFrame: annotFrame,
+    createClient: createClient, loadVersion: loadVersion, linkOf: linkOf, VERSION_FIELDS: VERSION_FIELDS,
+    versionFields: versionFields, fmtField: fmtField, versionFilters: versionFilters, browseVersions: browseVersions, BROWSE_FIELDS: BROWSE_FIELDS,
+    DEFAULT_TILE_FIELDS: DEFAULT_TILE_FIELDS, FILMSTRIP_W: FILMSTRIP_W, filmstripFrames: filmstripFrames, filmstripCss: filmstripCss, linkedVersionOf: linkedVersionOf, picSig: picSig, annotFrame: annotFrame,
     frameOf: frameOf, sync: sync,
   };
 })();

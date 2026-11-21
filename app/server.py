@@ -1625,7 +1625,11 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
 
     @app.get("/api/sg/status")
     def sg_status() -> JSONResponse:
-        return JSONResponse(sg.status(), headers={"Cache-Control": "no-store"})
+        st = sg.status()
+        # the media cache's source (the sidebar hides it by id — paths may be spelled differently)
+        d = normpath(Path(st["cacheDir"]))
+        st["cacheSource"] = next((r["id"] for r in lib.query("SELECT id, path FROM sources") if normpath(Path(r["path"])) == d), "")
+        return JSONResponse(st, headers={"Cache-Control": "no-store"})
 
     @app.put("/api/sg/config")
     async def sg_config(request: Request) -> JSONResponse:
@@ -1670,6 +1674,68 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     @app.delete("/api/sg/fetch")
     async def sg_fetch_delete(request: Request) -> Response:
         return await _sg_forward(request, "DELETE")
+
+    # Sight's ShotGrid view (docs/PLAN-trackers.md stage 2): thumbnails / filmstrips cached on disk, a Version opened
+    # as a library file (its web proxy downloaded into <SIGHT_HOME>/sg_cache/media, a source of its own that the
+    # sidebar does not list), the media cache's size.
+    @app.get("/api/sg/thumb/{vid}")
+    async def sg_thumb(vid: int, request: Request, kind: str = "image", u: str = "") -> Response:
+        _sg_local(request)   # an <img>: no X-Sight header; it only reads pictures (no token leaves the server)
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            raise HTTPException(403, "Sight page only")   # another site embedding it (probing Version ids)
+        try:
+            got = await asyncio.to_thread(sg.picture, vid, "filmstrip" if kind == "filmstrip" else "image", u[:64])
+        except SgError as e:
+            return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+        if not got:
+            return Response(status_code=204)
+        return FileResponse(got[0], media_type=got[1], headers={"Cache-Control": "max-age=86400"})
+
+    sg_src: dict = {}   # the media cache's source, added once: {"id", "path", "for"} (path as the library spells it)
+
+    def _sg_cache_source() -> dict:
+        d = sg.media_dir()
+        if sg_src.get("for") != str(d) or not lib.query("SELECT 1 FROM sources WHERE id=?", (sg_src.get("id", ""),)):
+            d.mkdir(parents=True, exist_ok=True)
+            got = lib.add_source(str(d))
+            sg_src.update({"id": got["id"], "path": got["path"], "for": str(d)})
+        return sg_src
+
+    @app.post("/api/sg/open/{vid}")
+    async def sg_open(vid: int, request: Request) -> JSONResponse:
+        _sg_guard(request)
+        from .library import asset_id, kind_of
+        src = await asyncio.to_thread(_sg_cache_source)
+        try:
+            path, v = await asyncio.to_thread(sg.fetch_media, vid, Path(src["path"]), lambda n: bool(kind_of(n)))
+        except SgError as e:
+            return JSONResponse({"errors": [{"title": str(e)}]}, status_code=e.status)
+        except (OSError, ValueError) as e:
+            return JSONResponse({"errors": [{"title": f"Could not save the Version's media ({type(e).__name__})"}]}, status_code=500)
+        kind = kind_of(str(path))
+        await asyncio.to_thread(lib._touch_one, src["id"], str(path), kind)
+        a = lib.get_asset(asset_id(str(path)))
+        if not a:
+            return JSONResponse({"errors": [{"title": "The downloaded media could not be added to the library"}]}, status_code=500)
+        return JSONResponse({"asset": a, "version": v})
+
+    @app.get("/api/sg/cache")
+    def sg_cache(request: Request) -> JSONResponse:
+        return JSONResponse(sg.cache_info(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/sg/cache/clear")
+    def sg_cache_clear(request: Request) -> dict:
+        _sg_guard(request)
+        d = sg.media_dir()
+        n = 0
+        for p in (d.rglob("*") if d.exists() else []):
+            if p.is_file() and not p.name.endswith(".part"):   # (a download under way finishes)
+                try:
+                    p.unlink()
+                    n += 1
+                except OSError:
+                    pass
+        return {"ok": True, "removed": n}
 
     @app.get("/api/sg/link/{aid}")
     def sg_link_get(aid: str) -> JSONResponse:

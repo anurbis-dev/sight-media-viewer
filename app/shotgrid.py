@@ -20,6 +20,7 @@ import http.client
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import urllib.error
@@ -79,6 +80,7 @@ class SgError(Exception):
 
 class ShotGridService:
     def __init__(self, home: Path) -> None:
+        self.home = home
         self.path = home / "shotgrid.json"
         self._lock = threading.RLock()
         # (site, script, sudo login — "" = the script) -> (token, until). Keyed by site + script too: a token asked for
@@ -99,6 +101,7 @@ class ShotGridService:
             "configured": bool(site and c.get("script") and c.get("key")),
             "site": site, "script": c.get("script", ""), "hasKey": bool(c.get("key")),
             "statusMap": c.get("statusMap") or {}, "logins": c.get("logins") or {}, "sudo": bool(c.get("sudo")),
+            "cacheLimitGB": float(c.get("cacheLimitGB") or 0), "cacheDir": str(self.media_dir()),
         }
 
     def configure(self, data: dict) -> bool:
@@ -109,6 +112,9 @@ class ShotGridService:
         site = site_url(data.get("site", "")) if isinstance(data.get("site", ""), str) else None
         script, key = data.get("script", ""), data.get("key")
         smap, logins, sudo = data.get("statusMap") or {}, data.get("logins") or {}, data.get("sudo", False)
+        limit = data.get("cacheLimitGB")   # downloaded Versions' media: GB, 0 = Auto (while the disk has room); missing = kept
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, (int, float)) or not 0 <= limit <= 100000):
+            return False
         if site is None or not isinstance(script, str) or (key is not None and not isinstance(key, str)):
             return False
         if site and not valid_site(site):
@@ -133,7 +139,9 @@ class ShotGridService:
                 key = old.get("key", "") if (old.get("site", ""), old.get("script", "")) == (site, script) else ""
             if not site or not script:
                 key = ""
-            new = {"site": site, "script": script, "key": key, "statusMap": smap, "logins": logins, "sudo": bool(sudo)}
+            if limit is None:
+                limit = old.get("cacheLimitGB") or 0
+            new = {"site": site, "script": script, "key": key, "statusMap": smap, "logins": logins, "sudo": bool(sudo), "cacheLimitGB": limit}
             new = {k: v for k, v in new.items() if v}
             self._tokens = {}
             if not new:
@@ -231,3 +239,209 @@ class ShotGridService:
             except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
                 raise SgError(502, f"ShotGrid not reachable ({type(e).__name__})") from None
         raise SgError(502, "unreachable")
+
+
+    # ---- the server's own calls (Sight's ShotGrid view: thumbnails, opening a Version) ---------------------
+    def api(self, method: str, path: str, body: dict | None = None) -> dict:
+        c = self._load()
+        url = c.get("site", "") + "/api/v1.1" + path
+        data = json.dumps(body).encode() if body is not None else None
+        status, _ctype, raw = self.forward(method, url, data, {"content-type": "application/json", "accept": "application/json"})
+        try:
+            j = json.loads(raw.decode("utf-8") or "{}")
+        except ValueError:
+            j = {}
+        if status >= 400:
+            err = (j.get("errors") or [{}])[0] if isinstance(j, dict) else {}
+            raise SgError(status if status < 500 else 502, err.get("title") or f"ShotGrid answered {status}")
+        return j
+
+    def version(self, vid: int, fields: list[str]) -> dict:
+        j = self.api("GET", f"/entity/versions/{int(vid)}?fields=" + urllib.parse.quote(",".join(fields)))
+        d = j.get("data") or {}
+        out = {"type": d.get("type"), "id": d.get("id")}
+        out.update(d.get("attributes") or {})
+        for k, v in (d.get("relationships") or {}).items():
+            out[k] = v.get("data") if isinstance(v, dict) else v
+        return out
+
+    def _host_dir(self, root: str) -> Path:
+        host = urllib.parse.urlsplit(self._load().get("site", "")).netloc.replace(":", "_") or "none"
+        return self.home / "sg_cache" / root / re.sub(r"[^\w.-]", "_", host)
+
+    def media_dir(self) -> Path:
+        # resolved: the library stores a source's resolved path, and a file must match its source by path
+        return (self.home / "sg_cache" / "media").resolve()
+
+    def _get_bytes(self, url: str, limit: int = MAX_BODY) -> tuple[bytes, str]:
+        status, ctype, raw = self.forward("GET", url, None, {})
+        if status >= 400:
+            raise SgError(502, f"download failed ({status})")
+        return raw[:limit], ctype
+
+    # Thumbnails / filmstrips on disk, one file per Version and kind, with the Version's updated_at beside it:
+    # a request with the same stamp is served from disk; a newer one fetches again. Returns (path, type) or None.
+    def picture(self, vid: int, kind: str, stamp: str) -> tuple[Path, str] | None:
+        field = "filmstrip_image" if kind == "filmstrip" else "image"
+        d = self._host_dir("thumbs")
+        f, meta = d / f"{int(vid)}_{kind}", d / f"{int(vid)}_{kind}.json"
+        try:
+            m = json.loads(meta.read_text(encoding="utf-8"))
+            if f.exists() and (not stamp or m.get("u") == stamp):
+                return (f, m.get("type") or "image/jpeg") if m.get("has") else None
+        except (OSError, ValueError):
+            pass
+        v = self.version(vid, [field, "updated_at"])
+        url = v.get(field)
+        d.mkdir(parents=True, exist_ok=True)
+        has, ctype = False, ""
+        if isinstance(url, str) and "/images/status/transient/" in url:
+            return None   # still being made on ShotGrid: not remembered, asked again next time
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            raw, ctype = self._get_bytes(url, 32 * 1048576)
+            has = bool(raw)
+        else:
+            raw = b""
+        # written aside, then swapped in: a request streaming the old file is not cut short
+        tmp = f.with_name(f.name + f".{threading.get_ident()}.tmp")
+        tmp.write_bytes(raw)
+        os.replace(tmp, f)
+        mtmp = meta.with_name(meta.name + f".{threading.get_ident()}.tmp")
+        mtmp.write_text(json.dumps({"u": stamp or str(v.get("updated_at") or ""), "has": has, "type": ctype}), encoding="utf-8")
+        os.replace(mtmp, meta)
+        return (f, ctype or "image/jpeg") if has else None
+
+    # Media of opened Versions (their web proxy) in <home>/sg_cache/media: a size limit in GB, or 0 = Auto — as much as
+    # the disk holds, keeping RESERVE free. Oldest (by last open) go first.
+    RESERVE = 2 * 1024 ** 3
+    IN_USE = 15 * 60
+
+    def cache_info(self) -> dict:
+        d = self.media_dir()
+        files = [p for p in d.rglob("*") if p.is_file()] if d.exists() else []
+        used = sum(p.stat().st_size for p in files)
+        free = shutil.disk_usage(d if d.exists() else self.home).free
+        return {"used": used, "files": len(files), "free": free, "limitGB": float(self._load().get("cacheLimitGB") or 0)}
+
+    def make_room(self, need: int, keep: Path | None = None) -> None:
+        d = self.media_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        limit = float(self._load().get("cacheLimitGB") or 0) * 1024 ** 3
+        every = [p for p in d.rglob("*") if p.is_file()]
+        used = sum(p.stat().st_size for p in every)   # downloads under way (.part) count, they are not evicted
+        # Never evicted: downloads under way and files opened in the last IN_USE seconds (the one in the preview).
+        recent = time.time() - self.IN_USE
+        files = sorted((p for p in every if p != keep and not p.name.endswith((".part", ".sgsrc")) and p.stat().st_atime < recent),
+                       key=lambda p: p.stat().st_atime)
+        evictable = sum(p.stat().st_size for p in files)
+
+        def ok() -> bool:
+            if limit and used + need > limit:
+                return False
+            return shutil.disk_usage(d).free - need >= self.RESERVE
+
+        # evicting cannot help (bigger than the limit itself, or than the disk could hold with the whole cache gone):
+        # refused before anything is deleted
+        if (limit and used - evictable + need > limit) or shutil.disk_usage(d).free + evictable - need < self.RESERVE:
+            if not ok():
+                raise SgError(507, "Not enough room for this Version's media (ShotGrid cache limit or free disk space)")
+        while not ok() and files:
+            p = files.pop(0)
+            try:
+                size = p.stat().st_size
+                p.unlink()
+                used -= size   # (only once it is really gone: a file in use on Windows stays and still counts)
+                side = p.with_name(p.name + ".sgsrc")   # its upload mark goes with it (kept alone it is never evicted)
+                if side.exists():
+                    used -= side.stat().st_size
+                    side.unlink()
+            except OSError:
+                pass
+        if not ok():
+            raise SgError(507, "Not enough room for this Version's media (ShotGrid cache limit or free disk space)")
+
+    def fetch_media(self, vid: int, root: Path | None = None, can_open=None) -> tuple[Path, dict]:
+        """Downloads a Version's web proxy (uploaded movie, else its picture) into the media cache (`root`: the cache
+        source's own path as the library spells it); reuses the file there while it is the same upload. `can_open(name)`
+        refuses a type Sight cannot open before anything is downloaded. Returns (path, version record)."""
+        fields = ["code", "project", "entity", "sg_task", "sg_first_frame", "frame_range", "sg_status_list",
+                  "sg_uploaded_movie", "image", "updated_at"]
+        v = self.version(vid, fields)
+        up = v.get("sg_uploaded_movie")
+        if isinstance(up, dict) and up.get("url"):
+            url, name = up["url"], up.get("name") or f"{v.get('code') or vid}.mp4"
+        elif isinstance(v.get("image"), str) and v["image"].startswith(("http://", "https://")):
+            url, name = v["image"], f"{v.get('code') or vid}.jpg"
+        else:
+            raise SgError(404, "This Version has no media")
+        name = name if isinstance(name, str) else f"{v.get('code') or vid}"
+        stem, ext = os.path.splitext(re.sub(r'[\x00-\x1f\\/:*?"<>|]+', "_", name).strip().strip(". "))
+        if ext in ("", ".") or len(ext) > 8:
+            ext = ".mp4" if isinstance(up, dict) else ".jpg"
+        stem = (stem or f"version{int(vid)}")[:100]
+        if can_open and not can_open(stem + ext):
+            raise SgError(415, f"Sight cannot open this Version's media ({ext})")
+        d = (root or self.media_dir()) / self._host_dir("x").name
+        path = d / f"{stem}__v{int(vid)}{ext}"
+        # the same upload (its attachment id, else the Version's stamp) reuses the file; a new one downloads again
+        mark = str((up or {}).get("id") or "") if isinstance(up, dict) else ""
+        mark = mark or str(v.get("updated_at") or "")
+        side = path.with_name(path.name + ".sgsrc")
+        try:
+            same = side.read_text(encoding="utf-8") == mark
+        except OSError:
+            same = False
+        if path.exists() and path.stat().st_size and same:
+            st = path.stat()
+            os.utime(path, (time.time(), st.st_mtime))   # last opened (atime): kept longest; mtime as is (no re-thumbnail)
+            return path, v
+        d.mkdir(parents=True, exist_ok=True)
+        self._stream_to(url, path)
+        side.write_text(mark, encoding="utf-8")
+        return path, v
+
+    def _stream_to(self, url: str, path: Path) -> None:
+        """Streams a download to `path` (via .part), making room for its announced size first and as it grows.
+        The site's own links get the token; a redirect is followed without it (a signed storage link)."""
+        c = self._load()
+        site = c.get("site", "")
+        u = urllib.parse.urlsplit(url)
+        on_site = f"{u.scheme}://{u.netloc}".lower() == site.lower()
+        if not on_site and u.scheme != "https":
+            raise SgError(400, "https only")
+        h = {"User-Agent": "Sight"}
+        if on_site:
+            h["Authorization"] = "Bearer " + self._token(c, "")
+        tmp = path.with_name(path.name + ".part")
+        try:
+            try:
+                resp = _opener_for(url).open(urllib.request.Request(url, headers=h), timeout=TIMEOUT_S)
+            except urllib.error.HTTPError as e:
+                loc = e.headers.get("Location") if e.code in (301, 302, 303, 307, 308) else None
+                if not loc:
+                    raise SgError(502, f"download failed ({e.code})") from None
+                loc = urllib.parse.urljoin(url, loc)
+                if not loc.lower().startswith("https://"):
+                    raise SgError(400, "redirect to http") from None
+                resp = _opener_for(loc).open(urllib.request.Request(loc, headers={"User-Agent": "Sight"}), timeout=TIMEOUT_S)
+            with resp:
+                size = int(resp.headers.get("Content-Length") or 0)
+                self.make_room(size or 64 * 1048576)
+                got = 0
+                with open(tmp, "wb") as f:
+                    while True:
+                        chunk = resp.read(1048576)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        got += len(chunk)
+                        if not size and got % (256 * 1048576) < 1048576:
+                            self.make_room(256 * 1048576, keep=tmp)   # (.part counts in `used` already)
+            os.replace(tmp, path)
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
+            raise SgError(502, f"download failed ({type(e).__name__})") from None
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
