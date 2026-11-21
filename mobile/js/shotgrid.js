@@ -193,3 +193,209 @@ export async function sgSync(ctx){
     ctx.toast("ShotGrid sync failed: " + errText(e) + corsHint(e, c), 6000);
   } finally { syncing = false; b.done(); }
 }
+
+// ---- the Versions browser (the home screen's second page, docs/PLAN-trackers.md) ------------------------------
+// A filter (project · entity type · entity · status) over the project's Versions, newest first, as a grid of
+// thumbnails. Thumbnails are cached in Cache Storage by Version id + its updated_at (a newer Version replaces it), so
+// the grid draws again without downloading. A tap opens the Version: its review on this device if there is one with
+// the media kept, else its web proxy (the uploaded movie / picture) is downloaded and opened as a review linked to it.
+// ctx: {el, btn, toast, busy, settings(), reviews(): [meta], openReview(key), openFile(file, link)}
+const FILTER_KEY = "sight-review:sgfilter";
+const THUMBS = "sight-review-sgthumbs";
+const PAGE = 60;
+const VFIELDS = ["code", "project", "entity", "sg_task", "sg_first_frame", "frame_range", "sg_status_list", "image", "updated_at", "created_at", "user", "sg_uploaded_movie"];
+const ENTITY_TYPES = [["", "All"], ["Shot", "Shots"], ["Asset", "Assets"], ["Sequence", "Sequences"]];
+function loadFilter(){ try { const f = JSON.parse(localStorage.getItem(FILTER_KEY) || "null"); return f && typeof f === "object" ? f : {}; } catch { return {}; } }
+function saveFilter(f){ try { localStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch {} }
+const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (x) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[x]);
+
+// One thumbnail: from the cache, else downloaded (at most 4 at a time) and put there.
+const thumbQ = [];
+let thumbRun = 0;
+// alive(): the grid still on screen (a browser re-made or closed drops its waiting thumbnails)
+function thumbUrl(cl, v, alive){
+  return new Promise((ok) => { thumbQ.push({ cl, v, ok, alive }); pumpThumbs(); });
+}
+// One cache entry per Version (its updated_at in a header: a changed Version replaces it in place); the cache is
+// trimmed to the newest MAX_THUMBS entries when a browser opens.
+const MAX_THUMBS = 3000;
+async function trimThumbs(){
+  try {
+    if (!globalThis.caches) return;
+    const cache = await caches.open(THUMBS), keys = await cache.keys();
+    for (let i = 0; i < keys.length - MAX_THUMBS; i++) await cache.delete(keys[i]);  // (oldest first: insertion order)
+  } catch {}
+}
+async function pumpThumbs(){
+  while (thumbRun < 4 && thumbQ.length){
+    const { cl, v, ok, alive } = thumbQ.shift();
+    if (alive && !alive()){ ok(null); continue; }
+    thumbRun++;
+    (async () => {
+      const key = `https://sg-thumb.invalid/${encodeURIComponent(cl.host)}/${v.id}`, upd = String(v.updated_at || "");
+      try {
+        const cache = globalThis.caches ? await caches.open(THUMBS) : null;
+        let hit = cache ? await cache.match(key) : null;
+        if (hit && hit.headers.get("X-Updated") !== upd) hit = null;
+        if (!hit){
+          if (!v.image || typeof v.image !== "string") return ok(null);
+          const blob = await cl.download(v.image);
+          hit = new Response(blob, { headers: { "Content-Type": blob.type || "image/jpeg", "X-Updated": upd } });
+          if (cache){ await cache.delete(key); await cache.put(key, hit.clone()); }  // (re-put: the newest at the end)
+        }
+        ok(URL.createObjectURL(await hit.blob()));
+      } catch { ok(null); }
+    })().finally(() => { thumbRun--; pumpThumbs(); });
+  }
+}
+
+export function sgBrowser(ctx, box){
+  const { el, btn, toast } = ctx;
+  box.textContent = "";
+  const c = sgConfig();
+  if (!sgReady(c)){
+    const e = el("div", "sgb-empty");
+    e.appendChild(el("p", "", "Connect ShotGrid to browse your projects' Versions here, open one and review it — the notes sync back."));
+    e.appendChild(btn("btn primary", "Connect ShotGrid…", () => ctx.settings()));
+    box.appendChild(e);
+    return { refresh(){}, dispose(){} };
+  }
+  const cl = client(c), f = loadFilter(), urls = [];
+  let gone = false, opening = false, loading = false;
+  trimThumbs();
+  const bar = el("div", "sgb-filter");
+  const proj = el("select", "sgb-proj"); proj.setAttribute("aria-label", "Project");
+  const types = el("div", "seg sgb-types");
+  const ent = el("select", "sgb-ent"); ent.setAttribute("aria-label", "Entity");
+  const stat = el("select", "sgb-stat"); stat.setAttribute("aria-label", "Status");
+  const q = el("input", "sgb-q"); q.type = "search"; q.placeholder = "Version name contains…"; q.spellcheck = false; q.value = f.q || "";
+  bar.appendChild(proj); bar.appendChild(types); bar.appendChild(ent);
+  const row = el("div", "sgb-row"); row.appendChild(stat); row.appendChild(q); bar.appendChild(row);
+  box.appendChild(bar);
+  const grid = el("div", "sgb-grid"), more = btn("btn sgb-more", "More", () => { if (!loading) load(true); });
+  more.hidden = true;
+  const msg = el("p", "sgb-msg");
+  box.appendChild(msg); box.appendChild(grid); box.appendChild(more);
+
+  ENTITY_TYPES.forEach(([t, label]) => { const b = btn("", label, () => { f.type = t; f.entity = ""; saveFilter(f); paintTypes(); loadEntities().then(() => load()); }); b.dataset.t = t; types.appendChild(b); });
+  const paintTypes = () => types.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === (f.type || "")));
+  paintTypes();
+  const fillSel = (sel, items, cur, any) => {
+    sel.innerHTML = `<option value="">${escHtml(any)}</option>` + items.map(([v, t]) => `<option value="${escHtml(v)}">${escHtml(t)}</option>`).join("");
+    sel.value = items.some(([v]) => String(v) === String(cur)) ? String(cur) : "";
+  };
+  async function loadEntities(){
+    ent.hidden = !f.type || !f.project;
+    if (ent.hidden) return;
+    fillSel(ent, [], "", "Loading…");
+    try {
+      const list = await cl.search(f.type, [["project", "is", { type: "Project", id: Number(f.project) }]], ["code"], { sort: "code", limit: 2000 });
+      fillSel(ent, list.map((x) => [x.id, x.code || "#" + x.id]), f.entity, "Every " + f.type.toLowerCase());
+    } catch (e){ fillSel(ent, [], "", errText(e)); }
+  }
+  const statuses = new Set(f.status ? [f.status] : []);
+  const paintStat = () => fillSel(stat, [...statuses].sort().map((s) => [s, s]), f.status || "", "Any status");
+  paintStat();
+  let page = 0, seq = 0, gridGen = 0;
+  async function load(append){
+    if (!f.project){ ++seq; loading = false; grid.textContent = ""; msg.textContent = "Pick a project."; more.hidden = true; return; }  // (a load in flight lands nowhere)
+    const my = ++seq;
+    loading = true;
+    if (!append){ gridGen++; page = 0; grid.textContent = ""; urls.splice(0).forEach((u) => URL.revokeObjectURL(u)); }
+    msg.textContent = "Loading…";
+    const filters = [["project", "is", { type: "Project", id: Number(f.project) }]];
+    if (f.entity && f.type) filters.push(["entity", "is", { type: f.type, id: Number(f.entity) }]);
+    else if (f.type) filters.push(["entity", "type_is", f.type]);
+    if (f.status) filters.push(["sg_status_list", "is", f.status]);
+    if (f.q) filters.push(["code", "contains", f.q]);
+    try {
+      const j = await cl.api("POST", "/entity/versions/_search", { filters, fields: VFIELDS, sort: "-created_at", page: { size: PAGE, number: page + 1 } }, { contentType: "application/vnd+shotgun.api3_array+json" });
+      if (my !== seq) return;
+      const vs = ((j && j.data) || []).map(SG().flat);
+      page++;
+      vs.forEach((v) => { if (v.sg_status_list && !statuses.has(v.sg_status_list)){ statuses.add(v.sg_status_list); paintStat(); } grid.appendChild(tile(v)); });
+      msg.textContent = grid.childNodes.length ? "" : "No Version matches.";
+      more.hidden = vs.length < PAGE;
+    } catch (e){ if (my === seq){ msg.textContent = errText(e) + corsHint(e, c); more.hidden = true; } }
+    finally { if (my === seq) loading = false; }
+  }
+  function linkedReview(v){
+    return ctx.reviews().find((m) => m.sg && m.sg.link && m.sg.link.site === cl.host && Number(m.sg.link.version.id) === Number(v.id));
+  }
+  function tile(v){
+    const t = btn("sgb-tile", "", () => open(v)), gen = gridGen;  // (a new grid drops this tile's waiting thumbnail; "More" keeps it)
+    t.dataset.ver = String(v.id);
+    const th = el("div", "th"), cap = el("div", "cap");
+    cap.appendChild(el("b", "", v.code || "#" + v.id));
+    cap.appendChild(el("small", "", [v.entity && v.entity.name, v.sg_status_list].filter(Boolean).join(" · ")));
+    if (linkedReview(v)) t.classList.add("has");
+    t.appendChild(th); t.appendChild(cap);
+    thumbUrl(cl, v, () => !gone && gen === gridGen).then((u) => { if (!u) return; if (gone){ URL.revokeObjectURL(u); return; } urls.push(u); const im = el("img"); im.alt = ""; im.src = u; th.appendChild(im); });
+    return t;
+  }
+  async function open(v){
+    if (opening) return;  // (a double tap: one download)
+    opening = true;
+    try { await open1(v); } finally { opening = false; }
+  }
+  async function open1(v){
+    const m = linkedReview(v);
+    if (m && m.kept){ await ctx.openReview(m.key); return; }
+    // a linked review of a still takes the Version's picture when the upload is a movie (an uploaded still is kept)
+    const up = v.sg_uploaded_movie && typeof v.sg_uploaded_movie === "object" ? v.sg_uploaded_movie : null;
+    const upVideo = up && (/^video\//.test(up.content_type || "") || /\.(mov|mp4|m4v|webm|mkv|avi)$/i.test(up.name || ""));
+    const mov = up && !(m && m.asset && m.asset.kind === "image" && upVideo) ? up : null;
+    const src = mov && mov.url ? { url: mov.url, name: mov.name || (v.code + ".mp4"), type: mov.content_type || "video/mp4" }
+      : typeof v.image === "string" && v.image ? { url: v.image, name: (v.code || "version") + ".jpg", type: "image/jpeg" } : null;
+    if (!src){ toast("This Version has no media to play on the phone", 4000); return; }
+    const b = ctx.busy("Downloading " + (v.code || "the Version") + "…");
+    try {
+      const blob = await cl.download(src.url);
+      let name = src.name;
+      if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += /video/.test(blob.type || src.type) ? ".mp4" : ".jpg";
+      const file = new File([blob], name, { type: blob.type || src.type });
+      b.done();
+      // the review this Version already has (its media not on the device): that one, not a second empty one
+      if (m) await ctx.openReview(m.key, file);
+      else await ctx.openFile(file, SG().linkOf(cl.host, v));
+    } catch (e){ b.done(); toast("Could not download the Version: " + errText(e) + corsHint(e, c), 6000); }
+  }
+
+  proj.onchange = () => { f.project = proj.value; f.entity = ""; saveFilter(f); loadEntities().then(() => load()); };
+  ent.onchange = () => { f.entity = ent.value; saveFilter(f); load(); };
+  stat.onchange = () => { f.status = stat.value; saveFilter(f); load(); };
+  let qt = 0;
+  q.addEventListener("input", () => { clearTimeout(qt); qt = setTimeout(() => { f.q = q.value.trim(); saveFilter(f); load(); }, 450); });
+  (async () => {
+    fillSel(proj, [], "", "Loading projects…");
+    try {
+      const ps = await cl.projects();
+      fillSel(proj, ps.map((p) => [p.id, p.name || "#" + p.id]), f.project, "Project…");
+      if (!proj.value) f.project = "";
+      await loadEntities();
+      await load();
+    } catch (e){ fillSel(proj, [], "", "No projects"); msg.textContent = errText(e) + corsHint(e, c); }
+  })();
+  return { refresh(){ load(); }, dispose(){ gone = true; seq++; urls.splice(0).forEach((u) => URL.revokeObjectURL(u)); } };
+}
+
+// The user sheet (the home screen's person button): the reviewer name and the tracker rows.
+// ui: {sheet, el, btn, toast, who(): name, setName(): Promise<bool>, settings()}
+export function userSheet(ui){
+  const { sheet, el, btn } = ui;
+  const c = sgConfig();
+  sheet((sh, close) => {
+    sh.appendChild(el("h2", "", "You"));
+    const kv = el("div", "kv");
+    kv.appendChild(el("b", "", "Reviewer name"));
+    const nm = kv.appendChild(btn("tapedit", ui.who() || "—", async () => { if (await ui.setName()) nm.textContent = ui.who(); }));
+    nm.title = "Tap to change your name";
+    kv.appendChild(el("b", "", "ShotGrid"));
+    let host = c.site || ""; try { host = new URL(c.site).host; } catch {}
+    kv.appendChild(el("span", "", sgReady(c) ? "connected · " + host + (c.sudo ? " · as reviewer" : "") : "not connected"));
+    sh.appendChild(kv);
+    const a = el("div", "acts");
+    a.appendChild(btn("btn", sgReady(c) ? "ShotGrid connection…" : "Connect ShotGrid…", () => { close(); ui.settings(); }));
+    sh.appendChild(a);
+  });
+}

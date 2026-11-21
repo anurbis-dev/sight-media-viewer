@@ -314,6 +314,15 @@
   wins). Deleting a note does not delete it on the other side. The phone app has the same: Settings → *ShotGrid
   connection…* and *Export and more → ShotGrid…*; if the site does not answer the phone app, put a proxy's address in
   the connection (`tools/sg-proxy-worker.js`, a Cloudflare Worker). Details: `docs/SHOTGRID.md`.
+- **You (reviewer name, tracker logins)** — the round person button (your initials once you have a name) at the top
+  of the sidebar, and the same button in the review panel's header: your reviewer name (stored with every note) and
+  a row per tracker (ShotGrid: connected or not, *Set up…*). On the phone it sits at the left of the home bar.
+- **ShotGrid on the phone's home screen** — two pages, *Reviews* and *ShotGrid* (tap the tabs in the bar, or swipe
+  sideways anywhere but on a review card). The ShotGrid page lists a project's Versions as thumbnails, newest first:
+  pick the project, then All / Shots / Assets / Sequences, an entity, a status, or type part of the name. Thumbnails
+  are kept on the device and only downloaded again when the Version changes. Tap a Version: its review opens (one
+  you already have is outlined), or its playable copy is downloaded, kept on the device and opened as a review that
+  is linked to the Version — *Export and more → ShotGrid… → Sync now* exchanges the notes.
 - **Phone app (Sight Review)** — review pictures, videos and 3D models on a phone or tablet, offline, without
   Sight: open the app's link (GitHub Pages of this repository) in Safari → Share → *Add to Home
   Screen* (Android: *Install app*); it then starts like an app and works without network. Reviews

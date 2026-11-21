@@ -156,6 +156,16 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .brand h1 .ver { margin-left: 6px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--subtle); vertical-align: baseline; }
 .brand .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand .sub:empty { display: none; }
+.brand .user-btn { flex: none; width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); display: grid; place-items: center; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0; }
+.brand .user-btn:hover { border-color: var(--border-strong); }
+.brand .user-btn.on { border-color: var(--accent); }
+.user-pop { position: fixed; z-index: 60; width: 280px; padding: 12px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.user-pop[hidden] { display: none; }
+.user-pop h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--subtle); text-transform: uppercase; letter-spacing: .04em; }
+.user-pop input { width: 100%; height: 30px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; outline: none; box-sizing: border-box; }
+.user-pop .trk { display: flex; align-items: center; gap: 8px; }
+.user-pop .trk b { font-weight: 600; } .user-pop .trk span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
+.user-pop .trk .dot { flex: none; width: 8px; height: 8px; border-radius: 4px; background: var(--subtle); } .user-pop .trk .dot.ok { background: #34c759; }
 .brand #add { margin-left: auto; flex: none; height: 26px; padding: 0 10px; font-size: calc(var(--text-size) - 1px); }
 .sub { font-size: 11px; color: var(--subtle); }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: var(--ctl-h); padding: 0 12px; border-radius: var(--radius-sm); background: var(--primary); color: var(--bg); font-weight: 500; transition: opacity var(--motion-quick) var(--ease), transform var(--motion-quick) var(--ease); }
@@ -695,7 +705,9 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
       <button class="mark" id="aboutBtn" type="button" title="About Sight" aria-label="About Sight"><img src="/static/favicon.svg" alt="" draggable="false"></button>
       <div><h1>Sight<span class="ver" id="verTag"></span></h1><div class="sub" id="buildTag" style="opacity:.7"></div></div>
       <button class="btn" id="add" title="Add a folder to the library">+ Folder</button>
+      <button class="user-btn" id="userBtn" data-userbtn type="button" title="You: reviewer name and tracker logins" aria-label="You: reviewer name and tracker logins"></button>
     </div>
+    <div class="user-pop" id="userPop" hidden></div>
     <div id="ffmpegBanner"></div>
     <div class="side-scroll" id="sideScroll">
       <nav class="nav" id="nav"></nav>
@@ -1012,6 +1024,71 @@ function bindShotGridSettings(){
     } catch (e){ msg.textContent = e.message || "Could not connect"; }
   };
 }
+// ---- You: the user button (sidebar header; the review panel's person icon opens the same panel) -------------
+// The reviewer name (stored with every note; no login needed) and one row per tracker: logged in or not, Set up…
+// (Settings → ShotGrid holds the fields). docs/PLAN-trackers.md stage 1.
+const userInitials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+function paintUserBtns(root){
+  const n = reviewerName(), ini = userInitials(n);
+  (root || document).querySelectorAll("[data-userbtn]").forEach((b) => {
+    b.innerHTML = ini ? esc(ini) : renderIconSvg("person", "currentColor", 15);
+    b.title = (n ? n + " — " : "") + "reviewer name and tracker logins";
+  });
+}
+function setReviewerName(v){
+  putSetting("sight.reviewer", v.trim());
+  paintUserBtns();
+  window.dispatchEvent(new CustomEvent("sight-reviewer"));
+}
+// Closing commits a name still being typed (auto-close, a toggle, a tap outside).
+function closeUserPanel(){
+  const pop = $("userPop"), inp = $("userName");
+  if (pop.hidden) return;
+  if (inp && inp.value.trim() !== reviewerName()) setReviewerName(inp.value);
+  pop.hidden = true;
+}
+// Touch has no pointer to move away: a tap outside the panel (and off the person buttons) closes it.
+document.addEventListener("pointerdown", (e) => {
+  const pop = $("userPop");
+  if (!pop || pop.hidden || pop.contains(e.target) || e.target.closest?.("[data-userbtn]")) return;
+  closeUserPanel();
+}, true);
+async function openUserPanel(anchor){
+  const pop = $("userPop");
+  if (!pop.hidden && pop._anchor === anchor){ closeUserPanel(); return; }
+  closeUserPanel();
+  pop._anchor = anchor;
+  // On the page itself, not in the sidebar: the sidebar is hidden in a narrow window (the review panel's button
+  // opens it too) and its drawer is a stacking context of its own.
+  if (pop.parentElement !== document.body) document.body.appendChild(pop);
+  pop.innerHTML = `<h3>You</h3>
+    <label>Reviewer name <input id="userName" placeholder="Your name" spellcheck="false" autocomplete="name"></label>
+    <h3>Trackers</h3>
+    <div class="trk"><i class="dot" id="userSgDot"></i><b>ShotGrid</b><span id="userSg">…</span><button class="btn ghost" id="userSgSet" type="button">Set up…</button></div>`;
+  const inp = $("userName");
+  inp.value = reviewerName();
+  inp.addEventListener("change", () => setReviewerName(inp.value));
+  inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter") || hotkey(e, "Escape")) closeUserPanel(); });
+  $("userSgSet").onclick = () => {
+    closeUserPanel();
+    if (!state.settingsOpen) $("settingsHead").click();
+    setTimeout(() => { const s = $("sgSite"); if (s){ s.scrollIntoView({ block: "center" }); s.focus(); } }, 60);
+  };
+  const r = anchor.getBoundingClientRect(), w = 280;
+  pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + "px";
+  pop.style.top = Math.min(innerHeight - 200, r.bottom + 6) + "px";
+  pop.hidden = false;
+  // one entry per element: point it at the button that opened the panel this time (the other may be gone)
+  const ent = registerAutoClose(pop, closeUserPanel, anchor);
+  ent.anchor = anchor; ent.armed = false;
+  try {
+    const st = await api("/api/sg/status");
+    let host = st.site; try { host = new URL(st.site).host; } catch {}
+    $("userSg").textContent = st.configured ? host + (st.sudo ? " · as reviewer" : "") : "not connected";
+    $("userSgDot").classList.toggle("ok", !!st.configured);
+    $("userSgSet").textContent = st.configured ? "Settings…" : "Set up…";
+  } catch { $("userSg").textContent = "not available"; }
+}
 // The page's ShotGrid client: everything goes through Sight's server, which holds the key (app/shotgrid.py).
 function sgClient(site){
   return globalThis.SightShotGrid.createClient({ site: site || $("sgSite")?.value || "x", via: "/api/sg/fetch?url=", serverAuth: true, headers: { "X-Sight": "1" } });
@@ -1191,6 +1268,8 @@ const annot = createAnnotator({
   exportBusy: () => seqExporting,
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+  userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
+  paintUserBtns: (root) => paintUserBtns(root),
   // (no lightbox, e.g. a review file dropped on the grid: the page's own toast, plain text)
   toast: (text, ms) => { if (light) flashV3DToast(text); else flash(htmlToText(text), ms); },
   appVersion: () => state.meta?.version || "",
@@ -1238,6 +1317,8 @@ const boardAnnot = createAnnotator({
   api: (path, opts) => api(path, opts),
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+  userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
+  paintUserBtns: (root) => paintUserBtns(root),
   toast: (text) => flashV3DToast(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
@@ -1261,6 +1342,8 @@ const cmpAnnot = createAnnotator({
   notesBtnShown: () => cmp.isOpen(),
   putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
+  userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
+  paintUserBtns: (root) => paintUserBtns(root),
   toast: (text) => flash(text),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
@@ -9770,6 +9853,8 @@ async function aboutCopy(){
   setTimeout(() => { $("aboutCopy").textContent = "Copy"; }, 1500);
 }
 $("aboutBtn").onclick = aboutOpen;
+$("userBtn").onclick = () => openUserPanel($("userBtn"));
+paintUserBtns();
 $("aboutClose").onclick = aboutClose;
 $("aboutCopy").onclick = aboutCopy;
 $("aboutOverlay").addEventListener("pointerdown", (e) => { if (e.target === $("aboutOverlay")) aboutClose(); });

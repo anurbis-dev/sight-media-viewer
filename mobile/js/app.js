@@ -15,7 +15,7 @@ import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
-import { sgSheet, sgSettings } from "./shotgrid.js";
+import { sgSheet, sgSettings, sgBrowser, userSheet } from "./shotgrid.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -29,6 +29,7 @@ const root = document.getElementById("app");
 function el(tag, cls, text){ const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 function btn(cls, text, fn, title){ const b = el("button", cls, text); b.type = "button"; if (fn) b.onclick = fn; if (title){ b.title = title; b.setAttribute("aria-label", title); } return b; }
 const ICONS = {
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/>',
   photo: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
   back: '<path d="m15 5-7 7 7 7"/>', more: '<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>',
@@ -364,7 +365,8 @@ async function openAny(files){
   }
   toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD, Gaussian splats) and Sight review files (.srev)", 4000);
 }
-async function openMedia(file, extras){
+// sgLink: a Version from the ShotGrid browser — the review is tied to it (a new link starts a fresh sync state).
+async function openMedia(file, extras, sgLink){
   const key = await assetKey(file.name, file.size);
   let meta = await DB.get("reviews", key);
   if (!meta){
@@ -394,7 +396,12 @@ async function openMedia(file, extras){
     await DB.saveReview(meta, []);
     DB.persist();
   }
-  await openReview(key, file, false, extras);
+  if (sgLink){
+    const same = meta.sg && meta.sg.link && meta.sg.link.site === sgLink.site && Number(meta.sg.link.version.id) === Number(sgLink.version.id);
+    meta.sg = { link: sgLink, state: same ? meta.sg.state || {} : {} };
+    await DB.put("reviews", meta);
+  }
+  await openReview(key, file, false, extras);  // (a picked file is kept on the device by autoKeep)
 }
 
 // ---- import / merge a .srev ------------------------------------------------------------------
@@ -589,6 +596,41 @@ const fsUp = (e) => {
 document.addEventListener("pointerup", fsUp, true);
 document.addEventListener("pointercancel", fsUp, true);
 
+// The home screen's page (Reviews | ShotGrid), its swipe and the reviews it knows (the browser marks linked Versions).
+let homePage = "reviews", homeSwipe = null, homeMetas = [], sgView = null;
+// A review linked to a ShotGrid Version, opened from the browser: with the Version's downloaded proxy when its own
+// media is not on the device — the same file: bound at once; another one (a desktop original reviewed in Sight): the
+// review opens and the usual "A different file?" question decides (drawings are in the original's pixels).
+async function openLinked(key, file){
+  if (!file) return openReview(key, null);
+  const m = await DB.get("reviews", key).catch(() => null);
+  const same = m && file.size === m.asset.size && file.name.toLowerCase() === String(m.asset.name || "").toLowerCase();
+  if (same) return openReview(key, file);
+  await openReview(key, null);
+  if (!R || R.meta.key !== key || R.file) return;  // (its own file was on the device after all)
+  // another kind of media (the Version's movie for a review of a still): not bound — the notes open without it
+  if (m && m.asset.kind && kindOf(file) !== m.asset.kind){ toast(`This review is for a ${m.asset.kind}; the Version's playable copy is a ${kindOf(file) || "file"} — pick the file to see the media`, 5000); return; }
+  await rebind(file);
+}
+try { if (sessionStorage.getItem("sight-review:page") === "sg") homePage = "sg"; } catch {}
+const initials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+// A horizontal swipe on the home screen: not on a review card (its own swipes), a field, a sheet or the filter bar's
+// controls; clearly sideways (≥ 60 px, twice its height).
+{
+  let hs = null;
+  document.addEventListener("touchstart", (e) => {
+    hs = null;
+    if (!root.classList.contains("home") || e.touches.length !== 1) return;
+    if (e.target.closest(".item, .row, input, select, textarea, .sheet, .back, .sgb-types, .selbar")) return;
+    hs = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: true });
+  document.addEventListener("touchend", (e) => {
+    if (!hs || !homeSwipe) return;
+    const t = e.changedTouches[0], dx = t.clientX - hs.x, dy = t.clientY - hs.y;
+    hs = null;
+    if (Math.abs(dx) >= 60 && Math.abs(dx) > 2 * Math.abs(dy)) homeSwipe(dx);
+  }, { passive: true });
+}
 async function renderHome(){
   fsArm();  // a new screen: auto full screen may ask again
   document.title = "Sight Review";
@@ -611,8 +653,33 @@ async function renderHome(){
     mini.appendChild(l);
   });
   mini.hidden = true;
-  bar.appendChild(el("span")); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
+  // You (name, tracker logins) on the left; the two pages — Reviews | ShotGrid — as tabs in the title (a swipe
+  // sideways anywhere but on a review card steps between them; the cards keep their own swipes).
+  const paintYou = () => { you.textContent = initials(who) || ""; if (!you.textContent) you.innerHTML = ico("user", 20); };
+  const you = btn("ib you", "", () => userSheet({ sheet, el, btn, toast, who: () => who,
+    setName: async () => { const ok = await setName(); paintYou(); return ok; }, settings: () => sgSettings({ sheet, el, btn, toast }) }), "You: reviewer name and tracker logins");
+  paintYou();
+  const tabs = el("div", "seg hometabs");
+  [["reviews", "Reviews"], ["sg", "ShotGrid"]].forEach(([k, label]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; tabs.appendChild(b); });
+  ttl.textContent = ""; ttl.appendChild(tabs);
+  bar.appendChild(you); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
+  const sgMain = el("main", "sgb");
+  if (sgView){ sgView.dispose(); sgView = null; }  // the previous render's browser: its thumbnails revoked, its queue dropped
+  const setHomePage = (k, dir) => {
+    const changed = homePage !== k;
+    homePage = k;
+    try { sessionStorage.setItem("sight-review:page", k); } catch {}
+    tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.p === k));
+    main.hidden = k !== "reviews"; sgMain.hidden = k !== "sg";
+    mini.classList.toggle("off", k !== "reviews");
+    const shown = k === "sg" ? sgMain : main;
+    if (dir){ shown.classList.remove("in-l", "in-r"); void shown.offsetWidth; shown.classList.add(dir > 0 ? "in-r" : "in-l"); }
+    if (k === "sg" && !sgView) sgView = sgBrowser({ el, btn, toast, busy, settings: () => sgSettings({ sheet, el, btn, toast }),
+      reviews: () => homeMetas, openReview: (key, file) => openLinked(key, file), openFile: (file, link) => openMedia(file, null, link) }, sgMain);
+    if (changed) window.scrollTo(0, 0);
+  };
+  homeSwipe = (dx) => { if (dx < 0 && homePage === "reviews") setHomePage("sg", 1); else if (dx > 0 && homePage === "sg") setHomePage("reviews", -1); };
   const main = el("main");
   const opens = el("div", "opens");
   const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
@@ -649,7 +716,10 @@ async function renderHome(){
   foot.appendChild(el("span", "", APP_LABEL)); foot.appendChild(el("br")); foot.appendChild(el("span", "", "Nothing leaves this device unless you share it"));
   main.appendChild(foot);
   root.appendChild(main);
+  root.appendChild(sgMain);
+  setHomePage(homePage);
   const all = await DB.all("reviews").catch(() => []);
+  homeMetas = all;
   if (!main.isConnected) return;  // another screen took over meanwhile
   // One set of open buttons in the page: the big ones only while there is no review at all.
   (all.length ? opens : mini).remove();

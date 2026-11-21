@@ -193,13 +193,18 @@ var SightShotGrid = (function(){
   }
 
   // A link = {site: host, project: {id, name}, version: {id, code}, task: {id}|null, firstFrame} — what a review is tied to.
+  var VERSION_FIELDS = ["code", "project", "entity", "sg_task", "sg_first_frame", "frame_range", "sg_status_list"];
   async function loadVersion(client, id){
-    var v = await client.get("Version", id, ["code", "project", "entity", "sg_task", "sg_first_frame", "frame_range", "sg_status_list"]);
+    var v = await client.get("Version", id, VERSION_FIELDS);
     if (!v || !v.id) throw err("Version " + id + " not found on ShotGrid");
+    return linkOf(client.host, v);
+  }
+  // The link of a Version record already read (its VERSION_FIELDS at least): what a review is tied to.
+  function linkOf(host, v){
     var first = Number(v.sg_first_frame);
     if (!isFinite(first)){ var m = /^\s*(-?\d+)/.exec(v.frame_range || ""); first = m ? Number(m[1]) : null; }
     return {
-      site: client.host, project: v.project ? { id: v.project.id, name: v.project.name || "" } : null,
+      site: host, project: v.project ? { id: v.project.id, name: v.project.name || "" } : null,
       version: { id: v.id, code: v.code || "" }, task: v.sg_task ? { id: v.sg_task.id } : null,
       entity: v.entity ? { type: v.entity.type, id: v.entity.id } : null, firstFrame: first,
     };
@@ -537,7 +542,7 @@ var SightShotGrid = (function(){
   return {
     DEFAULT_STATUS: DEFAULT_STATUS, OUR_PREFIX: OUR_PREFIX,
     siteUrl: siteUrl, siteHost: siteHost, idFor: idFor, flat: flat, statusTo: statusTo, statusFrom: statusFrom, statusMap: statusMap,
-    createClient: createClient, loadVersion: loadVersion, linkedVersionOf: linkedVersionOf, picSig: picSig, annotFrame: annotFrame,
+    createClient: createClient, loadVersion: loadVersion, linkOf: linkOf, VERSION_FIELDS: VERSION_FIELDS, linkedVersionOf: linkedVersionOf, picSig: picSig, annotFrame: annotFrame,
     frameOf: frameOf, sync: sync,
   };
 })();

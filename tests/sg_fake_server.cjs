@@ -40,6 +40,15 @@ srv.listen(Number(process.argv[2] || 0), "127.0.0.1", () => {
   fake = createFakeShotGrid({ site, storage: site + "/storage/" });
   fake.add("HumanUser", { id: 7, login: "bob", name: "Bob Smith" });
   fake.add("Project", { id: 70, name: "Demo", archived: false });
-  fake.add("Version", { id: 77, code: "sh010_comp_v003", project: { type: "Project", id: 70, name: "Demo" }, sg_task: { type: "Task", id: 55 }, sg_first_frame: 1001 });
+  // a project tree for the browser: Shots sh010 / sh020, an Asset, Versions with pictures (PNG thumbnails, a proxy)
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  fake.add("Shot", { id: 501, code: "sh010", project: { type: "Project", id: 70 } });
+  fake.add("Shot", { id: 502, code: "sh020", project: { type: "Project", id: 70 } });
+  fake.add("Asset", { id: 601, code: "robot", project: { type: "Project", id: 70 } });
+  const thumb = () => fake.addFile("t.png", png, "image/png").url;
+  fake.add("Version", { id: 78, code: "sh020_anim_v001", project: { type: "Project", id: 70, name: "Demo" }, entity: { type: "Shot", id: 502, name: "sh020" }, sg_status_list: "rev", image: thumb(),
+    sg_uploaded_movie: Object.assign(fake.addFile("sh020_anim_v001.png", png, "image/png"), { name: "sh020_anim_v001.png" }) });
+  fake.add("Version", { id: 79, code: "robot_model_v002", project: { type: "Project", id: 70, name: "Demo" }, entity: { type: "Asset", id: 601, name: "robot" }, sg_status_list: "apr", image: thumb() });
+  fake.add("Version", { id: 77, code: "sh010_comp_v003", entity: { type: "Shot", id: 501, name: "sh010" }, sg_status_list: "rev", image: thumb(), project: { type: "Project", id: 70, name: "Demo" }, sg_task: { type: "Task", id: 55 }, sg_first_frame: 1001 });
   console.log(JSON.stringify({ site }));
 });

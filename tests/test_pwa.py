@@ -643,6 +643,10 @@ class RoundTrip(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
             res = json.loads(r.stdout.strip().splitlines()[-1])
             self.assertEqual((res["ok"], res["rows"], res["attachments"]), (True, 2, 1))
+            # the home screen's ShotGrid page: swipe, filter, cached thumbnails, a Version opened linked
+            r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg_browser.cjs"), self.base, site, str(self.tmp)],
+                               capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+            self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
         finally:
             fake.terminate()
             fake.wait(5)

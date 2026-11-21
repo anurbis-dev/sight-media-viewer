@@ -2711,7 +2711,7 @@ export function createAnnotator(host){
     el.innerHTML = `
       <div class="an-ph">
         <b>Review</b>
-        <input class="an-who" placeholder="Your name" spellcheck="false" title="Reviewer name stored with every note">
+        <button type="button" class="an-ib an-user" data-userbtn data-act="user" title="Reviewer name and tracker logins"></button>
         <button type="button" class="an-ib" data-act="sg" title="ShotGrid: link this file to a Version and sync the notes both ways">SG ▾</button>
         <button type="button" class="an-ib" data-act="export" title="Export / import">Export ▾</button>
         <button type="button" class="an-ib" data-act="close" title="Hide panel (C)">${ICON.close}</button>
@@ -2757,10 +2757,10 @@ export function createAnnotator(host){
       </div>
       <input type="file" class="an-file" accept=".srev,.sightreview,application/json" hidden>`;
     el.addEventListener("pointerdown", (e) => e.stopPropagation());
-    const who = el.querySelector(".an-who");
-    who.value = reviewer();
-    who.addEventListener("change", () => { try { host.putSetting("sight.reviewer", who.value.trim()); } catch {} });
-    who.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter") || hotkey(e, "Escape")) who.blur(); });
+    // The reviewer name lives in the user panel (index.html openUserPanel), the same one as the sidebar's person button.
+    const who = el.querySelector(".an-user");
+    who.onclick = () => host.userPanel?.(who);
+    host.paintUserBtns?.(el);  // (not in the page yet)
     const menu = el.querySelector(".an-menu:not(.an-sg)"), exBtn = el.querySelector("[data-act=export]");
     exBtn.onclick = () => {
       menu.hidden = !menu.hidden;
@@ -5064,8 +5064,7 @@ function injectStyles(){
 .an-panel[hidden] { display: none; }
 .an-ph { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 14px; border-bottom: 1px solid var(--border); }
 .an-ph b { font-size: 13px; font-weight: 600; }
-.an-who { flex: 1; min-width: 0; height: 26px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid transparent; border-radius: 6px; outline: none; }
-.an-who:focus { border-color: var(--border-strong); }
+.an-user { margin-left: auto; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); font-size: 11px; font-weight: 600; display: grid; place-items: center; padding: 0; }
 .an-ib { height: 26px; min-width: 26px; padding: 0 6px; border-radius: 6px; color: var(--muted); display: inline-grid; place-items: center; font-size: 11px; white-space: nowrap; }
 .an-ib:hover { background: var(--surface-2); color: var(--fg); }
 .an-ib.on { color: #34c759; }

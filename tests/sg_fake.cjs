@@ -7,14 +7,14 @@ function createFakeShotGrid(opts){
   opts = opts || {};
   const site = (opts.site || "https://studio.shotgrid.example").replace(/\/+$/, "");
   const script = opts.script || "sight", key = opts.key || "secret";
-  const db = { Project: new Map(), Version: new Map(), Note: new Map(), Reply: new Map(), Attachment: new Map(), HumanUser: new Map() };
+  const db = { Project: new Map(), Version: new Map(), Note: new Map(), Reply: new Map(), Attachment: new Map(), HumanUser: new Map(), Shot: new Map(), Asset: new Map(), Sequence: new Map() };
   const storage = opts.storage || "https://storage.example/";  // where upload / download links point
   const files = new Map();  // upload id -> {bytes, type}
   const log = [];
   let nextId = 1000, clock = opts.clock || Date.parse("2026-11-20T10:00:00Z");
   const now = () => new Date(clock += 1000).toISOString().replace(/\.\d+Z$/, "Z");
   const tokens = new Map();  // token -> sudo login
-  const plural = { projects: "Project", versions: "Version", notes: "Note", replies: "Reply", attachments: "Attachment", human_users: "HumanUser" };
+  const plural = { projects: "Project", versions: "Version", notes: "Note", replies: "Reply", attachments: "Attachment", human_users: "HumanUser", shots: "Shot", assets: "Asset", sequences: "Sequence" };
   const ENTITY_FIELDS = new Set(["project", "entity", "sg_task", "user", "note_links", "tasks", "attachments"]);
 
   function add(type, f){ const id = f.id || nextId++; const r = Object.assign({ type, id, created_at: now(), updated_at: now() }, f, { id }); db[type].set(id, r); return r; }
@@ -46,6 +46,7 @@ function createFakeShotGrid(opts){
     if (op === "in"){
       return val.some((x) => (x && typeof x === "object") ? (Array.isArray(v) ? v.some((y) => same(y, x)) : same(v, x)) : v === x);
     }
+    if (op === "type_is") return !!(v && v.type === val);
     if (op === "contains") return String(v || "").toLowerCase().includes(String(val).toLowerCase());
     throw new Error("fake: op " + op);
   }
