@@ -1,13 +1,14 @@
 // Filter builder — one field filter for every source (docs/PLAN-trackers.md stage 3b): conditions field · operator ·
-// value in AND / OR groups. The library's fields are evaluated by Sight's server (Library.where_sql, `toLibWire`),
-// a ShotGrid project's Version fields go to ShotGrid as `_search` hash filters (`toSgConditions`).
+// value in AND / OR groups. The library's fields are evaluated by Sight's server (Library.where_sql, `toLibWire`);
+// a tracker project's fields and their translation into the tracker's own filter form belong to that tracker's adapter
+// (`filterFields` / `toConditions`, trackers-core.js; ShotGrid's in shotgrid-core.js) — this file stays generic.
 //
 // Plain script, no build step, no imports: one global `SightFilter` (also `module.exports` under Node, for
 // tests/filter_unit.cjs), so the phone app can load it like shotgrid-core.js (stage 3d).
 //
 // Model: a group {op: "and" | "or", c: [condition | group]}, a condition {f: field name, o: operator, v: value}.
-// A field: {name, label, type, values?: [[value, label]], ops?: [operator ids], sgType?}. Types: text, enum, tags,
-// number, date, entity (ShotGrid), bool (ShotGrid). The value kinds an operator takes: text, number, days, date
+// A field: {name, label, type, values?: [[value, label]], ops?: [operator ids], srcType?: the source's own type (an
+// adapter's)}. Types: text, enum, tags, number, date, entity (a tracker's link field), bool. The value kinds an operator takes: text, number, days, date
 // (YYYY-MM-DD), enum (one of field.values), none.
 
 var SightFilter = (function(){
@@ -131,69 +132,14 @@ var SightFilter = (function(){
     })(t);
   }
 
-  // ---- ShotGrid ----------------------------------------------------------------------------------------------
-  // The Version schema's fields (shotgrid-core versionFields: {name, label, type, values?}) the builder can filter.
-  var SG_TYPE = { text: "text", entity: "entity", multi_entity: "entity", status_list: "enum", list: "enum", date: "date", date_time: "date",
-    number: "number", float: "number", duration: "number", percent: "number", checkbox: "bool" };
-  // opts.seen: {field name: [values seen on the loaded records]} — a list / status field the schema lists no choices
-  // for offers these plus the ones opts.tree names (a value filtered out never shows on a record, yet its condition
-  // must hold). Sight's ShotGrid view and the phone's ShotGrid page pass the statuses they have seen.
+  // ---- Helpers for the tracker adapters ----------------------------------------------------------------------
+  // A tracker's own fields and its filter form live in its adapter (ShotGrid: shotgrid-core.js `filterFields` /
+  // `toConditions`, reached through SightTrackers.adapter(kind)); these generic pieces are what they build on.
+  // namedIn(tree, name, into): the values the tree's conditions on field `name` name, added to `into` as keys (a value
+  // filtered out never shows on a record, yet a list field built from the values seen must still offer it).
   function namedIn(tree, name, into){
     (function walk(g){ if (isGroup(g)) g.c.forEach(function(x){ if (isGroup(x)) walk(x); else if (x && x.f === name && x.v != null && x.v !== "") into[String(x.v)] = 1; }); })(tree);
     return into;
-  }
-  function sgFields(schema, opts){
-    var out = [], seen = (opts && opts.seen) || {};
-    (schema || []).forEach(function(f){
-      var t = SG_TYPE[f.type];
-      if (!t) return;
-      var x = { name: f.name, label: f.label, type: t, sgType: f.type };
-      if (t === "enum"){
-        var vals = f.values || [];
-        if (!vals.length && seen[f.name]){
-          var have = Object.create(null);   // (a value named "__proto__" stays a value)
-          Array.from(seen[f.name]).forEach(function(v){ if (v != null && v !== "") have[String(v)] = 1; });
-          vals = Object.keys(namedIn(opts.tree, f.name, have)).sort();
-        }
-        x.values = vals.map(function(v){ return [v, (f.labels && f.labels[v]) || v]; });
-        if (!x.values.length) x.type = "text";   // no list to pick from: typed
-        x.ops = ["is", "is_not", "empty", "not_empty"];
-      }
-      if (t !== "bool" && t !== "enum") x.ops = opsOf(x).concat(t === "date" || t === "number" ? ["empty", "not_empty"] : []);
-      out.push(x);
-    });
-    return out;
-  }
-  function isoOf(ms){ return new Date(ms).toISOString().replace(/\.\d+Z$/, "Z"); }
-  // A tree as ShotGrid REST hash filters: {logical_operator, conditions: [{path, relation, values} | group]}; null
-  // when nothing is left. Dates: a date field compares days, a date_time field the viewer's local midnights.
-  function toSgConditions(tree, fields){
-    var t = clean(tree, fields);
-    if (!t) return null;
-    return (function conv(g){
-      return { logical_operator: g.op, conditions: g.c.map(function(x){
-        if (isGroup(x)) return conv(x);
-        var f = fieldOf(fields, x.f), p = x.f, o = x.o, v = x.v;
-        var c = function(rel, vals){ return { path: p, relation: rel, values: vals }; };
-        if (o === "empty") return c("is", [null]);
-        if (o === "not_empty") return c("is_not", [null]);
-        if (f.type === "bool") return c("is", [o === "yes"]);
-        if (f.type === "entity"){
-          return c({ contains: "name_contains", not_contains: "name_not_contains", is: "name_is" }[o], [String(v).trim()]);
-        }
-        if (f.type === "number") return c({ is: "is", is_not: "is_not", gt: "greater_than", lt: "less_than" }[o], [Number(v)]);
-        if (f.type === "date"){
-          if (o === "in_last") return c("in_last", [Number(v), "DAY"]);
-          if (f.sgType === "date"){
-            return c({ on: "is", before: "less_than", after: "greater_than" }[o], [v]);
-          }
-          if (o === "before") return c("less_than", [isoOf(dayStart(v))]);
-          if (o === "after") return c("greater_than", [isoOf(dayStart(v, 1) - 1000)]);
-          return c("between", [isoOf(dayStart(v)), isoOf(dayStart(v, 1) - 1000)]);
-        }
-        return c(o, [f.type === "enum" ? v : String(v).trim()]);
-      }) };
-    })(t);
   }
   // ---- The builder UI (browser only) ---------------------------------------------------------------------------
   // mountBuilder(host, {fields, tree, onChange(tree), suggest(field) → [strings]}) renders the editor into `host`.
@@ -314,7 +260,7 @@ var SightFilter = (function(){
   return {
     OPS: OPS, TYPE_OPS: TYPE_OPS, LIB_FIELDS: LIB_FIELDS, KIND_VALUES: KIND_VALUES, REVIEW_VALUES: REVIEW_VALUES, MAX_DEPTH: MAX_DEPTH,
     opsOf: opsOf, valueKind: valueKind, fieldOf: fieldOf, isGroup: isGroup, empty: empty, sanitize: sanitize, complete: complete, clean: clean, count: count,
-    toLibWire: toLibWire, sgFields: sgFields, toSgConditions: toSgConditions, mountBuilder: mountBuilder,
+    toLibWire: toLibWire, dayStart: dayStart, namedIn: namedIn, mountBuilder: mountBuilder,
   };
 })();
 if (typeof globalThis !== "undefined") globalThis.SightFilter = SightFilter;

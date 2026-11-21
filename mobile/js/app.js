@@ -15,7 +15,7 @@ import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
-import { sgSheet, sgSettings, sgBrowser, userSheet, trackers, trackerOn, trackerDisconnect, connectTracker, trackerSettings, TRACKER_KINDS } from "./shotgrid.js";
+import { trackerSheet, trackerBrowser, userSheet, trackers, trackerOn, trackerDisconnect, connectTracker, trackerSettings, TRACKER_KINDS, linkReview, reviewLinkLabel } from "./trackers.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -365,8 +365,9 @@ async function openAny(files){
   }
   toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD, Gaussian splats) and Sight review files (.srev)", 4000);
 }
-// sgLink: a Version from the ShotGrid browser — the review is tied to it (a new link starts a fresh sync state).
-async function openMedia(file, extras, sgLink){
+// trkLink: {key, link} — a media entity from a tracker's page (ShotGrid: a Version), the review is tied to it under that
+// tracker key (another one than before starts a fresh sync state).
+async function openMedia(file, extras, trkLink){
   const key = await assetKey(file.name, file.size);
   let meta = await DB.get("reviews", key);
   if (!meta){
@@ -396,9 +397,8 @@ async function openMedia(file, extras, sgLink){
     await DB.saveReview(meta, []);
     DB.persist();
   }
-  if (sgLink){
-    const same = meta.sg && meta.sg.link && meta.sg.link.site === sgLink.site && Number(meta.sg.link.version.id) === Number(sgLink.version.id);
-    meta.sg = { link: sgLink, state: same ? meta.sg.state || {} : {} };
+  if (trkLink){
+    linkReview(meta, trkLink.key, trkLink.link);
     await DB.put("reviews", meta);
   }
   await openReview(key, file, false, extras);  // (a picked file is kept on the device by autoKeep)
@@ -596,9 +596,12 @@ const fsUp = (e) => {
 document.addEventListener("pointerup", fsUp, true);
 document.addEventListener("pointercancel", fsUp, true);
 
-// The home screen's page (Reviews | ShotGrid), its swipe and the reviews it knows (the browser marks linked Versions).
-let homePage = "reviews", homeSwipe = null, homeMetas = [], sgView = null;
-// A review linked to a ShotGrid Version, opened from the browser: with the Version's downloaded proxy when its own
+// The home screen's page ("reviews" or a connected tracker's key: Reviews | ShotGrid | …), its swipe and the reviews it
+// knows (a tracker page marks the records a review is linked to). trkViews: tracker key → its page (trackerBrowser).
+let homePage = "reviews", homeSwipe = null, homeMetas = [];
+const trkViews = new Map();
+const savedHomePage = () => { try { return sessionStorage.getItem("sight-review:page") || "reviews"; } catch { return "reviews"; } };
+// A review linked to a tracker's media entity (ShotGrid: a Version), opened from its page: with the downloaded proxy when its own
 // media is not on the device — the same file: bound at once; another one (a desktop original reviewed in Sight): the
 // review opens and the usual "A different file?" question decides (drawings are in the original's pixels).
 async function openLinked(key, file){
@@ -612,11 +615,11 @@ async function openLinked(key, file){
   if (m && m.asset.kind && kindOf(file) !== m.asset.kind){ toast(`This review is for a ${m.asset.kind}; the Version's playable copy is a ${kindOf(file) || "file"} — pick the file to see the media`, 5000); return; }
   await rebind(file);
 }
-try { if (sessionStorage.getItem("sight-review:page") === "sg") homePage = "sg"; } catch {}
+homePage = savedHomePage();
 // A tracker connected / disconnected (Settings → Trackers, the connection form, another tab): the home screen's
 // tracker parts come / go at once. Elsewhere nothing to redo: a review's ⋯ menu is built when it opens.
 window.addEventListener("sight-trackers", () => {
-  if (root.classList.contains("home")){ try { homePage = sessionStorage.getItem("sight-review:page") === "sg" ? "sg" : "reviews"; } catch {} renderHome(); }
+  if (root.classList.contains("home")){ homePage = savedHomePage(); renderHome(); }
 });
 const initials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 // A horizontal swipe on the home screen: not on a review card (its own swipes), a field, a sheet or the filter bar's
@@ -658,38 +661,44 @@ async function renderHome(){
     mini.appendChild(l);
   });
   mini.hidden = true;
-  // You (name, tracker logins) on the left; the two pages — Reviews | ShotGrid — as tabs in the title (a swipe
-  // sideways anywhere but on a review card steps between them; the cards keep their own swipes).
+  // You (name, tracker logins) on the left; the pages — Reviews and one per connected tracker (ShotGrid…) — as tabs in
+  // the title (a swipe sideways anywhere but on a review card steps between them; the cards keep their own swipes).
   const paintYou = () => { you.textContent = initials(who) || ""; if (!you.textContent) you.innerHTML = ico("user", 20); };
   const you = btn("ib you", "", () => userSheet({ sheet, el, btn, toast, who: () => who,
-    setName: async () => { const ok = await setName(); paintYou(); return ok; }, settings: () => sgSettings({ sheet, el, btn, toast }) }), "You: reviewer name and tracker logins");
+    setName: async () => { const ok = await setName(); paintYou(); return ok; } }), "You: reviewer name and tracker logins");
   paintYou();
-  // The ShotGrid page, its tab and the swipe to it only while ShotGrid is connected (docs/PLAN-trackers.md decision
-  // 10); otherwise the plain title. A connect / disconnect re-renders the home screen ("sight-trackers" below).
-  const sgOk = trackerOn("shotgrid");
-  if (!sgOk) homePage = "reviews";   // (the remembered page is kept for when it is connected again)
+  // A tracker's page, its tab and the swipe to it only while that tracker is connected (docs/PLAN-trackers.md decision
+  // 10); none connected: the plain title. A connect / disconnect re-renders the home screen ("sight-trackers" below).
+  const tl = trackers(), pages = ["reviews", ...tl.map((t) => t.key)];
+  if (!pages.includes(homePage)) homePage = "reviews";   // (the remembered page is kept for when it is connected again)
   const tabs = el("div", "seg hometabs");
-  [["reviews", "Reviews"], ["sg", "ShotGrid"]].forEach(([k, label]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; tabs.appendChild(b); });
-  if (sgOk){ ttl.textContent = ""; ttl.appendChild(tabs); }
+  [["reviews", "Reviews"], ...tl.map((t) => [t.key, t.name])].forEach(([k, label]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; tabs.appendChild(b); });
+  if (tl.length){ ttl.textContent = ""; ttl.appendChild(tabs); }
   bar.appendChild(you); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
-  const sgMain = el("main", "sgb");
-  if (sgView){ sgView.dispose(); sgView = null; }  // the previous render's browser: its thumbnails revoked, its queue dropped
+  // (the previous render's pages: their thumbnails revoked, their queues dropped)
+  trkViews.forEach((v) => v.dispose()); trkViews.clear();
+  const trkMains = new Map(tl.map((t) => { const m = el("main", "sgb"); m.dataset.tracker = t.key; m.hidden = true; return [t.key, m]; }));
   const setHomePage = (k, dir, keep) => {
-    if (!sgOk) k = "reviews";
+    if (!pages.includes(k)) k = "reviews";
     const changed = homePage !== k;
     homePage = k;
     if (!keep) try { sessionStorage.setItem("sight-review:page", k); } catch {}
     tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.p === k));
-    main.hidden = k !== "reviews"; sgMain.hidden = k !== "sg";
+    main.hidden = k !== "reviews";
+    trkMains.forEach((m, key) => { m.hidden = key !== k; });
     mini.classList.toggle("off", k !== "reviews");
-    const shown = k === "sg" ? sgMain : main;
+    const shown = trkMains.get(k) || main;
     if (dir){ shown.classList.remove("in-l", "in-r"); void shown.offsetWidth; shown.classList.add(dir > 0 ? "in-r" : "in-l"); }
-    if (k === "sg" && !sgView) sgView = sgBrowser({ el, btn, toast, busy, sheet, settings: () => sgSettings({ sheet, el, btn, toast }),
-      reviews: () => homeMetas, openReview: (key, file) => openLinked(key, file), openFile: (file, link) => openMedia(file, null, link) }, sgMain);
+    const t = tl.find((x) => x.key === k);
+    if (t && !trkViews.has(k)) trkViews.set(k, trackerBrowser({ el, btn, toast, busy, sheet,
+      reviews: () => homeMetas, openReview: (key, file) => openLinked(key, file), openFile: (file, link) => openMedia(file, null, link) }, trkMains.get(k), t));
     if (changed) window.scrollTo(0, 0);
   };
-  homeSwipe = sgOk ? (dx) => { if (dx < 0 && homePage === "reviews") setHomePage("sg", 1); else if (dx > 0 && homePage === "sg") setHomePage("reviews", -1); } : null;
+  homeSwipe = tl.length ? (dx) => {
+    const i = pages.indexOf(homePage), j = i + (dx < 0 ? 1 : -1);
+    if (i >= 0 && j >= 0 && j < pages.length) setHomePage(pages[j], dx < 0 ? 1 : -1);
+  } : null;
   const main = el("main");
   const opens = el("div", "opens");
   const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
@@ -726,7 +735,7 @@ async function renderHome(){
   foot.appendChild(el("span", "", APP_LABEL)); foot.appendChild(el("br")); foot.appendChild(el("span", "", "Nothing leaves this device unless you share it"));
   main.appendChild(foot);
   root.appendChild(main);
-  root.appendChild(sgMain);
+  trkMains.forEach((m) => root.appendChild(m));
   setHomePage(homePage, 0, true);
   const all = await DB.all("reviews").catch(() => []);
   homeMetas = all;
@@ -5100,7 +5109,7 @@ function reviewActions(){
     { label: "PDF report", note: "share / save", fn: () => exportReport("pdf") },
     { label: "Web page (HTML)", note: "opens anywhere", fn: () => exportReport("html") },
     { label: "Review file for Sight (.srev)", fn: exportSrev },
-    trackerOn("shotgrid") ? { label: "ShotGrid…", note: R.meta.sg && R.meta.sg.link ? R.meta.sg.link.version.code : "link & sync", fn: () => sgSheet(sgCtx()) } : null,
+    ...trackers().map((t) => ({ label: t.name + "…", note: reviewLinkLabel(R.meta, t) || "link & sync", fn: () => trackerSheet(trkCtx(), t) })),
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,
@@ -5136,12 +5145,12 @@ function offerFile(blob, name, what, onSent){
     sh.appendChild(a);
   });
 }
-// What the ShotGrid module (shotgrid.js) needs from the app: its sheets, the open review, the merge, the pictures.
-function sgCtx(){
-  return { sheet, el, btn, toast, busy, R: () => R, flush, mergeInto, save: () => { if (R) dirty(false); }, pictures: sgPictures };
+// What the trackers module (trackers.js) needs from the app: its sheets, the open review, the merge, the pictures.
+function trkCtx(){
+  return { sheet, el, btn, toast, busy, R: () => R, flush, mergeInto, save: () => { if (R) dirty(false); }, pictures: trkPictures };
 }
-// The notes' pictures for ShotGrid: the report's frames / views with the drawings burned in, then attached pictures.
-async function sgPictures(ids, opt){
+// The notes' pictures for a tracker: the report's frames / views with the drawings burned in, then attached pictures.
+async function trkPictures(ids, opt){
   const want = new Set(ids), out = new Map(), skip = (opt && opt.skipShots) || new Set();
   await refShots(R);
   // (report pictures carry no shot id: pictures pulled from ShotGrid are left out by id before the report is made)

@@ -8,6 +8,7 @@
 const { chromium } = require("playwright");
 const assert = require("assert");
 const [base, site] = process.argv.slice(2);
+const SG = ".trk-set[data-tracker=shotgrid]";   // ShotGrid's block, made from its adapter's settings form
 const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   .then((r) => { assert.strictEqual(r.status, 200); });
 (async () => {
@@ -48,25 +49,39 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   // Settings → Trackers: none connected, Connect a tracker… → ShotGrid → its fields → Save → the source comes live
   if (await p.locator("#settingsBody[hidden]").count()) await p.click("#settingsHead");
   await p.waitForSelector("#trkAdd", { state: "visible" });
-  assert.ok(await p.locator("#trkSg").isHidden(), "no ShotGrid block while not connected");
+  assert.ok(await p.locator(SG).isHidden(), "no ShotGrid block while not connected");
   assert.ok(await p.locator("#trkNone").isVisible());
   await p.click("#trkAdd"); await p.click("#trkKinds [data-kind=shotgrid]");
-  await p.waitForSelector("#trkSg", { state: "visible" });
-  assert.ok(await p.locator("#sgCancel").isVisible() && await p.locator("#sgDisconnect").isHidden() && await p.locator("#sgCacheSet").isHidden());
+  await p.waitForSelector(SG, { state: "visible" });
+  // the declarative form renders ShotGrid's fields as the hand-written block did (order, kinds, placeholders, titles)
+  const form = await p.$$eval(SG + " label", (ls) => ls.map((l) => { const i = l.querySelector("input, textarea"); const all = [...l.querySelectorAll("input")];
+    return [l.className, l.firstChild.textContent.trim(), i.tagName === "TEXTAREA" ? "textarea" : i.type, i.name || "", all.map((x) => x.placeholder).join("|"), !!l.title, !!l.closest(".trk-cache")]; }));
+  assert.deepStrictEqual(form, [
+    ["field", "Site", "url", "site", "mystudio.shotgrid.autodesk.com", true, false],
+    ["field", "Script name", "text", "script", "sight", true, false],
+    ["field", "Script key", "password", "key", "none", true, false],
+    ["opt", "Post as the reviewer", "checkbox", "sudo", "", true, false],
+    ["field", "Reviewer logins", "textarea", "logins", "", true, false],
+    ["field", "Note statuses", "text", "", "opn|ip|clsd", true, false],
+    ["field", "Media cache limit (GB)", "number", "cacheLimitGB", "Auto", true, true],
+  ], "ShotGrid's fields");
+  assert.strictEqual(await p.getAttribute(SG + " [name=logins]", "placeholder"), "Ann Lee = ann.lee@studio.com");
+  assert.ok(/Test/.test(await p.textContent(SG + " [data-act=test]")) && /not connected — site, script name and key/.test(await p.textContent(SG + " .trk-state")));
+  assert.ok(await p.locator(SG + " [data-act=cancel]").isVisible() && await p.locator(SG + " [data-act=disconnect]").isHidden() && await p.locator(SG + " .trk-cache").isHidden());
   assert.ok(await p.locator("#trkAddRow").isHidden(), "nothing else to connect while ShotGrid's fields are open");
-  assert.strictEqual(await p.inputValue("#sgSite"), site, "a disconnect kept the site");
-  await p.fill("#sgKey", "secret");
-  await p.click("#sgSave");
+  assert.strictEqual(await p.inputValue(SG + " [name=site]"), site, "a disconnect kept the site");
+  await p.fill(SG + " [name=key]", "secret");
+  await p.click(SG + " [data-act=save]");
   await p.waitForSelector(".trk-src", { timeout: 5000 });
-  await p.waitForSelector("#sgDisconnect", { state: "visible" });
-  assert.ok(/connected/.test(await p.textContent("#sgState")) && await p.locator("#sgCacheSet").isVisible());
+  await p.waitForSelector(SG + " [data-act=disconnect]", { state: "visible" });
+  assert.ok(/connected/.test(await p.textContent(SG + " .trk-state")) && await p.locator(SG + " .trk-cache").isVisible());
   // saving only the logins keeps the sidebar's open tree (the projects are not dropped)
   await p.click("#settingsHead");   // (the open Settings cover the sources)
   await p.click(".trk-src"); await p.waitForSelector(".trk-proj[data-proj='70']");
-  await p.click("#settingsHead"); await p.waitForSelector("#sgSave", { state: "visible" });
-  await p.fill("#sgLogins", "Bob Smith = bob\nAnn Lee = ann");
-  await p.click("#sgSave");
-  await p.waitForFunction(() => /Saved/.test(document.querySelector("#sgMsg").textContent), null, { timeout: 5000 });
+  await p.click("#settingsHead"); await p.waitForSelector(SG + " [data-act=save]", { state: "visible" });
+  await p.fill(SG + " [name=logins]", "Bob Smith = bob\nAnn Lee = ann");
+  await p.click(SG + " [data-act=save]");
+  await p.waitForFunction(() => /Saved/.test(document.querySelector(".trk-set[data-tracker=shotgrid] .trk-msg").textContent), null, { timeout: 5000 });
   assert.strictEqual(await p.locator(".trk-proj[data-proj='70']").count(), 1, "a logins-only save keeps the projects listed");
   // a Version downloaded (the tracker media cache), a project open → Disconnect → back to the library, no source,
   // Filter ▾ on library fields; an unsaved form edit is not saved by the Disconnect
@@ -75,14 +90,14 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   await p.click("#settingsHead");
   await p.click(".trk-proj[data-proj='70']");
   await p.waitForSelector(".card[data-id^='trk:']", { timeout: 10000 });
-  await p.click("#settingsHead"); await p.waitForSelector("#sgDisconnect", { state: "visible" });
+  await p.click("#settingsHead"); await p.waitForSelector(SG + " [data-act=disconnect]", { state: "visible" });
   assert.ok(await p.locator("#trkCacheRow").isHidden(), "connected: the cache is in ShotGrid's block");
-  await p.fill("#sgScript", "not-saved");
-  await p.click("#sgDisconnect");
+  await p.fill(SG + " [name=script]", "not-saved");
+  await p.click(SG + " [data-act=disconnect]");
   await p.waitForSelector(".trk-src", { state: "detached", timeout: 5000 });
   await p.waitForFunction(() => !document.querySelector(".card[data-id^='trk:']") && document.querySelectorAll(".card[data-id]").length > 0, null, { timeout: 8000 });
   assert.ok(await p.locator("#trkBar").isHidden());
-  assert.ok(await p.locator("#trkSg").isHidden() && await p.locator("#trkAdd").isVisible());
+  assert.ok(await p.locator(SG).isHidden() && await p.locator("#trkAdd").isVisible());
   const st = await (await fetch(base + "/api/sg/status")).json();
   assert.deepStrictEqual([st.configured, st.script, st.logins["Ann Lee"]], [false, "sight", "ann"], "Disconnect kept the stored settings, not the form's edit");
   // disconnected: the downloaded media can still be cleared
@@ -112,7 +127,7 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   await m.waitForSelector("#trkAdd", { state: "attached", timeout: 20000 });
   await m.waitForTimeout(500);
   assert.strictEqual(await m.locator(".trk-src").count(), 0);
-  assert.ok(await m.locator("#trkSg").isHidden());
+  assert.ok(await m.locator(SG).isHidden());
   assert.deepStrictEqual(errs, []);
   console.log(JSON.stringify({ ok: true }));
   await b.close();

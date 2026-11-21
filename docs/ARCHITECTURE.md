@@ -23,7 +23,7 @@ app/static/annotate.js   lightbox annotations + review notes panel — ES module
 app/static/review-core.js  drawing primitives + merge rules shared with the HTML page / mobile app (docs/FORMAT.md)
 app/static/tracker-source.js  a tracker project's media entities (ShotGrid Versions) as an item source of the library grid: filter bar, Fields ▾ captions, filmstrip, open as a library file (through the adapter)
 app/static/trackers-core.js  the client tracker registry (SightTrackers: keys, adapter lookup) + the client adapter interface; also the phone's (core/)
-app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, ShotGrid hash filters, the UI (SightFilter); also the phone's (core/)
+app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, the UI (SightFilter) — a tracker's fields / conditions come from its adapter; also the phone's (core/)
 app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version + the ShotGrid client adapter (SightShotGrid.adapter), shared with the phone app (docs/SHOTGRID.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
@@ -742,15 +742,15 @@ differ. Library: `LIB_FIELDS` (name, kind, ext, tags, rating, mtime, added, path
 `GET /api/assets?where=<json>` in the wire form (`toLibWire`: incomplete rows dropped, dates resolved to local
 epoch-ms bounds) and ANDed in `Library._clause` by `where_sql` (whitelisted fields / ops, ≤ 4 levels, ≤ 100
 conditions; anything else → 400). Also in the scoped "Remove missing" (`/api/missing/purge` body `where`).
-ShotGrid project: `trkSrc.where` (`sight.sg.where`, the adapter's `storeKey("where")`), fields from the Version schema (`sgFields`: text, entity,
+ShotGrid project: `trkSrc.where` (`sight.sg.where`, the adapter's `storeKey("where")`), fields from the Version schema (the adapter's `filterFields`, shotgrid-core.js: text, entity,
 status / list with `valid_values`, date / date_time, number, checkbox), sent by `browseVersions` as a REST **hash**
-filter (`toSgConditions`, content type `api3_hash+json`) ANDed with the bar's own filters; without conditions the
-array format is used as before. `sgFields(schema, {seen, tree})`: a list / status field with no schema choices offers
+filter (the adapter's `toConditions`, content type `api3_hash+json`) ANDed with the bar's own filters; without conditions the
+array format is used as before. `filterFields(schema, {seen, tree})`: a list / status field with no schema choices offers
 the values seen on loaded Versions plus the ones the tree names (both apps pass `seen: {sg_status_list}`).
 Phone (stage 3d): build_pwa ships filter-core.js as `core/filter-core.js`; the ShotGrid page's *Filter* button opens
-`mountBuilder` in a bottom sheet (`.flt-sheet`, mobile/js/shotgrid.js `openWhere`), the tree per project in
+`mountBuilder` in a bottom sheet (`.flt-sheet`, mobile/js/trackers.js `openWhere`), the tree per project in
 localStorage `sight-review:sgwhere` (`{"<host> <project id>": tree}`, newest 100), sent through the same
-`toSgConditions` → `browseVersions(…, cond)`. Smart collections are Sight-only (they live in the library DB; the
+adapter `toConditions` → `browse(…, cond)`. Since 0.108 filter-core.js holds no tracker code: a tracker's fields and its filter form are its adapter's (`filterFields` / `toConditions`), built on filter-core's generic `clean` / `fieldOf` / `opsOf` / `isGroup` / `dayStart` / `namedIn`. Smart collections are Sight-only (they live in the library DB; the
 phone talks to ShotGrid directly). Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
 **Smart collections** (stage 3c): rows of `collections` with `rule` (JSON — the client's raw tree, not the wire form;
 ≤ 64 000 chars, `_rule_json`) and no members (`add_to_collection` ignores them; nothing nests in one; `parent_id`
@@ -801,23 +801,52 @@ hostname is refused, never converted — Python's IDNA 2003 differs from the bro
   at the top of trackers-core.js (id / name / short / media names, the browser bar's entity types and status field,
   `serverClient(site, kind)`, `projects`, `entities`, `mediaFields`, `filterFields`, `toConditions`, `browse`,
   record accessors, filmstrip, `fmtField`, `siteHost(site)` (the host links and rows carry — every link is built and
-  compared with it, never with the server's entry host), `findMedia`, `loadLink`, `linkOf`, link accessors, `linkedIdOf`, `sync`,
-  `storeKey(name)`). ShotGrid's is `SightShotGrid.adapter` (shotgrid-core.js); its `storeKey` keeps the pre-0.107
-  setting names `sight.sg.fields / filter / where / project` (nothing to migrate).
+  compared with it, never with the server's entry host), `findMedia`, `loadLink`, `linkOf`, link accessors, `linkedIdOf`,
+  `recordSub`, `sync(o)` (`o.settings` = the connection's settings, the adapter picks its own options from them),
+  `storeKey(name, app)`, `settings` (the declarative settings form, below), and for a device holding the credentials
+  itself (the phone) `deviceClient(cfg)`, `deviceHint`, `deviceNote`, `pictureUrl(rec, "image"|"filmstrip")`,
+  `mediaSource(rec, {still})`, `download(client, url)`). ShotGrid's is `SightShotGrid.adapter` (shotgrid-core.js); its
+  `storeKey` keeps the pre-0.107 names — Sight's page `sight.sg.fields / filter / where / project`, the phone's
+  (`app "phone"`) `sight-review:sg` (connection), `sgfilter`, `sgfields`, `sgwhere`, `sg.project`, the Cache Storage
+  `sight-review-sgthumbs` and its key prefix `https://sg-thumb.invalid/` (nothing to migrate).
+- *Settings form* (0.108, `adapter.settings`, rendered by `SightTrackers.mountForm(host, adapter, app, {parts})` in both
+  apps): `fields` in order — `{name, label, type, placeholder?, title?, apps?, input?, part?, clean?}`, any text may be
+  `{sight, phone}`; types `text`, `secret` (never shown back; `has` = the status flag, `keptWith` = the fields it goes
+  with, `lostText`), `checkbox`, `pairs` ("Name = value" lines ↔ object), `number` (> 0 else 0), `custom`
+  (`build(document, app) → {el, get, set}`, `empty`: a section too specific for the types — ShotGrid's note status codes);
+  `required` (connected = all set, the phone's test), `needs` (the same in words), `intro.phone`, `disconnectTitle`,
+  `testTitle`, `saveError`, `cache.clearTitle`. Helpers: `formFields(a, app)`, `secretOf`, `formReady`, `secretLost`,
+  `formStored(a, app, status)` (Disconnect's body: the stored values, the secret ""). The form's `read()` returns a
+  secret only when typed (Sight's server keeps its own; the phone keeps the stored one while every `keptWith` field is
+  unchanged) and does not `clean` (the phone applies `clean`, e.g. ShotGrid's `siteUrl`; Sight's server cleans itself).
+  Sight renders a field with `part: "cache"` (ShotGrid's media cache limit) in the block's cache box with the cache line
+  and *Clear cache*, shown while connected. The two apps' field order is the form's (one order for both).
 - *Stored as before, mapped at the boundary:* the review rows' ShotGrid ids (`data.sg`, reply `sg`, FORMAT.md) are the
-  ShotGrid adapter's own; the phone keeps its ShotGrid connection (`sight-review:sg`), browser filters
-  (`sight-review:sgfilter` / `sgwhere`) and a review's link (`reviews.meta.sg`) as before; the media / thumbnail caches
-  stay under `<SIGHT_HOME>/sg_cache/`.
+  ShotGrid adapter's own; the phone keeps its ShotGrid connection (`sight-review:sg`) and browser filters
+  (`sight-review:sgfilter` / `sgwhere`) under the same names (the adapter's `storeKey(name, "phone")`); the media /
+  thumbnail caches stay under `<SIGHT_HOME>/sg_cache/`.
+- *Phone review links* (0.108): `reviews.meta.trk = {"<tracker key>": {link, state}}` (mobile/js/trackers.js
+  `reviewLinks` / `reviewLink` / `setReviewLink` / `linkReview`). A review saved before 0.108 has ShotGrid's in
+  `meta.sg = {link, state}`: read as the entry under `"shotgrid:" + link.site` (the host as stored, port kept, no
+  scheme guessed — like the server's `sg_links` copy), never written back there; the next `setReviewLink` (link, unlink,
+  sync) folds it into `meta.trk` and deletes `meta.sg` (a `meta.sg` without a readable site is left alone). A key in
+  `meta.trk` wins over `meta.sg`. Only the phone ever had `meta.sg` (the `.srev` carries neither).
 - *Page* (index.html): `trackers` (connected entries) / `trackerOn(kind or key)` / `trackerByKey` / `trkStat` (kind →
   status) / `trkCacheIds`; the sidebar draws a source row per connected tracker (`renderTrackerSources` →
   `renderTrackerSource(wrap, t)`, state per key in `trkTree`), a project opens through `openTrkProject(t, p, smartId)`
   with that tracker's item source (`trackerSource(t)`: one `createTrackerSource` per key, the bar `#trkBar` shared);
   grid items are `{id: "trk:<id>", trk: record, kind: "trkmedia"}`. annotate.js shows a link ▾ per connected tracker
   (`host.trackers()`; label = `adapter.short` + " ▾", ShotGrid "SG ▾") with one popover `.an-trk` (`trkState.kind`).
-  Settings → Trackers: each kind's own settings form (ShotGrid's: `bindShotGridSettings`) registers
-  `TRACKER_FORMS[kind] = {paint(on, t), focus()}`; the blocks, Connect a tracker… and the disconnected-cache line are
-  generic. Phone: `trackers()` entries carry `kind` / `key` / `note` like Sight's; `TRACKER_KINDS` = the registry's
-  kinds with a connection form (`trackerSettings(kind, ui)`).
+  Settings → Trackers: `bindTrackerForms` makes a block `.trk-set[data-tracker=<kind>]` per kind from its adapter's
+  form (fields by `name`, `[data-act=disconnect | cancel | test | save | clearcache]`, `.trk-state`, `.trk-msg`,
+  `.trk-cache`) and `bindTrackerForm` registers `TRACKER_FORMS[kind] = {paint(on, t), focus()}`; the blocks, Connect a
+  tracker… and the disconnected-cache line are generic — no tracker-specific markup or code left in index.html.
+  Phone (mobile/js/trackers.js, no tracker named): `trackers()` entries carry `kind` / `key` / `note` like Sight's
+  (connected = `formReady` on the device's connection); `TRACKER_KINDS` = the registry's kinds with `deviceClient` + a
+  phone form; `trackerSettings(kind, ui)` renders the form (`form.trkform`, `p.trkmsg`; Forget / Test / Save);
+  a home page per connected tracker (`trackerBrowser(ctx, box, t)`, tab `data-p` = its tracker key, `main.sgb[data-tracker]`),
+  a ⋯ item per connected tracker (`trackerSheet(ctx, t)`: link / Sync / Unlink); the `.sgb-*` / `.sgproj` / `.sglist`
+  class names are styling only and were kept.
 **Trackers: UI only while connected** (docs/PLAN-trackers.md decisions 10, 11; stage 5a). `GET /api/trackers` lists
 the *connected* trackers — an adapter's `tracker()`; ShotGrid: connected = `_connected()` (site + script name + key
 saved), the same test as `status().configured` and `forward()`'s refusal. Page: `refreshTrackers(changed)` in
@@ -941,13 +970,14 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   grabbing; `mp4.js` fps from the MP4 container; `report.js` report content + static HTML + PDF
   layout; `pdf.js` the PDF writer; `model3d.js` the 3D viewer (below). review-core / review-draw are classic scripts loaded first
   (globals `SightReviewCore`, `SightReviewDraw`); keys go through `core/keys.js` `runHotkeys`.
-  `shotgrid.js` the ShotGrid connection (localStorage `sight-review:sg`), link / sync, the home screen's browser and
+  `trackers.js` (was shotgrid.js before 0.108) every tracker through its adapter: the connections kept on the device
+  (per kind, `storeKey("connection", "phone")`; ShotGrid `sight-review:sg`), link / sync, a home page per tracker and
   the tracker list: `trackers()` (entries like Sight's `/api/trackers`: id, kind, key, name, site, host, note) /
-  `trackerOn(kind or key)` (connected = `sgReady`: site + script + key), `TRACKER_KINDS` (core/trackers-core.js
-  registry ∩ a connection form), `trackerSettings(kind, ui)`, `connectTracker`,
+  `trackerOn(kind or key)` (connected = the form's `required` fields saved; ShotGrid: site + script + key), `TRACKER_KINDS` (core/trackers-core.js
+  registry ∩ a device client + phone form), `trackerSettings(kind, ui)`, `connectTracker`,
   `trackerDisconnect` (drops the key only); `checkTrackers` fires `sight-trackers` when the list changed (after a
   save, on a `storage` event from another tab, on `visibilitychange`) and app.js re-renders the home screen. The ShotGrid tab / page / swipe, the person sheet's
-  row and the review's *ShotGrid…* exist only while `trackerOn("shotgrid")` (decision 10). The ShotGrid page's quick
+  row and the review's *ShotGrid…* exist only while that tracker is connected (decision 10). The ShotGrid page's quick
   filters live in `sight-review:sgfilter`, its *Filter* sheet's conditions (core/filter-core.js) per project in
   `sight-review:sgwhere`.
 - **Identity**: a review per media file, `key = assetKey(name, size)` = first 16 hex of SHA-1 of

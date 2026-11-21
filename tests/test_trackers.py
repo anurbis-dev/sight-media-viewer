@@ -98,10 +98,60 @@ class KeyTest(unittest.TestCase):
         want = ["id", "name", "short", "media", "entityTypes", "statusField", "defaultTileFields", "serverClient", "projects",
                 "entities", "mediaFields", "filterFields", "toConditions", "browse", "recordId", "recordName", "recordStamp",
                 "recordTime", "isVideo", "hasFilmstrip", "filmstripFrames", "filmstripCss", "fmtField", "hiddenDetailFields",
-                "findMedia", "loadLink", "linkOf", "linkId", "linkLabel", "linkProject", "linkedIdOf", "sync", "storeKey"]
+                "findMedia", "loadLink", "linkOf", "linkId", "linkLabel", "linkProject", "linkedIdOf", "sync", "storeKey",
+                "recordSub", "settings", "deviceClient", "deviceHint", "deviceNote", "pictureUrl", "mediaSource", "download"]
         for k in want:
             self.assertIn(k, got["keys"])
             self.assertIn(k, doc, f"{k} is documented in trackers-core.js")
+
+    def test_js_settings_form(self):
+        # the declarative settings form (stage 5b-2): the fields each app renders, connected = the required ones, the
+        # Disconnect body = the stored settings with the secret cleared (as the hand-written forms sent), a key lost
+        # with another site, the phone's pre-0.108 storage names kept, the device-side members
+        if not NODE:
+            self.skipTest("node is not available")
+        js = r"""
+require(process.argv[2]); const T = require(process.argv[1]); const A = T.adapter('shotgrid');
+const st = {configured: true, site: 'https://s.example', script: 'sight', hasKey: true, sudo: true, logins: {Ann: 'ann'},
+  statusMap: {open: 'o'}, cacheLimitGB: 5, cacheDir: '/x', ident: 'x'};
+const v = {id: 7, code: 'sh010', image: 'https://i/7.jpg', filmstrip_image: null, entity: {name: 'sh010'},
+  sg_uploaded_movie: {url: 'https://m/7.mov', name: 'sh010.mov', content_type: 'video/quicktime'}};
+console.log(JSON.stringify({
+  sight: T.formFields(A, 'sight').map((f) => [f.name, f.type, f.part || '']),
+  phone: T.formFields(A, 'phone').map((f) => f.name),
+  ready: [T.formReady(A, {site: 'a', script: 'b', key: 'c'}), T.formReady(A, {site: 'a', script: 'b', key: ''})],
+  stored: T.formStored(A, 'sight', st), storedEmpty: T.formStored(A, 'sight', {site: 'https://s.example'}),
+  lost: [T.secretLost(A, 'sight', st, {...st, hasKey: false, site: 'https://t.example'}), T.secretLost(A, 'sight', st, {...st, hasKey: false})],
+  keys: ['connection', 'filter', 'fields', 'where', 'project', 'thumbs', 'thumb'].map((n) => A.storeKey(n, 'phone')),
+  clean: A.settings.fields[0].clean('studio.example/api/v1.1'),
+  pic: [A.pictureUrl(v, 'image'), A.pictureUrl(v, 'filmstrip')], media: [A.mediaSource(v), A.mediaSource(v, {still: true})],
+  sub: A.recordSub(v), note: [A.deviceNote({sudo: true}), A.deviceNote({})],
+  hint: [A.deviceHint(new TypeError('x'), {}), A.deviceHint(new TypeError('x'), {proxy: 'p'}), A.deviceHint(new Error('x'), {})],
+  via: A.deviceClient({site: 's.example', script: 'a', key: 'b', proxy: 'https://p.example'}).host,
+}));"""
+        r = subprocess.run([NODE, "-e", js, str(ROOT / "app" / "static" / "trackers-core.js"), str(ROOT / "app" / "static" / "shotgrid-core.js")],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout)
+        self.assertEqual(got["sight"], [["site", "text", ""], ["script", "text", ""], ["key", "secret", ""], ["sudo", "checkbox", ""],
+                                        ["logins", "pairs", ""], ["statusMap", "custom", ""], ["cacheLimitGB", "number", "cache"]])
+        self.assertEqual(got["phone"], ["site", "script", "key", "proxy", "sudo", "logins", "statusMap"])
+        self.assertEqual(got["ready"], [True, False])
+        self.assertEqual(got["stored"], {"site": "https://s.example", "script": "sight", "key": "", "sudo": True, "logins": {"Ann": "ann"},
+                                         "statusMap": {"open": "o"}, "cacheLimitGB": 5})
+        self.assertEqual(got["storedEmpty"], {"site": "https://s.example", "script": "", "key": "", "sudo": False, "logins": {},
+                                              "statusMap": {}, "cacheLimitGB": 0})
+        self.assertEqual(got["lost"], [True, False])
+        self.assertEqual(got["keys"], ["sight-review:sg", "sight-review:sgfilter", "sight-review:sgfields", "sight-review:sgwhere",
+                                       "sight-review:sg.project", "sight-review-sgthumbs", "https://sg-thumb.invalid/"])
+        self.assertEqual(got["clean"], "https://studio.example")
+        self.assertEqual(got["pic"], ["https://i/7.jpg", None])
+        self.assertEqual(got["media"], [{"url": "https://m/7.mov", "name": "sh010.mov", "type": "video/quicktime"},
+                                        {"url": "https://i/7.jpg", "name": "sh010.jpg", "type": "image/jpeg"}])
+        self.assertEqual((got["sub"], got["note"]), ("sh010", ["as reviewer", ""]))
+        self.assertTrue(got["hint"][0].startswith(" — the site may not answer"))
+        self.assertEqual(got["hint"][1:], ["", ""])
+        self.assertEqual(got["via"], "s.example")
 
 
 class RegistryTest(unittest.TestCase):

@@ -1,8 +1,13 @@
-// Unit tests of app/static/filter-core.js (run by tests/test_filter.py): the model, the library wire form and the
-// ShotGrid hash filters.
+// Unit tests of app/static/filter-core.js (run by tests/test_filter.py): the model, the library wire form, and the
+// ShotGrid adapter's Filter ▾ fields / hash filters (shotgrid-core.js, reached through the trackers registry as the
+// pages do — filter-core.js itself keeps no tracker code).
 "use strict";
 const assert = require("assert");
 const F = require("../app/static/filter-core.js");
+require("../app/static/shotgrid-core.js");
+const A = require("../app/static/trackers-core.js").adapter("shotgrid");
+assert.strictEqual(F.sgFields, undefined, "no ShotGrid code left in filter-core");
+assert.strictEqual(F.toSgConditions, undefined);
 
 const L = F.LIB_FIELDS;
 // complete / clean / count
@@ -61,7 +66,7 @@ const schema = [
   { name: "sg_final", label: "Final", type: "checkbox" },
   { name: "tag_list", label: "Tags", type: "tag_list" },
 ];
-const S = F.sgFields(schema);
+const S = A.filterFields(schema);
 assert.deepStrictEqual(S.map((f) => f.name), ["code", "sg_status_list", "sg_kind", "entity", "created_at", "sg_due", "sg_frames", "sg_final"], "unsupported types left out");
 const st = F.fieldOf(S, "sg_status_list");
 assert.strictEqual(st.type, "enum");
@@ -69,7 +74,7 @@ assert.deepStrictEqual(st.values, [["rev", "Pending Review"], ["apr", "Approved"
 assert.strictEqual(F.fieldOf(S, "sg_kind").type, "text", "a list without choices is typed");
 assert.ok(F.opsOf(F.fieldOf(S, "created_at")).includes("empty"));
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
-assert.deepStrictEqual(F.toSgConditions({ op: "and", c: [
+assert.deepStrictEqual(A.toConditions({ op: "and", c: [
   { f: "sg_status_list", o: "is", v: "rev" },
   { op: "or", c: [{ f: "entity", o: "contains", v: " 010 " }, { f: "entity", o: "empty" }] },
   { f: "created_at", o: "in_last", v: "3" },
@@ -91,15 +96,15 @@ assert.deepStrictEqual(F.toSgConditions({ op: "and", c: [
   { path: "sg_final", relation: "is", values: [true] },
   { path: "code", relation: "not_contains", values: ["wip"] },
 ] });
-assert.strictEqual(F.toSgConditions({ op: "and", c: [{ f: "code", o: "is", v: "" }] }, S), null);
+assert.strictEqual(A.toConditions({ op: "and", c: [{ f: "code", o: "is", v: "" }] }, S), null);
 // a list field without schema choices: the values seen on the records plus the ones the conditions name
-const seenS = F.sgFields(schema, { seen: { sg_kind: new Set(["plate", "comp"]), sg_status_list: ["x"] },
+const seenS = A.filterFields(schema, { seen: { sg_kind: new Set(["plate", "comp"]), sg_status_list: ["x"] },
   tree: { op: "and", c: [{ op: "or", c: [{ f: "sg_kind", o: "is", v: "anim" }] }, { f: "code", o: "is", v: "plate" }] } });
 assert.deepStrictEqual(F.fieldOf(seenS, "sg_kind").values, [["anim", "anim"], ["comp", "comp"], ["plate", "plate"]]);
 assert.strictEqual(F.fieldOf(seenS, "sg_kind").type, "enum");
 assert.deepStrictEqual(F.fieldOf(seenS, "sg_status_list").values, [["rev", "Pending Review"], ["apr", "Approved"]], "schema choices win");
-assert.strictEqual(F.fieldOf(F.sgFields(schema, { seen: { sg_kind: [] } }), "sg_kind").type, "text", "nothing seen or named: typed");
-assert.deepStrictEqual(F.fieldOf(F.sgFields(schema, { seen: { sg_kind: ["__proto__"] }, tree: { op: "and", c: [{ f: "sg_kind", o: "is", v: "constructor" }] } }), "sg_kind").values,
+assert.strictEqual(F.fieldOf(A.filterFields(schema, { seen: { sg_kind: [] } }), "sg_kind").type, "text", "nothing seen or named: typed");
+assert.deepStrictEqual(F.fieldOf(A.filterFields(schema, { seen: { sg_kind: ["__proto__"] }, tree: { op: "and", c: [{ f: "sg_kind", o: "is", v: "constructor" }] } }), "sg_kind").values,
   [["__proto__", "__proto__"], ["constructor", "constructor"]], "values that are Object.prototype names stay values");
 
 console.log("filter_unit: ok");

@@ -8,6 +8,7 @@
 const assert = require("assert");
 const { chromium } = require("playwright");
 const [base, pic, site] = process.argv.slice(2);
+const KEY = "shotgrid:" + new URL(site).host;   // the tracker key the review's link is filed under (reviews.meta.trk)
 
 (async () => {
   const b = await chromium.launch();
@@ -51,14 +52,14 @@ const [base, pic, site] = process.argv.slice(2);
   await p.tap('.sheet button:has-text("Connect a tracker…")');
   await p.waitForSelector('.sheet .menu button:has-text("ShotGrid")');
   await p.tap('.sheet .menu button:has-text("ShotGrid")');
-  await p.waitForSelector(".sheet form.sgform");
-  await p.fill(".sgform input[name=site]", site);
-  await p.fill(".sgform input[name=script]", "sight");
-  await p.fill(".sgform input[name=key]", "secret");
-  await p.tap('.sgform button:has-text("Test")');
-  await p.waitForFunction(() => /Connected/.test(document.querySelector(".sgform .sgmsg").textContent), null, { timeout: 10000 });
-  await p.tap('.sgform button:has-text("Save")');
-  await p.waitForSelector(".sheet form.sgform", { state: "detached" });
+  await p.waitForSelector(".sheet form.trkform");
+  await p.fill(".trkform input[name=site]", site);
+  await p.fill(".trkform input[name=script]", "sight");
+  await p.fill(".trkform input[name=key]", "secret");
+  await p.tap('.trkform button:has-text("Test")');
+  await p.waitForFunction(() => /Connected/.test(document.querySelector(".trkform .trkmsg").textContent), null, { timeout: 10000 });
+  await p.tap('.trkform button:has-text("Save")');
+  await p.waitForSelector(".sheet form.trkform", { state: "detached" });
   // link: project + Version
   await more();
   await p.tap('.sheet .menu button:has-text("ShotGrid…")');
@@ -67,12 +68,12 @@ const [base, pic, site] = process.argv.slice(2);
   await p.fill(".sheet input[placeholder^='Version name']", "sh010");
   await p.waitForSelector(".sheet .sglist button[data-ver='77']");
   await p.tap(".sheet .sglist button[data-ver='77']");
-  await p.waitForFunction(() => window.__sightReview.R.meta.sg && window.__sightReview.R.meta.sg.link);
+  await p.waitForFunction((k) => { const m = window.__sightReview.R.meta; return m.trk && m.trk[k] && m.trk[k].link && !("sg" in m); }, KEY);
   // sync
   await more();
   await p.tap('.sheet .menu button:has-text("ShotGrid…")');
   await p.tap('.sheet .menu button:has-text("Sync now")');
-  await p.waitForFunction(() => window.__sightReview.R.meta.sg.state && window.__sightReview.R.meta.sg.state.last, null, { timeout: 20000 });
+  await p.waitForFunction((k) => { const e = window.__sightReview.R.meta.trk[k]; return e.state && e.state.last; }, KEY, { timeout: 20000 });
   const rows = await p.evaluate(() => window.__sightReview.R.rows.filter((x) => x.kind === "note").map((x) => ({ text: x.data.text, sg: x.data.sg })));
   const db = await (await fetch(site + "/__fake/db")).json();
   const sent = db.Note.find((n) => n.content === "Too bright here");
@@ -83,8 +84,44 @@ const [base, pic, site] = process.argv.slice(2);
   assert.strictEqual(atts.length, 1, "the picture with the drawing uploaded");
   // persisted with the review
   await p.evaluate(() => window.__sightReview.flush());
-  const saved = await p.evaluate(async () => (await window.__sightReview.DB.get("reviews", window.__sightReview.R.meta.key)).sg.link.version.code);
+  const saved = await p.evaluate(async (k) => (await window.__sightReview.DB.get("reviews", window.__sightReview.R.meta.key)).trk[k].link.version.code, KEY);
   assert.strictEqual(saved, "sh010_comp_v003");
+  // A review saved before 0.108 keeps ShotGrid's link in meta.sg: it still reads as linked (the ⋯ menu, the sheet) and
+  // syncs; the next change of its link state (the sync) moves it into meta.trk under the tracker key, nothing lost
+  const legacy = await p.evaluate(async (k) => {
+    const S = window.__sightReview, D = S.DB, key = S.R.meta.key;
+    await S.flush();
+    const m = await D.get("reviews", key);
+    m.sg = { link: m.trk[k].link, state: { last: 1, notes: m.trk[k].state.notes, replies: m.trk[k].state.replies } };
+    delete m.trk;
+    await D.put("reviews", m);
+    return { key, last: m.sg.state.last };
+  }, KEY);
+  await p.goto(base);
+  await p.waitForSelector(".item");
+  await p.locator(".item .th").first().click();
+  await p.waitForFunction((key) => window.__sightReview.R && window.__sightReview.R.meta.key === key, legacy.key, { timeout: 10000 });
+  assert.ok(await p.evaluate(() => !!window.__sightReview.R.meta.sg && !window.__sightReview.R.meta.trk), "opened as stored (meta.sg)");
+  await more();
+  assert.ok(/sh010_comp_v003/.test(await p.textContent('.sheet .menu button:has-text("ShotGrid…")')), "the menu names the Version linked in meta.sg");
+  await p.tap('.sheet .menu button:has-text("ShotGrid…")');
+  await p.waitForSelector('.sheet .menu button:has-text("Sync now")');
+  assert.ok(/Linked to sh010_comp_v003 · .*Last sync: (?!never)/.test(await p.textContent(".sheet p")), "the sheet shows the old link and its last sync");
+  await p.tap('.sheet .menu button:has-text("Sync now")');
+  await p.waitForFunction((k) => { const m = window.__sightReview.R.meta; return m.trk && m.trk[k] && m.trk[k].state.last > 1 && !("sg" in m); }, KEY, { timeout: 20000 });
+  await p.evaluate(() => window.__sightReview.flush());
+  const moved = await p.evaluate(async (k) => { const m = await window.__sightReview.DB.get("reviews", window.__sightReview.R.meta.key); return { sg: "sg" in m, code: m.trk[k].link.version.code, site: m.trk[k].link.site }; }, KEY);
+  assert.deepStrictEqual(moved, { sg: false, code: "sh010_comp_v003", site: new URL(site).host }, "moved into meta.trk");
+  const db2 = await (await fetch(site + "/__fake/db")).json();
+  assert.strictEqual(db2.Note.filter((n) => n.content === "Too bright here").length, 1, "the old sync state kept: the note was not sent twice");
+  // Unlink removes it (no meta.sg left to bring it back)
+  await more();
+  await p.tap('.sheet .menu button:has-text("ShotGrid…")');
+  await p.tap('.sheet .menu button:has-text("Unlink")');
+  await p.evaluate(() => window.__sightReview.flush());
+  assert.deepStrictEqual(await p.evaluate(async () => { const m = await window.__sightReview.DB.get("reviews", window.__sightReview.R.meta.key); return [m.trk, "sg" in m]; }), [{}, false], "unlinked");
+  await more();
+  assert.ok(/link & sync/.test(await p.textContent('.sheet .menu button:has-text("ShotGrid…")')));
   assert.deepStrictEqual(errs, []);
   console.log(JSON.stringify({ ok: true, rows: rows.length, attachments: atts.length }));
   await b.close();

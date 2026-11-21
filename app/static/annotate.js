@@ -2972,7 +2972,7 @@ export function createAnnotator(host){
           const { client } = await trkClient(kind);
           let vs = await A.findMedia(client, sel.value, q.value.trim());
           if (!vs.length && q.value.trim()){ const short = q.value.trim().replace(/[_. -]*v\d+$/i, ""); if (short !== q.value.trim()) vs = await A.findMedia(client, sel.value, short); }
-          list.innerHTML = vs.length ? vs.map((v) => `<button type="button" data-rec="${esc(A.recordId(v))}">${esc(A.recordName(v))}${v.entity?.name ? ` <small>${esc(v.entity.name)}</small>` : ""}</button>`).join("")
+          list.innerHTML = vs.length ? vs.map((v) => `<button type="button" data-rec="${esc(A.recordId(v))}">${esc(A.recordName(v))}${A.recordSub(v) ? ` <small>${esc(A.recordSub(v))}</small>` : ""}</button>`).join("")
             : `<div class="an-mlbl">No ${esc(A.media.one)} found</div>`;
           list.querySelectorAll("[data-rec]").forEach((b) => { b.onclick = () => trkLink(kind, b.dataset.rec); });
         } catch (e){ list.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; }
@@ -3034,7 +3034,7 @@ export function createAnnotator(host){
       if (!cur.link) throw new Error(`Not linked to a ${A.media.one}`);
       const asset = { id: a.id, name: a.name, path: a.path, ext: a.ext, kind: a.kind, size: a.size, mtime: a.mtime, width: a.width, height: a.height, duration: a.duration };
       const res = await A.sync({
-        client, link: cur.link, asset, fps: S.fps, state: cur.state, statusMap: st.statusMap, logins: st.logins, sudo: st.sudo,
+        client, link: cur.link, asset, fps: S.fps, state: cur.state, settings: st,
         getRows: () => trkApi(`/api/annotations?asset_id=${aid}&deleted=1`),  // tombstones: a note deleted here stays deleted
         importPackage: (pkg) => trkApi("/api/review/import", { method: "POST", body: JSON.stringify(pkg) }),
         pictures: (ids, opt) => S.asset?.id === aid ? trkPictures(ids, opt) : new Map(),

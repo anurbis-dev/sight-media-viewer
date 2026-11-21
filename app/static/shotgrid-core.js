@@ -263,7 +263,7 @@ var SightShotGrid = (function(){
   }
   // A page of Versions (newest first) with the fields a tile needs.
   var BROWSE_FIELDS = VERSION_FIELDS.concat(["image", "filmstrip_image", "updated_at", "created_at", "user", "sg_uploaded_movie"]);
-  // `where`: the filter builder's conditions as a hash group (SightFilter.toSgConditions) — ANDed with the browser's
+  // `where`: the filter builder's conditions as a hash group (the adapter's toConditions) — ANDed with the browser's
   // own filters, sent in the hash format (the array format has no OR groups).
   async function browseVersions(client, f, fields, page, size, where){
     var want = BROWSE_FIELDS.slice();
@@ -606,9 +606,133 @@ var SightShotGrid = (function(){
     return res;
   }
 
+  // ---- Filter ▾ over Version fields (the adapter's filterFields / toConditions; filter-core.js keeps the generic
+  // builder: clean, fieldOf, opsOf, dayStart, namedIn) ------------------------------------------------------------------
+  var SF = function(){ return globalThis.SightFilter; };
+  // The Version schema's fields (versionFields: {name, label, type, values?}) the builder can filter.
+  var FILTER_TYPE = { text: "text", entity: "entity", multi_entity: "entity", status_list: "enum", list: "enum", date: "date", date_time: "date",
+    number: "number", float: "number", duration: "number", percent: "number", checkbox: "bool" };
+  // opts.seen: {field name: [values seen on the loaded records]} — a list / status field the schema lists no choices
+  // for offers these plus the ones opts.tree names (a value filtered out never shows on a record, yet its condition
+  // must hold). Sight's tracker view and the phone's tracker page pass the statuses they have seen.
+  function filterFields(schema, opts){
+    var F = SF(), out = [], seen = (opts && opts.seen) || {};
+    (schema || []).forEach(function(f){
+      var t = FILTER_TYPE[f.type];
+      if (!t) return;
+      var x = { name: f.name, label: f.label, type: t, srcType: f.type };
+      if (t === "enum"){
+        var vals = f.values || [];
+        if (!vals.length && seen[f.name]){
+          var have = Object.create(null);   // (a value named "__proto__" stays a value)
+          Array.from(seen[f.name]).forEach(function(v){ if (v != null && v !== "") have[String(v)] = 1; });
+          vals = Object.keys(F.namedIn(opts.tree, f.name, have)).sort();
+        }
+        x.values = vals.map(function(v){ return [v, (f.labels && f.labels[v]) || v]; });
+        if (!x.values.length) x.type = "text";   // no list to pick from: typed
+        x.ops = ["is", "is_not", "empty", "not_empty"];
+      }
+      if (t !== "bool" && t !== "enum") x.ops = F.opsOf(x).concat(t === "date" || t === "number" ? ["empty", "not_empty"] : []);
+      out.push(x);
+    });
+    return out;
+  }
+  function isoOf(ms){ return new Date(ms).toISOString().replace(/\.\d+Z$/, "Z"); }
+  // A tree as ShotGrid REST hash filters: {logical_operator, conditions: [{path, relation, values} | group]}; null
+  // when nothing is left. Dates: a date field compares days, a date_time field the viewer's local midnights.
+  function toConditions(tree, fields){
+    var F = SF(), t = F.clean(tree, fields);
+    if (!t) return null;
+    return (function conv(g){
+      return { logical_operator: g.op, conditions: g.c.map(function(x){
+        if (F.isGroup(x)) return conv(x);
+        var f = F.fieldOf(fields, x.f), p = x.f, o = x.o, v = x.v;
+        var c = function(rel, vals){ return { path: p, relation: rel, values: vals }; };
+        if (o === "empty") return c("is", [null]);
+        if (o === "not_empty") return c("is_not", [null]);
+        if (f.type === "bool") return c("is", [o === "yes"]);
+        if (f.type === "entity"){
+          return c({ contains: "name_contains", not_contains: "name_not_contains", is: "name_is" }[o], [String(v).trim()]);
+        }
+        if (f.type === "number") return c({ is: "is", is_not: "is_not", gt: "greater_than", lt: "less_than" }[o], [Number(v)]);
+        if (f.type === "date"){
+          if (o === "in_last") return c("in_last", [Number(v), "DAY"]);
+          if (f.srcType === "date"){
+            return c({ on: "is", before: "less_than", after: "greater_than" }[o], [v]);
+          }
+          if (o === "before") return c("less_than", [isoOf(F.dayStart(v))]);
+          if (o === "after") return c("greater_than", [isoOf(F.dayStart(v, 1) - 1000)]);
+          return c("between", [isoOf(F.dayStart(v)), isoOf(F.dayStart(v, 1) - 1000)]);
+        }
+        return c(o, [f.type === "enum" ? v : String(v).trim()]);
+      }) };
+    })(t);
+  }
+
   // ---- the tracker adapter (trackers-core.js lists the interface; docs/ARCHITECTURE.md "Tracker adapters") ----------
   // What Sight's page and the phone use to talk to ShotGrid without naming it: the browser, the link, the sync.
-  var SF = function(){ return globalThis.SightFilter; };
+  // ---- the device side of the adapter (the phone holds the script key itself; Sight's page goes through its server)
+  // "https://sg-proxy.example.workers.dev" -> "https://sg-proxy.example.workers.dev/?url=" (a prefix ending in = is kept)
+  function proxyPrefix(p){ p = String(p).trim(); return /[=]$/.test(p) ? p : p.replace(/\/?$/, "/") + "?url="; }
+  function deviceClient(c){
+    c = c || {};
+    return createClient({ site: c.site, script: c.script, key: c.key, via: c.proxy ? proxyPrefix(c.proxy) : "" });
+  }
+  // the uploaded movie when it is one (a still is wanted: the Version's picture instead), else the picture
+  function mediaSource(v, o){
+    var up = v.sg_uploaded_movie && typeof v.sg_uploaded_movie === "object" ? v.sg_uploaded_movie : null;
+    var upVideo = up && (/^video\//.test(up.content_type || "") || /\.(mov|mp4|m4v|webm|mkv|avi)$/i.test(up.name || ""));
+    var mov = up && !(o && o.still && upVideo) ? up : null;
+    if (mov && mov.url) return { url: mov.url, name: mov.name || (v.code + ".mp4"), type: mov.content_type || "video/mp4" };
+    return typeof v.image === "string" && v.image ? { url: v.image, name: (v.code || "version") + ".jpg", type: "image/jpeg" } : null;
+  }
+  // The phone's names for its ShotGrid settings and caches (kept from before the adapter: nothing to migrate).
+  var PHONE_KEYS = { connection: "sight-review:sg", filter: "sight-review:sgfilter", fields: "sight-review:sgfields", where: "sight-review:sgwhere",
+    project: "sight-review:sg.project", thumbs: "sight-review-sgthumbs", thumb: "https://sg-thumb.invalid/" };
+  // Note status codes (open / in progress / done): a section of its own in the settings form (three short fields).
+  function statusCodes(doc){
+    var box = doc.createElement("span");
+    box.className = "trk-codes";
+    var ins = [["open", "Open", "opn"], ["progress", "In progress", "ip"], ["done", "Done", "clsd"]].map(function(k){
+      var i = doc.createElement("input");
+      i.type = "text"; i.placeholder = k[2]; i.setAttribute("aria-label", k[1]); i.autocomplete = "off"; i.spellcheck = false; i.setAttribute("data-code", k[0]);
+      box.appendChild(i);
+      return i;
+    });
+    return {
+      el: box,
+      get: function(){ return { open: ins[0].value.trim(), progress: ins[1].value.trim(), done: ins[2].value.trim() }; },
+      set: function(m){ m = m && typeof m === "object" ? m : {}; ins.forEach(function(i){ i.value = m[i.getAttribute("data-code")] || ""; }); },
+    };
+  }
+  // The settings form (trackers-core.js mountForm renders it in Sight's Settings → Trackers and on the phone).
+  var SETTINGS = {
+    required: ["site", "script", "key"],
+    needs: "site, script name and key",
+    intro: { phone: "Link reviews to ShotGrid Versions and sync notes both ways. A ShotGrid admin makes an API script (Admin → Scripts): its name and key go here and stay on this device." },
+    disconnectTitle: "Remove the saved key: ShotGrid's controls go until it is connected again (the site, script name and logins stay for that)",
+    testTitle: "Connect and list the projects",
+    saveError: "Check the site address (https://…) and the script name / key",
+    cache: { clearTitle: "Delete the downloaded Version media (they download again when opened)" },
+    fields: [
+      { name: "site", label: "Site", type: "text", input: { sight: "url" }, placeholder: "mystudio.shotgrid.autodesk.com", clean: siteUrl,
+        title: { sight: "Your studio's ShotGrid (Flow Production Tracking) address, e.g. mystudio.shotgrid.autodesk.com" } },
+      { name: "script", label: "Script name", type: "text", placeholder: "sight", title: { sight: "An API script made by a ShotGrid admin (Admin → Scripts): its Script Name" } },
+      { name: "key", label: "Script key", type: "secret", placeholder: { sight: "none" }, has: "hasKey", keptWith: ["site", "script"],
+        lostText: "The key was removed with the old site — enter it again",
+        title: { sight: "The script's Application Key. Kept by the Sight server only (shotgrid.json in Sight's own data folder), never shown again. Changing the site or the script name drops the saved key." } },
+      { name: "proxy", label: "Proxy (only if the site does not answer the app)", type: "text", apps: ["phone"], placeholder: "https://sg-proxy.example.workers.dev" },
+      { name: "sudo", label: { sight: "Post as the reviewer", phone: "Post as the reviewer (needs the script to be allowed to act as users)" }, type: "checkbox",
+        title: { sight: "Notes and replies are posted as the reviewer's own ShotGrid user (the login below). Needs the script to be allowed to act as users. Off: posted by the script, the reviewer's name goes into the note's subject / the reply's text." } },
+      { name: "logins", label: { sight: "Reviewer logins", phone: "Reviewer logins (Name = login, one per line)" }, type: "pairs", placeholder: "Ann Lee = ann.lee@studio.com",
+        title: { sight: "Reviewer name in Sight = ShotGrid login, one per line, e.g.\nAnn Lee = ann.lee@studio.com" } },
+      { name: "statusMap", label: { sight: "Note statuses", phone: "Note statuses: open / in progress / done" }, type: "custom", build: statusCodes, empty: {},
+        title: { sight: "The ShotGrid note status codes for Open / In progress / Done (Admin → Status list). Empty = opn / ip / clsd." } },
+      { name: "cacheLimitGB", label: "Media cache limit (GB)", type: "number", apps: ["sight"], part: "cache", min: 0, step: 1, placeholder: "Auto",
+        title: "Disk space for the media of Versions opened from ShotGrid (their web proxies). Empty = Auto: as much as the disk holds, keeping 2 GB free. Oldest opened go first." },
+    ],
+  };
+
   var adapter = {
     id: "shotgrid", name: "ShotGrid", short: "SG",
     media: { one: "Version", many: "Versions" },
@@ -626,8 +750,8 @@ var SightShotGrid = (function(){
       return list.map(function(x){ return { id: x.id, name: x.code || "#" + x.id }; });
     },
     mediaFields: versionFields,
-    filterFields: function(schema, o){ return SF().sgFields(schema, o); },
-    toConditions: function(tree, fields){ return SF().toSgConditions(tree, fields); },
+    filterFields: filterFields,
+    toConditions: toConditions,
     browse: browseVersions,
     recordId: function(v){ return v.id; },
     recordName: function(v){ return v.code || "#" + v.id; },
@@ -647,9 +771,22 @@ var SightShotGrid = (function(){
     linkLabel: function(l){ return l && l.version ? l.version.code || "#" + l.version.id : ""; },
     linkProject: function(l){ return l && l.project ? l.project.name || "" : ""; },
     linkedIdOf: linkedVersionOf,
-    sync: sync,
-    // per-kind page settings keep their pre-0.107 names (nothing to migrate): sight.sg.fields / filter / where / project
-    storeKey: function(n){ return "sight.sg." + n; },
+    recordSub: function(v){ return v && v.entity && v.entity.name ? String(v.entity.name) : ""; },
+    // o.settings: the connection's settings (Sight: /api/trackers/shotgrid/status, the phone: its connection)
+    sync: function(o){
+      var st = o.settings || {};
+      return sync(Object.assign({ statusMap: st.statusMap, logins: st.logins, sudo: !!st.sudo }, o));
+    },
+    // per-kind settings keep their pre-0.107 names (nothing to migrate): Sight's page sight.sg.fields / filter / where /
+    // project; the phone's sight-review:sg (the connection), sgfilter, sgfields, sgwhere, sg.project, its thumbnail cache
+    storeKey: function(n, app){ return app === "phone" ? PHONE_KEYS[n] || "sight-review:sg." + n : "sight.sg." + n; },
+    settings: SETTINGS,
+    deviceClient: deviceClient,
+    deviceHint: function(e, c){ return (!(c && c.proxy) && e instanceof TypeError) ? " — the site may not answer this app directly: set a proxy in Settings → Trackers → ShotGrid" : ""; },
+    deviceNote: function(c){ return c && c.sudo ? "as reviewer" : ""; },
+    pictureUrl: function(v, which){ var u = which === "filmstrip" ? v.filmstrip_image : v.image; return typeof u === "string" && u ? u : null; },
+    mediaSource: mediaSource,
+    download: function(client, url){ return client.download(url); },
   };
   if (typeof globalThis !== "undefined"){
     var reg = globalThis.SightTrackerAdapters = globalThis.SightTrackerAdapters || [];

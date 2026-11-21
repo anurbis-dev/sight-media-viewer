@@ -75,13 +75,18 @@ mark it done here, add the RECENT entry as usual.
   sg-source.js), smart collections, Settings → Trackers blocks, the You panel, and annotate.js's link ▾ (one per
   connected tracker) all go through the tracker list + adapter; no ShotGrid-only path left there except ShotGrid's own
   settings form. Phone: the tracker list entries carry kind / key, kinds from the registry, per-kind settings sheet.
-- **5b-2 (remains):** (1) the phone's ShotGrid page (`sgBrowser`) and its review link sheet (`sgSheet`) through the
-  adapter — a home page per connected tracker, the review's link per tracker key instead of `reviews.meta.sg`
-  (keep reading `meta.sg`); (2) the review rows' tracker ids: `data.sg` / reply `sg` (FORMAT.md) are ShotGrid's own — a
+- **5b-2 (1, 3, 5) done in 0.108.0** (see RECENT): (1) the phone's tracker home pages (`trackerBrowser`, a tab per
+  connected tracker) and the review link sheet (`trackerSheet`) go through the adapter (mobile/js/trackers.js, was
+  shotgrid.js; no tracker named there); a review's link is kept per tracker key in `reviews.meta.trk` (`meta.sg` of
+  older reviews still read and folded in at the next link change); the phone's storage names kept through
+  `storeKey(name, "phone")`. (3) a declarative settings form per adapter (`adapter.settings`, one renderer
+  `SightTrackers.mountForm` for Sight's Settings → Trackers and the phone's settings sheet; ShotGrid's status codes as an
+  adapter-provided custom section). (5) `sgFields` / `toSgConditions` moved into the ShotGrid adapter (`filterFields` /
+  `toConditions`); filter-core.js keeps only the generic builder.
+- **5b-2 (remains):** (2) the review rows' tracker ids: `data.sg` / reply `sg` (FORMAT.md) are ShotGrid's own — a
   second adapter needs its own row key and merge rule in both `Library.import_annotations` and review-core.js
-  (decide with 5c); (3) a declarative settings form per adapter (fields + Test / Disconnect) instead of ShotGrid's
-  hand-written block; (4) several sites of one kind (the key allows it; each adapter keeps one configuration);
-  (5) filter-core's `sgFields` / `toSgConditions` are reached through the adapter but still live in filter-core.
+  (decide with 5c); (4) several sites of one kind (the key allows it; each adapter keeps one configuration, the phone
+  one connection per kind).
 - **5b** the adapter: a tracker-neutral interface (connect / status, projects, entity types, schema fields incl.
   link fields, browse media entities with filters, thumbnails, media download, notes sync) that sg-source.js /
   shotgrid-core.js implement; index.html, annotate.js and the phone talk to "the trackers" (a list), keyed by
