@@ -31,6 +31,9 @@ const root = process.argv[2], shots = process.argv[3] || "";
       gridSw: hatch(lasso({ pattern: "grid", hatchWidth: 1.5 })).sw,
       oldDot: dots(lasso({ pattern: "dots" })), newDot: dots(lasso({ pattern: "dots", hatchWidth: 6 })),
       scaled: moved.data.hatchWidth, gapScaled: moved.data.gap,
+      // hatchMetrics (Sight's Lines drag starts from it) = what is drawn, also where a huge area caps the spacing
+      capped: (() => { const h = lasso({ pts: [0, 0, .5, 9000, 0, .5, 9000, 9000, .5, 0, 9000, .5] }); return [RC.hatchMetrics(h.data).width, hatch(h).sw]; })(),
+      noPts: RC.hatchMetrics({ pattern: "dots", gap: 10 }).auto,
       icons: RC.PATTERNS.concat(["random"]).every((id) => typeof RC.patternIcon(id) === "string" && RC.patternIcon(id).length > 20 && !!RC.PATTERN_LABELS[id]),
       toolIcons: !!(RC.TOOL_ICONS.lasso && RC.TOOL_ICONS.arrows),
     };

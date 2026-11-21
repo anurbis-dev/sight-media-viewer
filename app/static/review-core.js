@@ -364,24 +364,30 @@ var SightReviewCore = (function(){
     var poly = polyOf(d.pts), color = d.fill || d.color;
     var op = (d.opacity != null ? d.opacity : 1) * (d.fillOpacity != null ? d.fillOpacity : 0.5);
     if (pat === "solid") return [{ d: smoothPath(poly, true), fill: color, op: op }];
-    // The spacing actually used (capped for huge areas, as hatchPath / dotsPath do), so widths / dots follow it.
-    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    poly.forEach(function(p){ x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); });
-    var gap0 = Math.max(0.5, Number(d.gap) || d.size || 8), gap = gap0;
-    // data.hatchWidth (0.109+): the lines' width / the dots' diameter; absent or 0 = auto (0.18 / 0.4 of the
-    // spacing, the look before it existed). Where the spacing is capped it grows by the same factor.
-    var hw = Number(d.hatchWidth) > 0 ? Number(d.hatchWidth) : 0;
+    var m = hatchMetrics(d);
     if (pat === "dots"){
-      gap = Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0);
-      var dp = dotsPath(poly, gap, hw ? Math.max(0.05, hw / 2 * gap / gap0) : gap * 0.2);
+      var dp = dotsPath(poly, m.gap, m.width / 2);
       return dp ? [{ d: dp, fill: color, op: op }] : [];
     }
     var angles = PATTERN_ANGLES[pat];
     if (!angles) return [];
-    gap = Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);  // (the diagonal ≥ the extent across any line direction)
-    var lw = hw ? Math.max(0.1, hw * gap / gap0) : Math.max(0.3, gap * 0.18);
-    var path = angles.map(function(a){ return hatchPath(poly, a, gap); }).join("");
-    return path ? [{ d: path, stroke: color, sw: lw, op: op, cap: "butt", dash: pat === "dashes" ? [gap * 0.9, gap * 0.6] : null }] : [];
+    var path = angles.map(function(a){ return hatchPath(poly, a, m.gap); }).join("");
+    return path ? [{ d: path, stroke: color, sw: m.width, op: op, cap: "butt", dash: pat === "dashes" ? [m.gap * 0.9, m.gap * 0.6] : null }] : [];
+  }
+  // A lasso's hatch, as drawn: {gap: the spacing actually used (capped for huge areas, as hatchPath / dotsPath
+  // do — without pts, uncapped), width: the lines' width / the dots' diameter, auto: the width Auto gives}, doc
+  // units. data.hatchWidth (0.109+): absent or 0 = auto (0.18 / 0.4 of the spacing, the look before it existed);
+  // where the spacing is capped it grows by the same factor. Sight's props bar starts a drag from `width`.
+  function hatchMetrics(d){
+    var dots = d.pattern === "dots", gap0 = Math.max(0.5, Number(d.gap) || d.size || 8), gap = gap0;
+    if (Array.isArray(d.pts) && d.pts.length >= 3){
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (var i = 0; i + 1 < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
+      // (lines: the diagonal ≥ the extent across any line direction)
+      gap = dots ? Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0) : Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);
+    }
+    var auto = dots ? gap * 0.4 : Math.max(0.3, gap * 0.18), hw = Number(d.hatchWidth) > 0 ? Number(d.hatchWidth) : 0;
+    return { gap: gap, auto: auto, width: hw ? Math.max(0.1, hw * gap / gap0) : auto };
   }
 
   // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
@@ -1272,7 +1278,7 @@ var SightReviewCore = (function(){
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
-    primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
+    hatchMetrics: hatchMetrics, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
     sizeOpDrag: sizeOpDrag, opAfter: opAfter,

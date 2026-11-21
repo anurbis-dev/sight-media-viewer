@@ -167,8 +167,8 @@ const P = {
   bfill: { k: "fill", t: "color", label: "Fill colour", when: (g) => g("pattern") !== "none" },
   bfillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true, when: (g) => g("pattern") !== "none" },
   gap: { k: "gap", t: "num", label: "Spacing", title: "Pattern density: the distance between lines / dots", min: 2, max: 200, exp: true, unit: "px", when: hatched },
-  hatchWidth: { k: "hatchWidth", t: "num", label: "Lines", title: "Hatch line thickness (for dots: their size) — Auto follows the spacing; type 0 or right-click for Auto", min: 0.1, max: 100, exp: true, unit: "px", when: hatched,
-    auto: (g) => (g("pattern") === "dots" ? 0.4 : 0.18) * (Number(g("gap")) || 10) },
+  // (auto: 0 means Auto — RC.hatchMetrics' width, which a drag / scroll from Auto starts at.)
+  hatchWidth: { k: "hatchWidth", t: "num", label: "Lines", title: "Hatch line thickness (for dots: their size) — Auto follows the spacing; type 0 or right-click for Auto", min: 0.1, max: 100, exp: true, unit: "px", when: hatched, auto: true },
   // Stroke arrows: arrows along a freehand stroke, turned to its normal.
   ahead: { k: "head1", t: "select", label: "Tip", options: HEADS },
   step: { k: "step", t: "num", label: "Every", title: "Distance between the arrows along the stroke", min: 4, max: 1000, exp: true, unit: "px" },
@@ -2513,6 +2513,13 @@ export function createAnnotator(host){
     }
     return { items: null, type: S.tool };
   }
+  // The props a target shows: its type's; a mixed selection gets the ones every type has (the same descriptor:
+  // a lasso + a brush keep Size / Pressure, a rectangle + an ellipse their outline and fill; at least Colour).
+  function propList(tg){
+    if (tg.type) return PROPS[tg.type] || [];
+    const [first = [], ...rest] = (tg.types || []).map((t) => PROPS[t] || []);
+    return first.filter((p) => rest.every((l) => l.includes(p)));
+  }
   function propValue(tg, p){
     if (!tg.items) return S.styles[tg.type][p.k];
     const v = tg.items[0].data[p.k];
@@ -2528,7 +2535,7 @@ export function createAnnotator(host){
     if (!el || numDrag?.isConnected) return;
     if (S.crop && !cropItem()) S.crop = null;  // cropping ends with the image's selection
     const tg = propsTarget();
-    let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
+    let list = propList(tg);
     if (tg.items) list = list.filter((p) => !p.create);
     else list = list.filter((p) => !p.edit);
     list = list.filter((p) => !p.when || p.when((key) => propValue(tg, { k: key })));
@@ -2657,8 +2664,15 @@ export function createAnnotator(host){
   function bindNum(el, p){
     const em = el.querySelector("em");
     const get = () => Number(propValue(propsTarget(), p)) || 0;
-    // An Auto value (0) starts a drag / scroll from the width Auto draws.
-    const cur = () => get() || (p.auto ? p.auto((key) => propValue(propsTarget(), { k: key })) : 0);
+    // An Auto value (0) starts a drag / scroll from the width Auto draws (the renderer's own numbers: a selected
+    // lasso's capped spacing; the tool's, in screen px, uncapped).
+    const autoNow = () => {
+      const tg = propsTarget();
+      if (tg.items) return RC.hatchMetrics(tg.items[0].data).auto / k();
+      const st = S.styles[tg.type] || {};
+      return RC.hatchMetrics({ pattern: st.pattern, gap: st.gap, size: st.size }).auto;
+    };
+    const cur = () => get() || (p.auto ? autoNow() : 0);
     const set = (v, merge) => {
       v = p.auto && !(v > 0) ? 0 : clamp(v, p.min, p.max);
       if (!p.pct && p.unit !== "×") v = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
@@ -2702,7 +2716,7 @@ export function createAnnotator(host){
       el.addEventListener("lostpointercapture", up);  // whatever ends the capture ends the drag (numDrag never sticks)
     });
     el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(cur(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const dflt = (DEFAULT_STYLES[propsTarget().type] || {})[p.k]; if (dflt != null) set(dflt, false); });
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const tg = propsTarget(), dflt = (DEFAULT_STYLES[tg.type || tg.types?.[0]] || {})[p.k]; if (dflt != null) set(dflt, false); });
   }
   function typeNum(el, p, v, done){
     const em = el.querySelector("em");
@@ -4862,8 +4876,7 @@ export function createAnnotator(host){
   }
   function resizeTool(f){
     const tg = propsTarget();
-    const list = (tg.type && PROPS[tg.type]) || [];
-    const p = list.find((q) => q.k === "size" || q.k === "width");
+    const p = propList(tg).find((q) => q.k === "size" || q.k === "width");
     if (!p) return false;
     const v = Number(propValue(tg, p)) || 1;
     setProp(p, clamp(Math.round(v * f * 10) / 10, p.min, p.max), true);

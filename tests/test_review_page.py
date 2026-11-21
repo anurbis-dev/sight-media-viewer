@@ -265,6 +265,9 @@ class DrawLasso(unittest.TestCase):
         self.assertEqual((g["oldDot"], g["newDot"]), (2, 3))   # dots: 0.2 · gap radius / hatchWidth diameter
         self.assertEqual((g["scaled"], g["gapScaled"]), (6, 20))  # transformItem scales it like gap
         self.assertTrue(g["icons"] and g["toolIcons"])
+        self.assertGreater(g["capped"][0], 1.8)               # capped spacing → wider auto lines
+        self.assertAlmostEqual(g["capped"][0], g["capped"][1])
+        self.assertAlmostEqual(g["noPts"], 4)                  # dots: auto diameter 0.4 · gap
         self.assertTrue(res["lassoIcon"] and res["arrowsIcon"])
         self.assertEqual(res["patRow"], 11)           # none, solid, 8 patterns, random
         self.assertEqual((res["hatchShown"], res["hatchSolid"], res["hatchGrid"]), (True, False, True))

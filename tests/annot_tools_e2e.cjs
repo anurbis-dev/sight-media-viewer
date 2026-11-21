@@ -103,6 +103,18 @@ async function typeNum(p, key, v){
   await p.waitForTimeout(200);
   res.oldArrows = await propsState(p);
   await p.waitForTimeout(600);
+  // a lasso + a plain brush selected together: the props both have (Size), and ] makes both bigger
+  await p.keyboard.press("Escape");
+  const sizes = async () => { const all = await rows(); return [all.find((r) => r.id === "1".repeat(16)).data.size, all.find((r) => r.shape_kind === "brush" && !r.data.close).data.size]; };
+  const before = await sizes();
+  await p.mouse.click(ox, oy);
+  await p.keyboard.down("Shift"); await p.mouse.click(bx + 60, by + 20); await p.keyboard.up("Shift");
+  await p.waitForTimeout(200);
+  res.mixed = await p.evaluate(() => ({ label: document.querySelector(".an-props .an-pl")?.textContent || "", size: !!document.querySelector('.an-props .an-num[data-k="size"]'), pressure: !!document.querySelector('.an-props [data-k="pressure"]') }));
+  await p.keyboard.press("BracketRight");
+  await p.waitForTimeout(600);
+  const after = await sizes();
+  res.mixed.grew = after.map((v) => Math.round(v / before[0] * 100) / 100);  // (all take the first one's size × 1.2, as for one type)
   res.rows = await rows();
   // ---- a phone-size touch screen: the tools by tap, the icon row ----
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });

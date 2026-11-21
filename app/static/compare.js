@@ -119,7 +119,7 @@ export function createCompare(host){
           <button type="button" class="cmp-b" data-a="prev" title="Previous frame (,)">‹</button>
           <button type="button" class="cmp-b cmp-play" data-a="play" title="Play / pause (Space)">▶</button>
           <button type="button" class="cmp-b" data-a="next" title="Next frame (.)">›</button>
-          <button type="button" class="cmp-b" data-a="loop" title="Loop (L)">⟲</button>
+          <button type="button" class="cmp-b" data-a="loop" title="Loop (L — while annotating, L is the Lasso)">⟲</button>
           <span class="cmp-time"></span>
           <div class="cmp-track"><div class="cmp-spans"></div><i class="cmp-head"></i></div>
         </div>

@@ -499,7 +499,7 @@ global; `review.build_html` inlines it verbatim into the HTML page (`core_js()` 
 containing a closing script tag or an HTML comment opener). `tests/test_merge_parity.py` runs the
 Python and the JS merge on `tests/fixtures/merge_cases.json` and compares every row. It also holds the
 pickers' shared look: `PATTERN_LABELS` / `patternIcon(id)` (the lasso's fill patterns, inner SVG of a 24 × 24
-currentColor icon) and `TOOL_ICONS` (lasso, stroke arrows) — Sight's props bar and toolbar and review-draw.js both
+currentColor icon), `TOOL_ICONS` (lasso, stroke arrows) and `hatchMetrics(d)` (a lasso's spacing / hatch width as drawn — Sight's *Lines* control starts from it) — Sight's props bar and toolbar and review-draw.js both
 draw from them (review-draw reads them on open: RC is looked up then, not at its load).
 
 **Tool vs. stored type** — a tool id is not always a drawing type: Sight's *Lasso* tool (`lasso`) makes a
