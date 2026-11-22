@@ -53,7 +53,7 @@
   list; click a layer to view it alone, "Composite" to return to the full image.
 - **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar
   and the library grid on the left and the lightbox / video player on the right, with a divider to drag
-  (the width is remembered; the sidebar's Canvas section is hidden there). Double-click a thumbnail to open it, drag pictures from the grid onto the frame
+  (the width is remembered; the sidebar's Canvas section is hidden there). Click a thumbnail to show it in the player (Ctrl / Shift-click only selects), drag pictures from the grid onto the frame
   as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
   way you left it. On a board `Tab` shows / hides the library beside it in the same way (◧ now sits at the
   left of the top bar).

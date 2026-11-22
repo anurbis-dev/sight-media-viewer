@@ -3018,6 +3018,7 @@ function cardFromEvent(e){
 
 grid.addEventListener("dblclick", (e) => {
   if (skipClick || state.touchSelect) return; // in touch selection mode two quick taps are two toggles
+  if (lightSplitOn()) return; // beside the lightbox the first click already showed the file (toggleLight would close it)
   const card = cardFromEvent(e);
   if (!card) return;
   const a = state.items.find(x => x.id === card.dataset.id);
@@ -3154,6 +3155,13 @@ grid.addEventListener("click", (e) => {
     return;
   }
   clickSelect(card.dataset.id, e);
+  // Library beside the lightbox (Tab): a plain click shows that file in the lightbox. Ctrl / Shift stay a
+  // selection (files to compare); a drag onto the frame is not a click, so it never switches the file.
+  if (lightSplitOn() && !e.shiftKey){
+    const a = state.items.find(x => x.id === card.dataset.id);
+    if (a && a.trk){ if (lightItemId() !== a.id) openTrkItem(a); }
+    else if (a && a.status !== "missing" && light.id !== a.id) showInLight(a);
+  }
 });
 
 grid.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
