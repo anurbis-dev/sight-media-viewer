@@ -5,6 +5,7 @@ const { chromium } = require("playwright");
 const assert = require("assert");
 const [base, site, out] = process.argv.slice(2);
 const KEY = "shotgrid:" + new URL(site).host;   // ShotGrid's page = its tracker key (a page per connected tracker)
+const FILTER = "sight-review:sgfilter@" + new URL(site).host;   // the quick filters, per site since 0.110
 (async () => {
   const b = await chromium.launch();
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -155,8 +156,8 @@ const KEY = "shotgrid:" + new URL(site).host;   // ShotGrid's page = its tracker
   // to clear them (they cannot be shown)
   const fieldsUrl = site + "/api/v1.1/schema/versions/fields", hostKey = new URL(site).host + " 70";
   const msgText = () => p.textContent(".sgb-msg");
-  await p.evaluate((k) => { localStorage.setItem("sight-review:sgwhere", JSON.stringify({ [k]: { op: "and", c: [{ f: "sg_status_list", o: "is", v: "apr" }] } }));
-    localStorage.setItem("sight-review:sgfilter", JSON.stringify({ project: "70" })); sessionStorage.setItem("sight-review:page", "shotgrid:" + k.split(" ")[0]); }, hostKey);
+  await p.evaluate(([k, f]) => { localStorage.setItem("sight-review:sgwhere", JSON.stringify({ [k]: { op: "and", c: [{ f: "sg_status_list", o: "is", v: "apr" }] } }));
+    localStorage.setItem(f, JSON.stringify({ project: "70" })); sessionStorage.setItem("sight-review:page", "shotgrid:" + k.split(" ")[0]); }, [hostKey, FILTER]);
   await p.route(fieldsUrl, (r) => r.fulfill({ status: 500, headers: { "Access-Control-Allow-Origin": "*" }, contentType: "application/json", body: JSON.stringify({ errors: [{ title: "schema down" }] }) }));
   await p.goto(base);
   await waitTiles(["sh010_comp_v003", "robot_model_v002", "sh020_anim_v001"], "no schema: loaded without the conditions");
@@ -170,7 +171,7 @@ const KEY = "shotgrid:" + new URL(site).host;   // ShotGrid's page = its tracker
   // a status field without schema choices and no Version seen: typed; a second typed status still reloads (each tree
   // is compared with the fields its own values give)
   await p.route(fieldsUrl, async (r) => { const res = await r.fetch(); const j = await res.json(); delete j.data.sg_status_list.properties; await r.fulfill({ response: res, json: j }); });
-  await p.evaluate(() => localStorage.setItem("sight-review:sgfilter", JSON.stringify({ project: "70", q: "zzz" })));
+  await p.evaluate((f) => localStorage.setItem(f, JSON.stringify({ project: "70", q: "zzz" })), FILTER);
   await p.goto(base);
   await p.waitForFunction(() => /No Version matches/.test(document.querySelector(".sgb-msg").textContent), null, { timeout: 8000 });
   const until = async (fn, why) => { for (let i = 0; i < 80; i++){ if (fn()) return; await p.waitForTimeout(100); } assert.fail(why); };
@@ -189,7 +190,7 @@ const KEY = "shotgrid:" + new URL(site).host;   // ShotGrid's page = its tracker
   await p.tap('.flt-sheet button[data-act="clear"]');
   await p.tap('.flt-sheet button:has-text("Done")');
   await p.unroute(fieldsUrl);
-  await p.evaluate(() => localStorage.setItem("sight-review:sgfilter", JSON.stringify({ project: "70" })));
+  await p.evaluate((f) => localStorage.setItem(f, JSON.stringify({ project: "70" })), FILTER);
   // Disconnect (Settings → Trackers) on the home screen: the ShotGrid tab goes at once, the swipe does nothing
   await p.goto(base); await p.waitForSelector(".hometabs");
   await p.tap('.bar button[title="Settings"]');
@@ -199,7 +200,7 @@ const KEY = "shotgrid:" + new URL(site).host;   // ShotGrid's page = its tracker
   await touch("touchStart", [[300, 600]]); for (let i = 1; i <= 8; i++){ await touch("touchMove", [[300 - 25 * i, 600]]); await p.waitForTimeout(16); } await touch("touchEnd", []);
   await p.waitForTimeout(300);
   assert.ok(await p.evaluate(() => !document.querySelector("main.sgb") && !document.querySelector("main:not(.sgb)").hidden), "no swipe to ShotGrid");
-  assert.strictEqual(await p.evaluate(() => JSON.parse(localStorage.getItem("sight-review:sg")).site), site, "a disconnect keeps the site");
+  assert.strictEqual(await p.evaluate(() => JSON.parse(localStorage.getItem("sight-review:sg.connections"))[0].site), site, "a disconnect keeps the site");
   assert.deepStrictEqual(errs, []);
   console.log(JSON.stringify({ ok: true }));
   await b.close();

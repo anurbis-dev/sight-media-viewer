@@ -251,6 +251,26 @@ class SightPathTest(unittest.TestCase):
         finally:   # the other tests of this class need it connected
             svc.configure({"site": self.site, "script": "sight", "key": "secret", "logins": {"Bob Smith": "bob"}, "sudo": True})
 
+    def test_two_sites_in_the_browser(self):
+        # docs/PLAN-trackers.md 5b-2 (4): a second ShotGrid site connected beside the first, then the first disconnected
+        if subprocess.run([NODE, "-e", "require('playwright')"], capture_output=True, cwd=ROOT / "tests").returncode:
+            self.skipTest("Playwright is not available")
+        fake2 = subprocess.Popen([NODE, str(ROOT / "tests" / "sg_fake_server.cjs")], stdout=subprocess.PIPE, text=True)
+        try:
+            site2 = json.loads(fake2.stdout.readline())["site"]
+            r = subprocess.run([NODE, str(ROOT / "tests" / "trackers_multi_e2e.cjs"), f"http://127.0.0.1:{self.port}", self.site, site2, self.aid],
+                               capture_output=True, text=True, timeout=180, cwd=ROOT / "tests")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(ShotGridService.slots(self.lib.root), [1, 2], "the second site in shotgrid-2.json")
+        finally:   # back to one site, connected (the other tests of this class)
+            fake2.terminate()
+            fake2.wait(5)
+            fake2.stdout.close()
+            (self.lib.root / "shotgrid-2.json").unlink(missing_ok=True)
+            ShotGridService(self.lib.root).configure({"site": self.site, "script": "sight", "key": "secret",
+                                                     "logins": {"Bob Smith": "bob"}, "sudo": True})
+            self.lib.drop_tracker_link(self.aid, "shotgrid:" + urllib.parse.urlsplit(self.site).netloc)
+
     def test_trackers_endpoint(self):
         got = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/trackers").read())
         self.assertEqual([(t["id"], t["site"]) for t in got["trackers"]], [("shotgrid", self.site)])

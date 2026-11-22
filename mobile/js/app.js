@@ -15,7 +15,7 @@ import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
-import { trackerSheet, trackerBrowser, userSheet, trackers, trackerOn, trackerDisconnect, connectTracker, trackerSettings, TRACKER_KINDS, linkReview, reviewLinkLabel } from "./trackers.js";
+import { trackerSheet, trackerBrowser, userSheet, trackers, trackerDisconnect, connectTracker, trackerSettings, trackerLabel, TRACKER_KINDS, linkReview, reviewLinkLabel } from "./trackers.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -672,7 +672,7 @@ async function renderHome(){
   const tl = trackers(), pages = ["reviews", ...tl.map((t) => t.key)];
   if (!pages.includes(homePage)) homePage = "reviews";   // (the remembered page is kept for when it is connected again)
   const tabs = el("div", "seg hometabs");
-  [["reviews", "Reviews"], ...tl.map((t) => [t.key, t.name])].forEach(([k, label]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; tabs.appendChild(b); });
+  [["reviews", "Reviews"], ...tl.map((t) => [t.key, trackerLabel(t, tl, true), trackerLabel(t, tl)])].forEach(([k, label, title]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; if (title) b.title = title; tabs.appendChild(b); });
   if (tl.length){ ttl.textContent = ""; ttl.appendChild(tabs); }
   bar.appendChild(you); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
@@ -1406,15 +1406,17 @@ async function settings(){
     const tl = trackers();
     if (tl.length){
       const tkv = el("div", "kv trackers");
-      tl.forEach((t) => { tkv.appendChild(el("b", "", t.name)); tkv.appendChild(el("span", "", "connected · " + t.host)); });
+      tl.forEach((t) => { tkv.appendChild(el("b", "", trackerLabel(t, tl))); tkv.appendChild(el("span", "", "connected · " + t.host)); });
       sh.appendChild(tkv);
     } else sh.appendChild(el("p", "", "None connected. A tracker (ShotGrid) adds its Versions to the home screen and syncs a review's notes both ways."));
     const trA = el("div", "acts");
     tl.forEach((t) => {
-      trA.appendChild(btn("btn", "Disconnect " + t.name, () => { close(); trackerDisconnect(t.id); toast(t.name + " disconnected"); }));
-      trA.appendChild(btn("btn", t.name + " settings…", () => { close(); trackerSettings(t.kind, ui); }));
+      const name = trackerLabel(t, tl);
+      trA.appendChild(btn("btn", "Disconnect " + name, () => { close(); trackerDisconnect(t.key); toast(name + " disconnected"); }));
+      trA.appendChild(btn("btn", name + " settings…", () => { close(); trackerSettings(t.kind, ui, t.key); }));
     });
-    if (TRACKER_KINDS.some((k) => !trackerOn(k.id))) trA.appendChild(btn("btn", "Connect a tracker…", () => { close(); connectTracker(ui); }));
+    // (a connected kind is offered too: another site of it)
+    if (TRACKER_KINDS.length) trA.appendChild(btn("btn", "Connect a tracker…", () => { close(); connectTracker(ui); }));
     sh.appendChild(trA);
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
@@ -5109,7 +5111,7 @@ function reviewActions(){
     { label: "PDF report", note: "share / save", fn: () => exportReport("pdf") },
     { label: "Web page (HTML)", note: "opens anywhere", fn: () => exportReport("html") },
     { label: "Review file for Sight (.srev)", fn: exportSrev },
-    ...trackers().map((t) => ({ label: t.name + "…", note: reviewLinkLabel(R.meta, t) || "link & sync", fn: () => trackerSheet(trkCtx(), t) })),
+    ...trackers().map((t, i, tl) => ({ label: trackerLabel(t, tl) + "…", note: reviewLinkLabel(R.meta, t) || "link & sync", fn: () => trackerSheet(trkCtx(), t) })),
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,

@@ -22,7 +22,7 @@ from .library import Bus, Library, find_ffmpeg, KIND_LABEL, SKIP_DIRS, normpath
 from . import review
 from .settings import SettingsStore, load_defaults, save_defaults
 from .stt import SttError, SttService
-from .trackers import TrackerError, Trackers, split_key, tracker_key_of_host
+from .trackers import TrackerError, Trackers, split_key, tracker_key, tracker_key_of_host
 from .version import APP_VERSION
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -1646,17 +1646,31 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             return JSONResponse({"error": e.code}, status_code=502 if e.code in ("failed", "offline", "rate") else 412)
         return JSONResponse({"text": text}, headers={"Cache-Control": "no-store"})
 
-    # Trackers (app/trackers.py, docs/ARCHITECTURE.md "Tracker adapters"): one adapter per kind (ShotGrid only yet,
-    # app/shotgrid.py, docs/SHOTGRID.md). The generic routes are /api/trackers/{kind}/…; the old /api/sg/… routes stay
-    # as aliases for kind "shotgrid" (the phone's and older pages' paths, the tests). A tracker's credentials are set
-    # here and never read back; the page's client talks to the tracker through …/fetch, which adds them.
+    # Trackers (app/trackers.py, docs/ARCHITECTURE.md "Tracker adapters"): one adapter per configured site (ShotGrid
+    # only yet, app/shotgrid.py, docs/SHOTGRID.md; several sites of one kind since 0.110). The generic routes are
+    # /api/trackers/{ref}/… — ref = a tracker key "<kind>:<host>" (URL-encoded or not), or a kind = that kind's primary
+    # site (Trackers.get: the first connected, else the first stored — the one site every pre-0.110 client knows); the
+    # old /api/sg/… routes stay as aliases for kind "shotgrid" (the phone's and older pages' paths, the tests). status /
+    # config / cache with `?spare=1` and a kind: the site Connect a tracker… sets up (Trackers.spare); cache with
+    # `?idle=1` and a kind: the kind's cached media of no connected site. A tracker's credentials are set here and never
+    # read back; the page's client talks to the tracker through …/fetch, which adds them.
     trk = Trackers(lib.root)
 
-    def _adapter(kind: str):
-        a = trk.get(kind)
+    def _adapter(ref: str, spare: bool = False, request: Request | None = None):
+        try:
+            if spare and ":" not in ref:
+                pin = request.query_params.get("slot", "") if request is not None else ""
+                a = trk.spare(ref, int(pin) if re.fullmatch(r"[0-9]{1,5}", pin) else None)   # (ASCII digits: "²" is a digit to isdigit)
+            else:
+                a = trk.resolve(ref)
+        except TrackerError as e:
+            raise HTTPException(e.status, str(e)) from None
         if a is None:
             raise HTTPException(404, "no such tracker")
         return a
+
+    def _flag(request: Request | None, name: str) -> bool:
+        return bool(request is not None and request.query_params.get(name) in ("1", "true"))
 
     def _sg_guard(request: Request) -> None:
         # Only Sight's own page: a custom header needs a CORS preflight, which this server never answers, so
@@ -1689,21 +1703,29 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return JSONResponse({"trackers": trk.connected(), "kinds": trk.kinds, "cacheSources": caches},
                             headers={"Cache-Control": "no-store"})
 
-    def trk_status(kind: str) -> JSONResponse:
-        a = _adapter(kind)
+    def _status_of(a) -> JSONResponse:
         st = a.status()
-        st["key"] = trk.key_of(kind)
+        st["key"] = tracker_key(a.kind, a.site())   # (this site's tracker key; "" without a site)
+        st["kind"] = a.kind
+        st["slot"] = a.slot   # (a spare answer's slot: the page pins its later ?spare=1 requests to it with &slot=)
         st["cacheSource"] = _cache_source_of(a)   # (the sidebar hides it by id — paths may be spelled differently)
         return JSONResponse(st, headers={"Cache-Control": "no-store"})
 
-    async def trk_config(kind: str, request: Request) -> JSONResponse:
-        a = _adapter(kind)
+    def trk_status(ref: str, request: Request | None = None) -> JSONResponse:
+        return _status_of(_adapter(ref, _flag(request, "spare"), request))
+
+    async def trk_config(ref: str, request: Request) -> JSONResponse:
+        a = _adapter(ref, _flag(request, "spare"), request)
         if not request.headers.get("content-type", "").lower().startswith("application/json"):
             raise HTTPException(415, "json required")
         _sg_local(request)
-        if not a.configure(await json_body(request)):
+        try:
+            got = trk.configure(a, await json_body(request))
+        except TrackerError as e:
+            raise HTTPException(e.status, str(e)) from None
+        if got is None:
             raise HTTPException(400, f"invalid {a.name} settings")
-        return trk_status(kind)
+        return _status_of(got)   # (where the settings are now: its key may have changed with the save)
 
     async def trk_forward(kind: str, request: Request, method: str) -> Response:
         a = _adapter(kind)
@@ -1774,19 +1796,41 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             return JSONResponse({"errors": [{"title": "The downloaded media could not be added to the library"}]}, status_code=500)
         return JSONResponse({"asset": got, "version": v, "record": v})
 
-    def trk_cache(kind: str) -> JSONResponse:
-        return JSONResponse(_adapter(kind).cache_info(), headers={"Cache-Control": "no-store"})
+    def _idle_kind(ref: str) -> str:
+        if ":" in ref or trk.get(ref) is None:
+            raise HTTPException(404, "no such tracker")
+        return ref
 
-    def trk_cache_clear(kind: str, request: Request) -> dict:
-        a = _adapter(kind)
+    def trk_cache(ref: str, request: Request | None = None) -> JSONResponse:
+        if _flag(request, "idle"):   # the kind's media of no connected site (Settings → Trackers' cache line)
+            files = trk.idle_cache(_idle_kind(ref))
+            info = {"used": sum(p.stat().st_size for p in files), "files": len(files)}
+        else:
+            info = _adapter(ref, _flag(request, "spare"), request).cache_info()
+        return JSONResponse(info, headers={"Cache-Control": "no-store"})
+
+    def trk_cache_clear(ref: str, request: Request) -> dict:
+        if _flag(request, "idle"):
+            kind = _idle_kind(ref)
+            _sg_guard(request)
+            n = 0
+            for p in trk.idle_cache(kind):
+                if not p.name.endswith(".part"):   # (a download under way finishes)
+                    try:
+                        p.unlink()
+                        n += 1
+                    except OSError:
+                        pass
+            return {"ok": True, "removed": n}
+        a = _adapter(ref)
         _sg_guard(request)
         return {"ok": True, "removed": a.clear_cache()}
 
     # A file's link to a media entity, per tracker: filed under the tracker key of the site configured now
     # ("<kind>:<host>", Library tracker_links) — a link made on another site is not this one's.
     def trk_link_get(kind: str, aid: str) -> JSONResponse:
-        _adapter(kind)
-        key = trk.key_of(kind)
+        a = _adapter(kind)
+        key = tracker_key(a.kind, a.site())
         got = lib.get_tracker_link(aid, key) if key else None
         return JSONResponse(got or {"link": None, "state": {}}, headers={"Cache-Control": "no-store"})
 
@@ -1797,7 +1841,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         link, state = body.get("link"), body.get("state")
         if (link is not None and not isinstance(link, dict)) or (state is not None and not isinstance(state, dict)):
             raise HTTPException(400, "link / state must be objects")
-        key = trk.key_of(kind)
+        key = tracker_key(a.kind, a.site())
         if not key:
             raise HTTPException(412, f"{a.name} has no site set (Settings → Trackers)")
         if not lib.get_asset(aid):
@@ -1806,17 +1850,18 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return {"ok": True}
 
     def trk_link_drop(kind: str, aid: str, request: Request) -> dict:
-        _adapter(kind)
+        a = _adapter(kind)
         _sg_guard(request)
-        key = trk.key_of(kind)
+        key = tracker_key(a.kind, a.site())
         if key:
             lib.drop_tracker_link(aid, key)
         return {"ok": True}
 
-    # ---- the routes: /api/trackers/{kind}/… and the /api/sg/… aliases (kind "shotgrid") ----
+    # ---- the routes: /api/trackers/{kind}/… ({kind}: a tracker key or a kind) and the /api/sg/… aliases (kind
+    # "shotgrid": its primary site) ----
     @app.get("/api/trackers/{kind}/status")
-    def r_trk_status(kind: str) -> JSONResponse:
-        return trk_status(kind)
+    def r_trk_status(kind: str, request: Request) -> JSONResponse:
+        return trk_status(kind, request)
 
     @app.put("/api/trackers/{kind}/config")
     async def r_trk_config(kind: str, request: Request) -> JSONResponse:
@@ -1847,8 +1892,8 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         return await trk_open(kind, mid, request)
 
     @app.get("/api/trackers/{kind}/cache")
-    def r_trk_cache(kind: str) -> JSONResponse:
-        return trk_cache(kind)
+    def r_trk_cache(kind: str, request: Request) -> JSONResponse:
+        return trk_cache(kind, request)
 
     @app.post("/api/trackers/{kind}/cache/clear")
     def r_trk_cache_clear(kind: str, request: Request) -> dict:

@@ -9,8 +9,11 @@
 // pass-through proxy, tools/sg-proxy-worker.js, when the site does not answer browser requests from this app — CORS).
 //
 // Storage, per kind (adapter.storeKey(name, "phone"); ShotGrid keeps its pre-0.108 names — sight-review:sg,
-// sgfilter, sgfields, sgwhere, sg.project, the Cache Storage "sight-review-sgthumbs"): the connection (the settings
-// form's values), the browser's quick filters, tile fields, Filter conditions, the last project. A review's links:
+// sgfilter, sgfields, sgwhere, sg.project, the Cache Storage "sight-review-sgthumbs"): the connections (0.110: a list,
+// one per site — several sites of one kind can be connected at once — under storeKey("connections"); before that the
+// one connection under storeKey("connection"), still read while no list is stored, never written), the browser's quick
+// filters, tile fields, last project (per site since 0.110: storeName(…, host), falling back to the per-kind name),
+// Filter conditions (per "<host> <project>" already). A review's links:
 // reviews.meta.trk = {"<tracker key>": {link, state}} — a review made before 0.108 has ShotGrid's in meta.sg, read
 // as the link under "shotgrid:<its host>" (reviewLinks) and moved into meta.trk at the next change of a link.
 
@@ -28,18 +31,41 @@ export const TRACKER_KINDS = (TRK()?.kinds() || []).filter((k) => {
   const A = adapterOf(k.id);
   return !!(A && A.deviceClient && A.settings && TRK().formFields(A, "phone").length);
 });
-const connKey = (A) => A.storeKey("connection", "phone");
-export function trackerConfig(kind){
+const connKey = (A) => A.storeKey("connection", "phone");     // (the one connection before 0.110: read, never written)
+const listKey = (A) => A.storeKey("connections", "phone");
+const isObj = (c) => !!c && typeof c === "object" && !Array.isArray(c);
+// A kind's connections on this device, in order (each the settings form's values).
+export function trackerConnections(kind){
   const A = adapterOf(kind);
-  if (!A) return {};
-  try { const c = JSON.parse(localStorage.getItem(connKey(A)) || "null"); return c && typeof c === "object" ? c : {}; } catch { return {}; }
+  if (!A) return [];
+  try {
+    const raw = localStorage.getItem(listKey(A));
+    if (raw !== null){ const l = JSON.parse(raw); return Array.isArray(l) ? l.filter(isObj) : []; }
+    const c = JSON.parse(localStorage.getItem(connKey(A)) || "null");
+    return isObj(c) && Object.keys(c).length ? [c] : [];
+  } catch { return []; }
 }
+// The owner of a kind's pre-0.110 settings (filter, fields, project): the host of the one connection kept then —
+// recorded once, at start, never by which page opens first (SightTrackers.claimLegacy / readStored).
+TRACKER_KINDS.forEach((k) => {
+  const A = adapterOf(k.id), get = (x) => localStorage.getItem(x);
+  try { TRK().claimLegacy(get, (x, v) => localStorage.setItem(x, v), A, "phone", [TRK().legacyConnectionHost(get, A)]); } catch {}
+});
 const ready = (A, c) => TRK().formReady(A, c);
+const keyOfConn = (kind, c) => (c && c.site ? TRK().key(kind, c.site) : "");
+// One connection: by tracker key (connected or not), or by kind — its first connected one, else its first (the one
+// connection every pre-0.110 caller knew).
+export function trackerConfig(ref){
+  const sk = TRK()?.split(ref), kind = sk ? sk.kind : ref, A = adapterOf(kind), list = trackerConnections(kind);
+  if (!A) return {};
+  if (sk) return list.find((c) => keyOfConn(kind, c) === ref) || {};
+  return list.find((c) => ready(A, c)) || list[0] || {};
+}
 // A save that connects / disconnects (or changes the site) tells the app: its tracker controls come / go live.
-function saveConfig(kind, c){
+function saveConnections(kind, list){
   const A = adapterOf(kind);
   if (!A) return;
-  try { localStorage.setItem(connKey(A), JSON.stringify(c)); } catch {}
+  try { localStorage.setItem(listKey(A), JSON.stringify(list.filter((c) => isObj(c) && Object.keys(c).length))); } catch {}
   checkTrackers();
 }
 const clientOf = (A, c) => A.deviceClient(c);
@@ -52,14 +78,25 @@ const hintOf = (A, e, c) => (A.deviceHint ? A.deviceHint(e, c) : "");
 // of the app changes a connection).
 export function trackers(){
   if (!TRK()) return [];
-  return TRACKER_KINDS.map((k) => {
-    const A = adapterOf(k.id), c = trackerConfig(k.id);
-    if (!ready(A, c)) return null;
-    return { id: k.id, kind: k.id, key: TRK().key(k.id, c.site), name: A.name, site: c.site, host: TRK().hostOf(c.site) || c.site,
-      note: A.deviceNote ? A.deviceNote(c) : "" };
-  }).filter(Boolean);
+  const out = [];
+  TRACKER_KINDS.forEach((k) => {
+    const A = adapterOf(k.id);
+    trackerConnections(k.id).forEach((c) => {
+      const key = keyOfConn(k.id, c);
+      if (!ready(A, c) || !key || out.some((t) => t.key === key)) return;   // (the same site twice: the first counts)
+      out.push({ id: k.id, kind: k.id, key, name: A.name, site: c.site, host: TRK().hostOf(c.site) || c.site,
+        note: A.deviceNote ? A.deviceNote(c) : "" });
+    });
+  });
+  return out;
 }
-export const trackerOn = (id) => trackers().some((t) => t.id === id || t.key === id);
+export const trackerOn = (id) => trackers().some((t) => t.kind === id || t.key === id);
+// A tracker's name as a tab / menu item shows it: its kind's name, plus its site while another site of the kind is on.
+// short: the adapter's short name with a site ("SG · studio-b": a home tab, where room is scarce).
+export const trackerLabel = (t, list, short) => {
+  const s = TRK()?.siteLabel(t, list || trackers()), A = adapterOf(t.kind);
+  return (s && short && A && A.short ? A.short : t.name) + (s ? " · " + s : "");
+};
 const trackersKey = () => JSON.stringify(trackers());
 // "sight-trackers" only when the list really changed (not on every write of a connection: logins, statuses…):
 // after a save here, a write by another tab (storage event) and when the app comes back to the screen.
@@ -70,36 +107,49 @@ function checkTrackers(){
   lastTrackers = k;
   window.dispatchEvent(new CustomEvent("sight-trackers", { detail: trackers() }));
 }
-window.addEventListener("storage", (e) => { if (e.key === null || TRACKER_KINDS.some((k) => connKey(adapterOf(k.id)) === e.key)) checkTrackers(); });
+window.addEventListener("storage", (e) => { if (e.key === null || TRACKER_KINDS.some((k) => [connKey(adapterOf(k.id)), listKey(adapterOf(k.id))].includes(e.key))) checkTrackers(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkTrackers(); });
 // Disconnect: the secret goes (ShotGrid: the key; the site, script name, proxy and logins stay for the next connect).
-export function trackerDisconnect(kind){
-  const A = adapterOf(kind), sec = A && TRK().secretOf(A, "phone");
-  if (sec) saveConfig(kind, { ...trackerConfig(kind), [sec.name]: "" });
+// (key: the tracker key; a kind: its first connected site, as before 0.110)
+export function trackerDisconnect(key){
+  const sk = TRK()?.split(key), kind = sk ? sk.kind : key, A = adapterOf(kind), sec = A && TRK().secretOf(A, "phone");
+  if (!sec) return;
+  const list = trackerConnections(kind), cur = trackerConfig(key), i = list.indexOf(list.find((c) => JSON.stringify(c) === JSON.stringify(cur)));
+  if (i < 0) return;
+  list[i] = { ...list[i], [sec.name]: "" };
+  saveConnections(kind, list);
 }
-// Connect a tracker…: the kinds not connected yet; a pick opens that tracker's connection form.
+// Connect a tracker…: every kind (a connected one too: another site of it); a pick opens a connection form — the
+// kind's first stored connection that is not connected (its settings kept from a Disconnect), else a new one.
 export function connectTracker(ui){
   const { sheet, el, btn } = ui;
-  const left = TRACKER_KINDS.filter((k) => !trackerOn(k.id));
+  const left = TRACKER_KINDS;
   sheet((sh, close) => {
     sh.appendChild(el("h2", "", "Connect a tracker"));
-    if (!left.length){ sh.appendChild(el("p", "", "Every tracker Sight Review can link to is connected.")); return; }
-    sh.appendChild(el("p", "", "Link reviews to a production tracker: browse its Versions on the home screen and sync notes both ways."));
+    if (!left.length){ sh.appendChild(el("p", "", "Sight Review has no tracker it can link to.")); return; }
+    sh.appendChild(el("p", "", "Link reviews to a production tracker: browse its Versions on the home screen and sync notes both ways. A tracker already connected can be connected again for another site."));
     const m = el("div", "menu");
-    left.forEach((k) => m.appendChild(btn("", k.name, () => { close(); trackerSettings(k.id, ui); })));
+    left.forEach((k) => m.appendChild(btn("", trackerOn(k.id) ? `${k.name} — another site` : k.name, () => { close(); trackerSettings(k.id, ui); })));
     sh.appendChild(m);
   });
 }
 
 // ---- Settings → Trackers → <tracker>: the adapter's settings form ---------------------------------------------------
-// ui: {sheet, el, btn, toast}
-export function trackerSettings(kind, ui){
+// ui: {sheet, el, btn, toast}; key: the connection to edit (its tracker key) — none: the kind's spare connection (the
+// first stored one not connected, else a new one: Connect a tracker…)
+export function trackerSettings(kind, ui, key){
   const A = adapterOf(kind);
   if (!A || !A.settings) return;
   const { sheet, el, btn, toast } = ui, F = A.settings;
-  const c = trackerConfig(kind), sec = TRK().secretOf(A, "phone"), needs = F.needs || "its settings";
+  const sec = TRK().secretOf(A, "phone"), needs = F.needs || "its settings";
+  const list0 = trackerConnections(kind);
+  const orig = key ? list0.find((c) => keyOfConn(kind, c) === key) || null : list0.find((c) => !ready(A, c)) || null;
+  const c = orig || {};
+  // the connection this sheet edits, in the list as it is at the save (another tab may have changed it meanwhile)
+  const at = (list) => orig ? list.findIndex((x) => JSON.stringify(x) === JSON.stringify(orig)) : -1;
   sheet((sh, close) => {
-    sh.appendChild(el("h2", "", A.name));
+    const t0 = key ? trackers().find((t) => t.key === key) : null;
+    sh.appendChild(el("h2", "", t0 ? trackerLabel(t0) : A.name));
     const intro = TRK().pick(F.intro, "phone");
     if (intro) sh.appendChild(el("p", "", intro));
     const f = el("form", "trkform");
@@ -117,7 +167,11 @@ export function trackerSettings(kind, ui){
       return n;
     };
     const a = el("div", "acts");
-    if ((F.required || []).some((k) => c[k])) a.appendChild(btn("btn", "Forget", () => { saveConfig(kind, {}); toast(A.name + " connection removed"); close(); }));
+    if ((F.required || []).some((k) => c[k])) a.appendChild(btn("btn", "Forget", () => {
+      const list = trackerConnections(kind), i = at(list);
+      if (i >= 0) list.splice(i, 1);
+      saveConnections(kind, list); toast(A.name + " connection removed"); close();
+    }));
     a.appendChild(btn("btn", "Test", async () => {
       const n = read();
       if (!ready(A, n)){ msg.textContent = cap1(needs) + " are needed."; return; }
@@ -129,8 +183,14 @@ export function trackerSettings(kind, ui){
     f.appendChild(a);
     f.onsubmit = (e) => {
       e.preventDefault();
-      const n = read(), ok = ready(A, n);
-      saveConfig(kind, n);
+      const n = read(), ok = ready(A, n), list = trackerConnections(kind), i = at(list), k = keyOfConn(kind, n);
+      // the same site twice: refused while the other one is connected; a stored one not connected gives way to this
+      if (k && list.some((x, j) => j !== i && ready(A, x) && keyOfConn(kind, x) === k)){ msg.textContent = `${TRK().hostOf(n.site)} is already connected.`; return; }
+      const mine = i >= 0 ? list[i] : null;
+      const rest = list.filter((x, j) => j !== i && !(k && keyOfConn(kind, x) === k));
+      const pos = mine ? rest.indexOf(list.slice(0, i).reverse().find((x) => rest.includes(x))) + 1 : rest.length;
+      rest.splice(pos, 0, n);
+      saveConnections(kind, rest);
       toast(ok ? A.name + " connected" : `${A.name} saved — not connected: ${needs} are needed`, ok ? 2000 : 4000);
       close();
     };
@@ -181,29 +241,29 @@ export function reviewLinkLabel(meta, t){
 // t: the tracker (an entry of trackers())
 export function trackerSheet(ctx, t){
   const { sheet, el, btn, toast } = ctx;
-  const A = adapterOf(t.kind), c = trackerConfig(t.kind);
+  const A = adapterOf(t.kind), c = trackerConfig(t.key);
   if (!A) return;
-  if (!ready(A, c)){ trackerSettings(t.kind, ctx); return; }
+  if (!ready(A, c)){ trackerSettings(t.kind, ctx, t.key); return; }
   const R = ctx.R();
   const cur = reviewLink(R.meta, t.key);
   if (!cur){ pick(ctx, t); return; }
   sheet((sh, close) => {
-    sh.appendChild(el("h2", "", A.name));
+    sh.appendChild(el("h2", "", trackerLabel(t)));
     const L = cur.link, proj = A.linkProject(L);
     sh.appendChild(el("p", "", `Linked to ${A.linkLabel(L)}${proj ? " · " + proj : ""}. Last sync: ${cur.state && cur.state.last ? new Date(cur.state.last).toLocaleString() : "never"}.`));
     const m = el("div", "menu");
     m.appendChild(btn("", "Sync now", () => { close(); trackerSync(ctx, t); }));
     m.appendChild(btn("", `Link to another ${A.media.one}…`, () => { close(); pick(ctx, t); }));
     m.appendChild(btn("danger", "Unlink", () => { close(); setReviewLink(R.meta, t.key, null); ctx.save(); toast("Unlinked from " + A.name); }));
-    m.appendChild(btn("", "Connection settings…", () => { close(); trackerSettings(t.kind, ctx); }));
+    m.appendChild(btn("", "Connection settings…", () => { close(); trackerSettings(t.kind, ctx, t.key); }));
     sh.appendChild(m);
   });
 }
 
 function pick(ctx, t){
   const { sheet, el, btn, toast } = ctx;
-  const A = adapterOf(t.kind), c = trackerConfig(t.kind), R = ctx.R(), one = A.media.one;
-  const projKey = A.storeKey("project", "phone");
+  const A = adapterOf(t.kind), c = trackerConfig(t.key), R = ctx.R(), one = A.media.one;
+  const projKey = TRK().storeName(A, "project", "phone", t.host);
   const known = A.linkedIdOf(R.rows, A.siteHost(c.site));
   sheet((sh, close) => {
     sh.appendChild(el("h2", "", `Link to a ${A.name} ${one}`));
@@ -241,7 +301,7 @@ function pick(ctx, t){
     (async () => {
       try {
         const ps = await A.projects(clientOf(A, c));
-        let want = ""; try { want = localStorage.getItem(projKey) || ""; } catch {}
+        const want = TRK().readStored((k) => localStorage.getItem(k), A, "project", "phone", t.host) || "";
         proj.innerHTML = "<option value=''>Project…</option>" + ps.map((p) => `<option value="${escHtml(p.id)}">${escHtml(p.name || "#" + p.id)}</option>`).join("");
         if (ps.some((p) => String(p.id) === want)){ proj.value = want; find(); }
       } catch (e){ proj.innerHTML = ""; const o = el("option", "", errText(e)); proj.appendChild(o); toast(errText(e) + hintOf(A, e, c), 5000); }
@@ -253,7 +313,7 @@ async function link(ctx, t, id){
   const R = ctx.R(), A = adapterOf(t.kind);
   const b = ctx.busy("Linking…");
   try {
-    const L = await A.loadLink(clientOf(A, trackerConfig(t.kind)), id);
+    const L = await A.loadLink(clientOf(A, trackerConfig(t.key)), id);
     setReviewLink(R.meta, t.key, { link: L, state: {} });
     ctx.save();
     ctx.toast(`Linked to ${A.linkLabel(L)} — Sync to exchange notes`, 3500);
@@ -264,7 +324,7 @@ async function link(ctx, t, id){
 let syncing = false;
 export async function trackerSync(ctx, t){
   if (syncing) return;
-  const R = ctx.R(), A = adapterOf(t.kind), c = trackerConfig(t.kind);
+  const R = ctx.R(), A = adapterOf(t.kind), c = trackerConfig(t.key);
   const cur = reviewLink(R.meta, t.key);
   if (!cur){ pick(ctx, t); return; }
   syncing = true;
@@ -350,22 +410,25 @@ async function pumpThumbs(){
 export function trackerBrowser(ctx, box, t){
   const { el, btn, toast } = ctx;
   box.textContent = "";
-  const A = adapterOf(t.kind), c = trackerConfig(t.kind);
+  const A = adapterOf(t.kind), c = trackerConfig(t.key);
   if (!A || !ready(A, c)){
     const e = el("div", "sgb-empty");
     e.appendChild(el("p", "", `Connect ${t.name} to browse your projects here, open one and review it — the notes sync back.`));
-    e.appendChild(btn("btn primary", `Connect ${t.name}…`, () => trackerSettings(t.kind, ctx)));
+    e.appendChild(btn("btn primary", `Connect ${t.name}…`, () => trackerSettings(t.kind, ctx, t.key)));
     box.appendChild(e);
     return { refresh(){}, dispose(){} };
   }
   const one = A.media.one, many = A.media.many, statusField = A.statusField;
-  const FILTER_KEY = A.storeKey("filter", "phone"), FIELDS_KEY = A.storeKey("fields", "phone"), WHERE_KEY = A.storeKey("where", "phone");
+  // (quick filters and tile fields per site — "<name>@<host>", read falling back to the per-kind name; the conditions
+  // are kept per "<host> <project>" in one per-kind map already)
+  const FILTER_KEY = TRK().storeName(A, "filter", "phone", t.host), FIELDS_KEY = TRK().storeName(A, "fields", "phone", t.host), WHERE_KEY = A.storeKey("where", "phone");
+  const loadSite = (name, ok) => { try { const v = JSON.parse(TRK().readStored((k) => localStorage.getItem(k), A, name, "phone", t.host) || "null"); return ok(v) ? v : null; } catch { return null; } };
   const cl = clientOf(A, c), host = A.siteHost(c.site), urls = [];
   const thumbSrc = { A, cl, host, cacheName: A.storeKey("thumbs", "phone"), prefix: A.storeKey("thumb", "phone") };
   const hint = (e) => hintOf(A, e, c);
-  const f = loadJson(FILTER_KEY, (x) => x && typeof x === "object") || {};
+  const f = loadSite("filter", (x) => x && typeof x === "object") || {};
   const saveFilter = () => saveJson(FILTER_KEY, f);
-  let fields = loadJson(FIELDS_KEY, Array.isArray) || A.defaultTileFields.slice();
+  let fields = loadSite("fields", Array.isArray) || A.defaultTileFields.slice();
   // The filter builder's conditions, one tree per project ("<site host> <project id>" → tree), the newest 100 kept.
   const loadWheres = () => loadJson(WHERE_KEY, (w) => w && typeof w === "object" && !Array.isArray(w)) || {};
   const loadWhere = (k) => SF().sanitize(loadWheres()[k]);
@@ -645,13 +708,13 @@ export function userSheet(ui){
     const nm = kv.appendChild(btn("tapedit", ui.who() || "—", async () => { if (await ui.setName()) nm.textContent = ui.who(); }));
     nm.title = "Tap to change your name";
     list.forEach((t) => {
-      kv.appendChild(el("b", "", t.name));
+      kv.appendChild(el("b", "", trackerLabel(t, list)));
       kv.appendChild(el("span", "", "connected · " + t.host + (t.note ? " · " + t.note : "")));
     });
     sh.appendChild(kv);
     if (list.length){
       const a = el("div", "acts");
-      list.forEach((t) => a.appendChild(btn("btn", t.name + " connection…", () => { close(); trackerSettings(t.kind, ui); })));
+      list.forEach((t) => a.appendChild(btn("btn", trackerLabel(t, list) + " connection…", () => { close(); trackerSettings(t.kind, ui, t.key); })));
       sh.appendChild(a);
     }
   });

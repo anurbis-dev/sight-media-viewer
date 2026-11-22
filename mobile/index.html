@@ -348,8 +348,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .sheet .chk input { width: auto; margin: 0; }
 .sheet .sglist { max-height: 40vh; overflow: auto; }
 .bar .you { width: 34px; height: 34px; margin: 0 4px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; font-weight: 700; letter-spacing: 0; display: grid; place-items: center; padding: 0; }
-.hometabs { display: inline-flex; margin: 0 auto; }
-.hometabs button { padding: 5px 14px; font-size: 14px; }
+.hometabs { display: inline-flex; margin: 0 auto; max-width: 100%; }
+.hometabs button { padding: 5px 14px; font-size: 14px; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }   /* (several sites of a kind: long tabs shrink, the title names the site) */
 .bar .mini.off { visibility: hidden; }
 .home main.in-r { animation: pageInR .22s ease; } .home main.in-l { animation: pageInL .22s ease; }
 @keyframes pageInR { from { transform: translateX(40%); opacity: .3; } to { transform: none; opacity: 1; } }

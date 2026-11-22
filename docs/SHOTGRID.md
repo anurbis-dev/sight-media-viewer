@@ -19,21 +19,23 @@ one): everything runs against a fake (`tests/sg_fake.cjs`). See "To check on a r
 | File | Role |
 |------|------|
 | `app/static/shotgrid-core.js` | `SightShotGrid`: REST client (`createClient`), `loadVersion`, `linkedVersionOf`, `sync`, and `SightShotGrid.adapter` — the ShotGrid client adapter the generic UI uses (0.107; interface in trackers-core.js, docs/ARCHITECTURE.md "Tracker adapters"). Plain script (like review-core), Node-loadable. |
-| `app/shotgrid.py` | Sight's server side — the ShotGrid adapter of `app/trackers.py`: config in `<SIGHT_HOME>/shotgrid.json` (0600; the key is never sent back, dropped when site / script change), the token (per sudo login), `forward()` for `…/fetch`. |
-| `app/server.py` | `GET /api/trackers` (connected trackers), and per kind `/api/trackers/shotgrid/…` (0.107): `GET status`, `PUT config` (JSON only), `GET/POST/PUT/DELETE fetch?url=…[&sudo=]` (header `X-Sight: 1` required: no other site can use the key), `GET/PUT/DELETE link/{asset}`; the pre-0.107 `/api/sg/status`, `/api/sg/config`, `/api/sg/fetch`, `/api/sg/link/{asset}` … stay as aliases. `GET /api/annotations?asset_id=…&deleted=1` (tombstones too). |
+| `app/shotgrid.py` | Sight's server side — the ShotGrid adapter of `app/trackers.py`: config in `<SIGHT_HOME>/shotgrid.json` (0600; the key is never sent back, dropped when site / script change) — since 0.110 one file per site: `shotgrid.json` = the first (as every older Sight kept its one site), `shotgrid-2.json`, … for more sites (`ShotGridService(home, slot)`, `slots(home)`; the registry `Trackers` keeps one adapter per site), the token (per sudo login), `forward()` for `…/fetch`. |
+| `app/server.py` | `GET /api/trackers` (connected trackers — every site), and per tracker `/api/trackers/<ref>/…` (0.107; ref = the tracker key `shotgrid:<host>` since 0.110, or `shotgrid` = the primary site: the first connected, else the first stored; `status` / `config` / `cache` take `?spare=1` with the kind — the site *Connect a tracker…* sets up; `cache?idle=1` / `cache/clear?idle=1` — the media of no connected site; the same site twice → 409; a stored not-connected slot of the same site is dropped, its settings moved into slot 1 when it was slot 1; `&slot=` pins a spare request): `GET status`, `PUT config` (JSON only), `GET/POST/PUT/DELETE fetch?url=…[&sudo=]` (header `X-Sight: 1` required: no other site can use the key), `GET/PUT/DELETE link/{asset}`; the pre-0.107 `/api/sg/status`, `/api/sg/config`, `/api/sg/fetch`, `/api/sg/link/{asset}` … stay as aliases. `GET /api/annotations?asset_id=…&deleted=1` (tombstones too). |
 | `app/library.py` | table `tracker_links(asset_id, tracker key, link JSON, state JSON, updated_at)` (0.107; a link is filed under `shotgrid:<host>` of the site configured now; the old `sg_links` rows were copied in once); `get_tracker_link / set_tracker_link / drop_tracker_link`. A new link starts a fresh state. |
 | `app/static/index.html` | Settings → Trackers → ShotGrid (site, script name, key, post as reviewer, reviewer logins, note status codes, media cache limit / Clear cache; Test / Save / Disconnect — removes the key; since 0.108 made from the adapter's declarative form, `SightShotGrid.adapter.settings`, by the generic `bindTrackerForms`). Shown only while connected or being connected (*Connect a tracker…*); every ShotGrid control in the page shows only while `/api/trackers` lists it (docs/PLAN-trackers.md decision 10). |
 | `app/static/annotate.js` | Review panel **SG ▾** (since 0.107 the generic link ▾ of each connected tracker, labelled by the adapter): link (Version from the notes, or project + search), Sync now, link to another, Unlink. |
 | `mobile/js/trackers.js` | Phone (was shotgrid.js; generic over the adapters since 0.108): Settings → Trackers → *ShotGrid settings…* (the adapter's settings form: the same fields + **Proxy**), the home screen's ShotGrid page, *Export and more → ShotGrid…* (link / Sync / Unlink). |
-| `app/static/tracker-source.js` | ShotGrid Versions in the library grid (0.102 as sg-source.js; tracker-neutral since 0.107, through the adapter): filter bar, Fields ▾ captions, filmstrip scrub, the inspector's fields, open (index.html `pullTrk`, `openTrkItem`, `toggleLight` / `showInLight` / `lightStep` hooks). Server side: `/api/trackers/shotgrid/thumb/{id}?pic=image|filmstrip&u=<updated_at>` (local Host only; disk cache; alias `/api/sg/thumb/{id}?kind=`), `POST …/open/{id}` (proxy → media cache → library file), `GET …/cache`, `POST …/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). |
+| `app/static/tracker-source.js` | ShotGrid Versions in the library grid (0.102 as sg-source.js; tracker-neutral since 0.107, through the adapter): filter bar, Fields ▾ captions, filmstrip scrub, the inspector's fields, open (index.html `pullTrk`, `openTrkItem`, `toggleLight` / `showInLight` / `lightStep` hooks). Server side: `/api/trackers/shotgrid/thumb/{id}?pic=image|filmstrip&u=<updated_at>` (local Host only; disk cache; alias `/api/sg/thumb/{id}?kind=`), `POST …/open/{id}` (proxy → media cache → library file), `GET …/cache`, `POST …/cache/clear`; `ShotGridService.picture / fetch_media / make_room` (limit `cacheLimitGB`, 0 = Auto keeping 2 GB free; refused before deleting anything when eviction cannot help). The media cache is one folder (one library source) for every site, each site's files in `sg_cache/media/<host>/` (`cache_dir()`): a site's cache line, limit and *Clear cache* count only its own folder (0.110; before, the whole folder). |
 | `tools/sg-proxy-worker.js` | Cloudflare Worker pass-through for the phone when the site does not answer browsers (CORS). Same protocol as `/api/sg/fetch`. |
 
 ### Transport
 `createClient({site, script, key, via, serverAuth, headers})`. Every request may go through a proxy as
 `via + encodeURIComponent(targetUrl)`. **Sight**: `via = "/api/trackers/shotgrid/fetch?url="` (`adapter.serverClient`; the old `/api/sg/fetch?url=` is the same route), `serverAuth: true` — the page never
 holds the key or a token; the server adds `Authorization` for the site and nothing for other (https) hosts (signed
-storage links); the sudo login goes as `&sudo=`. **Phone**: the core requests tokens itself (key in localStorage
-`sight-review:sg`), directly or through the worker (`proxy` → `<proxy>/?url=`).
+storage links); the sudo login goes as `&sudo=`. With several sites (0.110) `via` names the tracker key:
+`/api/trackers/shotgrid%3A<host>/fetch?url=`. **Phone**: the core requests tokens itself (keys in localStorage — a
+list of connections `sight-review:sg.connections` since 0.110, the single pre-0.110 `sight-review:sg` read while no
+list is stored), directly or through the worker (`proxy` → `<proxy>/?url=`).
 
 ## Mapping
 
@@ -51,6 +53,9 @@ storage links); the sudo login goes as `&sudo=`. **Phone**: the core requests to
 Ids on our rows (FORMAT.md): note `data.sg = {site, id, v}` (v = Version id), reply `sg = <Reply id>`. The merge keeps
 them from either copy, so a `.srev` carries them to the other client: the phone syncing a review Sight already
 sent creates no duplicates. A review whose notes carry `data.sg.v` offers that Version when linking.
+Several sites (0.110): a file can be linked to a Version on each connected site (links per tracker key), but a note row
+holds **one** `data.sg` — a note already on site A counts as "linked to another Version" for site B and is not sent
+there (`res.skipped`); notes pulled from B are B's own rows. A row key per site is stage 5b-2 (2), deferred with 5c.
 
 ### Sync (`SightShotGrid.sync`)
 1. Read the Version's Notes, their Replies and Attachments.

@@ -3,8 +3,11 @@
 The sync itself runs in the page (app/static/shotgrid-core.js, shared with the phone app); this module keeps the
 connection settings and is the page's pass-through to the studio's site:
 
-- The config lives only here, in <SIGHT_HOME>/shotgrid.json (0600): site, API script name and key, the state ↔
-  status-code table, reviewer name → ShotGrid login, whether to post as the reviewer (sudo). The key is never sent
+- The config lives only here, one file per connected site (0600): <SIGHT_HOME>/shotgrid.json for the first one (the
+  file every Sight before 0.110 kept its one site in — read as is, nothing to migrate), shotgrid-2.json, shotgrid-3.json…
+  for more sites of the same kind (0.110, docs/PLAN-trackers.md 5b-2 (4)); each holds site, API script name and key, the
+  state ↔ status-code table, reviewer name → ShotGrid login, whether to post as the reviewer (sudo), its media cache
+  limit. One `ShotGridService` per file ("slot"); app/trackers.py `Trackers` keeps them. The key is never sent
   back to the page, never in settings.json / localStorage, never logged. Changing the site or the script name drops a
   stored key unless a new one comes with it, so nothing that can reach the settings can redirect the key elsewhere.
 - `forward()` (GET/POST/PUT/DELETE /api/sg/fetch?url=…) forwards one request: to the configured site with a Bearer
@@ -99,17 +102,57 @@ class SgError(TrackerError):
 
 
 class ShotGridService:
-    """The ShotGrid tracker adapter (app/trackers.py lists the interface; docs/ARCHITECTURE.md "Tracker adapters")."""
+    """The ShotGrid tracker adapter, one per configured site (app/trackers.py lists the interface; docs/ARCHITECTURE.md
+    "Tracker adapters"). `slot` numbers the site's settings file: 1 = shotgrid.json, n = shotgrid-<n>.json."""
     kind = "shotgrid"
     name = "ShotGrid"
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, slot: int = 1) -> None:
         self.home = home
-        self.path = home / "shotgrid.json"
+        self.slot = int(slot)
+        self.path = home / ("shotgrid.json" if self.slot == 1 else f"shotgrid-{self.slot}.json")
         self._lock = threading.RLock()
         # (site, script, sudo login — "" = the script) -> (token, until). Keyed by site + script too: a token asked for
         # just before the settings changed must never be sent to the new site.
         self._tokens: dict[tuple[str, str, str], tuple[str, float]] = {}
+
+    @staticmethod
+    def slots(home: Path) -> list[int]:
+        """The slots that have a settings file, in order (the order the UI lists the sites in)."""
+        out = [1] if (home / "shotgrid.json").is_file() else []
+        try:
+            names = [p.name for p in home.glob("shotgrid-*.json")]
+        except OSError:
+            names = []
+        for n in names:
+            m = re.fullmatch(r"shotgrid-([1-9]\d{0,3})\.json", n)
+            if m and int(m.group(1)) > 1:
+                out.append(int(m.group(1)))
+        return sorted(out)
+
+    def stored(self) -> bool:
+        return self.path.is_file()
+
+    def remove(self) -> None:
+        """Deletes this site's settings (another slot took its site over: app/trackers.py Trackers.configure)."""
+        with self._lock:
+            self._tokens = {}
+            try:
+                self.path.unlink()
+            except OSError:
+                pass   # (gone already, or held open on Windows: by_key prefers the connected slot meanwhile)
+
+    def take_over(self, other: "ShotGridService") -> bool:
+        """Moves another slot's settings into this one (its file renamed over this one's; both lose their tokens).
+        False when the file could not be moved (a file held open on Windows): nothing changed then."""
+        with self._lock, other._lock:
+            self._tokens = {}
+            other._tokens = {}
+            try:
+                os.replace(other.path, self.path)
+            except OSError:
+                return False
+        return True
 
     def _load(self) -> dict:
         try:
@@ -156,9 +199,11 @@ class ShotGridService:
             raise SgError(404, "no such Version")
         return int(s)
 
-    def configure(self, data: dict) -> bool:
+    def configure(self, data: dict, taken=()) -> bool:
         """Save the settings. A missing "key" keeps the stored one (unless site / script change); "" removes it.
-        Returns False for values that cannot be right."""
+        Returns False for values that cannot be right. `taken`: the tracker keys other connected sites of this kind have
+        — the same site twice is refused (SgError 409). A slot past the first needs a site (SgError 400: a site without
+        one could never be addressed again)."""
         if not isinstance(data, dict):
             return False
         site = site_url(data.get("site", "")) if isinstance(data.get("site", ""), str) else None
@@ -173,6 +218,10 @@ class ShotGridService:
             site = canonical_site(site)   # (an older, non-canonical spelling is rewritten, not refused)
         if site and not valid_site(site):
             return False
+        if not site and self.slot != 1:
+            raise SgError(400, "The site is needed")
+        if site and tracker_key(self.kind, site) in taken:
+            raise SgError(409, f"{host_of(site)} is already connected in Sight")
         script = script.strip()
         if len(script) > 200 or (script and not re.fullmatch(r"[\x21-\x7e ]+", script)):
             return False
@@ -324,8 +373,13 @@ class ShotGridService:
         return self.home / "sg_cache" / root / re.sub(r"[^\w.-]", "_", host)
 
     def media_dir(self) -> Path:
-        # resolved: the library stores a source's resolved path, and a file must match its source by path
+        # resolved: the library stores a source's resolved path, and a file must match its source by path. One folder
+        # (one library source) for every ShotGrid site; each site's files are in its own host folder (cache_dir).
         return (self.home / "sg_cache" / "media").resolve()
+
+    def cache_dir(self) -> Path:
+        """This site's part of the media cache (<media_dir>/<host>): its size, limit and Clear cache count only it."""
+        return self.media_dir() / self._host_dir("x").name
 
     def _get_bytes(self, url: str, limit: int = MAX_BODY) -> tuple[bytes, str]:
         status, ctype, raw = self.forward("GET", url, None, {})
@@ -371,15 +425,15 @@ class ShotGridService:
     IN_USE = 15 * 60
 
     def cache_info(self) -> dict:
-        d = self.media_dir()
+        d = self.cache_dir()
         files = [p for p in d.rglob("*") if p.is_file()] if d.exists() else []
         used = sum(p.stat().st_size for p in files)
         free = shutil.disk_usage(d if d.exists() else self.home).free
         return {"used": used, "files": len(files), "free": free, "limitGB": float(self._load().get("cacheLimitGB") or 0)}
 
     def clear_cache(self) -> int:
-        """Deletes the downloaded media (a download under way finishes). Returns the number of files removed."""
-        d = self.media_dir()
+        """Deletes this site's downloaded media (a download under way finishes). Returns the number of files removed."""
+        d = self.cache_dir()
         n = 0
         for p in (d.rglob("*") if d.exists() else []):
             if p.is_file() and not p.name.endswith(".part"):
@@ -391,7 +445,7 @@ class ShotGridService:
         return n
 
     def make_room(self, need: int, keep: Path | None = None) -> None:
-        d = self.media_dir()
+        d = self.cache_dir()   # (the site's own folder: its limit counts its files; other sites keep theirs)
         d.mkdir(parents=True, exist_ok=True)
         limit = float(self._load().get("cacheLimitGB") or 0) * 1024 ** 3
         every = [p for p in d.rglob("*") if p.is_file()]

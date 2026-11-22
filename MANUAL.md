@@ -310,8 +310,17 @@
   disconnecting shows / hides the controls at once, no reload; a ShotGrid project open in the grid goes back to the
   library on a disconnect (a change made in another window shows when you come back to this one). Smart
   collections and links made for a tracker stay and come back when it is connected again; Versions already
-  downloaded stay in Sight's cache — with no tracker connected a *Tracker media cache … Clear* line under the list
-  empties it. The phone app: Settings → *Trackers* (*Connect a tracker…*, *Disconnect ShotGrid*, *ShotGrid settings…*).
+  downloaded stay in Sight's cache — a *Tracker media cache … Clear* line under the list empties what belongs to no
+  connected site. The phone app: Settings → *Trackers* (*Connect a tracker…*, *Disconnect ShotGrid*, *ShotGrid settings…*).
+- **Several sites of one tracker** (e.g. two ShotGrid studios) — *Connect a tracker…* keeps offering a tracker that is
+  already connected: pick it again and fill in the other site (its own script name and key). Each site is then a tracker
+  of its own: its own row under Sources with its projects, its own block in Settings → Trackers (settings, Test, cache,
+  Disconnect), its own row in the You panel and its own link button in the review panel — named by its site once there
+  are two (*SG · studio-a ▾*, *SG · studio-b ▾*); a file can be linked to a Version on each site, and smart collections
+  sit under their own site's project. The same site cannot be connected twice. Disconnecting one site leaves the others;
+  its settings are kept, and *Connect a tracker…* → ShotGrid fills them in again. On the phone the same: Settings →
+  *Connect a tracker…* → *ShotGrid — another site*; the home screen then has a tab per site (*SG · studio-a*, …) and
+  *Export and more* an item per site.
 - **ShotGrid** — sync a file's notes with a ShotGrid (Flow Production Tracking) Version, both ways. Connect it once in
   Settings → Trackers → *Connect a tracker…* → ShotGrid: the site, an API script's name and key (a ShotGrid admin makes one: Admin → Scripts; Sight's
   server keeps the key and never shows it again), optionally *Post as the reviewer* with a *Reviewer logins* list
@@ -336,7 +345,7 @@
   video's tile to play through its frames (on a touch screen: drag a finger sideways over its picture). Double-click
   a Version (Space, or *Open* in the inspector) to open it: its playable copy is downloaded into Sight's cache and
   opens in the preview with its review linked (*SG ▾ → Sync now*); ← / → in the preview step to the next Version
-  (downloading it). Settings → Trackers → ShotGrid → *Media cache limit* caps that cache (empty = Auto: as much as the disk
+  (downloading it). Settings → Trackers → ShotGrid → *Media cache limit* caps that cache (per site) (empty = Auto: as much as the disk
   holds, 2 GB kept free; the oldest opened go first) and *Clear cache* empties it. Any library row in the sidebar
   returns to the library.
 - **Filter ▾** — the button next to the search box narrows what the grid shows by fields: *+ Condition* adds a row

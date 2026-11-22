@@ -766,8 +766,9 @@ keeps the local rule over a stale `/api/state` until the server returns the same
 underneath; *Save as smart collection* moves it into the new row (`saveAsSmart`). Counts are not shown on smart rows
 (each would cost a filtered COUNT on every `/api/state`).
 **Tracker adapters** (docs/PLAN-trackers.md decision 11, stage 5b). Several trackers can be connected at once; the
-UI is one for all and talks to a tracker only through its **adapter** — one per *kind* ("shotgrid"; ShotGrid is the only
-one yet). A tracker is kind + site; the **tracker key** `"<kind>:<host>"` (host = `URL.host`: lowercased, default port
+UI is one for all and talks to a tracker only through its **adapter** — one per *kind* on the client ("shotgrid"; ShotGrid
+is the only one yet), one per configured *site* on the server (0.110: several sites of one kind can be connected at once;
+each is a tracker of its own). A tracker is kind + site; the **tracker key** `"<kind>:<host>"` (host = `URL.host`: lowercased, default port
 dropped — `app/trackers.py host_of / tracker_key / split_key` and `SightTrackers.hostOf / key / split` follow the same
 rule — WHATWG canonical hostnames: IPv6 compressed without a dotted tail, IPv4 in any spelling as a dotted quad, punycode,
 percent-decoded; http(s) only —, tests/test_trackers.py checks they agree; `valid_site` refuses a hostname the browser
@@ -775,23 +776,40 @@ would spell differently (ShotGrid's `configure` first rewrites a saved site to t
 hostname is refused, never converted — Python's IDNA 2003 differs from the browser's for ß / ς), and a host stored *without* a scheme (a link's `site`, an old `sg_site`) goes through
 `host_norm` / `tracker_key_of_host`, which keep its port and guess no scheme) files everything kept per tracker: sidebar source rows
 (`data-tracker`), smart collections (`collections.tracker` + `tracker_project`), a file's link (`tracker_links`).
-- *Server* (`app/trackers.py`): `Trackers(home)` is the registry (kind → adapter, made once in `build_app`). The
+- *Server* (`app/trackers.py`): `Trackers(home)` is the registry (made once in `build_app`): per kind, one adapter per
+  stored site — `cls(home, slot)`, `cls.slots(home)` (ShotGrid: `shotgrid.json` = slot 1, the file every pre-0.110 Sight
+  kept its one site in, read as is; `shotgrid-<n>.json` more), instances kept for the process (tokens). `sites(kind)`,
+  `by_key(key)` (any stored slot, connected or not), `get(kind)` = the kind's **primary** site (the first connected, else
+  the first stored, else slot 1), `resolve(ref)` (a key, or a kind → primary), `spare(kind)` (where *Connect a tracker…*
+  saves: the first stored site not connected — its settings kept from a Disconnect —, else a new slot, written only by
+  a save; `spare(kind, slot)` = a slot pinned by the page, 409 once it is connected), `configure(a, data)` → the adapter
+  holding the settings (refuses a site another *connected* slot has — `TrackerError` 409 — and drops a stored
+  not-connected slot with the same site: never two slots of one site; when the dropped one is slot 1 the saved settings
+  move into it, `take_over`, so the first site stays in `shotgrid.json`), `idle_cache(kind)`; `by_key` prefers a
+  connected slot. A slot past the first needs a site (400 "The site is needed"). The
   adapter interface (duck-typed, listed in the module docstring; `ShotGridService` implements it): `kind`, `name`,
   `tracker()` (its `/api/trackers` entry while connected), `site()`, `status()` (never a secret; `configured`,
-  `ident` = "another connection" when it changes), `configure(data)`, `forward(method, url, body, headers, sudo)`
+  `ident` = "another connection" when it changes), `configure(data, taken)`, `forward(method, url, body, headers, sudo)`
   (the page's client goes through it; the server adds the credentials), `parse_media_id(str)`, `picture(id, kind,
-  stamp)`, `fetch_media(id, root, can_open)`, `media_dir()`, `cache_info()`, `clear_cache()`; errors are
+  stamp)`, `fetch_media(id, root, can_open)`, `media_dir()` (the kind's one folder / library source), `cache_dir()` (this
+  site's `<media_dir>/<host>`: its downloads, size, limit, *Clear cache*), `cache_info()`, `clear_cache()`, `slot`,
+  `slots(home)`, `stored()`, `remove()`, `take_over(other)`; errors are
   `TrackerError(status, detail)` (`SgError` is ShotGrid's subclass). Routes: `GET /api/trackers` →
   `{trackers: [{id, kind, key, name, site, host, note}], kinds: [{id, name}], cacheSources: [source id]}` (id = kind,
-  as before 0.107; `note` e.g. "as reviewer"; every adapter's media cache source, connected or not);
-  `/api/trackers/{kind}/status | config | fetch (GET/POST/PUT/DELETE) | thumb/{id}?pic=image|filmstrip&u= |
-  open/{id} | cache | cache/clear | link/{asset}` (an unknown kind → 404; the same guards as before: `X-Sight: 1` +
+  as before 0.107 — not unique with several sites: use `key`; `note` e.g. "as reviewer"; every kind's media cache source,
+  connected or not); `/api/trackers/{ref}/status | config | fetch (GET/POST/PUT/DELETE) | thumb/{id}?pic=image|filmstrip&u= |
+  open/{id} | cache | cache/clear | link/{asset}` — ref = a tracker key (URL-encoded or not; any stored site) or a kind
+  (its primary site); `status` / `config` / `cache` with a kind and `?spare=1` = `spare(kind)` (`&slot=<n>`: pinned to
+  the slot a first answer named — status carries `slot`); `cache?idle=1` /
+  `cache/clear?idle=1` with a kind = its files of no connected site; `status` carries `key` (this site's) and `kind`
+  (an unknown kind / key → 404; the same guards as before: `X-Sight: 1` +
   a local Host for anything that acts, a local Host for thumbnails). **Compatibility:** every pre-0.107
-  `/api/sg/…` route stays as an alias of kind "shotgrid" (same handlers; `/api/sg/thumb` keeps `kind=`), for the
+  `/api/sg/…` route and `/api/trackers/<kind>/…` stay aliases of the kind's primary site — for a single-site user the
+  one site, exactly as before; `/api/sg/…` = kind "shotgrid" (same handlers; `/api/sg/thumb` keeps `kind=`), for the
   tests, scripts and the proxy-worker protocol; `/api/sg/open` answers `{asset, version, record}`.
 - *Links* (`Library.get_tracker_link / set_tracker_link / drop_tracker_link`, table `tracker_links(asset_id,
-  tracker, link, state, updated_at)`, PK asset + tracker key): the route files a link under the key of the kind's
-  **current** site, so a link made on another site is not shown (nor synced against the wrong site) and comes back
+  tracker, link, state, updated_at)`, PK asset + tracker key): the route files a link under the key of the addressed
+  site as configured **now**, so a link made on another site is not shown (nor synced against the wrong site) and comes back
   when that site is configured again. Migration: the pre-0.107 `sg_links` rows are copied once under
   `"shotgrid:" + host_of(link.site)` (meta `tracker_links_from_sg`; once only, so a link dropped later is not revived;
   a row whose link JSON is unreadable is left behind); `sg_links` itself is left as it was and never written again.
@@ -799,7 +817,7 @@ hostname is refused, never converted — Python's IDNA 2003 differs from the bro
   as `core/trackers-core.js`): `hostOf`, `key`, `split`, `adapter(kind)`, `adapterOf(entry)`, `kinds()`. Adapters
   register by pushing onto `globalThis.SightTrackerAdapters` (load order free). The client adapter interface is listed
   at the top of trackers-core.js (id / name / short / media names, the browser bar's entity types and status field,
-  `serverClient(site, kind)`, `projects`, `entities`, `mediaFields`, `filterFields`, `toConditions`, `browse`,
+  `serverClient(site, ref)` (ref = the tracker key), `projects`, `entities`, `mediaFields`, `filterFields`, `toConditions`, `browse`,
   record accessors, filmstrip, `fmtField`, `siteHost(site)` (the host links and rows carry — every link is built and
   compared with it, never with the server's entry host), `findMedia`, `loadLink`, `linkOf`, link accessors, `linkedIdOf`,
   `recordSub`, `sync(o)` (`o.settings` = the connection's settings, the adapter picks its own options from them),
@@ -808,7 +826,17 @@ hostname is refused, never converted — Python's IDNA 2003 differs from the bro
   `mediaSource(rec, {still})`, `download(client, url)`). ShotGrid's is `SightShotGrid.adapter` (shotgrid-core.js); its
   `storeKey` keeps the pre-0.107 names — Sight's page `sight.sg.fields / filter / where / project`, the phone's
   (`app "phone"`) `sight-review:sg` (connection), `sgfilter`, `sgfields`, `sgwhere`, `sg.project`, the Cache Storage
-  `sight-review-sgthumbs` and its key prefix `https://sg-thumb.invalid/` (nothing to migrate).
+  `sight-review-sgthumbs` and its key prefix `https://sg-thumb.invalid/` (nothing to migrate). Several sites (0.110):
+  `SightTrackers.siteLabel(t, list)` names a site only while another connected tracker of its kind is listed (first host
+  label + port, the whole host when those clash or for an IP: "SG · studio-b ▾", phone tab "SG · studio-b");
+  `storeName(a, name, app, host)` = `storeKey(name, app) + "@" + host` is where a per-site UI setting is written (Sight:
+  `fields`, `filter`, `where`, `project`; the phone: `filter`, `fields`, `project` — `where` is per "<host> <project>"
+  already, the thumbnail cache keys carry the host) and `readStored(get, a, name, app, host)` reads it, falling back to
+  the per-kind name — for the owner host only (`storeKey("legacyHost", app)`), recorded eagerly by `claimLegacy(get,
+  set, a, app, hosts)` while unset and exactly one host is given (Sight: `refreshTrackers` with the kind's connected
+  sites; the phone: at start, the host of its pre-0.110 connection, `legacyConnectionHost`), never by reading order;
+  no owner = no fallback (a pre-0.110 value is kept, nothing migrated; writes never go to
+  the old name).
 - *Settings form* (0.108, `adapter.settings`, rendered by `SightTrackers.mountForm(host, adapter, app, {parts})` in both
   apps): `fields` in order — `{name, label, type, placeholder?, title?, apps?, input?, part?, clean?}`, any text may be
   `{sight, phone}`; types `text`, `secret` (never shown back; `has` = the status flag, `keptWith` = the fields it goes
@@ -822,7 +850,9 @@ hostname is refused, never converted — Python's IDNA 2003 differs from the bro
   Sight renders a field with `part: "cache"` (ShotGrid's media cache limit) in the block's cache box with the cache line
   and *Clear cache*, shown while connected. The two apps' field order is the form's (one order for both).
 - *Stored as before, mapped at the boundary:* the review rows' ShotGrid ids (`data.sg`, reply `sg`, FORMAT.md) are the
-  ShotGrid adapter's own; the phone keeps its ShotGrid connection (`sight-review:sg`) and browser filters
+  ShotGrid adapter's own; the phone keeps its ShotGrid connections (0.110: a list `sight-review:sg.connections`, one
+  entry per site; the pre-0.110 single `sight-review:sg` is read as the list while none is stored and never written
+  again) and browser filters
   (`sight-review:sgfilter` / `sgwhere`) under the same names (the adapter's `storeKey(name, "phone")`); the media /
   thumbnail caches stay under `<SIGHT_HOME>/sg_cache/`.
 - *Phone review links* (0.108): `reviews.meta.trk = {"<tracker key>": {link, state}}` (mobile/js/trackers.js
@@ -831,18 +861,31 @@ hostname is refused, never converted — Python's IDNA 2003 differs from the bro
   scheme guessed — like the server's `sg_links` copy), never written back there; the next `setReviewLink` (link, unlink,
   sync) folds it into `meta.trk` and deletes `meta.sg` (a `meta.sg` without a readable site is left alone). A key in
   `meta.trk` wins over `meta.sg`. Only the phone ever had `meta.sg` (the `.srev` carries neither).
-- *Page* (index.html): `trackers` (connected entries) / `trackerOn(kind or key)` / `trackerByKey` / `trkStat` (kind →
-  status) / `trkCacheIds`; the sidebar draws a source row per connected tracker (`renderTrackerSources` →
+- *Page* (index.html): `trackers` (connected entries) / `trackerOn(kind — any site of it — or key)` / `trackerByKey` /
+  `trkStat` (ref → status: every kind's primary + every connected key) / `trkCacheIds`; everything else is keyed by the
+  tracker key, never the kind; the sidebar draws a source row per connected tracker (`renderTrackerSources` →
   `renderTrackerSource(wrap, t)`, state per key in `trkTree`), a project opens through `openTrkProject(t, p, smartId)`
   with that tracker's item source (`trackerSource(t)`: one `createTrackerSource` per key, the bar `#trkBar` shared);
   grid items are `{id: "trk:<id>", trk: record, kind: "trkmedia"}`. annotate.js shows a link ▾ per connected tracker
-  (`host.trackers()`; label = `adapter.short` + " ▾", ShotGrid "SG ▾") with one popover `.an-trk` (`trkState.kind`).
-  Settings → Trackers: `bindTrackerForms` makes a block `.trk-set[data-tracker=<kind>]` per kind from its adapter's
-  form (fields by `name`, `[data-act=disconnect | cancel | test | save | clearcache]`, `.trk-state`, `.trk-msg`,
-  `.trk-cache`) and `bindTrackerForm` registers `TRACKER_FORMS[kind] = {paint(on, t), focus()}`; the blocks, Connect a
-  tracker… and the disconnected-cache line are generic — no tracker-specific markup or code left in index.html.
-  Phone (mobile/js/trackers.js, no tracker named): `trackers()` entries carry `kind` / `key` / `note` like Sight's
-  (connected = `formReady` on the device's connection); `TRACKER_KINDS` = the registry's kinds with `deviceClient` + a
+  (`host.trackers()`; `data-tracker` = its key; label = `adapter.short` (+ " · " + `siteLabel`) + " ▾", ShotGrid "SG ▾")
+  with one popover `.an-trk` (`trkState.key`; routes `/api/trackers/<key>/…`, `trkAdapter(key)`). Settings → Trackers:
+  `trkBlocks` — a block `.trk-set[data-tracker=<kind>][data-key=<key>]` per connected tracker plus the ones kept open
+  while not connected (`trkOpen`, a Set: Connect's block — `key` "" = the kind's spare site via `?spare=1&slot=<pinned>`
+  — and any block a save left unconnected; none removes another), each made by
+  `makeTrackerBlock(kind, key)` from its kind's form (fields by `name`, `[data-act=disconnect | cancel | test | save |
+  clearcache]`, `.trk-state`, `.trk-msg`, `.trk-cache`); a save moves the block's `key` with the site (`rekey` from the
+  answer's `key`): the connecting block becomes the connected one in place (its message kept), a connected block whose
+  save leaves it unconnected becomes the connecting one; `paintTrackerSettings` makes / paints / drops blocks (re-ordered
+  only when the order differs — a re-insert would blur a field). *Connect a tracker…* lists every kind with a form, a
+  connected one too (another site), but a kind with an open block. A block whose key turns connected leaves `trkOpen`
+  and any other block of that key goes. `#trkCacheRow` = every kind's
+  `cache?idle=1`. No tracker-specific markup or code in index.html.
+  Phone (mobile/js/trackers.js, no tracker named): `trackers()` entries carry `kind` / `key` / `note` like Sight's, one
+  per connected connection (`trackerConnections(kind)`, connected = `formReady`; the same key twice: the first counts);
+  `trackerConfig(ref)` (a key, or a kind = its first connected); `trackerSettings(kind, ui, key)` edits that connection
+  (no key: the spare one — the first stored not connected, else a new one; the same site as another *connected* one is
+  refused, a not-connected one with it is replaced; the entry is found again at save by its stored value);
+  `trackerDisconnect(key)`; `trackerLabel(t, list, short)` for tabs (short: "SG · site") / ⋯ items / sheets; `TRACKER_KINDS` = the registry's kinds with `deviceClient` + a
   phone form; `trackerSettings(kind, ui)` renders the form (`form.trkform`, `p.trkmsg`; Forget / Test / Save);
   a home page per connected tracker (`trackerBrowser(ctx, box, t)`, tab `data-p` = its tracker key, `main.sgb[data-tracker]`),
   a ⋯ item per connected tracker (`trackerSheet(ctx, t)`: link / Sync / Unlink); the `.sgb-*` / `.sgproj` / `.sglist`
@@ -850,19 +893,19 @@ hostname is refused, never converted — Python's IDNA 2003 differs from the bro
 **Trackers: UI only while connected** (docs/PLAN-trackers.md decisions 10, 11; stage 5a). `GET /api/trackers` lists
 the *connected* trackers — an adapter's `tracker()`; ShotGrid: connected = `_connected()` (site + script name + key
 saved), the same test as `status().configured` and `forward()`'s refusal. Page: `refreshTrackers(changed)` in
-index.html (reads `/api/trackers` + every kind's `/api/trackers/<kind>/status` together; runs at start, after Save /
+index.html (reads `/api/trackers`, then the status of every kind's primary site and of every connected key; runs at start, after Save /
 Test / Disconnect in Settings → Trackers, on every opening of the You panel and on `visibilitychange` / `focus`; an
-unchanged answer repaints nothing; a kind's projects are re-read only when its `key` / `ident` / connected changed —
+unchanged answer repaints nothing; a tracker's projects are re-read only when its `key` / `ident` / connected changed —
 `trkSig`); it repaints the sidebar sources, the You panel's rows (`paintUserTrackers`), Settings → Trackers
 (`paintTrackerSettings`), closes a tracker project on screen whose connection went / changed (`closeTrkList(true)` —
 Filter ▾'s tracker fields only exist inside one), and fires `sight-trackers` on window when the list changed;
 annotate.js listens and repaints its link buttons (`paintTrkBtns`; a host without `trackers` shows none).
 Disconnect (ShotGrid) = the key removed (the stored settings re-read from its status, PUT back with `key: ""`): site,
-script, logins and statuses stay for the next connect. While a kind is not connected and its cache holds files,
-`#trkCacheRow` (*Tracker media cache … Clear*) keeps the hidden media caches clearable.
-Settings → Trackers: a block per connected tracker (`.trk-set[data-tracker=<kind>]`) + *Connect a tracker…* listing
-the kinds (page adapter + server adapter + a settings form) not connected; `trkConnecting` keeps a kind's fields open
-while it is being connected (also after a save that left it unconnected). Data of a disconnected tracker (its smart
+script, logins and statuses stay for the next connect. While media of sites that are not connected sit in the cache
+(`cache?idle=1`), `#trkCacheRow` (*Tracker media cache … Clear*) keeps them clearable.
+Settings → Trackers: a block per connected tracker (`.trk-set[data-tracker=<kind>][data-key=<key>]`) + *Connect a
+tracker…* listing the kinds (page adapter + server adapter + a settings form), connected ones too (another site);
+`trkOpen` keeps the connecting blocks open (also after a save that left one unconnected). Data of a disconnected tracker (its smart
 collections, links, the media cache source) stays and is just not shown.
 Moving / renaming a file (`_migrate_asset`) re-targets its annotations.
 

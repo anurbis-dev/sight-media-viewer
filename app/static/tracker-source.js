@@ -1,6 +1,6 @@
 // A tracker project's media entities (ShotGrid Versions, …) as an item source for the library grid
 // (docs/PLAN-trackers.md stages 3a, 5b). Tracker-neutral: it talks to the tracker only through its adapter
-// (trackers-core.js lists the interface) and Sight's generic routes /api/trackers/<kind>/…. The grid, its tiles,
+// (trackers-core.js lists the interface) and Sight's generic routes /api/trackers/<tracker key>/…. The grid, its tiles,
 // selection, keys and lightbox stay the library's (index.html); this module gives it:
 //   - a filter bar (entity type · entity · status · Fields ▾ · ↻) shown above the grid while a project is open,
 //   - pages of records mapped to grid items {id: "trk:<id>", trk: record, name, kind: "trkmedia", has_thumb},
@@ -15,23 +15,28 @@ import { hotkey } from "/static/keys.js";
 const SF = () => globalThis.SightFilter;
 export const TRK_PAGE = 100;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const readJson = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k) || "null"); return v == null ? d : v; } catch { return d; } };
+// a per-site setting (0.110: several sites of one kind): "<the kind's name>@<host>", read falling back to the kind's
+// own name (what Sight kept before 0.110)
+const readSite = (A, name, host, d) => {
+  try { const v = JSON.parse(globalThis.SightTrackers.readStored((k) => localStorage.getItem(k), A, name, undefined, host) || "null"); return v == null ? d : v; } catch { return d; }
+};
 
 // opts: { adapter, tracker: {kind, key, site, host}, bar: element, putSetting(k, v), registerAutoClose(el, close,
 //         anchor), onChange(what) — the filter or the fields changed (the grid reloads / repaints) }
 export function createTrackerSource(opts){
   const A = opts.adapter, T = opts.tracker, bar = opts.bar;
-  const base = `/api/trackers/${encodeURIComponent(T.kind)}`;
-  const client = () => A.serverClient(T.site, T.kind);
-  const FIELDS_KEY = A.storeKey("fields"), FILTER_KEY = A.storeKey("filter"), WHERE_KEY = A.storeKey("where");
+  const base = `/api/trackers/${encodeURIComponent(T.key)}`;
+  const client = () => A.serverClient(T.site, T.key);
+  const TS = globalThis.SightTrackers;
+  const FIELDS_KEY = TS.storeName(A, "fields", undefined, T.host), FILTER_KEY = TS.storeName(A, "filter", undefined, T.host), WHERE_KEY = TS.storeName(A, "where", undefined, T.host);
   let project = null, fieldsAll = null, entSeq = 0;
-  let fields = readJson(FIELDS_KEY, null);
+  let fields = readSite(A, "fields", T.host, null);
   if (!Array.isArray(fields)) fields = A.defaultTileFields.slice();
-  const filter = Object.assign({ type: "", entity: "", status: "", q: "" }, readJson(FILTER_KEY, {}));
+  const filter = Object.assign({ type: "", entity: "", status: "", q: "" }, readSite(A, "filter", T.host, {}));
   filter.entity = "";
   const statuses = new Set();
   // the filter builder's conditions on the media entity's fields (Filter ▾ in the top bar), sent with every page
-  let where = SF().sanitize(readJson(WHERE_KEY, null));
+  let where = SF().sanitize(readSite(A, "where", T.host, null));
   let smart = null;   // a tracker smart collection's rule in effect instead of `where` (stage 3c; null: the free conditions)
   let fieldsPromise = null;
   const loadFields = () => fieldsAll ? Promise.resolve(fieldsAll)

@@ -1045,50 +1045,64 @@ function bindDictationSettings(){
 // ---- Trackers (docs/PLAN-trackers.md decisions 10, 11; docs/ARCHITECTURE.md "Tracker adapters") --------------------
 // `trackers` = the connected ones, from /api/trackers ([{id, kind, key, name, site, host, note}]: id = kind, key =
 // the tracker key "<kind>:<host>" everything per tracker is filed under; connected = configured and usable, defined
-// once on the server by each adapter). Every tracker control — the sidebar source rows, the You panel's rows, the
+// once on the server by each adapter). Several sites of one kind are several trackers (0.110): every place keys by the
+// tracker key, never by the kind. Every tracker control — the sidebar source rows, the You panel's rows, the
 // review panel's link (annotate.js, host.trackers / host.trackerOn), Filter ▾'s tracker fields (only inside a tracker
 // project) — shows only for a tracker listed here, and talks to it only through its adapter (trackers-core.js,
-// SightTrackers.adapter(kind); ShotGrid's is in shotgrid-core.js) and the generic routes /api/trackers/<kind>/….
+// SightTrackers.adapter(kind); ShotGrid's is in shotgrid-core.js) and the generic routes /api/trackers/<key>/….
 // refreshTrackers() re-reads the list after a connect / disconnect (and when the You panel opens), repaints those
-// places and fires "sight-trackers" on window. Settings → Trackers: a block per connected tracker (its kind's own
-// settings form, TRACKER_FORMS) plus *Connect a tracker…* (the only way in while none is).
+// places and fires "sight-trackers" on window. Settings → Trackers: a block per connected tracker (its kind's
+// settings form) plus *Connect a tracker…* (the only way in while none is; it also adds another site of a kind).
 const TRK = () => globalThis.SightTrackers;
 const adapterOf = (t) => TRK().adapterOf(t);
 // The kinds Sight can connect: the ones both this page (an adapter) and the server (/api/trackers kinds) have.
 const trackerKinds = () => TRK().kinds().filter((k) => !trkSrvKinds || trkSrvKinds.has(k.id));
-let trackers = [], trkConnecting = null, trkSeq = 0, trkRead = false;   // trkConnecting: the kind whose connect fields are open
-let trkStat = {}, trkCacheIds = [], trkSrvKinds = null;   // kind → its /api/trackers/<kind>/status; every media cache source id
-const trackerOn = (id) => trackers.some((t) => t.id === id || t.key === id);   // (a kind or a tracker key)
+let trackers = [], trkSeq = 0, trkRead = false;
+const trkOpen = new Set();   // the settings blocks kept open while not connected (being connected, or a save left them so)
+let trkStat = {}, trkCacheIds = [], trkSrvKinds = null;   // ref (tracker key, or kind = its primary site) → its status; every media cache source id
+const trackerOn = (id) => trackers.some((t) => t.kind === id || t.key === id);   // (a kind — any site of it — or a tracker key)
 const trackerByKey = (key) => trackers.find((t) => t.key === key) || null;
-const trkApi = (kind, path) => `/api/trackers/${encodeURIComponent(kind)}/${path}`;
-// "another connection" for a kind: another site, account (ShotGrid: script) or connected state — its sidebar tree
-// is read again and a project of it on screen closes; a save of logins or statuses keeps both.
+const trkApi = (ref, path) => `/api/trackers/${encodeURIComponent(ref)}/${path}`;
+// "another connection" for a tracker: another account (ShotGrid: script) or connected state — its sidebar tree is read
+// again and a project of it on screen closes; a save of logins or statuses keeps both. (Another site = another key.)
 const trkSig = (st) => st ? `${st.key || ""}|${st.ident || ""}|${!!st.configured}` : "";
 // changed: a connect / disconnect / save from Settings (a failure says so). An answer equal to what is shown already
 // repaints nothing (the focus / visibility re-checks below must not disturb a sidebar rename or the settings).
 async function refreshTrackers(changed){
   const my = ++trkSeq;
   const kinds = TRK().kinds().map((k) => k.id);
-  let tl, sts;
-  try { [tl, ...sts] = await Promise.all([api("/api/trackers"), ...kinds.map((k) => api(trkApi(k, "status")).catch(() => null))]); }
-  catch { if (my === trkSeq && changed) flash("Could not read the trackers' state", 3000); return; }
+  let tl, refs, sts;
+  try {
+    tl = await api("/api/trackers");
+    const keys = (Array.isArray(tl?.trackers) ? tl.trackers : []).map((t) => t && t.key).filter((k) => typeof k === "string" && k);
+    refs = [...kinds, ...keys];
+    sts = await Promise.all(refs.map((r) => api(trkApi(r, "status")).catch(() => null)));
+  } catch { if (my === trkSeq && changed) flash("Could not read the trackers' state", 3000); return; }
   if (my !== trkSeq) return;   // (an older answer after a newer one)
   const list = Array.isArray(tl?.trackers) ? tl.trackers.filter((t) => t && typeof t.id === "string" && typeof t.key === "string" && adapterOf(t)) : [];
   const stats = {};
-  // (a kind whose status could not be read keeps the last one: a failed re-check must not look like another
+  // (a tracker whose status could not be read keeps the last one: a failed re-check must not look like another
   // connection — that would close its project on screen and drop its sidebar tree)
-  kinds.forEach((k, i) => { if (sts[i] && typeof sts[i] === "object") stats[k] = sts[i]; else if (trkStat[k]) stats[k] = trkStat[k]; });
+  refs.forEach((r, i) => { if (sts[i] && typeof sts[i] === "object") stats[r] = sts[i]; else if (trkStat[r]) stats[r] = trkStat[r]; });
   const caches = Array.isArray(tl?.cacheSources) ? tl.cacheSources.filter((x) => typeof x === "string") : [];
   const srvKinds = Array.isArray(tl?.kinds) ? tl.kinds.map((k) => k && k.id).filter((x) => typeof x === "string") : [];
   const was = JSON.stringify(trackers), statWas = trkStat;
   if (!changed && trkRead && JSON.stringify(list) === was && JSON.stringify(stats) === JSON.stringify(trkStat)
       && JSON.stringify(caches) === JSON.stringify(trkCacheIds)) return;
   trackers = list; trkStat = stats; trkCacheIds = caches; trkSrvKinds = new Set(srvKinds); trkRead = true;
-  if (trkConnecting && trackerOn(trkConnecting)) trkConnecting = null;   // connected: its block is a connected one now
-  const moved = (kind) => trkSig(statWas[kind]) !== trkSig(stats[kind]);
-  for (const key of [...trkTree.keys()]){ const k = TRK().split(key)?.kind; if (!k || moved(k)) trkTree.delete(key); }
-  // a tracker project on screen whose connection went (or moved to another site / account): back to the library
-  if (trkListOn() && (!trackerByKey(trkSrc.tracker.key) || moved(trkSrc.tracker.kind))) closeTrkList(true);
+  // the owner of a kind's pre-0.110 settings (fields, filter, where, project): recorded while unset and exactly one site
+  // of the kind is connected — the one site of before, on the first launch after the upgrade (SightTrackers.claimLegacy)
+  for (const k of kinds){ const A = TRK().adapter(k); if (A) TRK().claimLegacy((x) => localStorage.getItem(x), putSetting, A, undefined, list.filter((t) => t.kind === k).map((t) => t.host)); }
+  // connected: such a block is a connected one now (in place, its message kept); another block already showing that
+  // tracker goes (never two blocks of one key)
+  for (const b of [...trkOpen]) if (trackerByKey(b.key)){
+    trkOpen.delete(b);
+    for (const o of trkBlocks.filter((x) => x !== b && x.key === b.key)){ o.el.remove(); trkBlocks = trkBlocks.filter((x) => x !== o); }
+  }
+  const moved = (key) => trkSig(statWas[key]) !== trkSig(stats[key]);
+  for (const key of [...trkTree.keys()]){ if (!trackerByKey(key) || moved(key)) trkTree.delete(key); }
+  // a tracker project on screen whose connection went (or moved to another account): back to the library
+  if (trkListOn() && (!trackerByKey(trkSrc.tracker.key) || moved(trkSrc.tracker.key))) closeTrkList(true);
   renderNav();
   paintTrackerSettings();
   paintUserTrackers();
@@ -1101,55 +1115,67 @@ async function refreshTrackers(changed){
   document.addEventListener("visibilitychange", again);
   window.addEventListener("focus", again);
 }
-// Each kind's settings form in Settings → Trackers: its block `.trk-set[data-tracker=<kind>]` (shown while connected
-// or being connected) and {paint(on, tracker), focus()} registered by bindTrackerForm (made from the adapter's form).
-const TRACKER_FORMS = {};
-const trkBlock = (kind) => document.querySelector(`.trk-set[data-tracker="${CSS.escape(kind)}"]`);
-// Settings → Trackers: which blocks show, each connected tracker's state, what Connect a tracker… still offers.
+// Settings → Trackers' blocks, one per connected tracker plus the ones kept open while not connected (trkOpen): each made from
+// its kind's settings form (makeTrackerBlock) — {kind, key, el, paint(on, tracker), focus()}. `key` = the site the block
+// edits (its tracker key; "" = the kind's spare site, `?spare=1`: Connect a tracker… on a kind — its stored settings
+// from a Disconnect, else a new site); a save that moves the site moves `key` with it.
+let trkBlocks = [];
+const trkFormKinds = () => trackerKinds().filter((k) => { const A = TRK().adapter(k.id); return !!(A?.settings && TRK().formFields(A, "sight").length); });
+// Settings → Trackers: which blocks show, each connected tracker's state, what Connect a tracker… offers.
 function paintTrackerSettings(){
-  if (!$("trkAddRow")) return;
-  for (const k of TRK().kinds()){
-    const on = trackerOn(k.id), box = trkBlock(k.id);
-    if (box) box.hidden = !on && trkConnecting !== k.id;
-    TRACKER_FORMS[k.id]?.paint(on, trackers.find((x) => x.kind === k.id) || null);
+  const wrap = $("trkForms");
+  if (!$("trkAddRow") || !wrap) return;
+  for (const t of trackers) if (!trkBlocks.some((b) => b.key === t.key) && trkFormKinds().some((k) => k.id === t.kind)) makeTrackerBlock(t.kind, t.key);
+  for (const b of trkBlocks.slice()){
+    const t = trackerByKey(b.key);
+    if (!t && !trkOpen.has(b)){ b.el.remove(); trkBlocks = trkBlocks.filter((x) => x !== b); continue; }
+    b.paint(!!t, t);
   }
+  // the connected ones in the list's order, the one being connected last
+  // (moved only when the order differs: re-inserting a block would take the focus out of a field being typed in)
+  const order = trackers.map((t) => trkBlocks.find((x) => x.key === t.key && !trkOpen.has(x))).filter(Boolean).map((x) => x.el);
+  trkBlocks.filter((x) => trkOpen.has(x)).forEach((x) => order.push(x.el));
+  if (order.some((el, i) => wrap.children[i] !== el)) order.forEach((el) => wrap.appendChild(el));
   paintTrackerCache();
-  const left = trackerKinds().filter((k) => !trackerOn(k.id) && trkConnecting !== k.id && TRACKER_FORMS[k.id]);
+  // every kind with a form — a connected one too (another site of it) — but the one whose connect fields are open
+  const left = trkFormKinds().filter((k) => ![...trkOpen].some((b) => b.kind === k.id));
   $("trkAddRow").hidden = !left.length;
-  $("trkNone").hidden = trackers.length > 0 || !!trkConnecting;
+  $("trkNone").hidden = trackers.length > 0 || trkOpen.size > 0;
   const kinds = $("trkKinds");
-  kinds.innerHTML = left.map((k) => `<button class="btn ghost" type="button" data-kind="${esc(k.id)}">${esc(k.name)}</button>`).join("")
+  kinds.innerHTML = left.map((k) => `<button class="btn ghost" type="button" data-kind="${esc(k.id)}" title="${esc(trackerOn(k.id) ? `Connect another ${k.name} site` : `Connect ${k.name}`)}">${esc(k.name)}</button>`).join("")
     + `<button class="btn ghost" type="button" data-kind="">Cancel</button>`;
   if (!left.length) kinds.hidden = true;
 }
-// Media downloaded from trackers that are not connected now (opened media stay in Sight's cache, the sidebar keeps
-// hiding those sources): a line under Trackers with their size and Clear while they hold anything. A connected
-// tracker's own block has the cache limit / Clear cache instead.
+// Media downloaded from tracker sites that are not connected now (opened media stay in Sight's cache, the sidebar
+// keeps hiding those sources; `?idle=1`: per kind, the files of no connected site): a line under Trackers with their
+// size and Clear while they hold anything. A connected tracker's own block has its cache limit / Clear cache instead.
 let trkCacheSeq = 0;
-const trkOffKinds = () => trackerKinds().map((k) => k.id).filter((k) => !trackerOn(k));
 function paintTrackerCache(){
   const row = $("trkCacheRow");
   if (!row) return;
-  const my = ++trkCacheSeq, off = trkOffKinds();
-  if (!off.length){ row.hidden = true; return; }
-  Promise.all(off.map((k) => api(trkApi(k, "cache")).catch(() => null))).then((cs) => {
+  const my = ++trkCacheSeq, kinds = trackerKinds().map((k) => k.id);
+  if (!kinds.length){ row.hidden = true; return; }
+  Promise.all(kinds.map((k) => api(trkApi(k, "cache?idle=1")).catch(() => null))).then((cs) => {
     if (my !== trkCacheSeq || !$("trkCacheRow")) return;
     const used = cs.reduce((n, c) => n + (c?.used || 0), 0), files = cs.reduce((n, c) => n + (c?.files || 0), 0);
     $("trkCacheRow").hidden = !files;
     $("trkCacheInfo").textContent = `Tracker media cache: ${bytes(used)} in ${files} file${files === 1 ? "" : "s"}`;
   });
 }
-// Connect a tracker… → a kind: its connect fields open under Trackers.
+// Connect a tracker… → a kind: its connect fields open under Trackers (the kind's spare site: the settings kept from a
+// Disconnect, else a new site — a second site of a connected kind too).
 function startTrackerConnect(kind){
-  trkConnecting = kind;
+  let b = [...trkOpen].find((x) => x.kind === kind);
+  if (!b){ b = makeTrackerBlock(kind, ""); if (b) trkOpen.add(b); }
   paintTrackerSettings();
-  TRACKER_FORMS[kind]?.focus();
+  b?.focus();
 }
-// The You panel's Settings… (or anything that wants Trackers on screen): opens Settings at that kind's block.
-function openTrackerSettings(kind){
+// The You panel's Settings… (or anything that wants Trackers on screen): opens Settings at that tracker's block.
+function openTrackerSettings(key){
   if (!state.settingsOpen) $("settingsHead").click();
   setTimeout(() => {
-    const b = (kind && document.querySelector(`.trk-set[data-tracker="${CSS.escape(kind)}"]:not([hidden])`)) || $("trkHead");
+    const b = (key && (document.querySelector(`.trk-set[data-key="${CSS.escape(key)}"]:not([hidden])`)
+      || document.querySelector(`.trk-set[data-tracker="${CSS.escape(key)}"]:not([hidden])`))) || $("trkHead");
     b?.scrollIntoView({ block: "start" });
   }, 60);
 }
@@ -1164,40 +1190,52 @@ function bindTrackerSettings(){
     if (b.dataset.kind) startTrackerConnect(b.dataset.kind);
   };
   $("trkCacheClear").onclick = async () => {
-    await Promise.all(trkOffKinds().map((k) => api(trkApi(k, "cache/clear"), { method: "POST", headers: { "X-Sight": "1" } }).catch(() => {})));
+    await Promise.all(trackerKinds().map((k) => api(trkApi(k.id, "cache/clear?idle=1"), { method: "POST", headers: { "X-Sight": "1" } }).catch(() => {})));
     paintTrackerCache();
   };
   bindTrackerForms();
   paintTrackerSettings();
 }
-// Each kind's block in Settings → Trackers, made from its adapter's declarative settings form (adapter.settings,
-// rendered by SightTrackers.mountForm — the same renderer as the phone's settings sheet): its fields (ShotGrid: site,
-// API script name + key — kept by the server only, never sent back —, post as the reviewer, reviewer → login, note
-// status codes), once connected the media cache limit / Clear cache and Disconnect (removes the secret; the other
-// settings stay), while being connected Cancel; Test / Save. Values go to / come from /api/trackers/<kind>/config | status.
+// The Settings section is made again on every opening: the blocks with it (the one being connected keeps its site).
 function bindTrackerForms(){
   const wrap = $("trkForms");
   if (!wrap) return;
   wrap.textContent = "";
-  for (const k of TRK().kinds()){
-    const A = TRK().adapter(k.id), F = A?.settings;
-    if (!F || !TRK().formFields(A, "sight").length) continue;
-    const box = document.createElement("div");
-    box.className = "trk-set"; box.dataset.tracker = k.id; box.hidden = true;
-    const cache = TRK().formFields(A, "sight").some((f) => f.part === "cache");
-    box.innerHTML = `<div class="trk"><i class="dot"></i><b>${esc(A.name)}</b><span class="trk-state"></span><button class="btn ghost" data-act="disconnect" type="button" title="${esc(F.disconnectTitle || `Remove the saved key: ${A.name}'s controls go until it is connected again`)}">Disconnect</button><button class="btn ghost" data-act="cancel" type="button" title="Do not connect ${esc(A.name)} now">Cancel</button></div>
-      <div class="trk-fields"></div>
-      ${cache ? `<div class="trk-cache"><div class="trk-cache-fields"></div><div class="theme-actions"><span class="ign-msg trk-cache-info"></span><button class="btn ghost" data-act="clearcache" type="button" title="${esc(F.cache?.clearTitle || "Delete the downloaded media (they download again when opened)")}">Clear cache</button></div></div>` : ""}
-      <div class="theme-actions"><span class="ign-msg trk-msg"></span><button class="btn ghost" data-act="test" type="button" title="${esc(F.testTitle || "Connect and list the projects")}">Test</button><button class="btn ghost" data-act="save" type="button">Save</button></div>`;
-    wrap.appendChild(box);
-    bindTrackerForm(k.id, A, box);
-  }
+  const open = [...trkOpen];
+  trkBlocks = []; trkOpen.clear();
+  for (const o of open){ const b = makeTrackerBlock(o.kind, o.key, o.slot); if (b) trkOpen.add(b); }
 }
-function bindTrackerForm(K, A, box){
-  const F = A.settings, q = (s) => box.querySelector(s), msg = q(".trk-msg");
+// One block in Settings → Trackers, made from its kind's declarative settings form (adapter.settings, rendered by
+// SightTrackers.mountForm — the same renderer as the phone's settings sheet): its fields (ShotGrid: site, API script
+// name + key — kept by the server only, never sent back —, post as the reviewer, reviewer → login, note status codes),
+// once connected the media cache limit / Clear cache and Disconnect (removes the secret; the other settings stay),
+// while being connected Cancel; Test / Save. Values go to / come from /api/trackers/<key>/config | status (no key yet:
+// /api/trackers/<kind>/…?spare=1).
+function makeTrackerBlock(K, key, slot){
+  const A = TRK().adapter(K), F = A?.settings;
+  if (!F || !TRK().formFields(A, "sight").length) return null;
+  const box = document.createElement("div");
+  box.className = "trk-set"; box.dataset.tracker = K; box.dataset.key = key || "";
+  const cache = TRK().formFields(A, "sight").some((f) => f.part === "cache");
+  box.innerHTML = `<div class="trk"><i class="dot"></i><b>${esc(A.name)}</b><span class="trk-state"></span><button class="btn ghost" data-act="disconnect" type="button" title="${esc(F.disconnectTitle || `Remove the saved key: ${A.name}'s controls go until it is connected again`)}">Disconnect</button><button class="btn ghost" data-act="cancel" type="button" title="Do not connect ${esc(A.name)} now">Cancel</button></div>
+    <div class="trk-fields"></div>
+    ${cache ? `<div class="trk-cache"><div class="trk-cache-fields"></div><div class="theme-actions"><span class="ign-msg trk-cache-info"></span><button class="btn ghost" data-act="clearcache" type="button" title="${esc(F.cache?.clearTitle || "Delete the downloaded media (they download again when opened)")}">Clear cache</button></div></div>` : ""}
+    <div class="theme-actions"><span class="ign-msg trk-msg"></span><button class="btn ghost" data-act="test" type="button" title="${esc(F.testTitle || "Connect and list the projects")}">Test</button><button class="btn ghost" data-act="save" type="button">Save</button></div>`;
+  $("trkForms").appendChild(box);
+  const B = { kind: K, key: key || "", slot: slot || 0, el: box };
+  const q = (s) => box.querySelector(s), msg = q(".trk-msg");
   const form = TRK().mountForm(q(".trk-fields"), A, "sight", { parts: { cache: q(".trk-cache-fields") } });
   const sec = TRK().secretOf(A, "sight"), secIn = sec ? form.input(sec.name) : null;
   const clearSecret = () => { if (secIn) secIn.value = ""; };
+  // the block's routes: its site by key, else the kind's spare site — pinned to the slot the first answer named
+  // (`&slot=`: a Disconnect elsewhere meanwhile must not move this block's save onto that site's kept settings)
+  const url = (path) => B.key ? trkApi(B.key, path)
+    : trkApi(K, path + (path.includes("?") ? "&" : "?") + "spare=1" + (B.slot ? "&slot=" + B.slot : ""));
+  const rekey = (st) => {
+    if (!st) return;
+    if (typeof st.key === "string"){ B.key = st.key; box.dataset.key = st.key; }
+    if (Number.isInteger(st.slot)) B.slot = st.slot;
+  };
   let saved = null;
   const show = (st) => {
     if (!st) return;
@@ -1206,23 +1244,33 @@ function bindTrackerForm(K, A, box){
     form.fill(st);
     msg.textContent = lost ? sec.lostText || "The key was removed — enter it again" : "";
   };
-  const put = (b) => api(trkApi(K, "config"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  const put = async (b) => { await first; const st = await api(url("config"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); rekey(st); return st; };
   // after a save: still not connected (no key, or the key went with a new site) → the fields stay open to finish
-  const settle = async (st) => { if (st && !st.configured) trkConnecting = K; await refreshTrackers(true); };
-  api(trkApi(K, "status")).then(show).catch(() => {});
-  const cacheInfo = () => q(".trk-cache-info") && api(trkApi(K, "cache")).then((c) => {
+  const settle = async (st) => {
+    if (st && !st.configured){
+      trkOpen.add(B);   // (another block kept open stays as it is: its typed fields are the user's)
+    }
+    await refreshTrackers(true);
+  };
+  const first = api(url("status")).then((st) => { if (!B.key) rekey(st); show(st); }).catch(() => {});
+  const cacheInfo = () => q(".trk-cache-info") && api(url("cache")).then((c) => {
     q(".trk-cache-info").textContent = `Cache: ${bytes(c.used)} in ${c.files} file${c.files === 1 ? "" : "s"} · ${bytes(c.free)} free on disk`;
   }).catch(() => {});
   cacheInfo();
   const clr = q("[data-act=clearcache]");
   if (clr) clr.onclick = async () => {
-    try { await api(trkApi(K, "cache/clear"), { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
+    try { await api(url("cache/clear"), { method: "POST", headers: { "X-Sight": "1" } }); } catch {}
     cacheInfo();
+  };
+  // (a refusal's own words when the server gives them: "<site> is already connected in Sight")
+  const why = (e) => {
+    let d = ""; try { d = JSON.parse(e?.message || "").detail || ""; } catch {}
+    return typeof d === "string" && /already connected|is needed|meanwhile/.test(d) ? d : F.saveError || "Check the settings";
   };
   q("[data-act=save]").onclick = async () => {
     let st;
     try { st = await put(form.read()); show(st); clearSecret(); }
-    catch { msg.textContent = F.saveError || "Check the settings"; return; }
+    catch (e){ msg.textContent = why(e); return; }
     await settle(st);
     if (!msg.textContent) msg.textContent = st.configured ? "Saved" : `Saved — not connected yet: the ${F.needs || "settings"} are all needed`;
   };
@@ -1231,35 +1279,35 @@ function bindTrackerForm(K, A, box){
   q("[data-act=disconnect]").onclick = async () => {
     let st;
     try {
-      const cur = await api(trkApi(K, "status"));
+      const cur = await api(url("status"));
       if (!cur.site) { await refreshTrackers(true); return; }
       st = await put(TRK().formStored(A, "sight", cur));
       show(st); clearSecret();
     } catch { msg.textContent = "Could not disconnect"; return; }
-    trkConnecting = null;
+    trkOpen.delete(B);
     await refreshTrackers(true);
   };
-  q("[data-act=cancel]").onclick = () => { trkConnecting = null; clearSecret(); show(saved); paintTrackerSettings(); };
+  q("[data-act=cancel]").onclick = () => { trkOpen.delete(B); clearSecret(); show(saved); paintTrackerSettings(); };
   q("[data-act=test]").onclick = async () => {
     msg.textContent = "Connecting…";
     try {
       const b = form.read();
       if ((sec && b[sec.name]) || !saved || saved.site !== b.site){ const st = await put(b); show(st); clearSecret(); await settle(st); }
-      const ps = await A.projects(A.serverClient(form.input("site")?.value || "x", K));
+      const ps = await A.projects(A.serverClient(form.input("site")?.value || "x", B.key || K));
       msg.textContent = `Connected — ${ps.length} project${ps.length === 1 ? "" : "s"}`;
     } catch (e){ msg.textContent = e.message || "Could not connect"; }
   };
-  TRACKER_FORMS[K] = {
-    paint(on, t){
-      q(".dot").classList.toggle("ok", on);
-      const s = q(".trk-state");
-      s.textContent = s.title = on ? `${t.host || t.site} · connected${t.note ? " · " + t.note : ""}` : `not connected — ${F.needs || "its settings"}`;
-      q("[data-act=disconnect]").hidden = !on;
-      q("[data-act=cancel]").hidden = on;
-      if (q(".trk-cache")) q(".trk-cache").hidden = !on;
-    },
-    focus(){ form.focus(); },
+  B.paint = (on, t) => {
+    q(".dot").classList.toggle("ok", on);
+    const s = q(".trk-state");
+    s.textContent = s.title = on ? `${t.host || t.site} · connected${t.note ? " · " + t.note : ""}` : `not connected — ${F.needs || "its settings"}`;
+    q("[data-act=disconnect]").hidden = !on;
+    q("[data-act=cancel]").hidden = on;
+    if (q(".trk-cache")) q(".trk-cache").hidden = !on;
   };
+  B.focus = () => form.focus();
+  trkBlocks.push(B);
+  return B;
 }
 // ---- You: the user button (sidebar header; the review panel's person icon opens the same panel) -------------
 // The reviewer name (stored with every note; no login needed) and a row per connected tracker with Settings…
@@ -1321,7 +1369,7 @@ function paintUserTrackers(){
   if (!box) return;
   box.innerHTML = trackers.length ? "<h3>Trackers</h3>" + trackers.map((t) => `<div class="trk" data-tracker="${esc(t.kind)}" data-key="${esc(t.key)}"><i class="dot ok"></i><b>${esc(t.name)}</b><span>${esc(t.host || t.site || "")}${t.note ? " · " + esc(t.note) : ""}</span><button class="btn ghost" type="button" data-act="trkset">Settings…</button></div>`).join("") : "";
   box.querySelectorAll("[data-act=trkset]").forEach((b) => {
-    b.onclick = () => { closeUserPanel(); openTrackerSettings(b.closest("[data-tracker]").dataset.tracker); };
+    b.onclick = () => { closeUserPanel(); openTrackerSettings(b.closest("[data-key]").dataset.key); };
   });
 }
 // ---- Trackers as sources (docs/PLAN-trackers.md stages 2, 5b): a row "<Tracker> · <site>" per connected tracker under
@@ -1353,7 +1401,7 @@ function renderTrackerSource(wrap, t){
     node.open = !node.open;
     if (node.open && !node.projects){
       let ps = null;
-      try { ps = await A.projects(A.serverClient(t.site, t.kind)); }
+      try { ps = await A.projects(A.serverClient(t.site, t.key)); }
       catch (e){ if (trkTree.get(t.key) === node){ node.open = false; flash(`${t.name}: ${e.message}`, 4000); } }
       if (trkTree.get(t.key) !== node || !trackerByKey(t.key)) return;   // (disconnected / another connection meanwhile: refreshTrackers repainted)
       node.projects = ps;
@@ -10071,9 +10119,9 @@ function renderOptions(){
       <div class="theme-actions stt-row"><span class="ign-msg" id="sttMsg"></span><button class="btn ghost" id="sttForget" type="button" title="Remove the saved key">Forget key</button><button class="btn ghost" id="sttSave" type="button">Save</button></div>
 
       <div class="settings-sub" id="trkHead">Trackers</div>
-      <!-- Connected trackers only (docs/PLAN-trackers.md decision 10): a block per kind, made from its adapter's settings
-           form (bindTrackerForms), shows while it is connected or being connected (Connect a tracker… → its kind);
-           paintTrackerSettings() fills / shows them. -->
+      <!-- Connected trackers only (docs/PLAN-trackers.md decision 10): a block per connected tracker (site), made from
+           its kind's settings form (makeTrackerBlock), plus the one being connected (Connect a tracker… → a kind);
+           paintTrackerSettings() makes / fills / drops them. -->
       <div id="trkForms"></div>
       <div class="theme-actions" id="trkAddRow"><span class="ign-msg" id="trkNone">None connected</span><button class="btn ghost" id="trkAdd" type="button" title="Link Sight to a production tracker: its projects become a source, reviews sync with it">Connect a tracker…</button></div>
       <div class="trk-kinds" id="trkKinds" hidden></div>

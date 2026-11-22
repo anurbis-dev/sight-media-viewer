@@ -6,8 +6,10 @@ Several trackers can be connected at once and the UI is one for all of them. A t
 port dropped — `tracker_key`). Everything Sight keeps per tracker is filed under that key: a file's link to a media
 entity (`tracker_links`), a smart collection of a tracker project (`collections.tracker`), the sidebar source rows.
 
-An adapter is one object per kind, made by `Trackers` with Sight's home folder. The server's routes
-`/api/trackers/{kind}/…` delegate to it (app/server.py); the old `/api/sg/…` routes are aliases for kind "shotgrid".
+An adapter is one object per configured site (several sites of one kind can be connected at once, 0.110), made by
+`Trackers` with Sight's home folder and the site's slot. The server's routes `/api/trackers/{ref}/…` delegate to it
+(app/server.py) — ref = a tracker key, or a kind for that kind's primary site; the old `/api/sg/…` routes are aliases
+for kind "shotgrid".
 The interface an adapter implements (duck-typed; `ShotGridService` in app/shotgrid.py is the first one):
 
     kind: str, name: str                     "shotgrid", "ShotGrid"
@@ -15,7 +17,8 @@ The interface an adapter implements (duck-typed; `ShotGridService` in app/shotgr
                                              None: {id, kind, key, name, site, host, note}
     site() -> str                            the configured site ("" none) — the tracker key's host comes from it
     status() -> dict                         settings as the page may see them (never a secret), incl. `configured`
-    configure(data: dict) -> bool            save the settings (False: refused values)
+    configure(data: dict, taken) -> bool     save the settings (False: refused values; `taken` = the keys other connected
+                                             sites of the kind have — the same site again raises TrackerError 409)
     forward(method, url, body, headers, sudo) -> (status, content type, body)
                                              one request on the page's behalf (the page's client talks through it;
                                              the server adds the credentials) — raises TrackerError
@@ -23,9 +26,15 @@ The interface an adapter implements (duck-typed; `ShotGridService` in app/shotgr
                                              a media entity's thumbnail ("image") / filmstrip, cached on disk
     fetch_media(media_id: str, root: Path, can_open) -> (Path, record dict)
                                              download a media entity's viewable file into the media cache
-    media_dir() -> Path                      the media cache folder (a library source the sidebar hides)
-    cache_info() -> dict                     {used, files, free, limitGB}
-    clear_cache() -> int                     files removed
+    media_dir() -> Path                      the kind's media cache folder (a library source the sidebar hides; one for
+                                             every site of the kind)
+    cache_dir() -> Path                      this site's folder inside it (its downloads, size, limit, Clear cache)
+    cache_info() -> dict                     {used, files, free, limitGB} of this site's folder
+    clear_cache() -> int                     files removed from this site's folder
+    slot: int, slots(home) -> [int], stored(), remove(), take_over(other)
+                                             one adapter per configured site: `cls(home, slot)`; the stored slots in
+                                             order; whether this slot has settings; delete them; move another slot's
+                                             settings into this one (Trackers.configure)
 
 Media ids travel as strings (`parse_media_id` turns them into what the adapter needs; a refused one is a 404).
 Errors are `TrackerError(status, detail)`; `SgError` is ShotGrid's (a subclass).
@@ -37,6 +46,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import threading
 import urllib.parse
 from pathlib import Path
 
@@ -193,26 +203,119 @@ def split_key(key: object) -> tuple[str, str] | None:
 
 
 class Trackers:
-    """The adapters Sight has, by kind (the registry). `kinds` lists them in the order the UI offers them."""
+    """The adapters Sight has (the registry): per kind, one adapter **per configured site** (0.110 — several sites of
+    one kind at once, docs/PLAN-trackers.md 5b-2 (4)). An adapter class has `kind`, `name`, `slots(home)` (its stored
+    sites' slot numbers, in order) and is made as `cls(home, slot)`; each instance is one site (one settings file) and
+    is kept for the process (its tokens live in it). A route names a tracker by its **key** "<kind>:<host>" (any slot
+    whose site gives that key, connected or not) or by its **kind** alone — the kind's *primary* site (`get`): the first
+    connected one, else the first stored, else slot 1 (the only site a pre-0.110 client knows; `/api/sg/…` and
+    `/api/trackers/<kind>/…` stay aliases of it). `spare(kind)`: where *Connect a tracker…* saves — the first stored site
+    that is not connected (its settings kept from a Disconnect), else a new slot (nothing stored until it is saved)."""
 
     def __init__(self, home: Path) -> None:
         from .shotgrid import ShotGridService
-        self._by_kind = {a.kind: a for a in (ShotGridService(home),)}
+        self.home = home
+        self._classes = {c.kind: c for c in (ShotGridService,)}
+        self._made: dict[tuple[str, int], object] = {}
+        self._lock = threading.RLock()
 
     @property
     def kinds(self) -> list[dict]:
-        return [{"id": a.kind, "name": a.name} for a in self._by_kind.values()]
+        return [{"id": c.kind, "name": c.name} for c in self._classes.values()]
+
+    def _inst(self, kind: str, slot: int):
+        with self._lock:
+            a = self._made.get((kind, slot))
+            if a is None:
+                a = self._made[(kind, slot)] = self._classes[kind](self.home, slot)
+            return a
+
+    def sites(self, kind: str) -> list:
+        """Every stored site of `kind` (connected or not), in slot order."""
+        cls = self._classes.get(kind)
+        return [self._inst(kind, n) for n in cls.slots(self.home)] if cls else []
 
     def get(self, kind: str):
-        return self._by_kind.get(kind)
+        """The kind's primary site (see the class) — None for a kind Sight has no adapter for."""
+        if kind not in self._classes:
+            return None
+        ss = self.sites(kind)
+        return next((a for a in ss if a.tracker()), None) or (ss[0] if ss else self._inst(kind, 1))
+
+    def by_key(self, key: str):
+        """The site whose tracker key is `key` (connected or not; a connected one first, should two slots name it),
+        else None."""
+        sk = split_key(key)
+        if not sk or sk[0] not in self._classes:
+            return None
+        hits = [a for a in self.sites(sk[0]) if tracker_key(sk[0], a.site()) == key]
+        return next((a for a in hits if a.tracker()), None) or (hits[0] if hits else None)
+
+    def resolve(self, ref: str):
+        """A route's tracker: a tracker key ("<kind>:<host>") or a kind (its primary site); None = no such tracker."""
+        return self.by_key(ref) if ":" in (ref or "") else self.get(ref)
+
+    def spare(self, kind: str, slot: int | None = None):
+        """Where Connect a tracker… → <kind> saves: the first stored site of it not connected, else a new slot. `slot`:
+        the one a first answer named (the page pins its later requests to it, so a Disconnect meanwhile cannot move a
+        save onto another site's kept settings) — TrackerError 409 when that slot is connected by now."""
+        if kind not in self._classes:
+            return None
+        if slot is not None:
+            if not 1 <= slot <= 9999:
+                raise TrackerError(404, "no such tracker")
+            a = self._inst(kind, slot)
+            if a.tracker():
+                raise TrackerError(409, f"Another {a.name} site was connected here meanwhile — use Connect a tracker… again")
+            return a
+        ss = self.sites(kind)
+        a = next((a for a in ss if not a.tracker()), None)
+        if a is not None:
+            return a
+        used = {a.slot for a in ss}
+        return self._inst(kind, next(n for n in range(1, len(used) + 2) if n not in used))
 
     def all(self) -> list:
-        return list(self._by_kind.values())
+        """One adapter per kind (its primary site) — for what is the kind's own: the media cache folder (one library
+        source for every site of a kind)."""
+        return [self.get(k) for k in self._classes]
 
     def connected(self) -> list[dict]:
-        return [t for t in (a.tracker() for a in self._by_kind.values()) if t]
+        return [t for k in self._classes for t in (a.tracker() for a in self.sites(k)) if t]
 
     def key_of(self, kind: str) -> str:
-        """The tracker key of `kind` as configured now ("" without a site)."""
+        """The tracker key of `kind`'s primary site as configured now ("" without a site)."""
         a = self.get(kind)
         return tracker_key(kind, a.site()) if a else ""
+
+    def configure(self, a, data: dict):
+        """Save one site's settings (`a.configure`) -> the adapter that holds them now, None for refused values. A site
+        another *connected* site of the kind has is refused (TrackerError 409 from the adapter); a *not connected*
+        stored site with the same one is dropped (this one took it over — e.g. Connect a tracker… set up a site again
+        whose old settings were kept in another slot). When the dropped one was slot 1, the saved settings move into
+        slot 1 (`take_over`): the first site stays in the file an older Sight reads (ShotGrid: shotgrid.json)."""
+        with self._lock:
+            others = [b for b in self.sites(a.kind) if b is not a]
+            taken = {t["key"] for t in (b.tracker() for b in others) if t}
+            if not a.configure(data, taken):
+                return None
+            key = tracker_key(a.kind, a.site())
+            for b in others:
+                if key and not b.tracker() and tracker_key(a.kind, b.site()) == key:
+                    if b.slot == 1 and a.stored() and b.take_over(a):
+                        a = b
+                    else:
+                        b.remove()   # (also when the move failed: one stored entry for the site either way)
+            return a
+
+    def idle_cache(self, kind: str) -> list[Path]:
+        """The kind's cached media files that belong to no connected site (another site's folder, a site switched away
+        from): the "Tracker media cache … Clear" line of Settings → Trackers."""
+        a = self.get(kind)
+        if a is None:
+            return []
+        root = Path(a.media_dir())
+        busy = [Path(b.cache_dir()) for b in self.sites(kind) if b.tracker()]
+        if not root.exists():
+            return []
+        return [p for p in root.rglob("*") if p.is_file() and not any(p.is_relative_to(d) for d in busy)]

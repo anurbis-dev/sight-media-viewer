@@ -8,6 +8,7 @@ and the migrations of pre-0.107 data (sg_links rows, collections.sg_site / sg_pr
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -21,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.library import Library  # noqa: E402
 from app.shotgrid import ShotGridService  # noqa: E402
-from app.trackers import Trackers, host_of, split_key, tracker_key  # noqa: E402
+from app.trackers import TrackerError, Trackers, host_of, split_key, tracker_key  # noqa: E402
 
 NODE = shutil.which("node")
 SITES = ["https://Studio.Example", "studio.example/", "https://studio.example:443", "http://127.0.0.1:8080",
@@ -154,6 +155,47 @@ console.log(JSON.stringify({
         self.assertEqual(got["via"], "s.example")
 
 
+class JsSitesTest(unittest.TestCase):
+    def test_site_labels_and_per_site_names(self):
+        # several sites of one kind (0.110): a site named only beside another of its kind; per-site setting names
+        # "<the kind's name>@<host>", read falling back to the per-kind name kept before 0.110
+        if not NODE:
+            self.skipTest("node is not available")
+        js = r"""
+require(process.argv[2]); const T = require(process.argv[1]); const A = T.adapter('shotgrid');
+const a = {kind: 'shotgrid', key: 'shotgrid:a.example', host: 'a.example'}, b = {kind: 'shotgrid', key: 'shotgrid:b.example', host: 'b.example'};
+const c = {kind: 'shotgrid', key: 'shotgrid:a.other', host: 'a.other'}, x = {kind: 'ftrack', key: 'ftrack:z.example', host: 'z.example'};
+const store = {'sight.sg.fields': 'old', 'sight.sg.fields@b.example': 'mine'}, get = (k) => k in store ? store[k] : null;
+console.log(JSON.stringify({
+  labels: [T.siteLabel(a, [a]), T.siteLabel(a, [a, x]), T.siteLabel(a, [a, b]), T.siteLabel(a, [a, c]), T.siteLabel({kind: 's', key: 's:127.0.0.1:9', host: '127.0.0.1:9'}, [{kind: 's', key: 's:x'}])],
+  names: [T.storeName(A, 'fields', undefined, 'b.example'), T.storeName(A, 'filter', 'phone', 'b.example'), T.storeName(A, 'fields')],
+  reads: [T.readStored(get, A, 'fields', undefined, 'a.example'), T.readStored(get, A, 'fields', undefined, 'b.example'), T.readStored(get, A, 'where', undefined, 'b.example')],
+  desktop: (() => { const st = {'sight.sg.fields': 'old'}, g = (k) => k in st ? st[k] : null, s = (k, v) => { st[k] = v; };
+    const twoFirst = T.claimLegacy(g, s, A, undefined, ['a.example', 'b.example']);   // (two at once: no owner)
+    const claimed = T.claimLegacy(g, s, A, undefined, ['a.example']);                 // (the first launch after the upgrade)
+    const b = T.readStored(g, A, 'fields', undefined, 'b.example');                   // (site B opened before A's project)
+    const a = T.readStored(g, A, 'fields', undefined, 'a.example');
+    return {twoFirst, claimed, b, a, kept: T.claimLegacy(g, s, A, undefined, ['b.example'])}; })(),
+  phone: (() => { const st = {'sight-review:sg': JSON.stringify({site: 'https://A.example', key: 'k'}), 'sight-review:sgfilter': 'old-phone'},
+    g = (k) => k in st ? st[k] : null, s = (k, v) => { st[k] = v; };
+    const owner = T.claimLegacy(g, s, A, 'phone', [T.legacyConnectionHost(g, A)]);
+    return {owner, bFirst: T.readStored(g, A, 'filter', 'phone', 'b.example'), a: T.readStored(g, A, 'filter', 'phone', 'a.example'),
+      none: T.legacyConnectionHost(() => null, A) || null}; })(),
+}));"""
+        r = subprocess.run([NODE, "-e", js, str(ROOT / "app" / "static" / "trackers-core.js"), str(ROOT / "app" / "static" / "shotgrid-core.js")],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout)
+        self.assertEqual(got["labels"], ["", "", "a", "a.example", "127.0.0.1:9"])
+        self.assertEqual(got["names"], ["sight.sg.fields@b.example", "sight-review:sgfilter@b.example", "sight.sg.fields"])
+        # no owner recorded: no fallback; claimLegacy records one only from exactly one host, never by reading order
+        self.assertEqual(got["reads"], [None, "mine", None])
+        self.assertEqual(got["desktop"], {"twoFirst": None, "claimed": "a.example", "b": None, "a": "old", "kept": "a.example"},
+                         "Sight: claimed while one site was connected; site B added later (and opened first) gets nothing")
+        self.assertEqual(got["phone"], {"owner": "a.example", "bFirst": None, "a": "old-phone", "none": None},
+                         "the phone: the old single connection's host owns the old values, whatever opens first")
+
+
 class RegistryTest(unittest.TestCase):
     def setUp(self) -> None:
         self.dir = Path(tempfile.mkdtemp(prefix="sight-trk-"))
@@ -188,6 +230,102 @@ class RegistryTest(unittest.TestCase):
         with self.assertRaises(Exception):
             t.get("shotgrid").parse_media_id("12x")
         self.assertEqual(t.get("shotgrid").parse_media_id("12"), 12)
+
+
+class SeveralSitesTest(unittest.TestCase):
+    """Several sites of one kind (0.110, docs/PLAN-trackers.md 5b-2 (4)): one settings file per site, the pre-0.110
+    shotgrid.json read as the first one; routes by tracker key; the kind alias = the primary site."""
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp(prefix="sight-trk2-"))
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_single_config_becomes_the_first_site(self):
+        old = {"site": "https://one.example", "script": "s", "key": "k1", "logins": {"Ann": "ann"}, "cacheLimitGB": 3}
+        (self.dir / "shotgrid.json").write_text(json.dumps(old), encoding="utf-8")
+        t = Trackers(self.dir)
+        self.assertEqual([e["key"] for e in t.connected()], ["shotgrid:one.example"], "the old file is the first site, key kept")
+        self.assertIs(t.get("shotgrid"), t.by_key("shotgrid:one.example"))
+        # Connect a tracker… with one site connected: a new slot; the same site again is refused
+        sp = t.spare("shotgrid")
+        self.assertEqual((sp.slot, sp.stored()), (2, False))
+        with self.assertRaises(TrackerError) as e:
+            t.configure(sp, {"site": "one.example", "script": "s", "key": "k"})
+        self.assertEqual(e.exception.status, 409)
+        self.assertFalse(sp.stored())
+        self.assertTrue(t.configure(sp, {"site": "two.example", "script": "s2", "key": "k2"}))
+        self.assertEqual([e["key"] for e in t.connected()], ["shotgrid:one.example", "shotgrid:two.example"])
+        self.assertEqual(json.loads((self.dir / "shotgrid.json").read_text()), old, "the first site's file untouched")
+        self.assertEqual(json.loads((self.dir / "shotgrid-2.json").read_text())["key"], "k2")
+        # a second registry (a restart) reads both
+        t2 = Trackers(self.dir)
+        self.assertEqual([e["key"] for e in t2.connected()], ["shotgrid:one.example", "shotgrid:two.example"])
+        # changing site 2 to site 1's: refused; disconnect site 1: the alias moves to site 2, site 1 is the spare
+        with self.assertRaises(TrackerError):
+            t.configure(t.by_key("shotgrid:two.example"), {"site": "one.example", "script": "s2"})
+        one = t.by_key("shotgrid:one.example")
+        t.configure(one, {"site": "https://one.example", "script": "s", "key": "", "logins": {"Ann": "ann"}})
+        self.assertEqual(t.key_of("shotgrid"), "shotgrid:two.example", "the primary = the first connected")
+        self.assertIs(t.spare("shotgrid"), one, "Connect a tracker… sets up the kept site again")
+        # site 2 takes site 1's (not connected) site: site 1's leftover settings go, no two slots of one site — and the
+        # survivor moves into shotgrid.json (the file an older Sight reads)
+        got = t.configure(t.by_key("shotgrid:two.example"), {"site": "one.example", "script": "s2", "key": "k2"})
+        self.assertEqual((got.slot, ShotGridService.slots(self.dir)), (1, [1]))
+        self.assertEqual(json.loads((self.dir / "shotgrid.json").read_text())["script"], "s2")
+        self.assertEqual([e["key"] for e in t.connected()], ["shotgrid:one.example"])
+        self.assertEqual(t.by_key("shotgrid:one.example").slot, 1)
+        # a site past the first saved without a site: refused (it could never be addressed again), nothing stored
+        sp = t.spare("shotgrid")
+        with self.assertRaises(TrackerError) as e:
+            t.configure(sp, {"site": "", "script": "s3", "key": "k3"})
+        self.assertEqual((e.exception.status, sp.stored()), (400, False))
+        # the pinned spare slot: a connected one by now is refused
+        with self.assertRaises(TrackerError) as e:
+            t.spare("shotgrid", 1)
+        self.assertEqual(e.exception.status, 409)
+        self.assertEqual(t.spare("shotgrid", 2).slot, 2)
+
+    def test_by_key_prefers_the_connected_slot(self):
+        (self.dir / "shotgrid.json").write_text(json.dumps({"site": "https://one.example", "script": "s"}), encoding="utf-8")
+        (self.dir / "shotgrid-2.json").write_text(json.dumps({"site": "https://one.example", "script": "s", "key": "k"}), encoding="utf-8")
+        self.assertEqual(Trackers(self.dir).by_key("shotgrid:one.example").slot, 2)
+
+    def test_takeover_that_cannot_move_the_file(self):
+        # slot 1 (not connected) has site A, slot 2 saves A, but the file cannot be moved (held open on Windows): one
+        # entry for the site all the same, no error
+        from unittest import mock
+        (self.dir / "shotgrid.json").write_text(json.dumps({"site": "https://one.example", "script": "s"}), encoding="utf-8")
+        t = Trackers(self.dir)
+        sp = t.spare("shotgrid", 2)
+        real = os.replace
+
+        def replace(src, dst):   # (only the move of slot 2's file onto shotgrid.json fails)
+            if Path(src).name == "shotgrid-2.json":
+                raise PermissionError("in use")
+            return real(src, dst)
+        with mock.patch("app.shotgrid.os.replace", side_effect=replace):
+            got = t.configure(sp, {"site": "one.example", "script": "s2", "key": "k"})
+        self.assertEqual((got.slot, ShotGridService.slots(self.dir)), (2, [2]))
+        self.assertEqual([e["key"] for e in t.connected()], ["shotgrid:one.example"])
+
+    def test_cache_per_site(self):
+        t = Trackers(self.dir)
+        a, b = t.spare("shotgrid"), None
+        t.configure(a, {"site": "one.example", "script": "s", "key": "k"})
+        b = t.spare("shotgrid")
+        t.configure(b, {"site": "two.example:8443", "script": "s", "key": "k"})
+        for site, name in ((a, "x.mp4"), (b, "y.mp4")):
+            site.cache_dir().mkdir(parents=True, exist_ok=True)
+            (site.cache_dir() / name).write_bytes(b"1234")
+        (a.media_dir() / "gone.example").mkdir()
+        (a.media_dir() / "gone.example" / "z.mp4").write_bytes(b"12")
+        self.assertEqual((a.cache_info()["files"], b.cache_info()["files"]), (1, 1))
+        self.assertEqual(sorted(p.name for p in t.idle_cache("shotgrid")), ["z.mp4"], "files of no connected site")
+        self.assertEqual(b.clear_cache(), 1)
+        self.assertTrue((a.cache_dir() / "x.mp4").exists(), "Clear cache of one site leaves the other's")
+        t.configure(a, {"site": "one.example", "script": "s", "key": ""})
+        self.assertEqual(sorted(p.name for p in t.idle_cache("shotgrid")), ["x.mp4", "z.mp4"])
 
 
 class MigrationTest(unittest.TestCase):
@@ -338,6 +476,45 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.c.get("/api/trackers/shotgrid/link/a1").json()["link"]["version"]["id"], 78)
         self.assertEqual(self.c.delete("/api/trackers/shotgrid/link/a1", headers=X).status_code, 200)
         self.assertIsNone(self.c.get("/api/sg/link/a1").json()["link"])
+
+    def test_two_sites_by_key(self):
+        X = {"X-Sight": "1"}
+        r = self.c.get("/api/trackers/shotgrid/status?spare=1").json()
+        self.assertEqual((r["key"], r["configured"], r["site"]), ("", False, ""), "the spare site: a new one (the only one is connected)")
+        self.assertEqual(self.c.put("/api/trackers/shotgrid/config?spare=1", json={"site": "https://studio.example", "script": "s", "key": "x"}).status_code,
+                         409, "the same site again")
+        r = self.c.put("/api/trackers/shotgrid/config?spare=1", json={"site": "https://other.example", "script": "s", "key": "k2"})
+        self.assertEqual((r.status_code, r.json()["key"], r.json()["configured"]), (200, "shotgrid:other.example", True))
+        try:
+            got = self.c.get("/api/trackers").json()
+            self.assertEqual([t["key"] for t in got["trackers"]], ["shotgrid:studio.example", "shotgrid:other.example"])
+            self.assertNotIn("k2", json.dumps(got))
+            self.assertEqual(self.c.get("/api/trackers/shotgrid%3Aother.example/status").json()["site"], "https://other.example")
+            self.assertEqual(self.c.get("/api/sg/status").json()["key"], "shotgrid:studio.example", "the alias = the first site")
+            self.assertEqual(self.c.get("/api/trackers/shotgrid:nope.example/status").status_code, 404)
+            link = {"site": "other.example", "version": {"id": 5}}
+            self.assertEqual(self.c.put("/api/trackers/shotgrid%3Aother.example/link/a1", json={"link": link}, headers=X).status_code, 200)
+            self.assertIsNone(self.c.get("/api/sg/link/a1").json()["link"], "the first site has its own (none)")
+            self.assertEqual(self.c.get("/api/trackers/shotgrid:other.example/link/a1").json()["link"]["version"]["id"], 5)
+            self.assertEqual(self.c.get("/api/trackers/shotgrid/cache?idle=1").json(), {"used": 0, "files": 0})
+            # Connect a tracker…'s block pins its spare slot: a Disconnect meanwhile does not move its save onto the
+            # disconnected site's kept settings; a pinned slot connected by now is refused
+            sp = self.c.get("/api/trackers/shotgrid/status?spare=1").json()
+            self.assertEqual((sp["slot"], sp["key"]), (3, ""))
+            self.c.put("/api/trackers/shotgrid:other.example/config", json={"site": "https://other.example", "script": "s", "key": ""})
+            self.assertEqual(self.c.get("/api/trackers/shotgrid/status?spare=1").json()["slot"], 2, "unpinned: the kept site")
+            r = self.c.put("/api/trackers/shotgrid/config?spare=1&slot=3", json={"site": "https://third.example", "script": "t"})
+            self.assertEqual((r.status_code, r.json()["slot"], r.json()["key"]), (200, 3, "shotgrid:third.example"))
+            self.assertEqual(self.c.get("/api/trackers/shotgrid:other.example/status").json()["script"], "s", "the kept site untouched")
+            self.assertEqual(self.c.get("/api/trackers/shotgrid/status?spare=1&slot=1").status_code, 409)
+            self.assertEqual(self.c.get("/api/trackers/shotgrid/status?spare=1&slot=%C2%B2").status_code, 200, "a non-ASCII digit is no pin")
+            r = self.c.put("/api/trackers/shotgrid/config?spare=1&slot=4", json={"site": "", "script": "x"})
+            self.assertEqual((r.status_code, r.json()["detail"]), (400, "The site is needed"))
+            self.assertEqual(self.c.post("/api/trackers/shotgrid/cache/clear?idle=1").status_code, 403, "header needed")
+        finally:
+            self.c.delete("/api/trackers/shotgrid:other.example/link/a1", headers=X)
+            (self.lib.root / "shotgrid-2.json").unlink(missing_ok=True)
+            (self.lib.root / "shotgrid-3.json").unlink(missing_ok=True)
 
     def test_collections(self):
         tree = {"op": "and", "c": []}

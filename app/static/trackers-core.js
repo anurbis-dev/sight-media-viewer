@@ -18,8 +18,9 @@
 //   defaultTileFields: [name]            tile captions until the user picks (Fields ▾)
 //   siteHost(site)                       the host a link and the review rows carry for that site (= the client's host;
 //                                        a stored link is compared by it)
-//   serverClient(site, kind)             a client for Sight's page: every request through Sight's server
-//                                        (/api/trackers/<kind>/fetch?url=…), which holds the credentials
+//   serverClient(site, ref)              a client for Sight's page: every request through Sight's server
+//                                        (/api/trackers/<ref>/fetch?url=…, ref = the tracker key — or a kind: its primary
+//                                        site), which holds the credentials
 //   projects(client) -> [{id, name}]
 //   entities(client, projectId, type) -> [{id, name}]       the bar's entity list for a quick type
 //   mediaFields(client) -> [{name, label, type, values?, labels?}]   the media entity's schema fields (link fields
@@ -43,8 +44,10 @@
 //                                        connection's settings (Sight: its status, the phone: the device's connection),
 //                                        the adapter reads its own options from them (ShotGrid: statusMap, logins, sudo)
 //   storeKey(name, app) -> string        where a per-kind setting is kept (ShotGrid: the pre-0.107 names). app "phone":
-//                                        the phone's names (localStorage / Cache Storage), e.g. "connection", "filter",
-//                                        "fields", "where", "project", "thumbs" (a cache name), "thumb" (its key prefix)
+//                                        the phone's names (localStorage / Cache Storage), e.g. "connection" (the one
+//                                        connection before 0.110, still read), "connections" (the list, 0.110),
+//                                        "filter", "fields", "where", "project", "thumbs" (a cache name), "thumb" (its key
+//                                        prefix). A per-*site* setting goes through storeName / readStored below.
 //   settings                             the declarative settings form (below; mountForm renders it in both apps)
 // A device that holds the credentials itself (the phone; Sight's page goes through its server instead):
 //   deviceClient(cfg)                    a client from the connection kept on the device (the settings form's values)
@@ -53,6 +56,16 @@
 //   pictureUrl(rec, which) -> url|null   which = "image" | "filmstrip": what the device downloads for a tile
 //   mediaSource(rec, {still}) -> {url, name, type}|null   the playable media to download (still: a still is wanted)
 //   download(client, url) -> Blob
+//
+// Several sites of one kind (0.110): each is its own tracker (its own key, sidebar row, link ▾, settings block, phone
+// page). `siteLabel(t, list)` names the site when another connected tracker of the same kind is listed (else "");
+// `storeName(a, name, app, host)` is where a per-site setting is kept (the per-kind name + "@" + host) and
+// `readStored(get, a, name, app, host)` reads it, falling back to the per-kind name kept before 0.110 — for the one site
+// that owns those values only (its host under storeKey("legacyHost", app)), so a second site does not inherit the first
+// one's project / filter / fields. The owner is recorded eagerly, never by reading order: `claimLegacy(get, set, a, app,
+// hosts)` sets it while unset and exactly one host is given — Sight: the kind's connected sites (refreshTrackers; one
+// on the first launch after the upgrade), the phone: the host of its pre-0.110 single connection
+// (`legacyConnectionHost`).
 //
 // The settings form (adapter.settings) — Settings → Trackers in Sight (index.html) and the phone's settings sheet render
 // it with the one renderer below (mountForm); what to do with the values (Sight: PUT /api/trackers/<kind>/config; the
@@ -99,6 +112,44 @@ var SightTrackers = (function(){
   function kinds(){ return list().filter(function(a){ return a && a.id; }).map(function(a){ return { id: a.id, name: a.name }; }); }
   // A tracker entry (from /api/trackers or the phone's list) -> its adapter (null: a kind this client lacks).
   function adapterOf(t){ return t ? adapter(t.kind || t.id) : null; }
+
+  // ---- several sites of one kind (see the top) ----------------------------------------------------------------------
+  // a host's short form: its first label (+ port) — an IP address / IPv6 whole
+  function shortHost(h){
+    h = String(h || "");
+    if (/^\[/.test(h) || /^\d+(\.\d+){3}(:\d+)?$/.test(h)) return h;
+    var m = /^([^.:]+)[^:]*(:\d+)?$/.exec(h);
+    return m ? m[1] + (m[2] || "") : h;
+  }
+  // "" while t is the only tracker of its kind in list, else its site, as short as tells it from the others
+  function siteLabel(t, list){
+    if (!t) return "";
+    var same = (list || []).filter(function(x){ return x && x.kind === t.kind && x.key !== t.key; });
+    if (!same.length) return "";
+    var s = shortHost(t.host);
+    return same.some(function(x){ return shortHost(x.host) === s; }) ? String(t.host || "") : s;
+  }
+  function storeName(a, name, app, host){ var k = a.storeKey(name, app); return host ? k + "@" + host : k; }
+  function getter(get){ return function(k){ try { var x = get(k); return x == null ? null : x; } catch (e){ return null; } }; }
+  // get(name) -> string | null (localStorage.getItem): the per-site value, else the per-kind one kept before 0.110 when
+  // this site owns those (claimLegacy recorded its host); no owner recorded: no fallback
+  function readStored(get, a, name, app, host){
+    var g = getter(get), v = g(storeName(a, name, app, host));
+    if (v != null || !host) return v != null ? v : g(a.storeKey(name, app));
+    return g(a.storeKey("legacyHost", app)) === host ? g(a.storeKey(name, app)) : null;
+  }
+  // Records the owner of the kind's pre-0.110 settings: while none is recorded and exactly one host is given. -> the owner
+  function claimLegacy(get, set, a, app, hosts){
+    var g = getter(get), mk = a.storeKey("legacyHost", app), owner = g(mk);
+    var hs = (hosts || []).filter(function(h, i, l){ return h && l.indexOf(h) === i; });
+    if (owner == null && hs.length === 1){ try { set(mk, hs[0]); owner = hs[0]; } catch (e){} }
+    return owner;
+  }
+  // The phone's pre-0.110 single connection's host ("" none): the owner of the phone's old settings.
+  function legacyConnectionHost(get, a){
+    try { var c = JSON.parse(getter(get)(a.storeKey("connection", "phone")) || "null"); return c && typeof c.site === "string" ? hostOf(c.site) : ""; }
+    catch (e){ return ""; }
+  }
 
   // ---- the settings form (adapter.settings, see the top) -------------------------------------------------------------
   function pick(v, app){ return v && typeof v === "object" && !Array.isArray(v) ? v[app] : v; }
@@ -204,6 +255,8 @@ var SightTrackers = (function(){
   }
 
   return { hostOf: hostOf, key: key, split: split, adapter: adapter, adapterOf: adapterOf, kinds: kinds,
+    shortHost: shortHost, siteLabel: siteLabel, storeName: storeName, readStored: readStored, claimLegacy: claimLegacy,
+    legacyConnectionHost: legacyConnectionHost,
     pick: pick, formFields: formFields, secretOf: secretOf, formReady: formReady, secretLost: secretLost, formStored: formStored, mountForm: mountForm };
 })();
 if (typeof globalThis !== "undefined") globalThis.SightTrackers = SightTrackers;

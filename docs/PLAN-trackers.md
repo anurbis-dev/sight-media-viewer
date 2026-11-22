@@ -83,10 +83,14 @@ mark it done here, add the RECENT entry as usual.
   `SightTrackers.mountForm` for Sight's Settings → Trackers and the phone's settings sheet; ShotGrid's status codes as an
   adapter-provided custom section). (5) `sgFields` / `toSgConditions` moved into the ShotGrid adapter (`filterFields` /
   `toConditions`); filter-core.js keeps only the generic builder.
+- **5b-2 (4) done in 0.110.0** (see RECENT): several sites of one kind at once — one adapter per site on the server
+  (`shotgrid.json` = the first, `shotgrid-<n>.json` more; routes by tracker key, the kind = its primary site), Sight's
+  page / annotate.js / tracker-source.js keyed by tracker key (a Settings block per site, *Connect a tracker…* offers a
+  connected kind again), per-site media cache folders and per-site UI settings (`storeName` / `readStored`), the phone a
+  list of connections (`sight-review:sg.connections`, the old single one read) with a tab / ⋯ item / settings per site.
 - **5b-2 (remains):** (2) the review rows' tracker ids: `data.sg` / reply `sg` (FORMAT.md) are ShotGrid's own — a
   second adapter needs its own row key and merge rule in both `Library.import_annotations` and review-core.js
-  (decide with 5c); (4) several sites of one kind (the key allows it; each adapter keeps one configuration, the phone
-  one connection per kind).
+  (decide with 5c); with two ShotGrid sites a note row also holds only one site's id (docs/SHOTGRID.md).
 - **5b** the adapter: a tracker-neutral interface (connect / status, projects, entity types, schema fields incl.
   link fields, browse media entities with filters, thumbnails, media download, notes sync) that sg-source.js /
   shotgrid-core.js implement; index.html, annotate.js and the phone talk to "the trackers" (a list), keyed by

@@ -633,7 +633,7 @@ export function createAnnotator(host){
 
   // The tracker link popover's state (see "Trackers" below) — kind: the tracker it is open for; per file: msg / picking
   // belong to the file they were made for; projects to the site they were read from; busy: the kind syncing ("" none)
-  const trkState = { kind: "", busy: "", msg: "", picking: false, projects: null, projSite: "", aid: "" };
+  const trkState = { key: "", busy: "", msg: "", picking: false, projects: null, projSite: "", aid: "" };   // key: the tracker key whose popover is open
   async function load(a){
     const token = {};
     S.loading = token;
@@ -2885,10 +2885,14 @@ export function createAnnotator(host){
   // link this file to one of the tracker's media entities (project + search, or the one its notes already name), then
   // Sync — the adapter's sync pulls the tracker's notes / replies / pictures (merged by /api/review/import), sends the
   // notes written here (pictures = the report's frames with drawings burned in) and stamps the tracker's ids on the
-  // rows. Credentials stay in Sight's server (app/trackers.py); this side only talks to /api/trackers/<kind>/….
+  // rows. Credentials stay in Sight's server (app/trackers.py); this side only talks to /api/trackers/<tracker key>/… (one link ▾ per connected site, several of one kind included).
   const TRK = () => globalThis.SightTrackers;
   const trkHeaders = { "X-Sight": "1" };
-  const trkPath = (kind, p) => `/api/trackers/${encodeURIComponent(kind)}/${p}`;
+  const trkPath = (key, p) => `/api/trackers/${encodeURIComponent(key)}/${p}`;   // (key: the tracker key)
+  const trkAdapter = (key) => TRK()?.adapter(TRK().split(key)?.kind) || null;
+  // a per-site setting (the last project picked): "<the kind's name>@<host>", read falling back to the kind's own
+  const trkStoreName = (A, key, n) => TRK().storeName(A, n, undefined, TRK().split(key)?.host);
+  const trkStored = (A, key, n) => TRK().readStored((k) => localStorage.getItem(k), A, n, undefined, TRK().split(key)?.host);
   async function trkApi(path, opts = {}){
     const r = await fetch(path, { ...opts, headers: { ...trkHeaders, ...(opts.headers || {}) } });
     const j = await r.json().catch(() => null);
@@ -2897,11 +2901,11 @@ export function createAnnotator(host){
   }
   // the connected trackers this page has an adapter for (index.html refreshTrackers → host.trackers)
   const trkConnected = () => (host.trackers?.() || []).filter((t) => t && TRK()?.adapterOf(t));
-  async function trkClient(kind){
-    const A = TRK().adapter(kind);
-    const st = await trkApi(trkPath(kind, "status"));
+  async function trkClient(key){
+    const A = trkAdapter(key);
+    const st = await trkApi(trkPath(key, "status"));
     if (!st.configured) throw new Error(`${A.name} is not connected: Settings → Trackers`);
-    return { st, A, client: A.serverClient(st.site, kind) };
+    return { st, A, client: A.serverClient(st.site, key) };
   }
   // The header's link buttons, one per connected tracker (none on a board: no media entity to link).
   function paintTrkBtns(board){
@@ -2912,16 +2916,16 @@ export function createAnnotator(host){
     if (box.dataset.sig !== sig){
       box.dataset.sig = sig;
       box.innerHTML = list.map((t) => { const A = TRK().adapterOf(t);
-        return `<button type="button" class="an-ib" data-act="trk" data-kind="${esc(t.kind)}" title="${esc(A.name)}: link this file to a ${esc(A.media.one)} and sync the notes both ways">${esc(A.short)} ▾</button>`; }).join("");
-      box.querySelectorAll("[data-act=trk]").forEach((b) => { b.onclick = () => openTrk(b.dataset.kind, b); });
+        return `<button type="button" class="an-ib" data-act="trk" data-tracker="${esc(t.key)}" data-kind="${esc(t.kind)}" title="${esc(A.name)}${t.host ? " · " + esc(t.host) : ""}: link this file to a ${esc(A.media.one)} and sync the notes both ways">${esc(A.short)}${TRK().siteLabel(t, list) ? " · " + esc(TRK().siteLabel(t, list)) : ""} ▾</button>`; }).join("");
+      box.querySelectorAll("[data-act=trk]").forEach((b) => { b.onclick = () => openTrk(b.dataset.tracker, b); });
     }
-    if (!list.some((t) => t.kind === trkState.kind)){ const pop = S.ui.querySelector(".an-trk"); if (pop) pop.hidden = true; }
+    if (!list.some((t) => t.key === trkState.key)){ const pop = S.ui.querySelector(".an-trk"); if (pop) pop.hidden = true; }
   }
-  function openTrk(kind, btn){
+  function openTrk(key, btn){
     const pop = S.ui?.querySelector(".an-trk");
     if (!pop) return;
-    if (!pop.hidden && trkState.kind === kind){ pop.hidden = true; return; }
-    if (trkState.kind !== kind){ Object.assign(trkState, { kind, msg: "", picking: false, projects: null, projSite: "" }); }
+    if (!pop.hidden && trkState.key === key){ pop.hidden = true; return; }
+    if (trkState.key !== key){ Object.assign(trkState, { key, msg: "", picking: false, projects: null, projSite: "" }); }
     // one auto-close entry for the popover, anchored at the button that opened it this time (the buttons are
     // re-made when the trackers change: a gone anchor closes it)
     const ent = host.registerAutoClose?.(pop, () => { pop.hidden = true; }, btn);
@@ -2933,17 +2937,17 @@ export function createAnnotator(host){
   async function trkPaint(){
     const box = S.ui?.querySelector(".an-trk");
     if (!box || box.hidden || !S.asset) return;
-    const kind = trkState.kind, A = TRK()?.adapter(kind);
+    const key = trkState.key, A = trkAdapter(key);
     if (!A){ box.hidden = true; return; }
     const aid = S.asset.id;
     if (trkState.aid !== aid){ trkState.aid = aid; trkState.msg = ""; trkState.picking = false; }
     let st, cur;
-    try { [st, cur] = await Promise.all([trkApi(trkPath(kind, "status")), trkApi(trkPath(kind, `link/${encodeURIComponent(aid)}`))]); }
-    catch (e){ if (trkState.kind === kind) box.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; return; }
-    if (S.asset?.id !== aid || trkState.kind !== kind) return;
+    try { [st, cur] = await Promise.all([trkApi(trkPath(key, "status")), trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`))]); }
+    catch (e){ if (trkState.key === key) box.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; return; }
+    if (S.asset?.id !== aid || trkState.key !== key) return;
     const msg = trkState.msg ? `<div class="an-trkmsg">${trkState.msg}</div>` : "";
     if (!st.configured){ box.innerHTML = `<div class="an-mlbl">${esc(A.name)} is not connected — Settings → Trackers.</div>`; return; }
-    const L = cur.link, busy = trkState.busy === kind;
+    const L = cur.link, busy = trkState.busy === key;
     if (L && !trkState.picking){
       const last = cur.state?.last ? fmtDate(cur.state.last) : "never";
       box.innerHTML = `<div class="an-mlbl">Linked to <b>${esc(A.linkLabel(L))}</b>${A.linkProject(L) ? " · " + esc(A.linkProject(L)) : ""}<br>Last sync: ${esc(last)}</div>
@@ -2964,25 +2968,25 @@ export function createAnnotator(host){
       q.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter")) find(); });
       let timer = 0;
       q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(find, 400); });
-      sel.onchange = () => { try { host.putSetting(A.storeKey("project"), sel.value); } catch {} find(); };
+      sel.onchange = () => { try { host.putSetting(trkStoreName(A, key, "project"), sel.value); } catch {} find(); };
       async function find(){
         if (!sel.value){ list.innerHTML = ""; return; }
         list.innerHTML = `<div class="an-mlbl">Searching…</div>`;
         try {
-          const { client } = await trkClient(kind);
+          const { client } = await trkClient(key);
           let vs = await A.findMedia(client, sel.value, q.value.trim());
           if (!vs.length && q.value.trim()){ const short = q.value.trim().replace(/[_. -]*v\d+$/i, ""); if (short !== q.value.trim()) vs = await A.findMedia(client, sel.value, short); }
           list.innerHTML = vs.length ? vs.map((v) => `<button type="button" data-rec="${esc(A.recordId(v))}">${esc(A.recordName(v))}${A.recordSub(v) ? ` <small>${esc(A.recordSub(v))}</small>` : ""}</button>`).join("")
             : `<div class="an-mlbl">No ${esc(A.media.one)} found</div>`;
-          list.querySelectorAll("[data-rec]").forEach((b) => { b.onclick = () => trkLink(kind, b.dataset.rec); });
+          list.querySelectorAll("[data-rec]").forEach((b) => { b.onclick = () => trkLink(key, b.dataset.rec); });
         } catch (e){ list.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; }
       }
       try {
-        const { client } = await trkClient(kind);
+        const { client } = await trkClient(key);
         if (trkState.projSite !== st.site){ trkState.projects = null; trkState.projSite = st.site; }
         const ps = trkState.projects || (trkState.projects = await A.projects(client));
-        if (S.asset?.id !== aid || trkState.kind !== kind) return;
-        let want = ""; try { want = localStorage.getItem(A.storeKey("project")) || ""; } catch {}
+        if (S.asset?.id !== aid || trkState.key !== key) return;
+        let want = ""; try { want = trkStored(A, key, "project") || ""; } catch {}
         sel.innerHTML = `<option value="">Project…</option>` + ps.map((p) => `<option value="${esc(p.id)}">${esc(p.name || "#" + p.id)}</option>`).join("");
         if (ps.some((p) => String(p.id) === want)){ sel.value = want; find(); }
       } catch (e){ sel.innerHTML = `<option value="">${esc(e.message)}</option>`; }
@@ -2990,21 +2994,21 @@ export function createAnnotator(host){
     box.querySelectorAll("[data-trk]").forEach((b) => {
       b.onclick = () => {
         const a = b.dataset.trk;
-        if (a === "sync") trkSync(kind);
+        if (a === "sync") trkSync(key);
         else if (a === "pick"){ trkState.picking = true; trkState.msg = ""; trkPaint(); }
         else if (a === "back"){ trkState.picking = false; trkPaint(); }
-        else if (a === "known") trkLink(kind, A.linkedIdOf([...S.items.values()], A.siteHost(st.site)));
-        else if (a === "unlink") trkApi(trkPath(kind, `link/${encodeURIComponent(aid)}`), { method: "DELETE" }).then(() => { trkState.msg = ""; trkPaint(); });
+        else if (a === "known") trkLink(key, A.linkedIdOf([...S.items.values()], A.siteHost(st.site)));
+        else if (a === "unlink") trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "DELETE" }).then(() => { trkState.msg = ""; trkPaint(); });
       };
     });
   }
-  async function trkLink(kind, id){
+  async function trkLink(key, id){
     try {
-      const { client, A } = await trkClient(kind);
+      const { client, A } = await trkClient(key);
       const link = await A.loadLink(client, id);
-      await trkApi(trkPath(kind, `link/${encodeURIComponent(S.asset.id)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
-      if (trkState.kind === kind){ trkState.picking = false; trkState.msg = `Linked to <b>${esc(A.linkLabel(link))}</b> — Sync now to exchange notes`; }
-    } catch (e){ if (trkState.kind === kind) trkState.msg = esc(e.message); }
+      await trkApi(trkPath(key, `link/${encodeURIComponent(S.asset.id)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
+      if (trkState.key === key){ trkState.picking = false; trkState.msg = `Linked to <b>${esc(A.linkLabel(link))}</b> — Sync now to exchange notes`; }
+    } catch (e){ if (trkState.key === key) trkState.msg = esc(e.message); }
     trkPaint();
   }
   // The notes' pictures for the tracker: the report's frames / views with the drawings burned in, then attached pictures.
@@ -3022,15 +3026,15 @@ export function createAnnotator(host){
     }
     return out;
   }
-  async function trkSync(kind){
+  async function trkSync(key){
     if (!S.asset || trkState.busy || exportBusy()) return;
-    const a = S.asset, aid = a.id, A = TRK().adapter(kind);
-    trkState.busy = kind; trkState.msg = ""; trkPaint();
-    const say = (m) => { if (trkState.kind === kind) trkState.msg = m; };
+    const a = S.asset, aid = a.id, A = trkAdapter(key);
+    trkState.busy = key; trkState.msg = ""; trkPaint();
+    const say = (m) => { if (trkState.key === key) trkState.msg = m; };
     try {
       await flush();
-      const { st, client } = await trkClient(kind);
-      const cur = await trkApi(trkPath(kind, `link/${encodeURIComponent(aid)}`));
+      const { st, client } = await trkClient(key);
+      const cur = await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`));
       if (!cur.link) throw new Error(`Not linked to a ${A.media.one}`);
       const asset = { id: a.id, name: a.name, path: a.path, ext: a.ext, kind: a.kind, size: a.size, mtime: a.mtime, width: a.width, height: a.height, duration: a.duration };
       const res = await A.sync({
@@ -3040,7 +3044,7 @@ export function createAnnotator(host){
         pictures: (ids, opt) => S.asset?.id === aid ? trkPictures(ids, opt) : new Map(),
         progress: (t) => toast(esc(t), 60000),
       });
-      await trkApi(trkPath(kind, `link/${encodeURIComponent(aid)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
+      await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
       const p = res.pulled, q = res.pushed, from = A.name;
       const parts = [p.added && `${p.added} new from ${from}`, p.updated && `${p.updated} updated from ${from}`, q.notes && `${q.notes} sent`,
         q.updated && `${q.updated} updated on ${from}`, q.replies && `${q.replies} repl${q.replies === 1 ? "y" : "ies"} sent`, q.pictures && `${q.pictures} picture${q.pictures === 1 ? "" : "s"} uploaded`].filter(Boolean);

@@ -647,6 +647,17 @@ class RoundTrip(unittest.TestCase):
             r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg_browser.cjs"), self.base, site, str(self.tmp)],
                                capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
             self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
+            # two sites of ShotGrid at once (0.110): the old single connection migrated, a tab per site, one disconnected
+            fake2 = subprocess.Popen([NODE, str(ROOT / "tests" / "sg_fake_server.cjs")], stdout=subprocess.PIPE, text=True)
+            try:
+                site2 = json.loads(fake2.stdout.readline())["site"]
+                r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg_multi.cjs"), self.base, site, site2],
+                                   capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+                self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
+            finally:
+                fake2.terminate()
+                fake2.wait(5)
+                fake2.stdout.close()
         finally:
             fake.terminate()
             fake.wait(5)

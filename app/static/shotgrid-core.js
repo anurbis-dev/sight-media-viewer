@@ -740,8 +740,8 @@ var SightShotGrid = (function(){
     statusField: "sg_status_list",
     defaultTileFields: DEFAULT_TILE_FIELDS,
     hiddenDetailFields: ["type", "id", "image", "filmstrip_image", "project", "sg_uploaded_movie"],
-    serverClient: function(site, kind){
-      return createClient({ site: site || "x", via: "/api/trackers/" + encodeURIComponent(kind || "shotgrid") + "/fetch?url=", serverAuth: true, headers: { "X-Sight": "1" } });
+    serverClient: function(site, ref){   // ref: the tracker key (or a kind: its primary site)
+      return createClient({ site: site || "x", via: "/api/trackers/" + encodeURIComponent(ref || "shotgrid") + "/fetch?url=", serverAuth: true, headers: { "X-Sight": "1" } });
     },
     siteHost: siteHost,   // the host a link / the rows name (what client.host is: links compare by it)
     projects: function(client){ return client.projects(); },
