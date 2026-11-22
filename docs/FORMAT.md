@@ -207,10 +207,13 @@ Per type (all lengths in doc units):
   *Close*): `close` (true = the outline runs back to the first point; a mouse brush then has no taper),
   `pattern` `none` | `solid` | `diag` (╱) | `diag2` (╲) | `horiz` | `vert` | `grid` | `cross` | `dots` |
   `dashes` (the fill inside the centre-line polygon, nonzero winding), `fill` (colour), `fillOpacity` (default 0.5,
-  times `opacity`), `gap` (pattern spacing; lines are 0.18·gap wide, dots 0.2·gap in radius, staggered rows).
+  times `opacity`), `gap` (pattern spacing; staggered rows of dots), **0.109+** `hatchWidth` (the hatch lines'
+  width, for `dots` the dots' diameter; absent or ≤ 0 = auto: lines 0.18·gap wide, dots 0.2·gap in radius — the
+  look before the field existed; a length, scaled with the drawing like `gap`; where a huge area caps the spacing,
+  it grows by the same factor). Sight's *Lasso* tool makes these (0.109+; before, the brush's *Close* switch).
   Patterns are plain geometry clipped to the polygon (no SVG pattern / clip ids). Older clients draw the open
-  stroke only.
-- **`stroke` arrows** (0.81+, Sight's arrow tool in *Stroke* mode): `pts` as above (pressure unused, 0.5),
+  stroke only; clients before 0.109 ignore `hatchWidth` (auto widths).
+- **`stroke` arrows** (0.81+, Sight's *Stroke arrows* tool; 0.81–0.108 the arrow tool's *Stroke* mode): `pts` as above (pressure unused, 0.5),
   `color`, `width`, `opacity`, `dash` (the guide), `guide` (false = the stroke itself is not drawn), `head1`
   (the arrows' heads, kinds as for line / arrow), `headSize`, `step` (spacing along the stroke: the count is
   round(length / step), at least 1, spread evenly, centred), `len` (each arrow's length), `dir` `out` (away
