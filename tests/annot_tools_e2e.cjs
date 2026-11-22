@@ -114,7 +114,12 @@ async function typeNum(p, key, v){
   await p.keyboard.press("BracketRight");
   await p.waitForTimeout(600);
   const after = await sizes();
-  res.mixed.grew = after.map((v) => Math.round(v / before[0] * 100) / 100);  // (all take the first one's size × 1.2, as for one type)
+  res.mixed.grew = after.map((v, i) => Math.round(v / before[i] * 100) / 100);  // each from its own size
+  // right-click Size: each back to its own type's default (lasso 4 px, brush 8 px)
+  await p.click('.an-props .an-num[data-k="size"]', { button: "right" });
+  await p.waitForTimeout(600);
+  const reset = await sizes();
+  res.mixed.resetRatio = Math.round(reset[0] / reset[1] * 100) / 100;
   res.rows = await rows();
   // ---- a phone-size touch screen: the tools by tap, the icon row ----
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });

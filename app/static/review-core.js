@@ -374,10 +374,12 @@ var SightReviewCore = (function(){
     var path = angles.map(function(a){ return hatchPath(poly, a, m.gap); }).join("");
     return path ? [{ d: path, stroke: color, sw: m.width, op: op, cap: "butt", dash: pat === "dashes" ? [m.gap * 0.9, m.gap * 0.6] : null }] : [];
   }
-  // A lasso's hatch, as drawn: {gap: the spacing actually used (capped for huge areas, as hatchPath / dotsPath
-  // do — without pts, uncapped), width: the lines' width / the dots' diameter, auto: the width Auto gives}, doc
-  // units. data.hatchWidth (0.109+): absent or 0 = auto (0.18 / 0.4 of the spacing, the look before it existed);
-  // where the spacing is capped it grows by the same factor. Sight's props bar starts a drag from `width`.
+  // A lasso's hatch, as drawn: {gap0: data's spacing (fallback size, 8), gap: the spacing actually used (capped for
+  // huge areas, as hatchPath / dotsPath do — without pts, uncapped), width: the lines' width / the dots' diameter,
+  // auto: the width Auto draws, autoStored: the hatchWidth that draws exactly that (auto · gap0 / gap)}, doc units.
+  // data.hatchWidth (0.109+): absent or 0 = auto (0.18 / 0.4 of the spacing, the look before it existed); it is
+  // relative to gap0: where the spacing is capped it grows by the same factor. Sight's Lines control starts a drag
+  // from Auto at autoStored.
   function hatchMetrics(d){
     var dots = d.pattern === "dots", gap0 = Math.max(0.5, Number(d.gap) || d.size || 8), gap = gap0;
     if (Array.isArray(d.pts) && d.pts.length >= 3){
@@ -387,7 +389,7 @@ var SightReviewCore = (function(){
       gap = dots ? Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0) : Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);
     }
     var auto = dots ? gap * 0.4 : Math.max(0.3, gap * 0.18), hw = Number(d.hatchWidth) > 0 ? Number(d.hatchWidth) : 0;
-    return { gap: gap, auto: auto, width: hw ? Math.max(0.1, hw * gap / gap0) : auto };
+    return { gap0: gap0, gap: gap, auto: auto, autoStored: auto * gap0 / gap, width: hw ? Math.max(0.1, hw * gap / gap0) : auto };
   }
 
   // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------

@@ -268,6 +268,7 @@ class DrawLasso(unittest.TestCase):
         self.assertGreater(g["capped"][0], 1.8)               # capped spacing → wider auto lines
         self.assertAlmostEqual(g["capped"][0], g["capped"][1])
         self.assertAlmostEqual(g["noPts"], 4)                  # dots: auto diameter 0.4 · gap
+        self.assertEqual(g["storedIsAuto"], [[True, True, True], [True, True, True]])  # capped; autoStored draws Auto
         self.assertTrue(res["lassoIcon"] and res["arrowsIcon"])
         self.assertEqual(res["patRow"], 11)           # none, solid, 8 patterns, random
         self.assertEqual((res["hatchShown"], res["hatchSolid"], res["hatchGrid"]), (True, False, True))

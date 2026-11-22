@@ -34,6 +34,14 @@ const root = process.argv[2], shots = process.argv[3] || "";
       // hatchMetrics (Sight's Lines drag starts from it) = what is drawn, also where a huge area caps the spacing
       capped: (() => { const h = lasso({ pts: [0, 0, .5, 9000, 0, .5, 9000, 9000, .5, 0, 9000, .5] }); return [RC.hatchMetrics(h.data).width, hatch(h).sw]; })(),
       noPts: RC.hatchMetrics({ pattern: "dots", gap: 10 }).auto,
+      // Sight's Lines drag from Auto starts at autoStored: stored as hatchWidth it draws exactly Auto, under the cap too
+      // (a 3840 × 2160 lasso, gap 10: lines and dots)
+      storedIsAuto: ["diag", "dots"].map((pat) => {
+        const big = (extra) => lasso(Object.assign({ pattern: pat, pts: [0, 0, .5, 3840, 0, .5, 3840, 2160, .5, 0, 2160, .5] }, extra));
+        const drawn = (it) => pat === "dots" ? dots(it) * 2 : hatch(it).sw;
+        const m = RC.hatchMetrics(big({}).data);
+        return [m.gap > m.gap0, Math.abs(drawn(big({ hatchWidth: m.autoStored })) - drawn(big({}))) < 0.02, Math.abs(drawn(big({})) - m.auto) < 0.02];
+      }),
       icons: RC.PATTERNS.concat(["random"]).every((id) => typeof RC.patternIcon(id) === "string" && RC.patternIcon(id).length > 20 && !!RC.PATTERN_LABELS[id]),
       toolIcons: !!(RC.TOOL_ICONS.lasso && RC.TOOL_ICONS.arrows),
     };

@@ -136,10 +136,12 @@ class AnnotTools(unittest.TestCase):
         self.assertEqual(old["pattern"], "dots")                # picked from the icon row
         self.assertNotIn("hatchWidth", old)                     # right-click → Auto removes the field
         self.assertEqual(res["oldLassoHw"] > 0, True)           # (typed before the reset)
-        # a lasso + a brush selected together keep Size / Pressure and ] (both take the first's size × 1.2)
+        # a lasso + a brush selected together keep Size / Pressure; ] grows each by 1.2 from its own size, a
+        # right-click resets each to its own type's default (lasso 4 px, brush 8 px)
         self.assertEqual(res["mixed"]["label"], "2 selected")
         self.assertTrue(res["mixed"]["size"] and res["mixed"]["pressure"])
         self.assertEqual(res["mixed"]["grew"], [1.2, 1.2])
+        self.assertEqual(res["mixed"]["resetRatio"], 0.5)
         self.assertEqual(res["touch"]["icons"], 11)
         self.assertGreaterEqual(res["touch"]["iconSize"], 34)
 

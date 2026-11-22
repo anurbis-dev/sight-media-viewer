@@ -2664,11 +2664,11 @@ export function createAnnotator(host){
   function bindNum(el, p){
     const em = el.querySelector("em");
     const get = () => Number(propValue(propsTarget(), p)) || 0;
-    // An Auto value (0) starts a drag / scroll from the width Auto draws (the renderer's own numbers: a selected
-    // lasso's capped spacing; the tool's, in screen px, uncapped).
+    // An Auto value (0) starts a drag / scroll from the hatchWidth that draws what Auto draws (RC.hatchMetrics: a
+    // selected lasso's autoStored — hatchWidth is relative to the uncapped spacing; the tool's, in screen px).
     const autoNow = () => {
       const tg = propsTarget();
-      if (tg.items) return RC.hatchMetrics(tg.items[0].data).auto / k();
+      if (tg.items) return RC.hatchMetrics(tg.items[0].data).autoStored / k();
       const st = S.styles[tg.type] || {};
       return RC.hatchMetrics({ pattern: st.pattern, gap: st.gap, size: st.size }).auto;
     };
@@ -2716,7 +2716,24 @@ export function createAnnotator(host){
       el.addEventListener("lostpointercapture", up);  // whatever ends the capture ends the drag (numDrag never sticks)
     });
     el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(cur(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const tg = propsTarget(), dflt = (DEFAULT_STYLES[tg.type || tg.types?.[0]] || {})[p.k]; if (dflt != null) set(dflt, false); });
+    // Right-click: the default — for a selection each drawing its own type's (a brush and a highlighter selected
+    // together: opacity 1 and 0.4).
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const tg = propsTarget();
+      if (!tg.items || S.edit){ const dflt = (DEFAULT_STYLES[tg.type] || {})[p.k]; if (dflt != null) set(dflt, false); return; }
+      const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
+      if (!ids.length) return;
+      commit(ids, () => {
+        for (const id of ids){
+          const it = S.items.get(id), ty = propType(it), dflt = (DEFAULT_STYLES[ty] || {})[p.k];
+          if (dflt == null || !PROPS[ty]?.some((q) => q.k === p.k)) continue;
+          if (p.auto && !(dflt > 0)) delete it.data[p.k];
+          else it.data[p.k] = LEN_KEYS.has(p.k) && typeof dflt === "number" ? dflt * k() : dflt;
+        }
+      });
+      renderProps();
+    });
   }
   function typeNum(el, p, v, done){
     const em = el.querySelector("em");
@@ -4878,8 +4895,20 @@ export function createAnnotator(host){
     const tg = propsTarget();
     const p = propList(tg).find((q) => q.k === "size" || q.k === "width");
     if (!p) return false;
-    const v = Number(propValue(tg, p)) || 1;
-    setProp(p, clamp(Math.round(v * f * 10) / 10, p.min, p.max), true);
+    const step = (v) => clamp(Math.round((Number(v) || 1) * f * 10) / 10, p.min, p.max);  // screen px
+    if (!tg.items || S.edit) setProp(p, step(propValue(tg, p)), true);
+    else {
+      // A selection: each drawing from its own value (one selected: as the tool), one undo step per run of presses.
+      const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
+      if (!ids.length) return false;
+      const kk = k();
+      commit(ids, () => {
+        for (const id of ids){
+          const it = S.items.get(id);
+          if (PROPS[propType(it)]?.some((q) => q.k === p.k)) it.data[p.k] = step(it.data[p.k] / kk) * kk;
+        }
+      }, "prop:" + p.k);
+    }
     renderProps(); renderSel();
     return true;
   }
