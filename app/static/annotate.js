@@ -43,6 +43,8 @@ const ICON = {
   marker: ico(`<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>`),
   eraser: ico(`<path d="M8 20h12"/><path d="M5.2 14.8 14 6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8L11.2 20H8.4l-3.2-3.2a1.4 1.4 0 0 1 0-2z"/><path d="m9.5 10.5 5 5"/>`),
   arrow: ico(`<path d="M5 19 19 5"/><path d="M10 5h9v9"/>`),
+  lasso: ico(RC.TOOL_ICONS.lasso),
+  arrows: ico(RC.TOOL_ICONS.arrows),
   rect: ico(`<rect x="4" y="6" width="16" height="12" rx="2"/>`),
   ellipse: ico(`<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>`),
   text: ico(`<path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>`),
@@ -73,9 +75,11 @@ const TOOLS = [
   ["brush", "KeyB", "Brush — pen pressure", ICON.brush],
   ["pencil", "KeyP", "Pencil", ICON.pencil],
   ["marker", "KeyM", "Highlighter", ICON.marker],
+  ["lasso", "KeyL", "Lasso — a closed stroke filled with a pattern", ICON.lasso],
   ["eraser", "KeyE", "Eraser — or hold Ctrl with any tool", ICON.eraser],
   null,
   ["arrow", "KeyW", "Arrow — a line with Start / End heads set to none · Shift keeps it horizontal / vertical", ICON.arrow],
+  ["arrows", "Shift+KeyW", "Stroke arrows — arrows along a freehand stroke", ICON.arrows],
   ["rect", "KeyR", "Shape — rectangle or ellipse (O) · Shift square / circle", ICON.rect],
   ["text", "KeyT", "Text", ICON.text],
   ["pin", "KeyN", "Number pin — click for a numbered circle, drag for a line to it; type the number, Enter", ICON.pin],
@@ -95,12 +99,16 @@ const HOLDS = [[0, "1 frame"], [0.5, "0.5 s"], [1, "1 s"], [2, "2 s"], [-1, "Who
 // Sizes in tool styles are screen pixels at the moment of drawing (what you see is what you get);
 // they are converted to doc units when an object is created.
 const DEFAULT_STYLES = {
-  brush: { color: "#ff3b30", size: 8, opacity: 1, pressure: true, smooth: 0.5, close: false, pattern: "diag", fill: "#ff3b30", fillOpacity: 0.5, gap: 10 },
+  brush: { color: "#ff3b30", size: 8, opacity: 1, pressure: true, smooth: 0.5 },
+  // A brush stroke that closes (data.close) and fills; hatchWidth 0 = auto (follows the spacing).
+  lasso: { color: "#ff3b30", size: 4, opacity: 1, pressure: true, smooth: 0.5, pattern: "diag", fill: "#ff3b30", fillOpacity: 0.5, gap: 10, hatchWidth: 0 },
   pencil: { color: "#ff3b30", size: 2.5, opacity: 1, pressure: true, smooth: 0.15 },
   marker: { color: "#ffd60a", size: 26, opacity: 0.4, smooth: 0.5 },
   eraser: { size: 26, mode: "object" },
   line: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "none", body: "straight", headSize: 1 },
-  arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1, mode: "line", step: 40, len: 24, dir: "out", side: "left", guide: true },
+  arrow: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head0: "none", head1: "triangle", body: "straight", headSize: 1 },
+  // Arrows along a freehand stroke (kind stroke, shape_kind "arrows").
+  arrows: { color: "#ff3b30", width: 4, opacity: 1, dash: "solid", head1: "triangle", headSize: 1, step: 40, len: 24, dir: "out", side: "left", guide: true },
   rect: { shape: "rect", color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, radius: 0, opacity: 1 },
   ellipse: { color: "#ff3b30", strokeOn: true, width: 4, dash: "solid", fillOn: false, fill: "#ff3b30", fillOpacity: 0.5, opacity: 1 },
   text: { font: "sans", size: 28, color: "#ffffff", bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1 },
@@ -108,10 +116,12 @@ const DEFAULT_STYLES = {
   image: { border: 0, borderColor: "#ffffff", shadow: 0, opacity: 1 },
 };
 // Keys whose value is a length (converted between screen px and doc units).
-const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border", "gap", "step", "len"]);
-// Fill patterns of a closed brush stroke (review-core PATTERNS); "random" (the tool only) picks one per stroke.
-const PATTERN_OPTS = [["none", "None"], ["solid", "Solid"], ["diag", "╱ Lines"], ["diag2", "╲ Lines"], ["horiz", "─ Lines"], ["vert", "│ Lines"], ["grid", "┼ Grid"], ["cross", "╳ Cross-hatch"], ["dots", "• Dots"], ["dashes", "┄ Dashes"]];
-const RANDOM_PATTERNS = PATTERN_OPTS.map(([id]) => id).filter((id) => id !== "none" && id !== "solid");
+const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border", "gap", "step", "len", "hatchWidth"]);
+// Fill patterns of a lasso (review-core PATTERNS, its names and icons — the same set as the drawing canvas's);
+// "random" (the tool only) picks one per stroke.
+const PATTERN_OPTS = RC.PATTERNS.map((id) => [id, RC.PATTERN_LABELS[id], ico(RC.patternIcon(id))]);
+const RANDOM_PATTERNS = RC.PATTERNS.filter((id) => id !== "none" && id !== "solid");
+const hatched = (g) => !["none", "solid"].includes(g("pattern"));
 
 // Props bar descriptors per object type.
 //   t: color | num | toggle | select | seg   create: only while drawing (hidden for a selection)
@@ -150,18 +160,16 @@ const P = {
   border: { k: "border", t: "num", label: "Frame", min: 0, max: 200, exp: false, unit: "px" },
   borderColor: { k: "borderColor", t: "color", label: "Frame colour" },
   shadow: { k: "shadow", t: "num", label: "Shadow", min: 0, max: 1, pct: true },
-  // Brush: close like a lasso and fill (solid or a pattern).
-  close: { k: "close", t: "toggle", label: "Close", title: "Close the stroke like a lasso and fill it", ico: ico(`<path d="M12 4c4.7 0 8 2.4 8 5.6s-3.3 5.6-8 5.6-8-2.4-8-5.6S7.3 4 12 4z"/><path d="M6.5 13.5C5 15.5 5.5 18.5 9 20"/>`) },
-  pattern: { k: "pattern", t: "select", label: "Fill", options: [...PATTERN_OPTS, ["random", "Random"]], create: true, when: (g) => g("close") },
-  ipattern: { k: "pattern", t: "select", label: "Fill", options: PATTERN_OPTS, edit: true, when: (g) => g("close") },
-  bfill: { k: "fill", t: "color", label: "Fill colour", when: (g) => g("close") && g("pattern") !== "none" },
-  bfillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true, when: (g) => g("close") && g("pattern") !== "none" },
-  gap: { k: "gap", t: "num", label: "Spacing", title: "Pattern density: the distance between lines / dots", min: 2, max: 200, exp: true, unit: "px", when: (g) => g("close") && !["none", "solid"].includes(g("pattern")) },
-  // Arrow tool: one arrow (Line) or arrows along a freehand stroke (Stroke), turned to its normal.
-  // A plain on / off button (fixed: always the Stroke icon, lit while on).
-  amode: { k: "mode", t: "cycle", label: "Stroke", fixed: true, create: true, options: [
-    ["line", "One arrow", ICON.arrow],
-    ["stroke", "Arrows along a stroke", ico(`<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>`)]] },
+  // Lasso (a closed brush stroke): its fill, an icon row (the tool also offers Random; a drawn one keeps the real
+  // pattern), the pattern's colour / opacity / spacing and the hatch lines' width (the dots' size); 0 = Auto.
+  pattern: { k: "pattern", t: "seg", label: "Fill", options: [...PATTERN_OPTS, ["random", RC.PATTERN_LABELS.random, ico(RC.patternIcon("random"))]], create: true },
+  ipattern: { k: "pattern", t: "seg", label: "Fill", options: PATTERN_OPTS, edit: true },
+  bfill: { k: "fill", t: "color", label: "Fill colour", when: (g) => g("pattern") !== "none" },
+  bfillOpacity: { k: "fillOpacity", t: "num", label: "Fill α", min: 0, max: 1, pct: true, when: (g) => g("pattern") !== "none" },
+  gap: { k: "gap", t: "num", label: "Spacing", title: "Pattern density: the distance between lines / dots", min: 2, max: 200, exp: true, unit: "px", when: hatched },
+  // (auto: 0 means Auto — RC.hatchMetrics' width, which a drag / scroll from Auto starts at.)
+  hatchWidth: { k: "hatchWidth", t: "num", label: "Lines", title: "Hatch line thickness (for dots: their size) — Auto follows the spacing; type 0 or right-click for Auto", min: 0.1, max: 100, exp: true, unit: "px", when: hatched, auto: true },
+  // Stroke arrows: arrows along a freehand stroke, turned to its normal.
   ahead: { k: "head1", t: "select", label: "Tip", options: HEADS },
   step: { k: "step", t: "num", label: "Every", title: "Distance between the arrows along the stroke", min: 4, max: 1000, exp: true, unit: "px" },
   alen: { k: "len", t: "num", label: "Length", title: "Length of each arrow", min: 2, max: 600, exp: true, unit: "px" },
@@ -175,17 +183,17 @@ const P = {
     ["both", "Both sides", ico(`<path d="M3 12h17M17 9l3 3-3 3"/><path d="M8 9V3M14 9V3M8 15v6M14 15v6"/>`)]] },
   guide: { k: "guide", t: "toggle", label: "Guide", title: "Guide — draw the stroke itself under the arrows", ico: ico(`<path d="M3 15c3-6 6 6 9 0s6-6 9 0"/>`) },
 };
-const lineMode = (g) => g("mode") !== "stroke", strokeMode = (g) => g("mode") === "stroke";
 const ARROWS_PROPS = [P.color, P.width, P.opacity, P.ahead, P.headSize, P.step, P.alen, P.adir, P.aside, P.guide, { ...P.dash, when: (g) => g("guide") !== false }];
 const PROPS = {
-  brush: [P.color, P.size, P.opacity, P.pressure, P.smooth, P.close, P.pattern, P.ipattern, P.bfill, P.bfillOpacity, P.gap],
+  brush: [P.color, P.size, P.opacity, P.pressure, P.smooth],
+  // The lasso tool, and a selected closed brush stroke (propType).
+  lasso: [P.color, P.size, P.opacity, P.pressure, P.smooth, P.pattern, P.ipattern, P.bfill, P.bfillOpacity, P.gap, P.hatchWidth],
   pencil: [P.color, P.size, P.opacity, P.pressure, P.smooth],
   marker: [P.color, P.size, P.opacity, P.smooth],
   eraser: [P.esize, P.emode],
   line: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
-  // The arrow tool in Stroke mode shows the arrows' props; a selected arrow is always a line arrow.
-  arrow: [P.amode, ...[P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize].map((p) => ({ ...p, when: lineMode })),
-    ...ARROWS_PROPS.map((p) => ({ ...p, when: p.when ? (g) => strokeMode(g) && p.when(g) : strokeMode }))],
+  arrow: [P.color, P.width, P.opacity, P.dash, P.head0, P.head1, P.body, P.headSize],
+  // The stroke arrows tool, and a selected arrows stroke.
   arrows: ARROWS_PROPS,
   // The shape tool (id "rect") draws either; a selected shape keeps its kind. No stroke switch: the outline is
   // always drawn (shapes made with it off keep it off).
@@ -198,6 +206,11 @@ const PROPS = {
 };
 
 const isDrawing = (it) => it.kind !== "note";
+// The props a drawing shows / takes: a closed brush stroke is a lasso (the lasso tool makes them; FORMAT.md keeps them
+// brush strokes with data.close).
+const propType = (it) => { const t = typeOf(it); return t === "brush" && it.data?.close ? "lasso" : t; };
+// Tools that draw a freehand stroke (the brush circle follows the pointer).
+const freehand = (t) => STROKE_TOOLS.has(t) || t === "lasso";
 // Reference images (kind "image") show Sight's stored shots.
 RC.setImageSource((id) => (/^[0-9a-f]{16}$/.test(String(id)) ? `/api/review/shots/${id}` : ""));
 // Pictures a reference image is made from: anything the browser decodes. Kept at most REF_MAX px on the long side.
@@ -538,6 +551,17 @@ export function createAnnotator(host){
     const saved = readJSON("sight.annotate.styles", {}) || {};
     const out = {};
     for (const [k, v] of Object.entries(DEFAULT_STYLES)) out[k] = { ...v, ...(saved[k] || {}) };
+    // 0.109: the brush's Close switch and the arrow tool's Stroke mode became the Lasso and Stroke arrows tools —
+    // their settings move over once (while the new tool has none saved) and leave the old tools.
+    const moveKeys = (from, to, keys) => {
+      const src = saved[from] || {};
+      if (!saved[to]) for (const key of keys) if (src[key] !== undefined) out[to][key] = src[key];
+      for (const key of keys) if (!(key in DEFAULT_STYLES[from])) delete out[from][key];
+    };
+    moveKeys("brush", "lasso", ["pattern", "fill", "fillOpacity", "gap"]);
+    delete out.brush.close;
+    moveKeys("arrow", "arrows", ["step", "len", "dir", "side", "guide"]);
+    delete out.arrow.mode;
     // The stroke switch is gone: a tool saved with it off would draw invisible outlines. The old fill default
     // (20 %) gives way to the new one.
     const mig = !readJSON("sight.annotate.fill50", false);  // once: a 20 % chosen later stays
@@ -1373,8 +1397,8 @@ export function createAnnotator(host){
     if (S.drag?.sizeOp) html += sizeOpSvg(S.drag);
     else if (S.hover && !S.region && !altCam()){
       const t = effTool(), st = S.styles[t];
-      if (!S.drag?.eraser && (STROKE_TOOLS.has(t) || t === "eraser")){
-        const r = Math.max(1, st.size / 2);
+      if (!S.drag?.eraser && (freehand(t) || t === "eraser")){
+        const r = Math.max(1, (st.size ?? st.width ?? 2) / 2);
         html += `<circle class="an-cursor${t === "eraser" ? " er" : ""}" cx="${r2(S.hover[0])}" cy="${r2(S.hover[1])}" r="${r2(r)}"/>`;
       }
     }
@@ -1694,7 +1718,7 @@ export function createAnnotator(host){
     }
     // Drawing starts a new note: a note picked in the panel lets go (the media shows the new one).
     if (S.pinFocus){ S.pinFocus = null; renderPanel(); }
-    if (tool === "arrow" && S.styles.arrow.mode === "stroke"){
+    if (tool === "arrows"){
       // Arrows along a freehand stroke: drawn like a brush stroke, the arrows follow it (review-core arrowsPrims).
       const st = styleDoc(tool);
       const it = newItem("stroke", "arrows", { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head1: st.head1, headSize: st.headSize, step: st.step, len: st.len, dir: st.dir, side: st.side, guide: st.guide !== false, pts: [r2(x), r2(y), 0.5] });
@@ -1703,11 +1727,13 @@ export function createAnnotator(host){
       renderAll();
       return;
     }
-    if (STROKE_TOOLS.has(tool)){
+    if (freehand(tool)){
       const st = styleDoc(tool);
       const p = pen ? clamp(e.pressure || 0.5, 0, 1) : 0.5;
-      const fillKeys = tool === "brush" ? { close: !!st.close, pattern: st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern, fill: st.fill, fillOpacity: st.fillOpacity, gap: st.gap } : {};
-      const it = newItem("stroke", tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, ...fillKeys, pts: [r2(x), r2(y), r2(p)] });
+      // The lasso: a brush stroke that closes and fills ("random" picks the pattern now; hatchWidth 0 = auto, not stored).
+      const fillKeys = tool === "lasso" ? { close: true, pattern: st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern, fill: st.fill, fillOpacity: st.fillOpacity, gap: st.gap,
+        ...(st.hatchWidth > 0 ? { hatchWidth: st.hatchWidth } : {}) } : {};
+      const it = newItem("stroke", tool === "lasso" ? "brush" : tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, ...fillKeys, pts: [r2(x), r2(y), r2(p)] });
       S.items.set(it.id, it);
       S.drag = { stroke: it, sm: [x, y], smooth: st.smooth ?? 0, start: [x, y], minStep: 0.75 * k() };
       renderAll();
@@ -1957,9 +1983,9 @@ export function createAnnotator(host){
       grab(e);
       S.drag = { sizeOp: G };
     } else {
-      const ids = editSel().map((it) => it.id).filter((id) => { const ty = typeOf(S.items.get(id)); return sizeProp(ty) || hasOpacity(ty); });
+      const ids = editSel().map((it) => it.id).filter((id) => { const ty = propType(S.items.get(id)); return sizeProp(ty) || hasOpacity(ty); });
       if (!ids.length) return false;
-      G.op = ids.some((id) => hasOpacity(typeOf(S.items.get(id))));
+      G.op = ids.some((id) => hasOpacity(propType(S.items.get(id))));
       grab(e);
       S.drag = { sizeOp: G, ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), moved: false };
     }
@@ -1982,13 +2008,13 @@ export function createAnnotator(host){
       for (const id of D.ids){
         const it = S.items.get(id), src = D.src.get(id);
         if (!it || !src) continue;
-        const ty = typeOf(it), sp = sizeProp(ty), b = src.data, d = it.data;
+        const ty = propType(it), sp = sizeProp(ty), b = src.data, d = it.data;
         if (m.f && sp && typeof b[sp.k] === "number" && b[sp.k] > 0){
           // (the range widened to the value it had: one already outside the props bar's px range at this zoom
           // must not jump to its edge)
           d[sp.k] = clamp(b[sp.k] * m.f, Math.min(b[sp.k], sp.min * kk), Math.max(b[sp.k], sp.max * kk));
           const g = d[sp.k] / b[sp.k];
-          for (const x of ["gap", "step", "len"]) if (typeof b[x] === "number") d[x] = b[x] * g;  // lengths that follow the width
+          for (const x of ["gap", "step", "len", "hatchWidth"]) if (typeof b[x] === "number") d[x] = b[x] * g;  // lengths that follow the width
         }
         if (m.dOp != null && hasOpacity(ty)) d.opacity = RC.opAfter(b.opacity, m.dOp);
         renderItem(it);
@@ -2025,8 +2051,8 @@ export function createAnnotator(host){
     } else {
       const it = S.items.get(D.ids[0]);
       if (!it) return "";
-      const sp = sizeProp(typeOf(it)), d = it.data;
-      size = sp && typeof d[sp.k] === "number" ? d[sp.k] / k() : null; op = hasOpacity(typeOf(it)) ? d.opacity ?? 1 : null; color = d.color || "#fff";
+      const sp = sizeProp(propType(it)), d = it.data;
+      size = sp && typeof d[sp.k] === "number" ? d[sp.k] / k() : null; op = hasOpacity(propType(it)) ? d.opacity ?? 1 : null; color = d.color || "#fff";
     }
     const [cx, cy] = G.at, r = Math.max(1, (size || 0) / 2);
     const label = [size != null ? fmtNum({ unit: "px" }, size) + " px" : "", op != null ? Math.round(op * 100) + " %" : ""].filter(Boolean).join(" · ");
@@ -2123,7 +2149,7 @@ export function createAnnotator(host){
         const [x, y] = toDocS(sx, sy);
         c = S.ctrlHeld ? "default" : hitAt(x, y) ? "move" : S.kind === "model3d" && !S.box3d ? "" : "default";
       }
-    } else if (STROKE_TOOLS.has(effTool()) || effTool() === "eraser") c = "none";
+    } else if (freehand(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
     else if (S.tool === "image") c = "copy";
     el.style.cursor = c;
@@ -2436,9 +2462,6 @@ export function createAnnotator(host){
     bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === S.tool));
     const sb = bar.querySelector("[data-tool=rect]"), sk = S.styles.rect.shape === "ellipse" ? "ellipse" : "rect";
     if (sb.dataset.shape !== sk){ sb.dataset.shape = sk; sb.innerHTML = ICON[sk]; }
-    // The arrow tool's icon follows its Line / Stroke mode.
-    const ab = bar.querySelector("[data-tool=arrow]"), am = S.styles.arrow.mode === "stroke" ? "stroke" : "line";
-    if (ab && ab.dataset.mode !== am){ ab.dataset.mode = am; ab.innerHTML = P.amode.options.find(([id]) => id === am)[2]; }
     bar.querySelector("[data-tool=image]").hidden = isBoard() || host.refImages === false;  // a board places pictures itself
     bar.querySelector("[data-act=stamp]").hidden = bar.querySelector("[data-act=stampset]").hidden = S.kind !== "video";
     bar.querySelector("[data-act=stamp]").classList.toggle("on", stampOn());
@@ -2485,10 +2508,17 @@ export function createAnnotator(host){
     const sel = [...S.sel].map((id) => S.items.get(id)).filter(Boolean);
     if (S.edit) return { items: [S.edit.it], type: "text" };
     if (sel.length){
-      const types = [...new Set(sel.map(typeOf))];
+      const types = [...new Set(sel.map(propType))];
       return { items: sel, type: types.length === 1 ? types[0] : null, types };
     }
     return { items: null, type: S.tool };
+  }
+  // The props a target shows: its type's; a mixed selection gets the ones every type has (the same descriptor:
+  // a lasso + a brush keep Size / Pressure, a rectangle + an ellipse their outline and fill; at least Colour).
+  function propList(tg){
+    if (tg.type) return PROPS[tg.type] || [];
+    const [first = [], ...rest] = (tg.types || []).map((t) => PROPS[t] || []);
+    return first.filter((p) => rest.every((l) => l.includes(p)));
   }
   function propValue(tg, p){
     if (!tg.items) return S.styles[tg.type][p.k];
@@ -2505,7 +2535,7 @@ export function createAnnotator(host){
     if (!el || numDrag?.isConnected) return;
     if (S.crop && !cropItem()) S.crop = null;  // cropping ends with the image's selection
     const tg = propsTarget();
-    let list = tg.type ? PROPS[tg.type] || [] : [P.color, P.opacity].filter((p) => tg.types.every((t) => PROPS[t]?.some((q) => q.k === p.k)));
+    let list = propList(tg);
     if (tg.items) list = list.filter((p) => !p.create);
     else list = list.filter((p) => !p.edit);
     list = list.filter((p) => !p.when || p.when((key) => propValue(tg, { k: key })));
@@ -2529,7 +2559,9 @@ export function createAnnotator(host){
       } else if (p.t === "select"){
         html += `<label class="an-psel" title="${esc(p.label)}"><span>${esc(p.label)}</span><select data-k="${p.k}">${p.options.map(([id, n]) => `<option value="${id}"${id === v ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
       } else if (p.t === "seg"){
-        html += `<span class="an-seg" title="${esc(p.label)}">${p.options.map(([id, n]) => `<button type="button" data-k="${p.k}" data-v="${id}" class="${id === v ? "on" : ""}">${esc(n)}</button>`).join("")}</span>`;
+        // Options with an icon ([id, name, icon]: the lasso's patterns) show it, the name as the tooltip.
+        const icons = p.options.some((o) => o[2]);
+        html += `<span class="an-seg${icons ? " ico" : ""}" role="group" title="${esc(p.label)}" aria-label="${esc(p.label)}">${p.options.map(([id, n, ic]) => `<button type="button" data-k="${p.k}" data-v="${id}" class="${id === v ? "on" : ""}"${ic ? ` title="${esc(n)}" aria-label="${esc(n)}"` : ""} aria-pressed="${id === v}">${ic || esc(n)}</button>`).join("")}</span>`;
       }
     }
     if (S.kind === "video" && !tg.items && S.tool !== "select" && S.tool !== "eraser"){
@@ -2562,6 +2594,7 @@ export function createAnnotator(host){
     bindProps(el, tg, list);
   }
   function fmtNum(p, v){
+    if (p.auto && !(v > 0)) return "Auto";
     if (v == null || Number.isNaN(v)) return "—";
     if (p.pct) return Math.round(v * 100) + "%";
     if (p.unit === "×") return (Math.round(v * 10) / 10) + "×";
@@ -2572,22 +2605,15 @@ export function createAnnotator(host){
     if (!tg.items){
       S.styles[tg.type][p.k] = v;
       saveStyles();
-      if (p.k === "shape" || (tg.type === "arrow" && p.k === "mode")) paintBar();  // the tool's icon follows its kind / mode
+      if (p.k === "shape") paintBar();  // the shape tool's icon follows its kind
       return;
     }
     const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
     const dv = LEN_KEYS.has(p.k) && typeof v === "number" ? v * k() : v;
     if (S.edit){ S.edit.it.data[p.k] = dv; S.edit.place(); if (p.t !== "color") S.edit.ta.focus(); return; }
     if (!ids.length) return;
-    commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[typeOf(it)]?.some((q) => q.k === p.k)){ it.data[p.k] = dv; if (p.k === "close" && dv) fillDefaults(it.data); } } }, merge ? "prop:" + p.k : null);
-  }
-  // A brush closed after it was drawn (or one from before 0.81) takes the brush tool's fill settings.
-  function fillDefaults(d){
-    const st = styleDoc("brush");
-    if (!RC.PATTERNS.includes(d.pattern)) d.pattern = st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern;
-    if (!d.fill) d.fill = st.fill;
-    if (d.fillOpacity == null) d.fillOpacity = st.fillOpacity;
-    if (!(d.gap > 0)) d.gap = st.gap;
+    // (An Auto value — hatchWidth 0 — is not stored: the field goes.)
+    commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[propType(it)]?.some((q) => q.k === p.k)){ if (p.auto && !(dv > 0)) delete it.data[p.k]; else it.data[p.k] = dv; } } }, merge ? "prop:" + p.k : null);
   }
   function bindProps(el, tg, list){
     el.querySelectorAll("input[type=color][data-k]").forEach((inp) => {
@@ -2638,8 +2664,17 @@ export function createAnnotator(host){
   function bindNum(el, p){
     const em = el.querySelector("em");
     const get = () => Number(propValue(propsTarget(), p)) || 0;
+    // An Auto value (0) starts a drag / scroll from the hatchWidth that draws what Auto draws (RC.hatchMetrics: a
+    // selected lasso's autoStored — hatchWidth is relative to the uncapped spacing; the tool's, in screen px).
+    const autoNow = () => {
+      const tg = propsTarget();
+      if (tg.items) return RC.hatchMetrics(tg.items[0].data).autoStored / k();
+      const st = S.styles[tg.type] || {};
+      return RC.hatchMetrics({ pattern: st.pattern, gap: st.gap, size: st.size }).auto;
+    };
+    const cur = () => get() || (p.auto ? autoNow() : 0);
     const set = (v, merge) => {
-      v = clamp(v, p.min, p.max);
+      v = p.auto && !(v > 0) ? 0 : clamp(v, p.min, p.max);
       if (!p.pct && p.unit !== "×") v = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
       else if (p.pct) v = Math.round(v * 100) / 100;
       setProp(p, v, merge);
@@ -2650,7 +2685,7 @@ export function createAnnotator(host){
       if (e.button !== 0) return;
       e.preventDefault();
       el.setPointerCapture(e.pointerId);
-      const x0 = e.clientX, v0 = get();
+      const x0 = e.clientX, v0 = cur();
       let moved = false;
       numDrag = el;
       // What the drag changes: the selection (or the tool) it started on. Another one (Esc, Delete, a tool key,
@@ -2680,8 +2715,25 @@ export function createAnnotator(host){
       el.addEventListener("pointercancel", up);
       el.addEventListener("lostpointercapture", up);  // whatever ends the capture ends the drag (numDrag never sticks)
     });
-    el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(get(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); const t = propsTarget().type, dflt = (DEFAULT_STYLES[t === "arrows" ? "arrow" : t] || {})[p.k]; if (dflt != null) set(dflt, false); });
+    el.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); set(stepBy(cur(), (e.deltaY < 0 ? 8 : -8)), true); }, { passive: false });
+    // Right-click: the default — for a selection each drawing its own type's (a brush and a highlighter selected
+    // together: opacity 1 and 0.4).
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const tg = propsTarget();
+      if (!tg.items || S.edit){ const dflt = (DEFAULT_STYLES[tg.type] || {})[p.k]; if (dflt != null) set(dflt, false); return; }
+      const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
+      if (!ids.length) return;
+      commit(ids, () => {
+        for (const id of ids){
+          const it = S.items.get(id), ty = propType(it), dflt = (DEFAULT_STYLES[ty] || {})[p.k];
+          if (dflt == null || !PROPS[ty]?.some((q) => q.k === p.k)) continue;
+          if (p.auto && !(dflt > 0)) delete it.data[p.k];
+          else it.data[p.k] = LEN_KEYS.has(p.k) && typeof dflt === "number" ? dflt * k() : dflt;
+        }
+      });
+      renderProps();
+    });
   }
   function typeNum(el, p, v, done){
     const em = el.querySelector("em");
@@ -2690,8 +2742,11 @@ export function createAnnotator(host){
     inp.value = p.pct ? Math.round(v * 100) : Math.round(v * 10) / 10;
     em.replaceWith(inp);
     inp.focus(); inp.select();
+    // (Once: replacing the focused field fires its blur, which would end it a second time mid-replace.)
+    let ended = false;
     const end = (ok) => {
-      if (!inp.isConnected) return;
+      if (ended || !inp.isConnected) return;
+      ended = true;
       const n = parseFloat(inp.value.replace(",", "."));
       inp.replaceWith(em);
       if (ok && Number.isFinite(n)) done(p.pct ? n / 100 : n);
@@ -4838,11 +4893,22 @@ export function createAnnotator(host){
   }
   function resizeTool(f){
     const tg = propsTarget();
-    const list = (tg.type && PROPS[tg.type]) || [];
-    const p = list.find((q) => q.k === "size" || q.k === "width");
+    const p = propList(tg).find((q) => q.k === "size" || q.k === "width");
     if (!p) return false;
-    const v = Number(propValue(tg, p)) || 1;
-    setProp(p, clamp(Math.round(v * f * 10) / 10, p.min, p.max), true);
+    const step = (v) => clamp(Math.round((Number(v) || 1) * f * 10) / 10, p.min, p.max);  // screen px
+    if (!tg.items || S.edit) setProp(p, step(propValue(tg, p)), true);
+    else {
+      // A selection: each drawing from its own value (one selected: as the tool), one undo step per run of presses.
+      const ids = tg.items.map((it) => it.id).filter((id) => S.items.has(id) && editable(S.items.get(id)));
+      if (!ids.length) return false;
+      const kk = k();
+      commit(ids, () => {
+        for (const id of ids){
+          const it = S.items.get(id);
+          if (PROPS[propType(it)]?.some((q) => q.k === p.k)) it.data[p.k] = step(it.data[p.k] / kk) * kk;
+        }
+      }, "prop:" + p.k);
+    }
     renderProps(); renderSel();
     return true;
   }
@@ -5087,6 +5153,9 @@ function injectStyles(){
 .an-seg { display: inline-flex; background: var(--surface-2); border-radius: 6px; padding: 2px; gap: 1px; }
 .an-seg button { height: 20px; padding: 0 7px; border-radius: 4px; color: var(--muted); font-size: 11px; }
 .an-seg button.on { background: var(--surface-3, #2a2b31); color: var(--accent); }
+.an-seg.ico button { width: 24px; padding: 0; display: inline-grid; place-items: center; }
+.an-seg.ico svg { width: 16px; height: 16px; }
+@media (pointer: coarse) { .an-seg.ico button { width: 34px; height: 34px; } .an-seg.ico svg { width: 20px; height: 20px; } }
 .an-toast { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 30; padding: 7px 14px; border-radius: 999px; font-size: 12px; color: var(--fg); background: rgb(10 10 11 / .82); border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity 160ms ease; white-space: nowrap; max-width: 80%; overflow: hidden; text-overflow: ellipsis; }
 .an-toast.on { opacity: 1; }
 .an-host.an-panel-on .an-toast { left: calc(50% - 160px); }

@@ -276,6 +276,32 @@ var SightReviewCore = (function(){
   // Patterns are plain geometry clipped to the stroke's polygon (no SVG <pattern> / clip ids, which differ
   // between clients), so the SVG overlay and the canvas compositor draw the same thing.
   var PATTERNS = ["none", "solid", "diag", "diag2", "horiz", "vert", "grid", "cross", "dots", "dashes"];
+  // The pattern pickers' names and icons — one set for Sight's props bar and the drawing canvas (the HTML page,
+  // the phone). "random" is a tool choice only (a real pattern is picked per stroke). patternIcon(id) is the
+  // inside of a 24 x 24 stroke icon drawn in currentColor (the caller wraps it in its own <svg>).
+  var PATTERN_LABELS = { none: "No fill", solid: "Solid", diag: "Lines \u2571", diag2: "Lines \u2572", horiz: "Lines \u2500", vert: "Lines \u2502", grid: "Grid", cross: "Cross-hatch", dots: "Dots", dashes: "Dashes", random: "Random pattern" };
+  function patternIcon(id){
+    var box = '<rect x="4" y="4" width="16" height="16" rx="3"/>', g = function(d){ return box + '<path d="' + d + '" stroke-width="1.3"/>'; };
+    switch (id){
+      case "solid": return '<rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor" fill-opacity=".55"/>';
+      case "diag": return g("M4 12 12 4M4 20 20 4M12 20l8-8");
+      case "diag2": return g("M12 4l8 8M4 4l16 16M4 12l8 8");
+      case "horiz": return g("M4 8.5h16M4 12h16M4 15.5h16");
+      case "vert": return g("M8.5 4v16M12 4v16M15.5 4v16");
+      case "grid": return g("M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16");
+      case "cross": return g("M4 12 12 4M4 20 20 4M12 20l8-8M12 4l8 8M4 4l16 16M4 12l8 8");
+      case "dots": return box + '<g fill="currentColor" stroke="none"><circle cx="8.5" cy="8.5" r="1.3"/><circle cx="15.5" cy="8.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="8.5" cy="15.5" r="1.3"/><circle cx="15.5" cy="15.5" r="1.3"/></g>';
+      case "dashes": return g("M6 9h4M14 9h4M8 15h4M16 15h2");
+      case "random": return box + '<text x="12" y="16.5" font-size="12" fill="currentColor" stroke="none" text-anchor="middle" font-family="system-ui, sans-serif">?</text>';
+      default: return box;
+    }
+  }
+  // Tool icons both toolbars show (same 24 x 24 stroke style): the lasso (a closed loop, hatched) and arrows
+  // along a stroke.
+  var TOOL_ICONS = {
+    lasso: '<path d="M12 3.5c5 0 9 2.6 9 6.2s-4 6.2-9 6.2-9-2.6-9-6.2 4-6.2 9-6.2z"/><path d="M7.5 15c-1.2 2-.6 3.8 1.6 5"/><path d="M8 12.6 13.6 7M11.6 13.6 16.8 8.4" stroke-width="1.3"/>',
+    arrows: '<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>',
+  };
   var PATTERN_ANGLES = { diag: [-45], diag2: [45], horiz: [0], vert: [90], grid: [0, 90], cross: [45, -45], dashes: [0] };
   function polyOf(pts){
     var out = [];
@@ -338,21 +364,32 @@ var SightReviewCore = (function(){
     var poly = polyOf(d.pts), color = d.fill || d.color;
     var op = (d.opacity != null ? d.opacity : 1) * (d.fillOpacity != null ? d.fillOpacity : 0.5);
     if (pat === "solid") return [{ d: smoothPath(poly, true), fill: color, op: op }];
-    // The spacing actually used (capped for huge areas, as hatchPath / dotsPath do), so widths / dots follow it.
-    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    poly.forEach(function(p){ x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); });
-    var gap = Math.max(0.5, Number(d.gap) || d.size || 8);
+    var m = hatchMetrics(d);
     if (pat === "dots"){
-      gap = Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0);
-      var dp = dotsPath(poly, gap, gap * 0.2);
+      var dp = dotsPath(poly, m.gap, m.width / 2);
       return dp ? [{ d: dp, fill: color, op: op }] : [];
     }
     var angles = PATTERN_ANGLES[pat];
     if (!angles) return [];
-    gap = Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);  // (the diagonal ≥ the extent across any line direction)
-    var lw = Math.max(0.3, gap * 0.18);
-    var path = angles.map(function(a){ return hatchPath(poly, a, gap); }).join("");
-    return path ? [{ d: path, stroke: color, sw: lw, op: op, cap: "butt", dash: pat === "dashes" ? [gap * 0.9, gap * 0.6] : null }] : [];
+    var path = angles.map(function(a){ return hatchPath(poly, a, m.gap); }).join("");
+    return path ? [{ d: path, stroke: color, sw: m.width, op: op, cap: "butt", dash: pat === "dashes" ? [m.gap * 0.9, m.gap * 0.6] : null }] : [];
+  }
+  // A lasso's hatch, as drawn: {gap0: data's spacing (fallback size, 8), gap: the spacing actually used (capped for
+  // huge areas, as hatchPath / dotsPath do — without pts, uncapped), width: the lines' width / the dots' diameter,
+  // auto: the width Auto draws, autoStored: the hatchWidth that draws exactly that (auto · gap0 / gap)}, doc units.
+  // data.hatchWidth (0.109+): absent or 0 = auto (0.18 / 0.4 of the spacing, the look before it existed); it is
+  // relative to gap0: where the spacing is capped it grows by the same factor. Sight's Lines control starts a drag
+  // from Auto at autoStored.
+  function hatchMetrics(d){
+    var dots = d.pattern === "dots", gap0 = Math.max(0.5, Number(d.gap) || d.size || 8), gap = gap0;
+    if (Array.isArray(d.pts) && d.pts.length >= 3){
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (var i = 0; i + 1 < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
+      // (lines: the diagonal ≥ the extent across any line direction)
+      gap = dots ? Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0) : Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);
+    }
+    var auto = dots ? gap * 0.4 : Math.max(0.3, gap * 0.18), hw = Number(d.hatchWidth) > 0 ? Number(d.hatchWidth) : 0;
+    return { gap0: gap0, gap: gap, auto: auto, autoStored: auto * gap0 / gap, width: hw ? Math.max(0.1, hw * gap / gap0) : auto };
   }
 
   // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
@@ -727,6 +764,7 @@ var SightReviewCore = (function(){
       if (s.size != null) d.size = s.size * k;
       if (s.width != null) d.width = s.width * k;
       if (s.gap != null) d.gap = s.gap * k;
+      if (s.hatchWidth != null) d.hatchWidth = s.hatchWidth * k;
       if (s.step != null) d.step = s.step * k;
       if (s.len != null) d.len = s.len * k;
       // A mirror (one negative axis) swaps an arrows drawing's left and right.
@@ -1236,13 +1274,13 @@ var SightReviewCore = (function(){
 
   return {
     FORMAT: FORMAT, FORMAT_VERSION: FORMAT_VERSION,
-    STROKE_TOOLS: STROKE_TOOLS, PATTERNS: PATTERNS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
+    STROKE_TOOLS: STROKE_TOOLS, PATTERNS: PATTERNS, PATTERN_LABELS: PATTERN_LABELS, patternIcon: patternIcon, TOOL_ICONS: TOOL_ICONS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
     uid: uid, clamp: clamp, r2: r2, hyp: hyp, typeOf: typeOf, esc: esc, fontStack: fontStack, segDist: segDist, rotPt: rotPt,
     smoothPath: smoothPath, strokeRadii: strokeRadii, strokeOutline: strokeOutline, dashArray: dashArray,
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
-    primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
+    hatchMetrics: hatchMetrics, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
     sizeOpDrag: sizeOpDrag, opAfter: opAfter,
