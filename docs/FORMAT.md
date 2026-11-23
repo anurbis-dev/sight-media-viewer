@@ -134,7 +134,8 @@ data = {
   compare?: {                         // 0.68+: written in Sight's version compare — that comparison
     ids: [assetId],                   //   its files in layer order (2+, this note's file among them)
     ref, sel,                         //   reference layer and the selected one (= this note's file)
-    layout: "swipe"|"grid"|"row"|"col", blend: "over"|"difference", dir: "x"|"y",
+    layout: "swipe"|"stack"|"grid"|"row"|"col", //   0.112+: "swipe" = Stack with Swipe on, "stack" = Swipe off
+    blend: "over"|"difference", dir: "x"|"y",    //   (blend applies in Stack only)
     starts: {assetId: frames}         //   video layers' first-frame offsets (0 omitted)
   }
 }
@@ -210,7 +211,7 @@ Per type (all lengths in doc units):
   times `opacity`), `gap` (pattern spacing; staggered rows of dots), **0.109+** `hatchWidth` (the hatch lines'
   width, for `dots` the dots' diameter; absent or ≤ 0 = auto: lines 0.18·gap wide, dots 0.2·gap in radius — the
   look before the field existed; a length, scaled with the drawing like `gap`; where a huge area caps the spacing,
-  it grows by the same factor). Sight's *Lasso* tool makes these (0.109+; before, the brush's *Close* switch).
+  it grows by the same factor; **0.111.3+** drawn at most 0.9·`gap` wide so lines / dots stay distinct, a larger stored value draws as that). The fill never depends on the outline `size`: editors write `gap` down before changing `size`; only rows without `gap` (before 0.109) still fall back to `size` for it. Sight's *Lasso* tool makes these (0.109+; before, the brush's *Close* switch).
   Patterns are plain geometry clipped to the polygon (no SVG pattern / clip ids). Older clients draw the open
   stroke only; clients before 0.109 ignore `hatchWidth` (auto widths).
 - **`stroke` arrows** (0.81+, Sight's *Stroke arrows* tool; 0.81–0.108 the arrow tool's *Stroke* mode): `pts` as above (pressure unused, 0.5),

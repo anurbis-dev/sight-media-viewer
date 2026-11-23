@@ -17,6 +17,7 @@
 
 import { runHotkeys } from "/static/keys.js";
 import { FINE, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
+import { setCursor, zoomCursor } from "/static/cursors.js";
 
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
@@ -93,7 +94,7 @@ function injectStyles(){
 .cframe[data-corner="tl"] .chandle { left: -6px; top: -6px; right: auto; bottom: auto; }
 .cframe[data-corner="tr"] .chandle { right: -6px; top: -6px; bottom: auto; }
 .cframe[data-corner="bl"] .chandle { left: -6px; bottom: -6px; right: auto; }
-.cframe .crot { left: 50%; top: -22px; margin-left: -6px; cursor: grab; }
+.cframe .crot { left: 50%; top: -22px; margin-left: -6px; cursor: var(--cur-rot, grab); } /* (cursors.js) */
 /* Crop grips (Alt held over an item): screen-space like the transform frame, so they stay the same size at any zoom. */
 .ccrop { position: absolute; left: 0; top: 0; pointer-events: none; transform-origin: 50% 50%; outline: 1px solid var(--card-active-color); }
 .ccrop i { position: absolute; pointer-events: auto; background: var(--card-active-color); border: 1px solid var(--bg); box-sizing: border-box; }
@@ -788,11 +789,21 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       drag = { kind: "grotate", ids: list.map((it) => it.id), cx, cy, startAngle: Math.atan2(w0.y - cy, w0.x - cx) * 180 / Math.PI, starts: before, moved: false, before };
     }
     el_setPointerCapture(e);
+    syncDragCursor();
   }
   frameEl.querySelector('[data-act="resize"]').addEventListener("pointerdown", startResize);
   frameEl.querySelector('[data-act="rotate"]').addEventListener("pointerdown", startRotate);
   function el_setPointerCapture(e){
     try { e.target.setPointerCapture(e.pointerId); } catch {}
+  }
+  // The running drag's cursor (cursors.js "gesture" layer on the viewport, over items and handles too): a board pan
+  // or an item move = grabbing, an item turn = rotate, the right-drag zoom = zoom-in / zoom-out by its direction.
+  function syncDragCursor(){
+    const d = drag;
+    const k = !d ? null : d.kind === "pan" || (d.kind === "move" && d.moved) ? "pan"
+      : d.kind === "rotate" || d.kind === "grotate" ? "rotate"
+      : d.kind === "zoomdrag" && d.moved ? zoomCursor(zoom / d.scale0) : null;
+    setCursor(viewportEl, "gesture", k);
   }
 
   // Un-crops an item mid-resize: the box grows outward to the full image at the same scale (the picture stays
@@ -974,6 +985,12 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   }
   function onPointerUp(e){
     if (!drag) return;
+    // A cancelled pointer is no click: a press that never moved / never grew into a box just ends.
+    if (e.type === "pointercancel" && (drag.kind === "zoomdrag" || drag.kind === "marquee") && !drag.moved && !drag.active){
+      if (drag.el) drag.el.remove();
+      drag = null;
+      return;
+    }
     if (drag.kind === "zoomdrag" && !drag.moved && onContextMenu){
       // Same rule as the library grid: right-clicking an item outside the selection selects just it.
       const hit = drag.itemId && items.has(drag.itemId) ? drag.itemId : null;
@@ -1001,15 +1018,15 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     if (e.button === 1 || (e.button === 0 && e.altKey)){
       e.preventDefault();
       drag = { kind: "pan", startClient: { x: e.clientX, y: e.clientY }, startVx: vx, startVy: vy, fine: e.shiftKey };
-      viewportEl.style.cursor = "grabbing";
       el_setPointerCapture(e);
+      syncDragCursor();
       return;
     }
     if (e.button === 2){
       e.preventDefault();
       const r = viewportEl.getBoundingClientRect();
       // A right-click that never turns into a zoom drag opens the item menu (see onPointerUp).
-      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, moved: false, fine: e.shiftKey, itemId: e.target.closest?.(".citem")?.dataset.id || null };
+      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, scale0: zoom, moved: false, fine: e.shiftKey, itemId: e.target.closest?.(".citem")?.dataset.id || null };
       el_setPointerCapture(e);
       return;
     }
@@ -1043,13 +1060,15 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     lastPtr = { x: e.clientX, y: e.clientY };
     if (altDown !== e.altKey){ altDown = e.altKey; updateCrop(); }
     onPointerMove(e);
+    syncDragCursor();
     if (!drag && !frameEl.hidden) updateHandleCorner();
     if (altDown) refreshCropTarget();
   });
-  window.addEventListener("pointerup", (e) => {
+  // (a cancelled pointer — a lost capture, the OS taking it — ends the drag like a release)
+  for (const t of ["pointerup", "pointercancel"]) window.addEventListener(t, (e) => {
     if (!isOpen) return;
-    if (drag && drag.kind === "pan") viewportEl.style.cursor = "default";
     onPointerUp(e);
+    syncDragCursor();
   });
   viewportEl.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -1076,6 +1095,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     if (!pinching){
       annot?.abortGesture();
       if (drag) onPointerUp(e);
+      syncDragCursor();
       pinching = true;
     }
     e.preventDefault();
@@ -1494,6 +1514,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   function close(){
     stopFly();   // a glide still running would write the old board's camera over this one
     isOpen = false;
+    drag = null; // (a drag left over would put its cursor back on the next pointer move after a reopen)
+    setCursor(viewportEl, "gesture", null);
     updateFrame();
     if (annot?.isOn()) annot.toggle(false);  // saves what is pending; the mode is not carried out of the board view
     return persistCurrent();

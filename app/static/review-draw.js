@@ -976,7 +976,9 @@ var SightReviewDraw = (function(){
         if (m.f && key && typeof b[key] === "number"){
           d[key] = RC.clamp(b[key] * m.f, 0.5 * k, vb[2] * 0.5);
           var g = d[key] / b[key];
-          if (b[key] > 0) WFOLLOW.forEach(function(x){ if (typeof b[x] === "number") d[x] = b[x] * g; });
+          // (A lasso's fill does not follow the outline; old data without a gap gets the size-derived one written down.)
+          if (RC.isFillStroke(b)){ if (!(Number(b.gap) > 0)) d.gap = RC.hatchMetrics(b).gap0; }
+          else if (b[key] > 0) WFOLLOW.forEach(function(x){ if (typeof b[x] === "number") d[x] = b[x] * g; });
         }
         if (m.dOp != null) d.opacity = RC.opAfter(b.opacity, m.dOp);
       });

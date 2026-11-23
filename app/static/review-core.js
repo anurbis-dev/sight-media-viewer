@@ -377,6 +377,8 @@ var SightReviewCore = (function(){
   // A lasso's hatch, as drawn: {gap0: data's spacing (fallback size, 8), gap: the spacing actually used (capped for
   // huge areas, as hatchPath / dotsPath do — without pts, uncapped), width: the lines' width / the dots' diameter,
   // auto: the width Auto draws, autoStored: the hatchWidth that draws exactly that (auto · gap0 / gap)}, doc units.
+  // Data without `gap` (before the lasso stored it) keeps the old fallback to size, so it draws as it always did;
+  // an edit that changes size must first write that gap down (annotate.js / review-draw.js) to stop the coupling.
   // data.hatchWidth (0.109+): absent or 0 = auto (0.18 / 0.4 of the spacing, the look before it existed); it is
   // relative to gap0: where the spacing is capped it grows by the same factor. Sight's Lines control starts a drag
   // from Auto at autoStored.
@@ -389,8 +391,14 @@ var SightReviewCore = (function(){
       gap = dots ? Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0) : Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);
     }
     var auto = dots ? gap * 0.4 : Math.max(0.3, gap * 0.18), hw = Number(d.hatchWidth) > 0 ? Number(d.hatchWidth) : 0;
-    return { gap0: gap0, gap: gap, auto: auto, autoStored: auto * gap0 / gap, width: hw ? Math.max(0.1, hw * gap / gap0) : auto };
+    // The width never exceeds HATCH_CAP of the spacing (lines / dots stay distinct, never merge into solid): cap is the
+    // drawn maximum, capStored the same in data.hatchWidth's terms (relative to gap0). A stored width above it draws as it.
+    return { gap0: gap0, gap: gap, auto: auto, autoStored: auto * gap0 / gap, cap: gap * HATCH_CAP, capStored: gap0 * HATCH_CAP,
+      width: hw ? Math.max(0.1, Math.min(hw * gap / gap0, gap * HATCH_CAP)) : auto };
   }
+  var HATCH_CAP = 0.9;
+  // A closed pattern-filled stroke (the lasso): its fill (gap, hatchWidth) is independent of the outline's size.
+  function isFillStroke(d){ return !!(d && d.close && d.pattern && d.pattern !== "none"); }
 
   // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
   // Arrows spread evenly along the stroke (about data.step apart), each data.len long along the stroke's
@@ -1280,7 +1288,7 @@ var SightReviewCore = (function(){
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
-    hatchMetrics: hatchMetrics, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
+    hatchMetrics: hatchMetrics, isFillStroke: isFillStroke, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
     sizeOpDrag: sizeOpDrag, opAfter: opAfter,

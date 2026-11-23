@@ -1,16 +1,21 @@
 // Version compare: several images / videos (usually versions of one shot) side by side or stacked.
 //
-// Layouts: "swipe" — every visible layer stacked in one view, cut into regions by N-1 draggable
-// split lines (each layer shows in its own region); "grid" (tiles), "row" (horizontal strip),
-// "col" (vertical strip) — one cell per layer. Pan / zoom are shared by every cell.
-// Blend: "over" — layers are drawn as they are; "difference" — each layer is drawn with
-// mix-blend-mode: difference over the reference layer (★), so identical pixels go black.
+// Layouts: "stack" — every visible layer stacked in one view; "grid" (tiles), "row" (horizontal
+// strip), "col" (vertical strip) — one cell per layer. Pan / zoom are shared by every cell.
+// Stack options (P.swipe, P.blend; the bar shows them only in Stack):
+//   Swipe on — the view is cut into regions by N-1 draggable split lines, region i shows visible
+//   layer i over the reference (★), which is drawn whole underneath. Swipe off — no splits: the
+//   layers lie full-frame in chip order, the first visible chip on top.
+//   Blend "over" — layers are drawn as they are; "difference" — mix-blend-mode: difference. Swipe
+//   off: every layer over the ones below it (the bottom one plain). Swipe on: each region's layer
+//   over the reference underneath (regions do not overlap, so that is all that lies below).
+// A stored layout "swipe" (prefs, a note's FORMAT.md `compare`) is Stack with Swipe on; notes write
+// "swipe" / "stack" for Stack with Swipe on / off, so an older Sight still opens the swipe look.
 // Video: one timeline for all layers. Each layer has a start offset in frames (where its first
 // frame sits on the timeline), so clips that start or run differently can be lined up. Playback
 // runs on one clock that waits for the slowest clip: a clip still seeking / buffering holds the clock
 // (every clip pauses on its frame) until all can play, then they start together; small drift is
-// nudged with playbackRate. One decoder per clip: the reference's copies under Difference tiles are
-// canvases painted from its video. A scrub proxy is decoded only while a drag is showing it, so it
+// nudged with playbackRate. One decoder per clip. A scrub proxy is decoded only while a drag is showing it, so it
 // does not take a hardware decoder away from playback. The server keeps a RAM window around each
 // clip's playhead (/api/video/focus items — the budget split between the clips). A drag scrubs a
 // short-GOP proxy per clip (made when the compare opens, up to a few at once): one seek in flight,
@@ -23,7 +28,7 @@
 // The proxy stays over the full file until that frame is presented, then its decoder is dropped.
 //
 // Input on the picture is the viewer's: click plays / pauses, left drag scrubs (Shift a tenth), right drag zooms,
-// middle drag pans; a swipe split is grabbed only by a press right on it. Shift slows every drag (scrub, zoom,
+// middle drag pans, double-click / F fits; a swipe split is grabbed only by a press right on it. Shift slows every drag (scrub, zoom,
 // pan, split, a clip's offset). Layer chips: click shows / hides, middle-click removes, drag reorders; the offset
 // field is dragged sideways (or clicked to type).
 //
@@ -36,9 +41,18 @@
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { attachViewerInput } from "/static/viewer-input.js";
+import { setCursor } from "/static/cursors.js";
 
 const COLORS = ["#4c9aff", "#ff9f0a", "#34c759", "#ff453a", "#af52de", "#32ade6", "#ffd60a", "#ff6482"];
-const LAYOUTS = [["swipe", "Swipe", "Digit1"], ["grid", "Tile", "Digit2"], ["row", "Row", "Digit3"], ["col", "Column", "Digit4"]];
+const LAYOUTS = [["stack", "Stack", "Digit1"], ["grid", "Tile", "Digit2"], ["row", "Row", "Digit3"], ["col", "Column", "Digit4"]];
+// A layout as stored (prefs, a note) → {layout, swipe}: "swipe" (before 0.112, and what a note writes for
+// Stack with Swipe on) is Stack with Swipe on; "stack" in a note is Stack with Swipe off; swipe null = keep.
+function readLayout(v){
+  if (v === "swipe") return { layout: "stack", swipe: true };
+  if (v === "stack") return { layout: "stack", swipe: false };
+  if (LAYOUTS.some(([k]) => k === v)) return { layout: v, swipe: null };
+  return null;
+}
 const PREF_KEY = "sight.compare";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -70,17 +84,29 @@ export function flash(text, ms = 2400){
 
 export function createCompare(host){
   injectStyles();
-  let P = { layout: "swipe", blend: "over", dir: "x", loop: true };
+  let P = { layout: "stack", swipe: true, blend: "over", dir: "x", loop: true };
   try { P = { ...P, ...(JSON.parse(localStorage.getItem(PREF_KEY)) || {}) }; } catch {}
+  {
+    // (stored before 0.112: layout "swipe", no swipe key — that is Stack with Swipe on)
+    const lay = P.layout === "stack" ? { layout: "stack", swipe: null } : readLayout(P.layout);
+    P.layout = lay?.layout || "stack";
+    P.swipe = lay?.swipe ?? (typeof P.swipe === "boolean" ? P.swipe : true);
+  }
   // A comparison opened from a note shows the look it was made with (C.pBase = the preferences before it);
   // only what is changed here is saved, and the rest goes back when it closes.
+  const PREF_LOOK = ["layout", "swipe", "blend", "dir"];
   const prefsToSave = () => {
     if (!C?.pBase) return { ...P };
     const out = { ...P };
-    for (const k of ["layout", "blend", "dir"]) if (!C.userSet.has(k)) out[k] = C.pBase[k];
+    for (const k of PREF_LOOK) if (!C.userSet.has(k)) out[k] = C.pBase[k];
     return out;
   };
-  const savePrefs = () => { try { host.putSetting(PREF_KEY, JSON.stringify(prefsToSave())); } catch {} };
+  const stacked = () => P.layout === "stack";
+  const swiping = () => P.layout === "stack" && !!P.swipe; // the split lines are up
+  const diffOn = () => P.layout === "stack" && P.blend === "difference"; // (Difference is a Stack option)
+  // (Stack with Swipe on is stored as layout "swipe", as a note writes it, so an older Sight reading the same
+  // settings still finds a layout it knows; readLayout maps it back.)
+  const savePrefs = () => { try { const o = prefsToSave(); if (o.layout === "stack" && o.swipe) o.layout = "swipe"; host.putSetting(PREF_KEY, JSON.stringify(o)); } catch {} };
   let C = null; // the open session
 
   // ---- open / close ----------------------------------------------------------------------------
@@ -102,10 +128,10 @@ export function createCompare(host){
       <div class="cmp-bar">
         <b>Compare</b>
         <div class="cmp-seg" data-g="layout">${LAYOUTS.map(([k, n], i) => `<button type="button" data-v="${k}" title="${n} (${i + 1})">${n}</button>`).join("")}</div>
-        <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are (D toggles)">Over</button><button type="button" data-v="difference" title="Difference against the reference ★ — equal pixels go black (D)">Difference</button></div>
+        <button type="button" class="cmp-b" data-a="swipe" title="Swipe — cut the stack with split lines, one region per layer; off: the layers lie whole, the first chip on top (S)">Swipe</button>
         <button type="button" class="cmp-b" data-a="dir" title="Split direction (V)"></button>
-        <button type="button" class="cmp-b" data-a="fit" title="Fit (F) · wheel / right-drag zooms · middle-drag pans">Fit</button>
-        <span class="cmp-hint">Click play · drag scrub (Shift fine) · right-drag zoom · middle-drag pan · [ ] shift layer · ↑↓ layer · R reference · H hide · Esc</span>
+        <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against the ones below it (with Swipe: against the reference ★) — equal pixels go black (D)">Difference</button></div>
+        <span class="cmp-hint">Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · dbl-click / F fit · S swipe · D difference · [ ] shift layer · ↑↓ layer · R reference · H hide · Esc</span>
         <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost cmp-lbtn on" data-a="close" type="button" style="width:40px;padding:0" title="Close the comparison (K)" aria-label="Close the comparison" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
@@ -143,7 +169,8 @@ export function createCompare(host){
       if (layer(session.ref)) C.ref = session.ref;
       if (layer(session.sel)) C.sel = C.sound = session.sel;
       for (const l of C.layers){ const f = Number(session.starts?.[l.id]); if (Number.isFinite(f)) l.start = Math.round(f); }
-      if (LAYOUTS.some(([k]) => k === session.layout)) P = { ...P, layout: session.layout };
+      const lay = readLayout(session.layout);
+      if (lay){ P = { ...P, layout: lay.layout }; if (lay.swipe != null) P.swipe = lay.swipe; }
       if (session.blend === "over" || session.blend === "difference") P = { ...P, blend: session.blend };
       if (session.dir === "x" || session.dir === "y") P = { ...P, dir: session.dir };
     }
@@ -212,15 +239,10 @@ export function createCompare(host){
     const n = visible().length;
     C.splits = Array.from({ length: Math.max(0, n - 1) }, (_, i) => (i + 1) / n);
   }
-  function mkMedia(l, primary, mirror){
+  function mkMedia(l, primary){
     const a = l.a;
     let m;
-    if (mirror){
-      // A copy of a clip that already has a <video> on the stage: painted from it every frame (paintMirrors), so
-      // the clip is decoded once and the copy can never drift from it.
-      m = document.createElement("canvas");
-      m.width = m.height = 0;
-    } else if (isVideo(a)){
+    if (isVideo(a)){
       m = document.createElement("video");
       m.preload = "auto";
       m.playsInline = true;
@@ -231,7 +253,6 @@ export function createCompare(host){
         if (!C) return;
         C.focusDirty = true;
         if (primary){ l.nw = m.videoWidth || l.nw; l.nh = m.videoHeight || l.nh; if (Number.isFinite(m.duration)) l.dur = m.duration; }
-        else if (Number.isFinite(m.duration) && !l.media.some((x) => x._primary)) l.dur = m.duration; // (a hidden ★'s copy)
         place(); paintTimeline();
       });
       // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
@@ -422,10 +443,35 @@ export function createCompare(host){
     const st = C.stage;
     st.innerHTML = "";
     // (prefixed: a bare "row" is the sidebar's menu-row class, whose fixed height flattened the Row layout to nothing)
-    st.className = "cmp-stage lay-" + P.layout;
-    const vis = visible(), ref = refLayer(), diff = P.blend === "difference";
+    st.className = "cmp-stage lay-" + P.layout + [...st.classList].filter((c) => c.startsWith("cur-")).map((c) => " " + c).join(""); // (cursors.js keeps its classes)
+    setCursor(st, "base", vids().length ? null : "grab"); // pictures only: a left drag pans
+    setCursor(st, "hover", null); // (the splits are rebuilt: the next pointer move finds one again)
+    const vis = visible(), ref = refLayer(), diff = diffOn();
     if (!vis.length){ st.innerHTML = `<div class="cmp-empty">All layers are hidden</div>`; paintAll(); return; }
-    if (P.layout === "swipe"){
+    const label = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}${l === ref ? " ★" : ""}`;
+    if (stacked() && !P.swipe){
+      // Swipe off: every visible layer whole, the last chip at the bottom and the first on top. Over: the top
+      // one covers the rest (a clip outside its span dims and shows what is under it). Difference: each layer
+      // over everything below it, the bottom one plain. The reference only sets the frame here.
+      const box = document.createElement("div");
+      box.className = "cmp-box";
+      st.appendChild(box);
+      [...vis].reverse().forEach((l, k) => {
+        const w = document.createElement("div");
+        w.className = "cmp-ly" + (k ? "" : " base");
+        if (diff && k) w.style.mixBlendMode = "difference";
+        w.appendChild(mkMedia(l, true));
+        box.appendChild(w);
+      });
+      // Names, top layer first: Over shows only the one on top (the one you see), Difference all of them.
+      (diff ? vis : vis.slice(0, 1)).forEach((l, j) => {
+        const lb = document.createElement("div");
+        lb.className = "cmp-lbl";
+        lb.style.top = `${10 + j * 26}px`;
+        lb.innerHTML = label(l);
+        box.appendChild(lb);
+      });
+    } else if (stacked()){
       if (C.splits.length !== vis.length - 1) resetSplits();
       const box = document.createElement("div");
       box.className = "cmp-box";
@@ -448,7 +494,7 @@ export function createCompare(host){
         const lb = document.createElement("div");
         lb.className = "cmp-lbl";
         lb.dataset.i = String(i);
-        lb.innerHTML = `<i style="background:${l.color}"></i>${esc(l.a.name)}${l === ref ? " ★" : ""}`;
+        lb.innerHTML = label(l);
         box.appendChild(lb);
       });
       C.splits.forEach((p, i) => {
@@ -459,10 +505,8 @@ export function createCompare(host){
         box.appendChild(h);
       });
     } else {
+      // (no blend in cells: Over / Difference are Stack options)
       const n = vis.length;
-      // The reference's copies under the other cells: a canvas painted from its video when the reference has a
-      // cell of its own (or one copy already decodes it), so it is decoded once.
-      const refCopy = () => mkMedia(ref, false, isVideo(ref.a) && (vis.includes(ref) || ref.media.some((m) => m.tagName === "VIDEO")));
       let cols = n, rows = 1;
       if (P.layout === "col"){ cols = 1; rows = n; }
       else if (P.layout === "grid"){ cols = Math.ceil(Math.sqrt(n)); rows = Math.ceil(n / cols); }
@@ -472,20 +516,13 @@ export function createCompare(host){
         const cell = document.createElement("div");
         cell.className = "cmp-cell" + (l.id === C.sel ? " sel" : "");
         cell.dataset.id = l.id;
-        if (diff && l !== ref){
-          const b = document.createElement("div");
-          b.className = "cmp-ly base";
-          b.appendChild(refCopy());
-          cell.appendChild(b);
-        }
         const w = document.createElement("div");
         w.className = "cmp-ly";
-        if (diff && l !== ref) w.style.mixBlendMode = "difference";
         w.appendChild(mkMedia(l, true));
         cell.appendChild(w);
         const lb = document.createElement("div");
         lb.className = "cmp-lbl";
-        lb.innerHTML = `<i style="background:${l.color}"></i>${esc(l.a.name)}${l === ref ? " ★" : ""}`;
+        lb.innerHTML = label(l);
         cell.appendChild(lb);
         st.appendChild(cell);
       }
@@ -496,7 +533,7 @@ export function createCompare(host){
     paintAll();
     reportView();
   }
-  // The selected layer's viewer for the annotator: the box it is drawn in (swipe: the whole box — a drawing
+  // The selected layer's viewer for the annotator: the box it is drawn in (Stack: the whole box — a drawing
   // anywhere maps into the selected layer's picture), its media element and its geometry (object-fit: contain
   // inside the element's box, so a layer of another shape is placed as it is shown).
   function reportView(){
@@ -504,7 +541,7 @@ export function createCompare(host){
     const l = layer(C.sel);
     let wrap = null, media = null;
     if (l && l.vis){
-      if (P.layout === "swipe"){
+      if (stacked()){
         wrap = C.stage.querySelector(".cmp-box");
         media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
       } else {
@@ -527,7 +564,7 @@ export function createCompare(host){
     if (!C) return;
     const ref = refLayer();
     const rw = ref.nw || 1600, rh = ref.nh || 900;
-    const boxes = P.layout === "swipe" ? [...C.stage.querySelectorAll(".cmp-box")] : [...C.stage.querySelectorAll(".cmp-cell")];
+    const boxes = stacked() ? [...C.stage.querySelectorAll(".cmp-box")] : [...C.stage.querySelectorAll(".cmp-cell")];
     for (const box of boxes){
       const W = box.clientWidth, H = box.clientHeight;
       const s = Math.min(W / rw, H / rh) * C.view.zoom;
@@ -536,7 +573,7 @@ export function createCompare(host){
       for (const m of box.querySelectorAll(".cmp-m")) Object.assign(m.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px" });
     }
     host.onPlaced?.();
-    if (P.layout !== "swipe") return;
+    if (!swiping()) return;
     const box = boxes[0];
     if (!box) return;
     const edges = [0, ...C.splits, 1], horiz = P.dir === "x";
@@ -610,7 +647,6 @@ export function createCompare(host){
     }
     C.last = now;
     syncVideos(now);
-    paintMirrors();
     pushFocus(now);
   }
   // Keeps every video element on the shared clock. Playing: a clip that is seeking, buffering or more than
@@ -743,34 +779,12 @@ export function createCompare(host){
     }
     if (was !== !!C.wait) paintTime();
   }
-  // The copies (canvases) take their clip's current picture.
-  function paintMirrors(){
-    for (const l of C.layers){
-      if (!isVideo(l.a)) continue;
-      let src = null;
-      const sc = l.scrub;
-      // Difference tiles paint from the proxy element while it is the picture on screen.
-      const proxy = sc && !sc.hidden && sc.readyState >= 2 && sc.videoWidth ? sc : null;
-      for (const m of l.media){
-        if (m.tagName !== "CANVAS") continue;
-        if (!src) src = proxy || l.media.find((x) => x.tagName === "VIDEO" && x.readyState >= 2 && x.videoWidth);
-        if (!src || src.seeking) continue; // (mid-seek, currentTime already reads the target over the old frame)
-        const k = `${src.currentTime}|${src.videoWidth}x${src.videoHeight}`;
-        if (m._k === k) continue;
-        m._k = k;
-        const s = Math.min(1, 4096 / src.videoWidth); // (full size: Difference against a softened copy would show edges)
-        const w = Math.max(1, Math.round(src.videoWidth * s)), h = Math.max(1, Math.round(src.videoHeight * s));
-        if (m.width !== w || m.height !== h){ m.width = w; m.height = h; }
-        try { m.getContext("2d").drawImage(src, 0, 0, w, h); } catch {}
-      }
-    }
-  }
   // Tell the server where every clip's playhead is, so its RAM window (split between the clips) follows them.
   // Posted as soon as the comparison opens (paused too), again when a duration arrives or the playhead jumps,
   // and about once a second while playing. `gen` is this client's cache generation: a lightbox post already
   // in flight carries an older one and the server leaves these windows alone.
   function pushFocus(now){
-    const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO")); // (a hidden ★ can decode under tiles)
+    const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO")); // (a hidden ★ still decodes as the swipe base)
     if (!v.length) return;
     const due = C.focusDirty ? 150 : C.playing ? 1000 : Infinity;
     if (now - (C.focusAt || 0) < due) return;
@@ -812,8 +826,14 @@ export function createCompare(host){
     const el = C.el;
     el.querySelectorAll(".cmp-seg[data-g=layout] button").forEach((b) => b.classList.toggle("on", b.dataset.v === P.layout));
     el.querySelectorAll(".cmp-seg[data-g=blend] button").forEach((b) => b.classList.toggle("on", b.dataset.v === P.blend));
+    // Swipe and Over / Difference are Stack options: hidden in Tile / Row / Column (the blend is kept for Stack).
+    el.querySelector(".cmp-seg[data-g=blend]").hidden = !stacked();
+    const sw = el.querySelector("[data-a=swipe]");
+    sw.hidden = !stacked();
+    sw.classList.toggle("on", !!P.swipe);
+    sw.setAttribute("aria-pressed", P.swipe ? "true" : "false");
     const dir = el.querySelector("[data-a=dir]");
-    dir.hidden = P.layout !== "swipe";
+    dir.hidden = !swiping();
     dir.textContent = P.dir === "x" ? "⇹ Side by side" : "⇳ Top / bottom";
   }
   function paintLayers(){
@@ -825,7 +845,7 @@ export function createCompare(host){
       return `<div class="cmp-chip${l.id === C.sel ? " sel" : ""}${l.vis ? "" : " off"}" data-id="${l.id}" draggable="true" title="${esc(l.a.path || l.a.name)} — click shows / hides (H) · middle-click removes · drag to reorder">
         <i class="cmp-dot" style="background:${l.color}"></i>
         <span class="cmp-nm">${esc(l.a.name)}</span>
-        <button type="button" data-a="ref" class="${l === ref ? "on" : ""}" title="${l === ref ? "Reference" : "Make reference (R)"} — the base the others are compared against">${l === ref ? "★" : "☆"}</button>
+        <button type="button" data-a="ref" class="${l === ref ? "on" : ""}" title="${l === ref ? "Reference" : "Make reference (R)"} — its picture sets the frame; with Swipe it lies whole under the regions, the base the others are compared against">${l === ref ? "★" : "☆"}</button>
         ${v ? `<span class="cmp-off" title="Where this clip's first frame sits on the timeline — drag sideways to slide it (Shift slower), click to type · [ ] (Shift ×10)"><em data-a="ov">${l.start > 0 ? "+" : ""}${l.start}f</em></span>
           <button type="button" data-a="snd" class="${C.sound === l.id ? "on" : ""}" title="${C.sound === l.id ? "Sound from this clip" : "Play this clip's sound"}">${C.sound === l.id ? "🔊" : "🔈"}</button>` : ""}
         <button type="button" data-a="lb" title="Open in the viewer">⤢</button>
@@ -1100,7 +1120,7 @@ export function createCompare(host){
       const a = b.dataset.a;
       if (a === "close") close();
       else if (a === "annot") host.onAnnotButton?.();
-      else if (a === "fit") fit();
+      else if (a === "swipe") setPref("swipe", !P.swipe);
       else if (a === "dir") setPref("dir", P.dir === "x" ? "y" : "x");
     });
     el.querySelector(".cmp-tl").addEventListener("click", (e) => {
@@ -1311,7 +1331,7 @@ export function createCompare(host){
   // The split a press grabs: only one within reach of the pointer (a mouse needs to be close, a finger less so).
   // -1: none, the press is the picture's (scrub / play).
   function splitNear(e, anyDistance){
-    if (!C || P.layout !== "swipe" || !C.splits.length) return -1;
+    if (!C || !swiping() || !C.splits.length) return -1;
     const box = C.stage.querySelector(".cmp-box");
     if (!box) return -1;
     const r = box.getBoundingClientRect(), horiz = P.dir === "x";
@@ -1325,16 +1345,18 @@ export function createCompare(host){
   // Alt held (as Alt scrubs a video in the viewer), a finger or pen moves the split it lands on — drawing is
   // skipped then.
   function wantsPress(e){
-    if (!C || P.layout !== "swipe" || !C.splits.length || e.button !== 0) return false;
+    if (!C || !swiping() || !C.splits.length || e.button !== 0) return false;
     if (e.altKey) return true;
     if (e.pointerType !== "touch" && e.pointerType !== "pen") return false;
     return splitNear(e) >= 0;
   }
-  // The layer a press lands on: a tile's own, or in swipe the region under the pointer.
+  // The layer a press lands on: a tile's own, or in swipe the region under the pointer. A stack without splits:
+  // Over — the layer on top (the one you see); Difference — none (the selection stays: every layer is in view).
   function layerAt(e, box){
     if (box.classList.contains("cmp-cell")) return box.dataset.id;
     const vis = visible();
     if (!vis.length) return null;
+    if (!swiping()) return P.blend === "difference" ? null : vis[0].id;
     const r = box.getBoundingClientRect(), horiz = P.dir === "x";
     const f = horiz ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height;
     const edges = [0, ...C.splits, 1];
@@ -1403,12 +1425,7 @@ export function createCompare(host){
         zoomAt(box, C.view.zoom * f, x - r.left, y - r.top);
       },
       zoomSettings: () => host.getZoomSettings?.() || {},
-      onDrag: (k) => {
-        if (!C) return;
-        C.stage.classList.toggle("panning", k === "pan");
-        C.stage.classList.toggle("zooming", k === "zoom");
-        C.stage.classList.toggle("scrubbing", k === "scrub");
-      },
+      // (the gesture cursors — grabbing, zoom-in / -out, ew-resize, a split's resize — are viewer-input.js's)
       // A second finger: the annotator's stroke is dropped, a timeline scrub ends where it is.
       abortOthers: () => {
         host.abortAnnot?.();
@@ -1422,6 +1439,7 @@ export function createCompare(host){
     const r = box.getBoundingClientRect(), horiz = P.dir === "x";
     const d = { p0: C.splits[k], at: horiz ? e.clientX : e.clientY, span: horiz ? r.width : r.height, fine: e.shiftKey };
     return {
+      cursor: horiz ? "resize-x" : "resize-y",
       move: (ev) => {
         if (!C || !box.isConnected || k >= C.splits.length) return; // (rebuilt mid-drag: the split is gone)
         const at = P.dir === "x" ? ev.clientX : ev.clientY;
@@ -1447,8 +1465,7 @@ export function createCompare(host){
   }
   function hoverCursor(e){
     const k = e.pointerType === "mouse" && !host.annotating?.() ? splitNear(e) : -1;
-    C.stage.classList.toggle("near-x", k >= 0 && P.dir === "x");
-    C.stage.classList.toggle("near-y", k >= 0 && P.dir !== "x");
+    setCursor(C.stage, "hover", k < 0 ? null : P.dir === "x" ? "resize-x" : "resize-y");
   }
   // 100 % of the reference's own pixels.
   function actual(){
@@ -1472,8 +1489,9 @@ export function createCompare(host){
       ["Shift+BracketLeft", () => shift(C.sel, -10)], ["Shift+BracketRight", () => shift(C.sel, 10)],
       ["ArrowUp", () => selectStep(-1)], ["ArrowDown", () => selectStep(1)],
       ...LAYOUTS.map(([k, , combo]) => [combo, () => setPref("layout", k)]),
-      ["KeyD", () => setPref("blend", P.blend === "difference" ? "over" : "difference")],
-      ["KeyV", () => { if (P.layout === "swipe") setPref("dir", P.dir === "x" ? "y" : "x"); }],
+      ["KeyD", () => { if (stacked()) setPref("blend", P.blend === "difference" ? "over" : "difference"); else toast("Over / Difference are Stack options (1)"); }],
+      ["KeyS", () => { if (stacked()) setPref("swipe", !P.swipe); else toast("Swipe is a Stack option (1)"); }],
+      ["KeyV", () => { if (swiping()) setPref("dir", P.dir === "x" ? "y" : "x"); }],
       ["KeyF", () => fit()], ["Digit0", () => actual()],
       ["KeyH", () => toggleVis(C.sel)], ["KeyR", () => setRef(C.sel)],
       ["KeyL", () => setPref("loop", !P.loop)],
@@ -1489,7 +1507,9 @@ export function createCompare(host){
     if (!C) return null;
     const starts = {};
     for (const l of C.layers) if (isVideo(l.a) && l.start) starts[l.id] = l.start;
-    return { ids: C.layers.map((l) => l.id), ref: C.ref, sel: C.sel, layout: P.layout, blend: P.blend, dir: P.dir, starts };
+    // (Stack is written as "swipe" / "stack" — Swipe on / off — so an older Sight still opens the swipe look)
+    const layout = stacked() ? (P.swipe ? "swipe" : "stack") : P.layout;
+    return { ids: C.layers.map((l) => l.id), ref: C.ref, sel: C.sel, layout, blend: P.blend, dir: P.dir, starts };
   }
   // The annotator stops: on the frame the selected clip is showing (its drawing is stored at that element
   // time), not the clock's snapped / drifted one.
@@ -1521,13 +1541,14 @@ export function createCompare(host){
     C.focusDirty = true;
     paintTime();
   }
-  function relayout(){ if (C) requestAnimationFrame(() => place()); }
+  // (also on annotating on / off: a split's hover cursor is not the annotator's — the next move sets it again)
+  function relayout(){ if (C){ setCursor(C.stage, "hover", null); requestAnimationFrame(() => place()); } }
   // The view on screen as a picture, for the annotator's screenshot: every visible layer where and how it is
-  // shown (swipe regions, tiles, Difference, dimmed clips outside their span), split lines and name labels.
-  // Swipe: the box; tiles: the whole stage. ox / oy: the annotated surface's place in it (CSS px).
+  // shown (stacked layers or swipe regions, tiles, Difference, dimmed clips outside their span), split lines and
+  // name labels. Stack: the box; tiles: the whole stage. ox / oy: the annotated surface's place in it (CSS px).
   function captureView(dpr){
     if (!C) return null;
-    const root = P.layout === "swipe" ? C.stage.querySelector(".cmp-box") : C.stage;
+    const root = stacked() ? C.stage.querySelector(".cmp-box") : C.stage;
     if (!root) return null;
     const R = root.getBoundingClientRect();
     const cv = document.createElement("canvas");
@@ -1536,7 +1557,7 @@ export function createCompare(host){
     cx.fillStyle = "#000";
     cx.fillRect(0, 0, cv.width, cv.height);
     const rel = (el) => { const b = el.getBoundingClientRect(); return { x: b.left - R.left, y: b.top - R.top, w: b.width, h: b.height }; };
-    const boxes = P.layout === "swipe" ? [root] : [...root.querySelectorAll(".cmp-cell")];
+    const boxes = stacked() ? [root] : [...root.querySelectorAll(".cmp-cell")];
     for (const box of boxes){
       const B = rel(box);
       cx.save();
@@ -1556,8 +1577,7 @@ export function createCompare(host){
         if (ly.style.mixBlendMode === "difference") cx.globalCompositeOperation = "difference";
         if (ly.classList.contains("out")) cx.globalAlpha = 0.12;
         const x = parseFloat(m.style.left) || 0, y = parseFloat(m.style.top) || 0, w = parseFloat(m.style.width) || 0, h = parseFloat(m.style.height) || 0;
-        const cvs = m.tagName === "CANVAS"; // (a clip's copy under a Difference tile, see paintMirrors)
-        const nw = m.videoWidth || m.naturalWidth || (cvs ? m.width : w), nh = m.videoHeight || m.naturalHeight || (cvs ? m.height : h);
+        const nw = m.videoWidth || m.naturalWidth || w, nh = m.videoHeight || m.naturalHeight || h;
         if (nw && nh && w && h){
           const s = Math.min(w / nw, h / nh);
           try { cx.drawImage(m, (B.x + x + (w - nw * s) / 2) * dpr, (B.y + y + (h - nh * s) / 2) * dpr, nw * s * dpr, nh * s * dpr); } catch {}
@@ -1610,7 +1630,7 @@ function injectStyles(){
 .cmp-b { height: 28px; min-width: 28px; padding: 0 9px; border-radius: 7px; color: var(--muted); background: var(--surface-2); font-size: 12px; white-space: nowrap; }
 .cmp-b:hover { color: var(--fg); }
 .cmp-b.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.cmp-b[hidden] { display: none; }
+.cmp-b[hidden], .cmp-seg[hidden] { display: none; }
 .cmp-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: grid; gap: 2px; background: #000; touch-action: none; user-select: none; }
 .cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
@@ -1636,9 +1656,7 @@ function injectStyles(){
 .cmp-split b { position: absolute; width: 14px; height: 30px; border-radius: 7px; background: #fff; box-shadow: 0 1px 6px rgb(0 0 0 / .6); }
 .cmp-split.x b { left: -8px; top: calc(50% - 15px); }
 .cmp-split.y b { top: -8px; left: calc(50% - 15px); width: 30px; height: 14px; }
-.cmp-stage.lay-swipe { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
-.cmp-stage.near-x { cursor: ew-resize; } .cmp-stage.near-y { cursor: ns-resize; }
-.cmp-stage.scrubbing { cursor: ew-resize; } .cmp-stage.panning { cursor: grabbing; } .cmp-stage.zooming { cursor: zoom-in; }
+.cmp-stage.lay-stack { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
 .cmp-empty { display: grid; place-items: center; color: var(--subtle); }
 .cmp-foot { flex: none; border-top: 1px solid var(--border); background: var(--surface, #1b1c20); padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
 .cmp-tl { display: flex; align-items: center; gap: 6px; }

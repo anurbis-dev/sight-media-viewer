@@ -8,6 +8,8 @@
 - **Command palette** — `Ctrl/Cmd+K`: run actions, jump to a kind/collection/file.
 - **Filters** — sidebar lists kinds (image, video, audio, PSD, font, document, 3D model),
   tags and collections; click to filter, and drag assets into a collection to group them.
+  A click with a slightly shaky hand stays a click: a thumbnail is dragged only after the pointer has moved about 12 px.
+  A drag that is dropped on nothing (or cancelled with Esc) leaves the selection where it was.
 - **Tags** — select one or more assets and edit tags in the details panel.
 - **Details preview** — the details panel shows only the file's thumbnail plus its info, for every
   type. Playback, waveforms, font/text previews and the 3D viewer are in the lightbox (Space /
@@ -121,7 +123,7 @@
     icons, the same set as the phone app's: none, solid, a pattern (lines in four directions, grid, cross-hatch,
     dots, dashes) or *?* Random (a different pattern each stroke) — then fill colour, *Fill α*, *Spacing*
     (pattern density) and *Lines* (the hatch lines' thickness, for dots their size; *Auto* follows the spacing as
-    before — type 0 or right-click it to go back to Auto). A selected lasso (also one drawn before these tools,
+    before — type 0 or right-click it to go back to Auto; it is capped at 0.9 of the spacing, so the lines never merge, and neither it nor the spacing follows the outline's width). A selected lasso (also one drawn before these tools,
     with the brush's old *Close* switch) shows the same settings; erasing a piece out of it opens it. (The brush's
     *Close* switch and the arrow tool's *Stroke* button are gone: these two tools replace them.) Text: font, size,
     colour, bold / italic / underline,
@@ -188,8 +190,10 @@
     notes, and the sidebar (under Types) gets *Open notes / Needs review / Changes requested /
     Approved* rows that filter the library.
   - **Turn / mirror the view** — `Shift+R` turns a picture or video by 90°, the mirror button at
-    the top of the viewer (`Shift+M`) mirrors it; Sight remembers it per file. Only the
-    view changes: the file and the drawings on it stay as they are. Mirror and the annotate
+    the top of the viewer (`Shift+M`) mirrors it left to right, and the flip button next to it
+    (`Shift+V`) turns it upside down; Sight remembers all three per file. Only the
+    view changes: the file and the drawings on it stay as they are (drawings follow the turned /
+    flipped picture). The version compare shows every file unturned and unmirrored. Mirror, flip and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
   - **Reset the toolbar** — hold the pen button (the one that turns annotating on) for about a second: every tool's colours, sizes
     and options, the hold time and the frame stamp's look return to their defaults (a normal click still toggles annotating).
@@ -600,22 +604,27 @@
     to a file outside that set starts a new one. On a touch screen:
     select the files in the library beside the viewer (long-press a tile) and tap the compare button. A picture
     dropped while annotating is still added as a reference image instead; a drop no longer turns annotating on.
-  - Layouts (`1`–`4`): **Swipe** — all layers stacked in one view and cut by split lines, one
-    region per layer; press right on a split line to move it (anywhere else the press is the picture's, see
-    below), `V` switches between
-    side-by-side and top / bottom splits. **Tile**, **Row** (horizontal strip), **Column** (vertical
-    strip) — one cell per layer.
-  - Blend: **Over** shows the layers as they are; **Difference** (`D`) draws each layer as the
-    difference to the reference layer (★, `R` makes the selected layer the reference) — identical
-    pixels turn black, so any change stands out. Works in every layout.
+  - Layouts (`1`–`4`): **Stack** — all layers in one view, on top of each other. **Tile**, **Row** (horizontal
+    strip), **Column** (vertical strip) — one cell per layer.
+  - Stack has its own options in the top bar (hidden in the other layouts):
+    - **Swipe** (button, or `S`): on — the stack is cut by split lines, one region per layer (the first chip
+      on the left / top); press right on a split line to move it (anywhere else the press is the picture's,
+      see below), `V` (or the button next to Swipe) switches between side-by-side and top / bottom splits.
+      Off — no split lines: every layer lies whole, the first chip on top; a press on the picture selects that
+      top layer. Hide a layer (`H`) or drag the chips to see the ones under it.
+    - **Over** shows the layers as they are; **Difference** (`D`) — identical pixels turn black, so any
+      change stands out. With Swipe off, each layer is blended over all the layers below it (the bottom
+      one stays as it is); with Swipe on, each region shows its layer against the reference (★, `R` makes
+      the selected layer the reference), which lies whole under the regions.
   - On the picture, as in the viewer: **click** plays / pauses, **left drag** scrubs every clip (the width of the
     view is the whole timeline), **right drag** zooms, **middle drag** (or `Alt`+drag) pans. A press selects the
     layer under it. Touch: tap plays / pauses, one finger scrubs, two fingers pinch-zoom and pan. With pictures
     only (no video), a left drag pans. **`Shift` slows every drag down** — scrub, zoom, pan, a split, a clip's
     offset — and can be pressed or let go mid-drag without a jump.
   - Layers bar at the bottom: **click a chip** shows / hides that layer (`H`; one brought back becomes the
-    selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), ☆ reference, drag a
-    chip to reorder (touch: hold it, then drag; the whole chip follows) — the order is the order of the splits and tiles and is kept
+    selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), ☆ reference (its picture sets the
+    frame every layer is fitted to), drag a
+    chip to reorder (touch: hold it, then drag; the whole chip follows) — the order is the order of the splits, the stack (first on top) and the tiles and is kept
     with a note written in the comparison, ⤢ opens the file in the viewer, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
     `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
@@ -634,15 +643,15 @@
   - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
     **selected layer** — notes and drawings go to that file, at its own frame (a video layer's local
     time). While annotating, a click on a layer chip picks that layer (showing it if hidden) instead of hiding it — that is how you annotate another file. A note written here remembers the
-    comparison — the files, their order, reference, layout and offsets: its card in the viewer has
+    comparison — the files, their order, reference, layout (with Swipe on / off) and offsets: its card in the viewer has
     *⧉ Compare · N files*, which opens it again on the note's frame, and `K` on that file brings the same
     files back (the newest such note wins) instead of its versions. While annotating, the left button draws: `Alt`+drag
     moves the nearest split (as it scrubs a video in the viewer), and a finger or stylus that lands on a split
-    moves it instead of drawing. The tools' keys (`[` `]` brush size, `R` `V` `L` tools, `Shift+,` / `.`
+    moves it instead of drawing. The tools' keys (`[` `]` brush size, `R` `V` `L` tools, `S` screenshot, `Shift+,` / `.`
     markers) win over the compare's; leave annotating (`A` / Esc) to shift layers or change the reference by
     key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
-    layer in its split or tile, Difference, the split lines and names — with the drawings on top.
-  - Wheel zooms around the cursor (`Shift` slower), double-click or `F` fits, `0` shows the reference at 100 %. `Esc` / `K` closes.
+    layer in its split, stack or tile, Difference, the split lines and names — with the drawings on top.
+  - Wheel zooms around the cursor (`Shift` slower), double-click (double-tap) or `F` fits (there is no Fit button), `0` shows the reference at 100 %. `Esc` / `K` closes.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
   is kept; a Shift-range or a marquee adds them in grid order) and press Space over one of them, or
   click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back
@@ -815,6 +824,9 @@
   pause, double-click to switch Frame ↔ 100 %; a left drag on a picture pans it; middle-drag pans,
   right-drag and the wheel zoom. On a touch screen tap plays / pauses, one
   finger scrubs a video or pans a picture, two fingers pinch-zoom and pan.
+- The pointer shows what a drag does, the same everywhere (preview, compare, 3D, board, library, while annotating):
+  a grab hand over a picture, a closed hand while panning, zoom-in / zoom-out while zooming (by the drag's direction),
+  a turning arrow while rotating (Alt-turn, 3D orbit, a board item's turn handle) and a resize arrow while scrubbing.
 - **`Shift` slows every pan / zoom / scrub drag** — in the preview, version compare, on a board, in 3D and in a
   text document: scrubbing to a tenth, panning and zooming (right-drag and the wheel; Ctrl+Shift+wheel on a board)
   to a fifth. Press or let go of it mid-drag and the drag carries on from where it is, without a jump. Not slowed:

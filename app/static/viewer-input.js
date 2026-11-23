@@ -8,6 +8,8 @@
 // drag (scrub ×0.1, zoom / pan ×0.2) and may change mid-drag without a jump; two fingers pinch-zoom and pan
 // by their middle. A mode's own drags (a split, an Alt turn) are claimed before any of that.
 
+import { setCursor, zoomCursor } from "./cursors.js";
+
 export const DRAG_PX = 4;          // a press that moves less is a click
 export const CLICK_MS = 250;       // the click hold: a second click within it is a double-click
 export const ZOOM_DRAG = 0.012;    // right-drag zoom per px (× the theme's zoomSpeed)
@@ -56,9 +58,10 @@ export function pinchTracker(){
 // el: the element the viewer's picture lives in (listened to in the bubble phase, so an annotator's capture
 // listener on it or below sees presses first). Options, all optional:
 //   canStart(e) → bool        a press / wheel / double-click here belongs to the viewer (e.g. on a picture)
-//   claim(e) → null | "pan" | "zoom" | { move(ev), end(ev, cancelled) }
+//   claim(e) → null | "pan" | "zoom" | { move(ev), end(ev, cancelled), cursor? }
 //                             asked first on every press it may take (it may also note the press: compare
-//                             selects the layer under it); null: the default meaning of the button
+//                             selects the layer under it); null: the default meaning of the button.
+//                             cursor: the claimed drag's gesture cursor (cursors.js: "rotate", "resize-x" …)
 //   click()                   a click, after the 250 ms hold
 //   dblclick(e)               anywhere on el (canStart is not asked)
 //   scrub: { begin(e) → bool, to(frac, ev), end(cancelled) }
@@ -69,7 +72,9 @@ export function pinchTracker(){
 //   zoom(factor, x, y, down)  relative to the current view, about client point (x, y)
 //   zoomSettings() → {zoomAxis, zoomSpeed, zoomInvert}
 //   wheel: false              leave the wheel to the viewer
-//   onDrag(kind)              "pan" | "zoom" | "scrub" | "pinch" | null — for cursors
+//   onDrag(kind)              "pan" | "zoom" | "scrub" | "pinch" | null — the running gesture
+//   cursor: false             leave el's cursor alone (default: the running gesture's cursor goes on el through
+//                             cursors.js — grabbing, zoom-in / zoom-out by the drag's direction, ew-resize …)
 //   abortOthers()             a second finger came: cancel what the first one started elsewhere (an
 //                             annotator stroke, another control's scrub)
 // Returns { destroy(), cancel(), dropClick(), busy() }.
@@ -80,7 +85,8 @@ export function attachViewerInput(el, o = {}){
   const zs = () => o.zoomSettings?.() || {};
   const capture = (pid) => { try { el.setPointerCapture(pid); } catch {} }; // (synthetic / lost ids throw)
   const dropClick = () => { if (clickT){ clearTimeout(clickT); clickT = 0; } };
-  const setKind = (k) => { try { o.onDrag?.(k); } catch {} };
+  const cur = (k) => { if (o.cursor !== false) setCursor(el, "gesture", k); };
+  const setKind = (k) => { cur(k); try { o.onDrag?.(k); } catch {} };
   // A text field / editor inside el (an annotator's text box, a pin number) keeps its own press.
   const EDIT = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
   const editable = (e) => !!e.target?.closest?.(EDIT);
@@ -112,7 +118,8 @@ export function attachViewerInput(el, o = {}){
       if (d.kind === "claim") d.h.end?.(ev, cancelled);
       else if (d.kind === "scrub") o.scrub?.end?.(cancelled);
     } finally {
-      if (d.kind !== "press" && d.kind !== "claim") setKind(null);
+      if (d.kind === "claim") cur(null);
+      else if (d.kind !== "press") setKind(null);
     }
     // A click: decided on pointerup (not the click event, so an annotator's click suppression is not involved).
     // A second one inside the hold is a double-click's: neither toggles (the dblclick event does its own thing).
@@ -134,7 +141,7 @@ export function attachViewerInput(el, o = {}){
     if (e.pointerType === "touch" && touches.size > 1) return; // (the pinch has it)
     if (o.canStart && !o.canStart(e)) return;
     const c = o.claim?.(e);
-    if (c && typeof c === "object"){ e.preventDefault(); dropClick(); start("claim", e, { h: c }); return; }
+    if (c && typeof c === "object"){ e.preventDefault(); dropClick(); start("claim", e, { h: c }); if (c.cursor) cur(c.cursor); return; }
     let kind = c === "pan" || c === "zoom" ? c : null;
     if (!kind){
       if (e.button === 1) kind = "pan";
@@ -174,7 +181,12 @@ export function attachViewerInput(el, o = {}){
       g.frac += dx / Math.max(1, o.scrubWidth?.() || el.clientWidth) * (fine ? FINE_SCRUB : 1);
       o.scrub.to(g.frac, e);
     } else if (g.kind === "pan") o.pan(dx * f, dy * f, g.down);
-    else if (g.kind === "zoom") o.zoom(zoomFactorDrag(dx, dy, zs(), fine), g.x, g.y, g.down);
+    else if (g.kind === "zoom"){
+      const zf = zoomFactorDrag(dx, dy, zs(), fine);
+      g.zf = (g.zf ?? 1) * zf; // the cursor says which way this drag zooms in total (no flicker on a jittery pointer)
+      if (g.zf !== 1) cur(zoomCursor(g.zf));
+      o.zoom(zf, g.x, g.y, g.down);
+    }
   }
   function onWinUp(e){
     if (!g || g.kind === "pinch" || e.pointerId !== g.pid) return;

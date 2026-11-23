@@ -37,6 +37,8 @@ app/static/viewer-input.js shared pointer / gesture layer for the viewers (attac
                          zoomFactorWheel, pinchTracker — the last three also used by canvas.js and bind3dZoom): Compare's
                          stage and the lightbox 2D viewer (`attachViewer`, kept as `stage._vinput`, destroyed by
                          the next attachViewer / `fillStage` / `closeLight`) — see Compare
+app/static/cursors.js    one cursor system for view gestures (setCursor / during / zoomCursor, ROTATE_CURSOR, --cur-rot)
+                         — see "Cursors" under Frontend conventions
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
@@ -75,6 +77,25 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   (lightbox = canvas), marquee modes via `combineSelection` (plain = replace, Ctrl = toggle,
   Ctrl+Shift = add), `markSmallSrc`/`syncPixelation` (nearest-neighbour for small sources),
   `navDblClick` (double-click detection across nav re-renders), `showIconPicker`.
+- **Cursors:** every pan / zoom / rotate / scrub / split cursor goes through `cursors.js`
+  `setCursor(el, layer, kind)` — kind is a gesture name (`grab`, `pan` = grabbing, `zoom-in` / `zoom-out`
+  (`zoomCursor(f)` picks one from a zoom step), `rotate` (inline SVG data-URI, hotspot 12 12, `alias` fallback; also
+  `--cur-rot` on :root for CSS), `scrub` = ew-resize, `resize-x` / `resize-y`), a raw CSS value, or null. Layers,
+  highest first: `gesture` (class `cur-g` + `--cur-g`, `!important` on el and every descendant: beats a tool cursor,
+  a child's CSS, the Alt hint), `hover` and `tool` (resolved into el's inline `style.cursor`, hover first), `base`
+  (class `cur-b` under `:where()`, zero specificity: the `body.k-alt .view` rotate hint and everything else beat it).
+  `attachViewerInput` sets the gesture cursor itself (kind from the gesture; zoom by drag direction; a claim object's
+  `cursor` field for claimed drags — the lightbox Alt turn, Compare's split); `cursor: false` opts out. Call sites:
+  lightbox picture `base` grab (a left drag pans; video: none), Compare `base` grab with pictures only and `hover`
+  resize near a split, `bind3dZoom` (both 3D viewers: OrbitControls `start`/`end` + `controls.state` → rotate / pan,
+  its own right-drag → zoom), the light-turn drag, canvas.js `syncDragCursor()` on the viewport (pan / item move =
+  grabbing, item rotate, right-drag zoom; `.crot` hover = `var(--cur-rot)`), the library grid (middle pan, right-drag
+  tile zoom), `attachPanScroll`, and the annotator's tool cursor (`tool` layer — so a middle / right drag while
+  drawing shows grabbing / zoom and the tool cursor comes back after). Never write `el.style.cursor` on an element
+  the module manages (it owns the inline value), and keep the `cur-*` classes if you reset `className` (Compare's
+  `build()` does). Left alone on purpose: element-specific cursors (buttons, resize corners `RESIZE_CURSORS`, crop
+  edges, the annotator's handle cursors as tool values), and `review-draw.js` (inlined into the HTML page / phone
+  app, no module imports — it keeps its own one-line rule).
 - Popups: every menu/popover closes via `registerAutoClose(el, close, anchor)` (cursor more than
   25 px away, never while a button is held; a popup anchored inside another keeps its parent open).
   Every `<input type="color">` opens the in-page `#colorPop` picker, never the native popup, which
@@ -653,9 +674,11 @@ as `more [{frame, size, caption, title, text, file, ctx}]` (the note's first: `f
 `RC.picFileName(title)`, the page's download / ZIP name) (review.py: PDF after the note's frame; the page's
 `frameOf(id)` reads `frameCtx`, `frameOf("<id>|<i>")` the rest). Video labels are
 `RC.frameLabel(t, fps)` ("f128 / 0:05+3"), also burned small into the frame's corner (`bakeFrame`).
-The lightbox view's **turn / mirror** (index.html `attachViewer`: `turn {rot, mir}`, localStorage
-`sight.viewTurn`, newest 500 files) is a CSS prefix about the window centre on the media and on
-annotate's layer root (`geom().turn`); `unturn(x, y)` maps the pointer back, so pan / zoom and
+The lightbox view's **turn / mirror / flip** (index.html `attachViewer`: `turn {rot, mir, mirV}` — `mir` left / right,
+`mirV` upside down, `#mirBtn` / `#mirVBtn`, `Shift+M` / `Shift+V`; localStorage `sight.viewTurn` as
+`[rot, mir]` or `[rot, mir, 1]` with `mirV`, so older entries load unflipped; newest 500 files) is a CSS prefix
+`rotate(rot) scale(mir ? -1 : 1, mirV ? -1 : 1)` about the window centre on the media and on
+annotate's layer root (`geom().turn`); `unturn(x, y)` (rotate back, then flip x / y) maps the pointer back, so pan / zoom and
 annotate's `local(e)` / `toDoc` work in the unturned frame. Doc units never change.
 
 **HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)` or, for a sequence,
@@ -976,26 +999,33 @@ must not drive the element: annotate.js goes through `vidPause` / `vidSeek`, whi
 `openCompareSession` (the lightbox's annotator — not the compare's own). `compareFromContext` asks
 `latestCompareSession(focus)` before the file's versions. Keys while compare is open: the annotator's (when on)
 → `A` → compare's. On close, a lightbox underneath is reloaded if anything was annotated (its notes are stale).
-`host.passThrough(e)` (→ `cmp.wantsPress`: swipe, Alt+left or a touch / pen press within 24 px of a split) makes
+`host.passThrough(e)` (→ `cmp.wantsPress`: Stack with Swipe on, Alt+left or a touch / pen press within 24 px of a split) makes
 the annotator's capture `onDown` leave the press to compare (whose Alt+left pans only when not annotating).
-`host.captureView(dpr)` (→ `cmp.captureView`) paints the screenshot: swipe box or whole stage from the media
+`host.captureView(dpr)` (→ `cmp.captureView`) paints the screenshot: the Stack box or whole stage from the media
 elements' boxes, the layers' `clip-path: inset()` regions, `mix-blend-mode: difference` as canvas
 `difference`, `.out` at 0.12, split lines and labels; `{cv, ox, oy}` places the annotated surface in it
 (`composeView` draws the drawings there; an area capture offsets its rect).
 
 **Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
 Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared
-zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is drawn whole at the
+zoom / pan as doc-normalised centre + zoom over fit). Layouts: `stack` / `grid` / `row` / `col` (`P.layout`);
+Stack has two options, `P.swipe` and `P.blend` (`swiping()` / `diffOn()`; the bar hides Swipe, the split
+direction and Over / Difference outside Stack, and cells never blend). Stack + Swipe: the reference is drawn whole at the
 bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
-to visible layer i — with `mix-blend-mode: difference` in Difference mode. Tile layouts put a canvas copy
-of the reference under each other cell for that same Difference blend (Over tiles do not). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The reference stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the reference (whichever layer is ★; that starts as the file the lightbox had open). Video: `C.T` is a wall-clock timeline;
+to visible layer i — with `mix-blend-mode: difference` in Difference mode (each region against the reference).
+Stack without Swipe: every visible layer whole, DOM bottom → top = chips last → first (first chip on top), no
+splits (`C.splits` is kept for when Swipe comes back); Difference blends every layer but the bottom one over
+all below it; names: the top layer's (Over) or all, top first (Difference); a press selects the top layer
+(Over) or keeps the selection (Difference). A stored layout `"swipe"` (prefs before 0.112, notes) reads as
+Stack + Swipe (`readLayout`); `session()` writes `"swipe"` / `"stack"` for Stack with Swipe on / off. There is
+no Fit button (double-click / `F`); compare has no turn / mirror (the lightbox's per-file view turn is not
+applied: `geom().turn` is empty). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The reference stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the reference (whichever layer is ★; that starts as the file the lightbox had open). The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
 layer local time = T − start/fps; `syncVideos()` holds the clock
 (`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
 never seek towards a running clock. Clips outside their span pause (dimmed). Compare `<video>` elements
 use `clip-path: inset(0)` so Windows does not promote them to hardware overlays. A timeline drag shows
 each clip's scrub proxy when that copy can; until then the picture holds and the release seeks every
-clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. Reference copies under Difference tiles are
-canvases painted from its one `<video>`. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
+clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox. The stage's layout class is `lay-<layout>` (a bare `row` is the
 sidebar's menu-row class and collapses the stage). Stage input goes through `viewer-input.js` `attachViewerInput(stage, …)`
 (`C.input`, destroyed in `close`): the module owns the press / click / drag decision (4 px, the 250 ms click hold —

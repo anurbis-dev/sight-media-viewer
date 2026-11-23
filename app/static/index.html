@@ -124,7 +124,6 @@ button:disabled { cursor: default; opacity: .4; }
 /* Touch: 18 px strip, at most 12 px into the library area (its padding, so the first card column stays
    tappable) and 6 px over the panel's own buttons. */
 @media (pointer: coarse) { #sideHandle::before { left: -6px; width: 18px; } #inspHandle::before { left: -12px; width: 18px; } }
-.side.panning { cursor: grabbing; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .main-body { flex: 1; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
 .main-body.stacked { flex-direction: column; }
@@ -181,7 +180,6 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .btn:active { transform: scale(0.98); }
 .btn.ghost { background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); }
 .side-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
-.panning { cursor: grabbing; }
 .nav { display: flex; flex-direction: column; gap: var(--menu-gap); flex: none; }
 .row { display: flex; align-items: center; gap: var(--space-2); min-height: 20px; height: var(--menu-row-h); padding: 0 var(--space-2); border-radius: var(--radius-sm); color: var(--muted); text-align: left; width: 100%; cursor: pointer; transition: background-color var(--motion-quick) var(--ease), color var(--motion-quick) var(--ease); }
 .row:hover { background: var(--surface-2); color: var(--fg); }
@@ -269,7 +267,6 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
 .touch-selbar .btn { min-height: 40px; white-space: nowrap; }
 body.touch-sel-on .grid { padding-bottom: 88px; }
 body.touch-sel-on .insp.open { bottom: 84px; }
-.grid.panning { cursor: grabbing; }
 .space { position: relative; width: 100%; }
 .slice { position: absolute; left: 0; right: 0; top: 0; display: grid; gap: var(--grid-gap); align-content: start; grid-auto-rows: var(--row-h, auto); }
 .slice.masonry { display: block; }
@@ -610,8 +607,9 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .view { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; }
 /* Cursor = what the held modifier does (body classes k-alt / k-ctrl / k-shift, kept by the key tracker near the
    keyup handler): Alt-drag turns a picture (on a video: scrubs it; Ctrl+Alt turns the video), Shift on a video =
-   fine scrub. An annotation tool's own cursor is an inline style and wins; with Alt held the annotator clears it. */
-:root { --cur-rot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 12a7 7 0 1 1-2.2-5.1M19 4v4h-4' stroke='black' stroke-width='4.2'/%3E%3Cpath d='M19 12a7 7 0 1 1-2.2-5.1M19 4v4h-4' stroke='white' stroke-width='2'/%3E%3C/svg%3E") 12 12, alias; }
+   fine scrub. An annotation tool's own cursor (cursors.js "tool" layer, inline) wins; with Alt held the annotator
+   clears it. This hint beats the idle "grab" of a picture (the "base" layer); a running gesture beats both.
+   --cur-rot (the rotate cursor) is defined by cursors.js. */
 body.k-alt .view, body.k-alt .view .view-media { cursor: var(--cur-rot); }
 body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media, body.k-shift:not(.k-alt) .view.vid .view-media { cursor: ew-resize; }
 .view-media { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; }
@@ -867,6 +865,7 @@ import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
+import { setCursor, during as cursorDuring, zoomCursor } from "/static/cursors.js";
 import { createTrackerSource } from "/static/tracker-source.js";
 import "/static/trackers-core.js";  // globalThis.SightTrackers — the tracker registry (docs/ARCHITECTURE.md "Tracker adapters")
 import "/static/shotgrid-core.js";  // globalThis.SightShotGrid — registers the ShotGrid adapter (annotate.js syncs through it)
@@ -2586,6 +2585,9 @@ function fillThumb(el, a, first, pos){
   }
 }
 
+// Pointer travel (CSS px) before a library tile may start an HTML5 drag; a click moving less stays a click.
+// Native drag starts at ~4px, too touchy for a hand on a mouse; 12px is still a deliberate move.
+const TILE_DRAG_SLOP = 12;
 function ensureCard(a, i, L, pos){
   let el = cardPool.get(a.id);
   if (!el){
@@ -2594,27 +2596,90 @@ function ensureCard(a, i, L, pos){
     el.dataset.id = a.id;
     el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div><div class="rv" hidden></div>`;
     el.draggable = false;
+    // A native drag always starts after ~4px and cannot be armed later (Blink gives the press up once the
+    // tile was not draggable at that move), so the 4px start is kept and what follows is deferred instead:
+    // until the pointer is TILE_DRAG_SLOP px from the press, the drag shows nothing and changes nothing.
+    // If it ends inside that radius it was a click with a shaky hand, and is replayed as one.
+    let press = null, drag = null;
     el.addEventListener("pointerdown", (ev) => {
       // Not for a finger: a held touch would start an HTML5 drag (whose dragstart replaces the selection)
       // instead of the long-press that selects.
       el.draggable = ev.button === 0 && !ev.ctrlKey && !ev.metaKey && ev.pointerType !== "touch";
+      press = { x: ev.clientX, y: ev.clientY, n: 1, shift: ev.shiftKey, alt: ev.altKey };
     });
+    el.addEventListener("mousedown", (ev) => { if (press) press.n = ev.detail || 1; });
+    // Ends a tile drag. Registered on window (not on the tile) because renderGrid's virtualisation can detach
+    // the dragged tile mid-drag, and a detached source never gets its dragend: then the first pointer move
+    // after the drag (pointer events do not fire during a native drag) ends it, with the drop seen via `drop`.
+    const finish = (effect) => {
+      const d = drag;
+      if (!d) return;
+      drag = null;
+      d.off();
+      d.g.remove();
+      el.draggable = false;
+      const id = el.dataset.id;
+      if (!d.live){
+        if (effect === "none"){
+          // Never left the click radius and nothing took it: a click (and double click) the drag swallowed.
+          const mod = { bubbles: true, cancelable: true, shiftKey: !!press?.shift, altKey: !!press?.alt, clientX: press?.x, clientY: press?.y };
+          el.dispatchEvent(new MouseEvent("click", { ...mod, detail: 1 }));
+          if (press?.n === 2) el.dispatchEvent(new MouseEvent("dblclick", { ...mod, detail: 2 }));
+        } else if (!state.selectedIds.includes(id)) selectOnly(id);
+      } else if (effect === "none"){
+        // No target took the drop (released over nothing, or Esc): the selection goes back to what it was.
+        const b = d.before;
+        state.selectedIds = b.ids; state.selected = b.sel; state.anchor = b.anchor; state.touchSelect = b.touch;
+        paintSelection();
+        renderInsp();
+      }
+    };
     el.addEventListener("dragstart", (ev) => {
       const id = el.dataset.id;
       if (id.startsWith("trk:")){ ev.preventDefault(); return; }   // a tracker record is no file to drag (yet)
+      if (drag){ drag.off(); drag.g.remove(); drag = null; }
       const ids = state.selectedIds.includes(id) ? state.selectedIds : [id];
-      if (!state.selectedIds.includes(id)) selectOnly(id);
       ev.dataTransfer.setData("application/x-sight-ids", JSON.stringify(ids));
       // The dragged card goes last so it sits on top of the pile.
       const list = [...ids.filter((x) => x !== id), id].map(assetById).filter(Boolean);
       const g = document.createElement("div");
       g.className = "drag-ghost";
       g.innerHTML = `<div class="stack">${stackHtml(list)}</div>`;
+      g.style.visibility = "hidden";
       document.body.append(g);
-      ev.dataTransfer.setDragImage(g, 100, 70);
-      requestAnimationFrame(() => g.remove());
+      // The browser's own drag picture is an empty one; the pile above follows the pointer once the drag is real.
+      const none = document.createElement("div");
+      none.style.cssText = "position:fixed;left:-100px;top:0;width:1px;height:1px";
+      document.body.append(none);
+      ev.dataTransfer.setDragImage(none, 0, 0);
+      requestAnimationFrame(() => none.remove());
+      const d = { g, live: false, dropped: false, before: { ids: state.selectedIds, sel: state.selected, anchor: state.anchor, touch: state.touchSelect } };
+      // dragover carries reliable pointer coordinates in every engine (`drag` reports 0,0 in some).
+      const over = (e) => {
+        if (!d.live){
+          if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < TILE_DRAG_SLOP) return;
+          d.live = true;
+          if (!state.selectedIds.includes(id)) selectOnly(id);
+          g.style.visibility = "";
+        }
+        g.style.left = e.clientX - 100 + "px";
+        g.style.top = e.clientY - 70 + "px";
+      };
+      const dropped = () => { d.dropped = true; };
+      const end = (e) => finish(e.dataTransfer?.dropEffect ?? "none");
+      const late = (e) => { if (e.buttons) return; finish(d.dropped ? "copy" : "none"); };  // (a button still down: an engine that reports moves mid-drag)
+      window.addEventListener("dragover", over, true);
+      window.addEventListener("drop", dropped, true);
+      window.addEventListener("dragend", end, true);
+      window.addEventListener("pointermove", late, true);
+      d.off = () => {
+        window.removeEventListener("dragover", over, true);
+        window.removeEventListener("drop", dropped, true);
+        window.removeEventListener("dragend", end, true);
+        window.removeEventListener("pointermove", late, true);
+      };
+      drag = d;
     });
-    el.addEventListener("dragend", () => { el.draggable = false; });
     cardPool.set(a.id, el);
     fillThumb(el, a, false, pos);
     if (a.trk) trkSrc.bindFilmstrip(el, el.querySelector(".thumb"), () => assetById(el.dataset.id));
@@ -3102,7 +3167,7 @@ grid.addEventListener("pointerdown", (e) => {
   if (e.button === 1){
     e.preventDefault();
     panDrag = { x: e.clientX, y: e.clientY, sl: grid.scrollLeft, st: grid.scrollTop };
-    grid.classList.add("panning");
+    setCursor(grid, "gesture", "pan");
     bindPtr();
     return;
   }
@@ -3147,6 +3212,7 @@ function onPtrMove(e){
   if (tileDrag){
     if (Math.abs(tileDrag.y - e.clientY) > 2) tileDrag.moved = true;
     setTile(tileDrag.size + (tileDrag.y - e.clientY) * 0.9);
+    if (tileDrag.moved) setCursor(grid, "gesture", e.clientY <= tileDrag.y ? "zoom-in" : "zoom-out"); // (up: bigger tiles)
     return;
   }
   if (marquee){
@@ -3174,7 +3240,7 @@ function onPtrUp(e){
   else if (t && !t.moved && !t.cardId) showGridCtx(e.clientX, e.clientY);
   if (m?.active || t?.moved) skipClick = true;
   panDrag = tileDrag = marquee = null;
-  grid.classList.remove("panning");
+  setCursor(grid, "gesture", null);
   boxEl?.remove();
   boxEl = null;
   unbindPtr();
@@ -5407,6 +5473,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         e.stopImmediatePropagation();
         lightDrag = { x: e.clientX, yaw0: state.v3d.lightYaw };
         renderer.domElement.setPointerCapture(e.pointerId);
+        setCursor(renderer.domElement, "gesture", "rotate");
       });
       renderer.domElement.addEventListener("pointermove", (e) => {
         if (!lightDrag) return;
@@ -5415,8 +5482,9 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         state.v3d.lightYaw = yaw;
         saveV3D();
       });
-      renderer.domElement.addEventListener("pointerup", () => { lightDrag = null; });
-      renderer.domElement.addEventListener("pointercancel", () => { lightDrag = null; });
+      const endLightDrag = () => { if (lightDrag) setCursor(renderer.domElement, "gesture", null); lightDrag = null; };
+      renderer.domElement.addEventListener("pointerup", endLightDrag);
+      renderer.domElement.addEventListener("pointercancel", endLightDrag);
     } else {
       scene.add(new THREE.AmbientLight(0xffffff, 0.7));
       const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(3,5,2); scene.add(dir);
@@ -5742,8 +5810,13 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
 // The Ctrl / Shift right-drags are taken by their own handlers, which are bound before this one and stop the
 // event; any other right-drag (Alt included) zooms here, as OrbitControls' right-drag did.
 // Zoom toward the pointer for the splat viewer (controls.zoomToCursor), as OrbitControls did.
+// Cursors (cursors.js) for every 3D drag of both viewers: OrbitControls' own (left = rotate; middle, or a modified
+// left = pan) from its start / end events, and the right-drag zoom here (zoom-in / zoom-out by direction).
 function bind3dZoom(el, controls){
   controls.enableZoom = false;
+  const ORBIT_CUR = { 0: "rotate", 2: "pan" }; // OrbitControls' _STATE: ROTATE 0, PAN 2 (touch states: no cursor)
+  controls.addEventListener("start", () => setCursor(el, "gesture", ORBIT_CUR[controls.state] || null));
+  controls.addEventListener("end", () => { if (!rdrag) setCursor(el, "gesture", null); });
   // The zoom factors and the finger tracking are viewer-input.js's, shared with the 2D viewers; the dolly stays
   // incremental (each move relative to the camera's distance then), which is the same as anchoring at the press.
   let rdrag = null;
@@ -5759,7 +5832,7 @@ function bind3dZoom(el, controls){
     if (e.pointerType === "touch"){ touches.down(e); return; }
     if (e.button !== 2) return;
     e.preventDefault();
-    rdrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    rdrag = { id: e.pointerId, x: e.clientX, y: e.clientY, zf: 1 };
     el.setPointerCapture(e.pointerId);
   });
   el.addEventListener("pointermove", (e) => {
@@ -5774,11 +5847,14 @@ function bind3dZoom(el, controls){
     rdrag.x = e.clientX; rdrag.y = e.clientY;
     anchor(e.clientX, e.clientY);
     // (Shift held mid-drag: slower. A Shift+right press on a mesh turns the lights instead and never gets here.)
-    dolly(zoomFactorDrag(dx, dy, state.theme, e.shiftKey));
+    const f = zoomFactorDrag(dx, dy, state.theme, e.shiftKey);
+    rdrag.zf *= f; // (the cursor: which way the drag zooms in total since the press)
+    if (rdrag.zf !== 1) setCursor(el, "gesture", zoomCursor(rdrag.zf));
+    dolly(f);
   });
   const endPointer = (e) => {
     touches.up(e);
-    if (rdrag && rdrag.id === e.pointerId) rdrag = null;
+    if (rdrag && rdrag.id === e.pointerId){ rdrag = null; setCursor(el, "gesture", null); }
   };
   el.addEventListener("pointerup", endPointer);
   el.addEventListener("pointercancel", endPointer);
@@ -6229,19 +6305,20 @@ function releaseMedia(free){
   if (free && !light.focusHeld) fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true, gen: cacheGen }) }).catch(() => {});
 }
 
-// The lightbox view's turn (0 / 90 / 180 / 270°) and mirror per file, remembered across sessions.
-// View only: the file and the drawings on it keep the media's own pixels (annotate.js maps the
-// pointer back through the turn).
+// The lightbox view's turn (0 / 90 / 180 / 270°), mirror (left / right) and vertical mirror (upside
+// down) per file, remembered across sessions as [rot, mir, mirV] (an older [rot, mir] loads with
+// mirV off). View only: the file and the drawings on it keep the media's own pixels (annotate.js
+// maps the pointer back through the turn).
 const TURN_KEY = "sight.viewTurn";
 function loadTurn(id){
-  try { const m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; const v = m[id]; if (Array.isArray(v)) return { rot: ((Number(v[0]) || 0) % 360 + 360) % 360, mir: !!v[1] }; } catch {}
-  return { rot: 0, mir: false };
+  try { const m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; const v = m[id]; if (Array.isArray(v)) return { rot: ((Number(v[0]) || 0) % 360 + 360) % 360, mir: !!v[1], mirV: !!v[2] }; } catch {}
+  return { rot: 0, mir: false, mirV: false };
 }
 function saveTurn(id, t){
   let m = {};
   try { m = JSON.parse(localStorage.getItem(TURN_KEY)) || {}; } catch {}
   delete m[id];
-  if (t.rot || t.mir) m[id] = [t.rot, t.mir ? 1 : 0];
+  if (t.rot || t.mir || t.mirV) m[id] = t.mirV ? [t.rot, t.mir ? 1 : 0, 1] : [t.rot, t.mir ? 1 : 0];
   const keys = Object.keys(m);
   for (const k of keys.slice(0, Math.max(0, keys.length - 500))) delete m[k];  // the newest 500 files
   try { localStorage.setItem(TURN_KEY, JSON.stringify(m)); } catch {}
@@ -6284,35 +6361,43 @@ function attachViewer(stage, a, src, opts = {}){
   const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit" };
   // Turn / mirror about the window's centre, in front of the picture's own translate + scale;
   // pan and zoom work in the unturned frame (unturn maps the pointer there).
-  const turn = opts.embedded ? { rot: 0, mir: false } : loadTurn(a.id);
+  const turn = opts.embedded ? { rot: 0, mir: false, mirV: false } : loadTurn(a.id);
+  // (the drawings' layer takes this same transform from geom().turn, and unturn is its exact inverse:
+  // screen = C + R(rot)·S(mir, mirV)·(p − C), so p = C + S·R(−rot)·(screen − C))
   function turnCss(){
-    if (!turn.rot && !turn.mir) return "";
+    if (!turn.rot && !turn.mir && !turn.mirV) return "";
     const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2;
-    return `translate(${cx}px,${cy}px) rotate(${turn.rot}deg) scale(${turn.mir ? -1 : 1},1) translate(${-cx}px,${-cy}px) `;
+    return `translate(${cx}px,${cy}px) rotate(${turn.rot}deg) scale(${turn.mir ? -1 : 1},${turn.mirV ? -1 : 1}) translate(${-cx}px,${-cy}px) `;
   }
   function unturn(x, y){
-    if (!turn.rot && !turn.mir) return [x, y];
+    if (!turn.rot && !turn.mir && !turn.mirV) return [x, y];
     const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2, r = -turn.rot * Math.PI / 180;
     const dx = x - cx, dy = y - cy;
     let ux = dx * Math.cos(r) - dy * Math.sin(r);
-    const uy = dx * Math.sin(r) + dy * Math.cos(r);
+    let uy = dx * Math.sin(r) + dy * Math.cos(r);
     if (turn.mir) ux = -ux;
+    if (turn.mirV) uy = -uy;
     return [cx + ux, cy + uy];
   }
   function unturnVec(dx, dy){ const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2, p = unturn(cx + dx, cy + dy); return [p[0] - cx, p[1] - cy]; }
+  const paintMirBtns = () => {
+    light?.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
+    light?.el.querySelector("#mirVBtn")?.classList.toggle("on", turn.mirV);
+  };
   function setTurn(t){
-    turn.rot = ((t.rot % 360) + 360) % 360; turn.mir = !!t.mir;
+    turn.rot = ((t.rot % 360) + 360) % 360; turn.mir = !!t.mir; turn.mirV = !!t.mirV;
     saveTurn(a.id, turn);
     if (vs.mode === "fit") toFit(); else apply();
-    if (light) light.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
+    paintMirBtns();
   }
   if (light && !opts.embedded){
     light.video = isVid ? el : null; light.setZoom = (n) => toScale(n); light.fit = () => toFit();
     light.vctl = isVid ? { seek: (t) => seekVideo(t), begin: () => beginScrub(), end: () => endScrub() } : null;
     if (isVid && !opts.adopt){ vApplySnd(el); vApplyLoop(el); } else if (isVid) vApplyLoop(el);
-    light.turn = () => setTurn({ rot: turn.rot + 90, mir: turn.mir });
-    light.mirror = () => setTurn({ rot: turn.rot, mir: !turn.mir });
-    light.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
+    light.turn = () => setTurn({ ...turn, rot: turn.rot + 90 });
+    light.mirror = () => setTurn({ ...turn, mir: !turn.mir });
+    light.mirrorV = () => setTurn({ ...turn, mirV: !turn.mirV });
+    paintMirBtns();
   }
   // Scrubbing sets currentTime far faster than a long-GOP clip can decode. Firing a seek per
   // pointer event piles them up and the picture freezes until the pointer stops, so only the latest
@@ -6574,8 +6659,8 @@ function attachViewer(stage, a, src, opts = {}){
       if (!(e.button === 0 && e.altKey && (!isVid || e.ctrlKey || e.metaKey))) return null;
       const r = wrap.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       const d = { a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
-      wrap.style.cursor = "var(--cur-rot)";
       return {
+        cursor: "rotate",
         move: (ev) => {
           let delta = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI - d.a0;
           delta = ((delta + 540) % 360) - 180; // -180 … 180: the way the pointer went round
@@ -6585,7 +6670,6 @@ function attachViewer(stage, a, src, opts = {}){
           if (vs.mode === "fit") toFit(); else apply();
         },
         end: () => {
-          wrap.style.cursor = "";
           if (!opts.embedded) saveTurn(a.id, turn); // kept once the drag ends
         },
       };
@@ -6617,14 +6701,12 @@ function attachViewer(stage, a, src, opts = {}){
       zoomAt(vs.scale * f, x - r.left, y - r.top);
     },
     zoomSettings: () => state.theme,
-    onDrag: (k) => {
-      wrap.style.cursor = k === "pan" ? "grabbing" : k === "scrub" && !handed ? "ew-resize"
-        : k === "zoom" ? (state.theme.zoomAxis === "x" ? "ew-resize" : "ns-resize") : "";
-    },
+    // (the gesture cursors — grabbing, zoom-in / -out, ew-resize, the Alt turn — are viewer-input.js's, cursors.js)
     // A second finger: a stroke the first one began is dropped (the pinch never leaves a mark).
     abortOthers: () => { if (light && !opts.embedded){ annot.abortGesture(); light.seqDrag?.end(); } },
   });
   stage._vinput = input;
+  setCursor(wrap, "base", isVid ? null : "grab"); // a picture: a left drag pans (a video: it scrubs)
   wrap.addEventListener("contextmenu", (e) => e.preventDefault());
   wrap.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
   // Annotations draw over this picture (its listeners go in first, in the capture phase, so a
@@ -7558,6 +7640,8 @@ function seqScrubBegin(e, fine){
   // (light.seqDrag: a second finger on the viewer that started it, or closing the lightbox, ends it where it is;
   // a press on a later clip's viewer while it runs stays dead)
   light.seqDrag = { pid: drag.pid, end: () => up({ pointerId: drag.pid }) };
+  // The scrub cursor on the lightbox itself: the clip's stage (and the viewer's own gesture cursor) goes at each cut.
+  const endCursor = cursorDuring(light.el, "scrub");
   drag.T = drag.T0;
   const move = (ev) => {
     if (ev.pointerId !== drag.pid || !light?.seq) return;
@@ -7572,6 +7656,7 @@ function seqScrubBegin(e, fine){
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
     if (light?.seqDrag?.pid === drag.pid) light.seqDrag = null;
+    endCursor();
     if (drag.began) light?.vctl?.end();
   };
   window.addEventListener("pointermove", move);
@@ -7754,6 +7839,7 @@ function toggleLight(a){
       <button class="btn ghost cmp-lbtn" id="cmpBtn" type="button" style="width:40px;padding:0" title="Compare (K)" aria-label="Compare" disabled hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
       <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Draw &amp; write notes — the drawing tools (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
       <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
+      <button class="btn ghost" id="mirVBtn" type="button" style="width:40px;padding:0" title="Flip the view upside down (Shift+V)" aria-label="Flip upside down" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8 17 3v5z"/><path d="M7 16l10 5v-5z"/></svg></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
     </div>
@@ -7824,6 +7910,7 @@ function toggleLight(a){
   bindAnnoReset(wrap.querySelector("#annoBtn"), [annot, boardAnnot, cmpAnnot]);
   wrap.querySelector("#cmpBtn").onclick = () => compareFromContext();
   wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
+  wrap.querySelector("#mirVBtn").onclick = () => light?.mirrorV?.();
   wrap.querySelector("#v3dGear").onclick = () => toggleV3DPanel();
   wrap.querySelector("#psdBtn").onclick = () => togglePsdPanel();
   wrap.querySelector("#infoBtn").onclick = () => toggleLightInfo();
@@ -7872,8 +7959,8 @@ function toggleLight(a){
   requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("on")));
 }
 
-const LIGHT_HINT = "A annotate · Shift+R turn · Shift+M mirror · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const LIGHT_HINT_VIDEO = "A annotate · Shift+R turn · Shift+M mirror · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
+const LIGHT_HINT = "A annotate · Shift+R turn · Shift+M / Shift+V mirror / flip · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
+const LIGHT_HINT_VIDEO = "A annotate · Shift+R turn · Shift+M / Shift+V mirror / flip · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
 const ANNOT_HINT = "Annotating · ? = shortcuts · Esc leaves";
 function syncLightHint(){
   const el = $("lightHint");
@@ -7921,11 +8008,12 @@ function showInLight(a, opts = {}){
   light.vctl = null;
   light.audio = null;
   light.setZoom = null; light.fit = null; // set by attachViewer/mountDocStage below if the new asset supports digit-key zoom
-  light.turn = light.mirror = null; // set by attachViewer (pictures, PSD, video)
+  light.turn = light.mirror = light.mirrorV = null; // set by attachViewer (pictures, PSD, video)
   const flat = a.kind === "image" || a.kind === "video" || a.ext === ".psd";
   // Icons follow what the file can do: mirror and turn need a flat picture (image, PSD, video); annotation
   // works on those and on 3D models (annotate.js `supported`), so documents and audio hide the A button.
   light.el.querySelector("#mirBtn").hidden = !flat;
+  light.el.querySelector("#mirVBtn").hidden = !flat;
   light.el.querySelector("#annoBtn").hidden = !(flat || a.kind === "model3d");
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
   // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
@@ -10552,7 +10640,7 @@ function attachPanScroll(el){
     e._panScroll = true;
     e.preventDefault();
     drag = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
-    el.classList.add("panning");
+    setCursor(el, "gesture", "pan");
     el.setPointerCapture(e.pointerId);
   });
   el.addEventListener("pointermove", (e) => {
@@ -10560,7 +10648,7 @@ function attachPanScroll(el){
     el.scrollTop = drag.st - (e.clientY - drag.y);
     el.scrollLeft = drag.sl - (e.clientX - drag.x);
   });
-  const end = () => { drag = null; el.classList.remove("panning"); };
+  const end = () => { drag = null; setCursor(el, "gesture", null); };
   el.addEventListener("pointerup", end);
   el.addEventListener("pointercancel", end);
   el.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
@@ -11020,6 +11108,7 @@ document.addEventListener("keydown", (e) => {
   if (light && hotkey(e, "KeyI") && !typing3d){ e.preventDefault(); toggleLightInfo(); return; }
   if (light && light.turn && !typing && hotkey(e, "Shift+KeyR")){ e.preventDefault(); light.turn(); return; }
   if (light && light.mirror && !typing && hotkey(e, "Shift+KeyM")){ e.preventDefault(); light.mirror(); return; }
+  if (light && light.mirrorV && !typing && hotkey(e, "Shift+KeyV")){ e.preventDefault(); light.mirrorV(); return; }
   // D in the lightbox of a PSD opens its layers panel; everywhere else it toggles Details.
   if (hotkey(e, "KeyD") && !typing && !in3d){
     if (light && !$("psdBtn").hidden) togglePsdPanel(); else toggleDetails();

@@ -23,6 +23,7 @@
 
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
+import { setCursor } from "/static/cursors.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
 import "/static/review-core.js";
@@ -2014,7 +2015,10 @@ export function createAnnotator(host){
           // must not jump to its edge)
           d[sp.k] = clamp(b[sp.k] * m.f, Math.min(b[sp.k], sp.min * kk), Math.max(b[sp.k], sp.max * kk));
           const g = d[sp.k] / b[sp.k];
-          for (const x of ["gap", "step", "len", "hatchWidth"]) if (typeof b[x] === "number") d[x] = b[x] * g;  // lengths that follow the width
+          // (A lasso's fill — gap, hatchWidth — does not follow the outline: old data without a gap keeps its look by
+          // having the size-derived gap written down first.)
+          if (RC.isFillStroke(b)){ if (!(Number(b.gap) > 0)) d.gap = RC.hatchMetrics(b).gap0; }
+          else for (const x of ["gap", "step", "len", "hatchWidth"]) if (typeof b[x] === "number") d[x] = b[x] * g;  // lengths that follow the width
         }
         if (m.dOp != null && hasOpacity(ty)) d.opacity = RC.opAfter(b.opacity, m.dOp);
         renderItem(it);
@@ -2152,7 +2156,8 @@ export function createAnnotator(host){
     } else if (freehand(effTool()) || effTool() === "eraser") c = "none";
     else if (S.tool === "text") c = "text";
     else if (S.tool === "image") c = "copy";
-    el.style.cursor = c;
+    // The "tool" layer (cursors.js): a running view gesture (pan / zoom / turn) still shows its own cursor over it.
+    setCursor(el, "tool", c || null);
   }
   // The tool a press would use now: Ctrl held turns any drawing tool into the eraser.
   const effTool = () => S.ctrlHeld && S.tool !== "select" && !S.region ? "eraser" : S.tool;
@@ -2520,9 +2525,19 @@ export function createAnnotator(host){
     const [first = [], ...rest] = (tg.types || []).map((t) => PROPS[t] || []);
     return first.filter((p) => rest.every((l) => l.includes(p)));
   }
+  // The Lines control's maximum for what it edits (RC.hatchMetrics' cap of the spacing; the smallest of a selection's),
+  // in the control's px: a width stored above it (the spacing was reduced) shows and edits as the cap.
+  function hatchCap(tg){
+    if (!tg.items){ const st = S.styles[tg.type] || {}; return RC.hatchMetrics({ pattern: st.pattern, gap: st.gap, size: st.size }).cap; }
+    return Math.min(...tg.items.map((it) => RC.hatchMetrics(it.data).capStored)) / k();
+  }
   function propValue(tg, p){
-    if (!tg.items) return S.styles[tg.type][p.k];
-    const v = tg.items[0].data[p.k];
+    if (!tg.items){
+      const v = S.styles[tg.type][p.k];
+      return p.k === "hatchWidth" && v > 0 ? Math.min(v, hatchCap(tg)) : v;
+    }
+    let v = tg.items[0].data[p.k];
+    if (p.k === "hatchWidth" && v > 0) return Math.min(v / k(), hatchCap(tg));
     return LEN_KEYS.has(p.k) && typeof v === "number" ? v / k() : v;
   }
   // numDrag: a value is being dragged in the bar. A change to a selected drawing re-renders the bar (commit →
@@ -2674,9 +2689,10 @@ export function createAnnotator(host){
     };
     const cur = () => get() || (p.auto ? autoNow() : 0);
     const set = (v, merge) => {
-      v = p.auto && !(v > 0) ? 0 : clamp(v, p.min, p.max);
+      v = p.auto && !(v > 0) ? 0 : clamp(v, p.min, p.k === "hatchWidth" ? Math.max(p.min, hatchCap(propsTarget())) : p.max);
       if (!p.pct && p.unit !== "×") v = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
       else if (p.pct) v = Math.round(v * 100) / 100;
+      if (p.k === "hatchWidth" && v > 0) v = Math.min(v, Math.max(p.min, hatchCap(propsTarget())));  // (rounding must not step over the cap)
       setProp(p, v, merge);
       em.textContent = fmtNum(p, v);
     };
@@ -4663,7 +4679,7 @@ export function createAnnotator(host){
     S.b3?.annotating?.(S.on);
     if (S.bar) S.bar.hidden = !S.on;
     const el = surfaceEl();
-    if (el){ el.style.cursor = ""; el.classList.toggle("an-active", S.on); }
+    if (el){ setCursor(el, "tool", null); el.classList.toggle("an-active", S.on); }
     if (S.on && S.kind === "video" && !S.fpsKnown) loadFps();
     renderAll();
     renderSel();
