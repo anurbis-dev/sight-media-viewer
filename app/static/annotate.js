@@ -539,6 +539,7 @@ export function createAnnotator(host){
     sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
+    anchors: {}, // last point of each drawing tool, for Shift+click (a straight line from there)
     fps: 25, raf: 0, lastSig: "", dirty: new Set(), saveTimer: 0, views: new Map(), curVk: null,
     status: "", versions: [], prevOpen: null, filter: readJSON("sight.annotate.filter", "all"),
     plate: null, shotView: null, adopt: new Set(), dict: null, dictTa: null,
@@ -1269,8 +1270,10 @@ export function createAnnotator(host){
   function ensureLayer(){
     const el = surfaceEl();
     if (!el) return null;
-    if (S.layer && S.layer.root.parentNode === el) return S.layer;
+    if (S.layer?.root?.isConnected && S.layer.root.parentNode === el) return S.layer;
     S.layer?.root.remove();
+    // A rebind that dropped S.layer without removing the node left a second copy of every drawing.
+    el.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
     const root = document.createElement("div");
     root.className = "an-layer";
     root.innerHTML = `<svg class="an-doc" xmlns="${SVGNS}"></svg><svg class="an-ui" xmlns="${SVGNS}"></svg>`;
@@ -1712,8 +1715,20 @@ export function createAnnotator(host){
     }
     grab(e);
     if (S.sel.size){ S.sel.clear(); renderProps(); }
+    // Shift+click: a straight line from this tool's last point (Photoshop). Nothing is drawn until the
+    // pointer comes up still, so a move becomes the usual constrained drag from this press.
+    if (e.shiftKey && !e.altKey && lineTool(tool)){
+      S.drag = { shiftClick: true, tool, x, y, sx, sy };
+      return;
+    }
+    beginMark(tool, x, y, sx, sy, e);
+  }
+  // Brush, pencil, marker, lasso, stroke arrows, line, arrow, eraser: Shift+click joins clicks.
+  const lineTool = (t) => freehand(t) || t === "arrows" || t === "line" || t === "arrow" || t === "eraser";
+  function beginMark(tool, x, y, sx, sy, e){
+    const pen = e.pointerType === "pen";
     if (tool === "eraser"){
-      S.drag = { eraser: true, before: new Map(), partial: S.styles.eraser.mode === "partial" };
+      S.drag = { eraser: true, before: new Map(), partial: S.styles.eraser.mode === "partial", toolName: tool };
       eraseAt(x, y);
       return;
     }
@@ -1724,7 +1739,7 @@ export function createAnnotator(host){
       const st = styleDoc(tool);
       const it = newItem("stroke", "arrows", { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head1: st.head1, headSize: st.headSize, step: st.step, len: st.len, dir: st.dir, side: st.side, guide: st.guide !== false, pts: [r2(x), r2(y), 0.5] });
       S.items.set(it.id, it);
-      S.drag = { stroke: it, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k() };
+      S.drag = { stroke: it, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k(), toolName: tool };
       renderAll();
       return;
     }
@@ -1736,7 +1751,7 @@ export function createAnnotator(host){
         ...(st.hatchWidth > 0 ? { hatchWidth: st.hatchWidth } : {}) } : {};
       const it = newItem("stroke", tool === "lasso" ? "brush" : tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen, ...fillKeys, pts: [r2(x), r2(y), r2(p)] });
       S.items.set(it.id, it);
-      S.drag = { stroke: it, sm: [x, y], smooth: st.smooth ?? 0, start: [x, y], minStep: 0.75 * k() };
+      S.drag = { stroke: it, sm: [x, y], smooth: st.smooth ?? 0, start: [x, y], minStep: 0.75 * k(), toolName: tool };
       renderAll();
       return;
     }
@@ -1744,7 +1759,7 @@ export function createAnnotator(host){
       const st = styleDoc(tool);
       const it = newItem("shape", tool, { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head0: st.head0, head1: st.head1, body: st.body, headSize: st.headSize, pts: [x, y, x, y] });
       S.items.set(it.id, it);
-      S.drag = { shape: it, x, y };
+      S.drag = { shape: it, x, y, toolName: tool };
       renderAll();
       return;
     }
@@ -1803,6 +1818,13 @@ export function createAnnotator(host){
     if (S.ctrlHeld !== e.ctrlKey && !S.drag) S.ctrlHeld = e.ctrlKey;
     const D = S.drag;
     if (!D){ updateCursor(sx, sy); renderSel(); return; }
+    // Still a Shift+click until the pointer actually moves: then the usual drag from the press (H/V, square).
+    if (D.shiftClick){
+      if (hyp(sx - D.sx, sy - D.sy) < 4){ updateCursor(sx, sy); renderSel(); return; }
+      beginMark(D.tool, D.x, D.y, D.sx, D.sy, e);
+      if (!S.drag || S.drag.shiftClick) return;
+      return onMove(e);
+    }
     e.preventDefault();
     if (D.sizeOp){ moveSizeOp(D, e); return; }
     if (D.region){ S.region.rect[2] = sx; S.region.rect[3] = sy; renderSel(); return; }
@@ -1895,6 +1917,19 @@ export function createAnnotator(host){
     if (D.sizeOp && D.sizeOp.pid !== e.pointerId) return;  // the same for an Ctrl + right-drag
     S.drag = null;
     try { surfaceEl()?.releasePointerCapture(e.pointerId); } catch {}
+    if (D.shiftClick){
+      if (e.type === "pointercancel" || e.type === "lostpointercapture") return;
+      const tool = D.tool, x = D.x, y = D.y, a = S.anchors[tool];
+      // Screen pixels, same 3 px as a kept stroke: a zoomed-in click is a small document distance.
+      if (a && hyp(x - a[0], y - a[1]) / k() >= 3) commitShiftLine(tool, a, [x, y]);
+      else if (freehand(tool) || tool === "eraser"){
+        beginMark(tool, x, y, D.sx, D.sy, e);
+        if (S.drag) onUp({ pointerId: e.pointerId, type: "pointerup", clientX: e.clientX, clientY: e.clientY });
+      }
+      S.anchors[tool] = [x, y];
+      renderSel();
+      return;
+    }
     if (D.sizeOp){ endSizeOp(D, e.type === "pointercancel" || e.type === "lostpointercapture"); return; }
     if (D.region){ finishRegion(); return; }
     if (D.stroke){
@@ -1904,23 +1939,33 @@ export function createAnnotator(host){
         if (hyp(D.last[0] - d.pts[n - 3], D.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(r2(D.last[0]), r2(D.last[1]), r2(D.last[2]));
       }
       S.items.delete(it.id);
+      const dEnd = it.data, nEnd = dEnd.pts.length;
+      const end = nEnd >= 3 ? [dEnd.pts[nEnd - 3], dEnd.pts[nEnd - 2]] : null;
       if (typeOf(it) === "arrows"){
         // An arrows stroke needs some length (a click would leave a dot with no arrows).
         let len = 0;
         const d = it.data;
         for (let i = 3; i < d.pts.length; i += 3) len += hyp(d.pts[i] - d.pts[i - 3], d.pts[i + 1] - d.pts[i - 2]);
-        if (len / k() < 3){ renderAll(); return; }
+        if (len / k() < 3){ renderAll(); if (D.toolName && end) S.anchors[D.toolName] = end; return; }
       }
       commit([it.id], () => S.items.set(it.id, it));
+      if (D.toolName && end) S.anchors[D.toolName] = end;
       return;
     }
     if (D.shape){
       const it = D.shape, d = it.data, t = typeOf(it);
       S.items.delete(it.id);
       const tiny = t === "line" || t === "arrow" ? hyp(d.pts[2] - d.pts[0], d.pts[3] - d.pts[1]) / k() < 3 : Math.abs(d.w) / k() < 3 && Math.abs(d.h) / k() < 3;
-      if (tiny){ renderAll(); return; }
+      // A click leaves no mark, but it is still this tool's point: the next Shift+click starts here.
+      if (tiny){
+        if ((t === "line" || t === "arrow") && D.toolName && d.pts?.length >= 2)
+          S.anchors[D.toolName] = d.pts.length >= 4 ? [d.pts[2], d.pts[3]] : [d.pts[0], d.pts[1]];
+        renderAll();
+        return;
+      }
       if (t === "rect" || t === "ellipse"){ if (d.w < 0){ d.x += d.w; d.w = -d.w; } if (d.h < 0){ d.y += d.h; d.h = -d.h; } }
       commit([it.id], () => S.items.set(it.id, it));
+      if ((t === "line" || t === "arrow") && D.toolName) S.anchors[D.toolName] = [d.pts[2], d.pts[3]];
       return;
     }
     if (D.pin){
@@ -1933,14 +1978,8 @@ export function createAnnotator(host){
       return;
     }
     if (D.eraser){
-      if (D.before.size){
-        const after = new Map([...D.before.keys()].map((id) => [id, snap(S.items.get(id))]));
-        // Items were already changed live; record the step and persist.
-        S.undo.push({ before: D.before, after, at: performance.now() });
-        S.redo.length = 0;
-        for (const [id, b] of D.before) persist(id, b, after.get(id));
-        afterChange();
-      }
+      finishEraser(D);
+      if (e.clientX != null && surfaceEl()){ const [x, y] = toDoc(e); S.anchors.eraser = [x, y]; }
       return;
     }
     if (D.marquee){
@@ -2079,8 +2118,53 @@ export function createAnnotator(host){
     renderSel(); renderProps();
   }
 
-  // Shift while drawing (straight stroke, line / arrow, pin leader): horizontal or vertical only.
+  // Shift while dragging: horizontal or vertical (a stroke, a line, an arrow, a pin leader). Shift+click, with no
+  // move, draws a straight line from this tool's last point instead (commitShiftLine).
   const snapAngle = RC.snapHV;
+  function finishEraser(D){
+    if (!D?.before?.size) return;
+    const after = new Map([...D.before.keys()].map((id) => [id, snap(S.items.get(id))]));
+    // Items were already changed live; record the step and persist.
+    S.undo.push({ before: D.before, after, at: performance.now() });
+    S.redo.length = 0;
+    for (const [id, b] of D.before) persist(id, b, after.get(id));
+    afterChange();
+  }
+  // A straight mark from the previous point of this tool to this click.
+  function commitShiftLine(tool, a, b){
+    const [x0, y0] = a, [x1, y1] = b;
+    if (tool === "eraser"){
+      const rad = Math.max(S.styles.eraser.size / 2 * k(), 0.5);
+      const n = Math.max(1, Math.ceil(hyp(x1 - x0, y1 - y0) / (rad * 0.5)));
+      S.drag = { eraser: true, before: new Map(), partial: S.styles.eraser.mode === "partial", toolName: "eraser" };
+      for (let i = 0; i <= n; i++) eraseAt(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n);
+      const D = S.drag;
+      S.drag = null;
+      finishEraser(D);
+      return;
+    }
+    if (hyp(x1 - x0, y1 - y0) / k() < 3) return;
+    if (tool === "line" || tool === "arrow"){
+      const st = styleDoc(tool);
+      const it = newItem("shape", tool, { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head0: st.head0, head1: st.head1, body: st.body, headSize: st.headSize, pts: [x0, y0, x1, y1] });
+      commit([it.id], () => S.items.set(it.id, it));
+      return;
+    }
+    const st = styleDoc(tool);
+    const step = Math.max(0.75 * k() * 4, ((st.size || st.width * 2) || 4) / 3);
+    const n = Math.max(1, Math.ceil(hyp(x1 - x0, y1 - y0) / step));
+    const pts = [];
+    for (let i = 0; i <= n; i++) pts.push(r2(x0 + (x1 - x0) * i / n), r2(y0 + (y1 - y0) * i / n), 1);
+    if (tool === "arrows"){
+      const it = newItem("stroke", "arrows", { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head1: st.head1, headSize: st.headSize, step: st.step, len: st.len, dir: st.dir, side: st.side, guide: st.guide !== false, pts });
+      commit([it.id], () => S.items.set(it.id, it));
+      return;
+    }
+    const fillKeys = tool === "lasso" ? { close: true, pattern: st.pattern === "random" ? RANDOM_PATTERNS[Math.floor(Math.random() * RANDOM_PATTERNS.length)] : st.pattern, fill: st.fill, fillOpacity: st.fillOpacity, gap: st.gap,
+      ...(st.hatchWidth > 0 ? { hatchWidth: st.hatchWidth } : {}) } : {};
+    const it = newItem("stroke", tool === "lasso" ? "brush" : tool, { color: st.color, size: st.size, opacity: st.opacity, pressure: st.pressure !== false, pen: false, ...fillKeys, pts });
+    commit([it.id], () => S.items.set(it.id, it));
+  }
 
 
   function eraseAt(x, y){
@@ -3269,6 +3353,8 @@ export function createAnnotator(host){
     return `<div class="an-nprev${cls}${ct ? " an-hascap" : ""}"${goVk ? ` data-vk="${goVk}"` : ""} style="aspect-ratio:${g.w} / ${g.h}" title="${ct ? esc(ct) : goVk ? "Go to this view" : "Show this note's drawings"}">${img}<svg viewBox="${-vw / 2} -500 ${vw} 1000" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
   }
   function notePreview(n){
+    // A comparison note's picture is the screenshot of the comparison. The selected file's frame would show one layer.
+    if (n.data?.compare && (n.data.shots || []).length) return "";
     if (S.kind === "model3d") return view3dPreviews(n);
     if (isBoard()) return boardPreview(n);
     if (!S.b2 || (S.kind !== "image" && S.kind !== "psd" && S.kind !== "video")) return "";
@@ -4025,7 +4111,24 @@ export function createAnnotator(host){
     // other frames alone do not make an empty note (they go into the next real one).
     const fresh = (it) => ctxShown(it) || (it.data.created || 0) >= S.composeSince || S.adopt.has(it.id);
     if (!text && !capText && !S.pending.length && !pendingDrawings().some(fresh)){ toast("Type a note, draw, or take a screenshot first"); return; }
-    const ctx = ctxNow(true, true);
+    // Compare: the picture is the comparison as shown. The frame and the file are read when that
+    // picture is taken — the upload can take a while, and the playhead or the selected layer may move.
+    const assetId = S.asset?.id || null;
+    let ctx = null;
+    if (host.captureView && surfaceEl()){
+      try {
+        const res = await composeView();
+        if (!S.asset || S.asset.id !== assetId){ toast("The layer changed — add the note again"); return; }
+        ctx = ctxNow(true, true);
+        if (res?.cv){
+          const r = await uploadCanvas(res.cv);
+          if (!S.asset || S.asset.id !== assetId){ toast("The layer changed — add the note again"); return; }
+          S.pending.unshift({ id: r.id, url: r.url });
+        }
+      } catch (e){ console.warn(e); }
+    }
+    if (!S.asset || S.asset.id !== assetId){ toast("The layer changed — add the note again"); return; }
+    if (!ctx) ctx = ctxNow(true, true);
     const note = { id: uid(), kind: "note", sub: null, z: 0, data: { text, author: reviewer(), created: Date.now(), status: "open", ctx, shots: S.pending.map((p) => p.id) } };
     // The host's context for the note (the version compare: the comparison it was written in, FORMAT.md `compare`).
     const extra = host.noteExtra?.();
@@ -4999,7 +5102,7 @@ export function createAnnotator(host){
     }
     // Mouse / touch things that are not hotkeys (static: they live in the pointer code, not in the table).
     const extra = {
-      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift (held)"], "Straight stroke, line / arrow, pin line: horizontal or vertical only; rectangle square, ellipse circle"]],
+      "Drawing tools": [[["Ctrl (held)"], "Eraser with any tool"], [["Shift+click"], "Straight line from the last point of this tool (brush, pencil, marker, lasso, stroke arrows, line, arrow, eraser)"], [["Shift (held)"], "While dragging: stroke, line, arrow or pin line horizontal or vertical; rectangle square, ellipse circle"]],
       "General": [[["Alt + drag"], isBoard() ? "Pan the board while a drawing tool is active (middle-drag and the wheel pan too, right-drag / Ctrl+wheel zoom)" : "Hand the drag to the viewer (pan / zoom, orbit in 3D) while a drawing tool is active"],
         [["Ctrl + right-drag"], "Sideways: the tool's size (right = bigger), up / down: its opacity (up = more solid); with the select tool, the selection's (touch: press and hold, then drag, in the phone app / review page)"]],
       ...(S.kind !== "model3d" ? {} : { "3D models": [[["Shift+A"], "Enter / leave annotation mode (A flies the camera in a 3D view)"], [["Alt+1–9"], "Save the camera view (1–9 recall it)"]] }),
@@ -5163,10 +5266,12 @@ export function createAnnotator(host){
     cancelRegion();
     S.asset = a;
     S.kind = a.ext === ".psd" ? "psd" : a.kind;
-    // A board's viewport stays: its layer must go (the next board makes its own), the lightbox's viewer is replaced anyway.
-    if (S.b2?.board) S.layer?.root.remove();
+    // Always drop the overlay. Compare reuses its viewer node; leaving the old layer painted a second copy.
+    S.layer?.root.remove();
+    (S.b2?.wrap || S.b3?.host)?.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
     S.b2 = S.b3 = null;
     S.layer = null;
+    S.anchors = {};
     S.items.clear(); S.saved.clear(); S.sel.clear(); S.crop = null;
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
@@ -5198,7 +5303,12 @@ export function createAnnotator(host){
     // A marquee whose pointer lost capture without an up / cancel reaching us ends here: otherwise the
     // second-pointer guard in onDown would swallow every later touch (new pointerIds) while it is stuck.
     el.addEventListener("lostpointercapture", (e) => { if ((S.drag?.marquee && S.drag.pid === e.pointerId) || S.drag?.sizeOp?.pid === e.pointerId) onUp(e); });
-    el.addEventListener("pointerleave", () => { S.hover = null; if (S.on && !S.drag) renderSel(); });
+    el.addEventListener("pointerleave", (e) => {
+      // A pan is captured by an ancestor (compare's stage). Leaving must not freeze the brush circle.
+      if (e.buttons) return;
+      S.hover = null;
+      if (S.on && !S.drag) renderSel();
+    });
     // Pictures dropped on the frame become reference images (files from outside, or files dragged from the library).
     el.addEventListener("dragover", (e) => { if (!refDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
     el.addEventListener("drop", onRefDrop);
@@ -5224,14 +5334,21 @@ export function createAnnotator(host){
     }, true);
   }
   // Images / video: the viewer's wrap, media element and geometry (x0, y0, scale, natural size).
+  const vidWired = new WeakSet();
   function bind2d(view){
     if (!S.light || !S.asset) return;
+    const same = S.b2?.wrap === view.wrap && S.layer?.root?.isConnected && S.layer.root.parentNode === view.wrap;
     S.b2 = view;
     S.b3 = null;
-    S.layer = null;
+    if (!same){
+      S.layer?.root.remove();
+      view.wrap.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
+      S.layer = null;
+    }
     attachInput(view.wrap);
     if (S.on) view.wrap.classList.add("an-active");
-    if (view.isVid){
+    if (view.isVid && view.media && !vidWired.has(view.media)){
+      vidWired.add(view.media);
       const v = view.media;
       v.addEventListener("loadedmetadata", () => renderMarks());
       // Watching with the mode off: playing / seeking moves the frame, the drawings follow (followOff).
@@ -5240,6 +5357,7 @@ export function createAnnotator(host){
       v.addEventListener("pause", wake); v.addEventListener("ended", wake);   // the frame it stopped on
       v.addEventListener("durationchange", () => renderMarks());
     }
+    if (same){ syncViewBox(); if (S.on) renderSel(); startTick(); return; }
     renderAll();
     renderMarks();
     renderPanel();  // the note previews need the picture
@@ -5254,6 +5372,8 @@ export function createAnnotator(host){
   // 3D: host element, camera get/set, synchronous capture of the rendered frame.
   function bind3d(r){
     if (!S.light || !S.asset || S.asset.id !== r.aid) return;
+    S.layer?.root.remove();
+    r.host.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
     S.b3 = r;
     S.b2 = null;
     S.layer = null;
@@ -5262,6 +5382,25 @@ export function createAnnotator(host){
     renderAll();
     startTick();
   }
+
+  // A pan captures an ancestor of the surface (compare's stage), so pointermove never reaches onMove and the
+  // brush circle stayed where the drag started. Follow the pointer while it is over this host.
+  function trackHover(e){
+    if (!S.on || !S.light?.contains(e.target)) return;
+    const el = surfaceEl();
+    if (!el || el.contains(e.target)) return;
+    const r = el.getBoundingClientRect();
+    const inside = e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
+    if (!inside){
+      if (!S.drag && S.hover){ S.hover = null; renderSel(); }
+      return;
+    }
+    const [sx, sy] = local(e);
+    if (S.hover && S.hover[0] === sx && S.hover[1] === sy) return;
+    S.hover = [sx, sy];
+    if (!S.drag) renderSel();
+  }
+  window.addEventListener("pointermove", trackHover, true);
 
   return {
     mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, importFile, explodeChanged,
@@ -5302,7 +5441,7 @@ function injectStyles(){
   padding: 10px 16px; border-radius: 10px; border: 1px solid #c0392b; background: #2a1414; color: #ffd9d4; font: 13px/1.3 system-ui, sans-serif;
   cursor: pointer; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
 .an-outbox[hidden] { display: none; }
-.an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; isolation: isolate; }
 .an-layer[hidden] { display: none; }
 .an-layer > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .an-active { touch-action: none; }

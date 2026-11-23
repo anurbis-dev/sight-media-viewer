@@ -229,15 +229,16 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   hold back, and its arrival terminates every running scrub ffmpeg (`_stop_scrub_procs`), whose jobs
   then start over. Compare (`compare.js` `ensureScrubs`) asks for a scrub copy per video layer as
   soon as it opens (clips under 3 s are skipped, as in the lightbox). The proxy element is created
-  with no `src` (`armScrubs` sets it when a drag starts, `releaseScrubDecoder` clears it once the
-  proxy is hidden) so a hidden copy does not hold a hardware decoder during playback. A drag seeks
+  with no `src` (`armScrubs` sets it when a drag starts; `releaseScrubDecoder` sets `hidden` and then
+  clears `src`) so a hidden copy does not hold a hardware decoder during playback, and an empty proxy
+  is not left on top of the file. A drag seeks
   that proxy, one seek in flight, latest time queued (`pumpTime` / `wantTime`); the full file stays
   on its last frame until the pointer goes up, then is seeked once and the proxy hides after it
   presents (`settleScrub`, rVFC or 250 ms). Until the proxy can show a frame the full file is not
   seeked while the pointer is down — a long-GOP seek per move lands the clips apart and can fail a
   decoder — and the release seeks every clip once: one the playhead has left goes to its last
-  frame, one it has not reached goes to its first. The proxy stays up until that frame is presented
-  (`atPlayhead` uses the same edge), then `releaseScrubDecoder` runs. Closing Compare during a drag
+  frame, one it has not reached goes to its first. On a layer that stays visible, the proxy stays up until that frame is presented
+  (`atPlayhead` uses the same edge), then `releaseScrubDecoder` runs. Hiding the layer during the drag hides its proxy at once and drops `src`; showing the layer again shows the file, not an empty proxy. Closing Compare during a drag
   removes the window listeners that finish it. `.cmp-m` is `clip-path: inset(0)` so Windows does not promote the compare videos to hardware
   overlays (a clip without one stays on its old picture until playback stops, and the overlay cancels
   a drag whose timeline it covers). Losing pointer capture mid-drag does not end it. The `.out`
@@ -1008,10 +1009,11 @@ back to the page; a new URL drops the key), set by `PUT /api/stt/config` (JSON o
 → the mic's toasts. Each mic has a language chip (tap = the other of the two recent languages, Alt+Shift+M).
 
 **Annotating in compare** (index.html `cmpAnnot`) — a second `createAnnotator` instance mounted on the compare
-overlay (`host.onOpen` → `mount(C.el)`); compare reports the selected layer's viewer after every rebuild /
-selection (`host.onView({asset, wrap, media, isVid, geom, unturn})`: swipe → the whole `.cmp-box`, tiles → its
-`.cmp-cell`; `geom` is object-fit: contain inside the media element's box) → `setAsset` (only when the file
-changes) + `bind2d`; `onPlaced` → `viewChanged`. The compare runs every clip on one clock, so the annotator
+overlay (`host.onOpen` → `mount(C.el)`); compare reports the selected layer's viewer when its surface node or its
+file changes (`host.onView({asset, wrap, media, isVid, geom, unturn})`: Stack → the whole `.cmp-box`, tiles → its
+`.cmp-cell`; `geom` is object-fit: contain inside the media element's box). Hiding a layer, or Over / Difference,
+keeps that element, so `onView` is not called again. `setAsset` runs only when the file changes and removes any
+`.an-layer`; `bind2d` keeps the layer when that same wrap still holds it. `onPlaced` → `viewChanged`. The compare runs every clip on one clock, so the annotator
 must not drive the element: annotate.js goes through `vidPause` / `vidSeek`, which use `host.pauseVideo` /
 `host.seekVideo` when present (→ `cmp.pause()` / `cmp.seekLayer(sel, t)`). New notes get `host.noteExtra()`
 = `{compare: cmp.session()}` (FORMAT.md `compare`); a note card with it shows a button when the host has
@@ -1039,7 +1041,12 @@ i over every layer below it (in Difference: the difference of layers i..n-1); wi
 (Over) or keeps the selection (Difference). A stored layout `"swipe"` (prefs before 0.112, notes) reads as
 Stack + Swipe (`readLayout`); `session()` writes `"swipe"` / `"stack"` for Stack with Swipe on / off. There is
 no Fit button (double-click / `F`); compare has no turn / mirror (the lightbox's per-file view turn is not
-applied: `geom().turn` is empty). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The bottom layer stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the bottom layer. The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
+applied: `geom().turn` is empty). `build()` runs only when the layout, Swipe, the chip order or the set of layers changes (`structureKey`);
+it moves each layer's media node (`ensurePrimary`) instead of dropping its `src` (the Stack DOM is the same order — chips reversed — with Swipe on or off; `applyLook` marks the bottom, the cut `data-i` layers and the blend), and ends any fast start. Hide / show and Over / Difference go
+through `applyLook` (class `off` is `display: none`, blend is `mix-blend-mode` on the layer). Hidden videos stay loaded
+and paused; showing one sets `_catch` so the next tick seeks it onto the clock. Stack layers sit in `.cmp-stack`
+(`isolation: isolate`) so the blend group does not paint the annotation twice; the annotation layer is a sibling.
+Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The bottom layer stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the bottom layer. The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
 layer local time = T − start/fps; `syncVideos()` holds the clock
 (`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
 never seek towards a running clock. **Fast start** (0.116, `bridge()` / `aimFull()` / `endBridge()`, `l.br`): a jump while playing (clip in span, full element seeking / queued / > 0.3 s off) plays the clip's scrub copy at once while the full element seeks to `local + lead` (lead from the measured `l.seekCost`, ×1.5 per miss) and waits there paused; when the clock reaches the target it plays and, once on the clock past the target, the copy is hidden and its decoder dropped. Not for clips without a copy (< 3 s, still encoding) or within 0.5 s of their end. `settleScrub` skips a layer in a bridge; a drag start, `build()`, leaving the span or stopping ends it. `scrubEnd` keeps the copies armed by the press while playing (bridge() drops an unused one). Measured on 1080p GOP-250 ×3 in headless Edge: the clock moves 70–190 ms after a click (was 490–760 ms). Clips outside their span pause, parked on their edge frame (frame 0 / the last; `syncVideos` seeks an
@@ -1048,8 +1055,7 @@ element that is not there, e.g. after `build()` or a jump), drawn at full streng
 the layer below; **See-through** (`P.thru`, a pref, not in notes; `T`) puts `.thru` on the box: alpha / empty
 space show through and an `.out` clip is cut away (`clip-path: inset(50%)`, never opacity: `.out` is toggled mid-drag too). Compare `<video>` elements
 use `clip-path: inset(0)` so Windows does not promote them to hardware overlays. A timeline drag shows
-each clip's scrub proxy when that copy can; until then the picture holds and the release seeks every
-clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
+each visible clip's scrub proxy when that copy can; a hidden clip is not armed, and while it stays hidden its proxy is marked `hidden` and drops `src` (a decoding proxy under `display: none` holds a hardware decoder, and an empty proxy left visible would cover the file when the layer is shown). Until a proxy can show, the picture holds, and the release seeks every visible clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). A hidden clip is not seeked and does not hold the clock. On a visible layer the proxy stays until that frame is presented. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
 open and do not reach the library / lightbox. The stage's layout class is `lay-<layout>` (a bare `row` is the
 sidebar's menu-row class and collapses the stage). Stage input goes through `viewer-input.js` `attachViewerInput(stage, …)`
 (`C.input`, destroyed in `close`): the module owns the press / click / drag decision (4 px, the 250 ms click hold —
@@ -1062,7 +1068,11 @@ Alt+left → `"pan"`). The picture scrub shares `scrubBegin` / `scrubTo` / `scru
 `startScrub` (`C.scrub`, proxies, `queueRelease`); right = zoom (`zoomAt`, the viewer's zoom settings), middle / Alt = pan, two touches = pinch. Shift rebases a drag
 and slows it (scrub / track ×0.1, zoom / pan ×0.2, offset 6 px → 30 px per frame; once Shift has been used, the timeline drag stays relative). The compare annotator has
 `readPanel` on, with `notesBtn` / `eyeBtn` pointing at the compare bar's own buttons; it binds the selected layer
-on every `onView`, drawing or not.
+on `onView` (a hide or a blend restyle does not call it), drawing or not. A middle / right press does not select a
+layer (`claim` only on button 0): selecting did rebind the annotator and left a second copy of the drawings, and the
+brush circle stuck because the stage holds the pointer. `trackHover` follows it from window `pointermove`. Shift+click
+in annotate.js draws a straight line from that tool's last point when the gap is at least 3 screen px (a zoomed-in click is a small document distance). A line or arrow click that is too short to keep still stores that point. A note added while comparing uploads `captureView`
+(the whole comparison) as its picture; the card then does not also show the selected file's frame. The note's frame and file are the ones when that picture is taken; if the selected layer changes before the upload finishes, the note is not filed.
 **Shift-fine rule (every viewer):** Shift held slows a drag — scrub ×0.1 (`FINE_SCRUB`), pan / zoom ×0.2 (`FINE`,
 `zoomFactorDrag(…, fine)`, `zoomFactorWheel(…, fine)`) — in the lightbox, compare, the board, 3D dolly and the text
 viewer; a change of Shift mid-drag rebases (incremental code needs nothing; anchored code counts that move at the old

@@ -35,12 +35,15 @@
 //
 // Input on the picture is the viewer's: click plays / pauses, left drag scrubs (Shift a tenth), right drag zooms,
 // middle drag pans, double-click / F fits; a swipe split is grabbed only by a press right on it. Shift slows every drag (scrub, zoom,
-// pan, split, a clip's offset). Layer chips: click shows / hides, middle-click removes, drag reorders; the offset
-// field is dragged sideways (or clicked to type).
+// pan, split, a clip's offset). Layer chips: click shows / hides, Ctrl+click solos that layer (again: every layer),
+// middle-click removes, drag reorders; the offset field is dragged sideways (or clicked to type). Hiding a layer
+// and Over / Difference only restyle the layers already on screen: the media elements stay, so a clip is not
+// loaded and seeked again.
 //
 // createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
-// onView(view) — the selected layer's viewer after every rebuild / selection (view: {asset, wrap, media, isVid,
-// geom, unturn} or null), onPlaced() — pan / zoom / splits moved, onClose(), onAnnotButton() }.
+// onView(view) — the selected layer's viewer when its surface or its file changes (view: {asset, wrap, media,
+// isVid, geom, unturn} or null). Hiding a layer, or Over / Difference, keeps that element, so onView is not
+// called again. onPlaced() — pan / zoom / splits moved, onClose(), onAnnotButton() }.
 // open(ids, focusId, session) / close() / isOpen() / onKey(e) (true when the key was used) / session() — the
 // set to store with a note (FORMAT.md `compare`) / pause() / seekLayer(id, t) — the selected clip's local time.
 
@@ -164,7 +167,7 @@ export function createCompare(host){
     C = {
       el, stage: el.querySelector(".cmp-stage"), layers: [], sel: null, sound: null, splits: [],
       view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0,
-      candidates: [], built: "", snaps: {}, focusDirty: true, // post the split windows on the first tick, paused or not
+      candidates: [], built: "", viewWrap: null, viewMedia: null, snaps: {}, focusDirty: true, // post the split windows on the first tick, paused or not
     };
     C.cacheTimer = setInterval(pollCaches, 500);
     host.onOpen?.(el); // (the annotator mounts on the overlay before the first rebuild reports a viewer)
@@ -369,7 +372,9 @@ export function createCompare(host){
   function queueRelease(){
     if (!C) return;
     for (const l of C.layers){
-      if (!isVideo(l.a)) continue;
+      // A hidden clip stays where it was. Seeking it here holds the visible ones on that seek,
+      // and a decoder under display:none is a decoder the clips on screen do not get.
+      if (!isVideo(l.a) || !l.vis) continue;
       // Before this clip: frame 0. Past it: the last frame. The drag already showed that edge.
       const want = clipLocal(l) + 0.1 / C.fps;
       for (const m of l.media){
@@ -436,113 +441,186 @@ export function createCompare(host){
     if (!C) return;
     for (const l of C.layers){
       const v = l.scrub;
-      if (!v || !l.scrubReady || v.getAttribute("src")) continue;
+      // A hidden layer is not on screen: giving its proxy a src keeps a hardware decoder for nothing.
+      if (!v || !l.vis || !l.scrubReady || v.getAttribute("src")) continue;
       v.src = `/api/video/scrub/${l.id}`;
     }
   }
-  // Playback needs those decoders. Drop the proxy's src once it is no longer the picture.
+  // Playback needs those decoders. The proxy is no longer the picture: hide it first, then drop
+  // its src. Clearing src alone leaves it on top (z-index 2) with no frame, covering the file.
   function releaseScrubDecoder(v){
-    if (!v || !v.getAttribute("src")) return;
+    if (!v) return;
+    v.hidden = true;
     v._want = null;
+    if (!v.getAttribute("src")) return;
     try { v.pause(); v.removeAttribute("src"); v.load(); } catch {}
   }
-  // Rebuilds the stage DOM (layout, visibility, order or blend changed). Media elements are
-  // recreated, so video positions are restored from the shared clock on the next tick.
+  // What forces a new stage skeleton: the layout, whether Swipe is on, and the chip order. Visibility and
+  // Over / Difference are painted onto that skeleton (applyLook) — they do not reload a clip.
+  const structureKey = () => P.layout + ":" + (P.swipe ? 1 : 0) + ":" + C.layers.map((l) => l.id).join(",");
+  const q = (root, sel, id) => root?.querySelector(`${sel}[data-id="${CSS.escape(String(id))}"]`) || null;
+  // The layer's picture element, made once. Taken out of the stage and put back: its decoder and frame stay.
+  function ensurePrimary(l){
+    const m = l.media.find((x) => x._primary);
+    if (m){ m.remove(); return m; }
+    return mkMedia(l, true);
+  }
+  // Layout, Swipe or the chip order changed: a new skeleton. Every layer is mounted, hidden ones included,
+  // so the next hide / show only toggles a class. Media nodes are moved, not recreated.
   function build(){
     for (const l of C.layers){
-      for (const m of l.media) releaseMedia(m);
-      l.media = [];
-      if (l.br){ l.br = null; if (l.scrub){ l.scrub.hidden = true; releaseScrubDecoder(l.scrub); } } // (new elements start over)
+      // A fast start ends here: the copy is unmounted below, and a target queued for the parked full file is
+      // dropped (the next tick seeks or bridges it again from the clock).
+      // The copy stays up, paused on its frame (the full file is parked ahead, a frame the clock has not reached);
+      // brJumped makes the next tick start a new bridge on it or hide it — never leave it frozen over a running clock.
+      if (l.br){ endBridge(l, false); l.brJumped = true; for (const m of l.media) m._want = null; }
+      if (l.scrub?.isConnected) l.scrub.remove();
     }
     const st = C.stage;
+    const curs = [...st.classList].filter((c) => c.startsWith("cur-"));
     st.innerHTML = "";
     // (prefixed: a bare "row" is the sidebar's menu-row class, whose fixed height flattened the Row layout to nothing)
-    st.className = "cmp-stage lay-" + P.layout + [...st.classList].filter((c) => c.startsWith("cur-")).map((c) => " " + c).join(""); // (cursors.js keeps its classes)
+    st.className = "cmp-stage lay-" + P.layout + curs.map((c) => " " + c).join(""); // (cursors.js keeps its classes)
     setCursor(st, "base", vids().length ? null : "grab"); // pictures only: a left drag pans
     setCursor(st, "hover", null); // (the splits are rebuilt: the next pointer move finds one again)
-    const vis = visible(), diff = diffOn();
-    if (!vis.length){ st.innerHTML = `<div class="cmp-empty">All layers are hidden</div>`; paintAll(); return; }
-    const label = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
+    const name = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
     if (stacked()){
-      // One stack, the last chip at the bottom and the first on top, each layer on its own level (as Open RV).
-      // Over: a layer covers the ones below it (opaque unless See-through). Difference: each layer is blended with
-      // everything below it, the bottom one plain — the difference of the whole visible stack; hiding a layer takes
-      // it out. Swipe cuts layers, it does not change the stack: like an RV wipe, layer i keeps only the part of the
-      // view before its split line (region i and the regions before it), so region i shows layer i over everything
-      // below it, and the bottom layer is never cut. The first (top) visible layer sets the frame.
-      const sw = !!P.swipe;
-      if (sw && C.splits.length !== vis.length - 1) resetSplits();
+      // One stack, the last chip at the bottom and the first on top, each layer on its own level (as Open RV) —
+      // the same DOM order with Swipe on or off. Over: a layer covers the ones below it (opaque unless See-through).
+      // Difference: each layer is blended with everything below it, the bottom one plain — the difference of the
+      // whole visible stack; hiding a layer takes it out. Swipe cuts layers, it does not change the stack: like an
+      // RV wipe, layer i keeps only the part of the view before its split line, so region i shows layer i over
+      // everything below it, and the bottom layer is never cut. The first (top) visible layer sets the frame.
+      // Which layer is bottom / cut / blended is applyLook's (hiding a layer changes it without a rebuild).
       const box = document.createElement("div");
       box.className = "cmp-box" + (P.thru ? " thru" : "");
+      const stack = document.createElement("div");
+      stack.className = "cmp-stack"; // blend stays inside here; the annotation layer is a sibling, painted once
+      box.appendChild(stack);
       st.appendChild(box);
-      const n = vis.length;
-      for (let i = n - 1; i >= 0; i--){
-        const l = vis[i], bottom = i === n - 1;
+      for (const l of [...C.layers].reverse()){
         const w = document.createElement("div");
-        w.className = "cmp-ly" + (bottom ? " base" : "");
-        if (sw && !bottom) w.dataset.i = String(i); // (place() cuts it at its split line)
-        if (diff && !bottom) w.style.mixBlendMode = "difference";
-        w.appendChild(mkMedia(l, true));
-        box.appendChild(w);
-      }
-      if (sw){
-        // A name per region (place() lays them out).
-        vis.forEach((l, i) => {
-          const lb = document.createElement("div");
-          lb.className = "cmp-lbl";
-          lb.dataset.i = String(i);
-          lb.innerHTML = label(l);
-          box.appendChild(lb);
-        });
-        C.splits.forEach((p, i) => {
-          const h = document.createElement("div");
-          h.className = "cmp-split";
-          h.dataset.k = String(i);
-          h.innerHTML = "<b></b>";
-          box.appendChild(h);
-        });
-      } else {
-        // Names, top layer first: Over shows only the one on top (the one you see), Difference all of them.
-        (diff ? vis : vis.slice(0, 1)).forEach((l, j) => {
-          const lb = document.createElement("div");
-          lb.className = "cmp-lbl";
-          lb.style.top = `${10 + j * 26}px`;
-          lb.innerHTML = label(l);
-          box.appendChild(lb);
-        });
+        w.className = "cmp-ly";
+        w.dataset.id = l.id;
+        w.appendChild(ensurePrimary(l));
+        stack.appendChild(w);
+        const lb = document.createElement("div");
+        lb.className = "cmp-lbl";
+        lb.dataset.id = l.id;
+        lb.innerHTML = name(l);
+        box.appendChild(lb);
       }
     } else {
       // (no blend in cells: Over / Difference are Stack options)
-      const n = vis.length;
-      let cols = n, rows = 1;
-      if (P.layout === "col"){ cols = 1; rows = n; }
-      else if (P.layout === "grid"){ cols = Math.ceil(Math.sqrt(n)); rows = Math.ceil(n / cols); }
-      st.style.setProperty("--cols", cols);
-      st.style.setProperty("--rows", rows);
-      for (const l of vis){
+      for (const l of C.layers){
         const cell = document.createElement("div");
-        cell.className = "cmp-cell" + (l.id === C.sel ? " sel" : "");
+        cell.className = "cmp-cell";
         cell.dataset.id = l.id;
         const w = document.createElement("div");
         w.className = "cmp-ly";
-        w.appendChild(mkMedia(l, true));
+        w.dataset.id = l.id;
+        w.appendChild(ensurePrimary(l));
         cell.appendChild(w);
         const lb = document.createElement("div");
         lb.className = "cmp-lbl";
-        lb.innerHTML = label(l);
+        lb.innerHTML = name(l);
         cell.appendChild(lb);
         st.appendChild(cell);
       }
     }
+    C.built = structureKey();
+    // The surface node changed: the annotator must bind the new one (a later retune with the same node does not).
+    C.viewWrap = null; C.viewMedia = null;
     mountScrubs();
+    applyLook();
     C.syncNow = true;
+    place();
+    paintAll();
+    reportView();
+  }
+  // Hide / show, Over / Difference, labels, swipe regions and the tile grid — on the skeleton build() left.
+  // A hidden layer keeps its element (class off); showing it does not decode the file again.
+  function applyLook(){
+    const vis = visible(), diff = diffOn();
+    const box = C.stage.querySelector(".cmp-box");
+    if (stacked() && box){
+      // The bottom is the last visible chip: never cut, never blended. Every other visible layer is blended in
+      // Difference, and with Swipe cut at its split line (data-i = its region, place() sets the clip-path).
+      const sw = !!P.swipe, idx = new Map(vis.map((l, i) => [l.id, i])), n = vis.length;
+      for (const l of C.layers){
+        const w = q(box, ".cmp-ly", l.id);
+        if (!w) continue;
+        const i = idx.get(l.id), on = i != null, bottom = on && i === n - 1;
+        w.classList.toggle("off", !on);
+        w.classList.toggle("base", bottom);
+        w.style.mixBlendMode = diff && on && !bottom ? "difference" : "";
+        if (sw && on && !bottom) w.dataset.i = String(i);
+        else { delete w.dataset.i; w.style.clipPath = ""; }
+      }
+      // Names. Swipe: one per region (place() lays them out). Off: top layer first — Over shows only the one on
+      // top (the one you see), Difference every visible one.
+      let j = 0;
+      for (const l of C.layers){
+        const lb = q(box, ".cmp-lbl", l.id);
+        if (!lb) continue;
+        const i = idx.get(l.id);
+        if (sw){
+          lb.classList.toggle("off", i == null);
+          if (i == null) delete lb.dataset.i; else lb.dataset.i = String(i);
+        }
+      }
+      if (!sw){
+        for (const l of C.layers) q(box, ".cmp-lbl", l.id)?.classList.add("off");
+        for (const l of vis){
+          const lb = q(box, ".cmp-lbl", l.id);
+          if (!lb || !(diff || l === vis[0])) continue;
+          lb.classList.remove("off");
+          lb.style.top = `${10 + j * 26}px`;
+          j++;
+        }
+        box.querySelectorAll(".cmp-split").forEach((h) => h.remove());
+        return;
+      }
+      const need = Math.max(0, vis.length - 1);
+      if (C.splits.length !== need) resetSplits();
+      const handles = [...box.querySelectorAll(".cmp-split")];
+      while (handles.length > need) handles.pop().remove();
+      while (handles.length < need){
+        const h = document.createElement("div");
+        h.className = "cmp-split";
+        h.innerHTML = "<b></b>";
+        box.appendChild(h);
+        handles.push(h);
+      }
+      handles.forEach((h, i) => { h.dataset.k = String(i); });
+    } else {
+      const n = Math.max(1, vis.length);
+      let cols = n, rows = 1;
+      if (P.layout === "col"){ cols = 1; rows = n; }
+      else if (P.layout === "grid"){ cols = Math.ceil(Math.sqrt(n)); rows = Math.ceil(n / cols); }
+      C.stage.style.setProperty("--cols", cols);
+      C.stage.style.setProperty("--rows", rows);
+      for (const l of C.layers){
+        const cell = q(C.stage, ".cmp-cell", l.id);
+        if (!cell) continue;
+        cell.classList.toggle("off", !l.vis);
+        cell.classList.toggle("sel", l.id === C.sel);
+      }
+    }
+  }
+  // Visibility or blend changed, or the skeleton is stale (layout, Swipe, order, a layer added or removed).
+  function retune(){
+    if (!C) return;
+    if (C.built !== structureKey()){ build(); return; }
+    applyLook();
     place();
     paintAll();
     reportView();
   }
   // The selected layer's viewer for the annotator: the box it is drawn in (Stack: the whole box — a drawing
   // anywhere maps into the selected layer's picture), its media element and its geometry (object-fit: contain
-  // inside the element's box, so a layer of another shape is placed as it is shown).
+  // inside the element's box, so a layer of another shape is placed as it is shown). The same element in the
+  // same box is not reported again: hiding another layer or switching Over / Difference must not rebuild it.
   function reportView(){
     if (!host.onView) return;
     const l = layer(C.sel);
@@ -552,11 +630,13 @@ export function createCompare(host){
         wrap = C.stage.querySelector(".cmp-box");
         media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
       } else {
-        wrap = [...C.stage.querySelectorAll(".cmp-cell")].find((c) => c.dataset.id === l.id) || null;
+        wrap = q(C.stage, ".cmp-cell", l.id);
         media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
       }
     }
+    if (wrap === C.viewWrap && media === C.viewMedia) return;
     C.viewWrap = wrap;
+    C.viewMedia = media;
     if (!wrap || !media){ host.onView(null); return; }
     const geom = () => {
       const x = parseFloat(media.style.left) || 0, y = parseFloat(media.style.top) || 0;
@@ -590,7 +670,7 @@ export function createCompare(host){
       const i = Number(w.dataset.i), b = (1 - edges[i + 1]) * 100;
       w.style.clipPath = horiz ? `inset(0 ${b}% 0 0)` : `inset(0 0 ${b}% 0)`;
     }
-    for (const lb of box.querySelectorAll(".cmp-lbl")){
+    for (const lb of box.querySelectorAll(".cmp-lbl:not(.off)")){
       const i = Number(lb.dataset.i);
       if (horiz){ lb.style.left = `calc(${edges[i] * 100}% + 10px)`; lb.style.top = "10px"; lb.style.maxWidth = `calc(${(edges[i + 1] - edges[i]) * 100}% - 20px)`; }
       else { lb.style.left = "10px"; lb.style.top = `calc(${edges[i] * 100}% + 10px)`; lb.style.maxWidth = ""; }
@@ -776,6 +856,19 @@ export function createCompare(host){
     let waiting = false;
     for (const l of C.layers){
       if (!isVideo(l.a)) continue;
+      // A hidden layer stays loaded but does not play or seek: showing it again is one seek, not a new file.
+      if (!l.vis){
+        // Drop a queued seek and the scrub proxy's decoder. The file element stays loaded;
+        // showing the layer seeks it once (_catch). A fast start in progress ends (its copy is not on screen).
+        l.br = null; l.brJumped = false;
+        if (l.scrub){ l.scrub._want = null; if (!l.scrub.paused) l.scrub.pause(); releaseScrubDecoder(l.scrub); }
+        for (const m of l.media) if (m.tagName === "VIDEO"){ m._want = null; if (!m.paused) m.pause(); }
+        continue;
+      }
+      // Shown again after being hidden: one seek onto the clock. Left set while the element is still
+      // loading or a scrub is holding the picture, so a blend change (no _catch) does not seek anyone.
+      let catchUp = !!l._catch;
+      l._catch = false;
       const local = C.T - l.start / C.fps;
       const inside = local >= -1e-4 && (!l.dur || local < l.dur);
       // Keep a visible proxy paused. Do not hide it here once the drag has ended, including when
@@ -792,6 +885,7 @@ export function createCompare(host){
         m.parentElement?.classList.toggle("out", !inside);
         if (m.tagName !== "VIDEO") continue;
         if (!inside){
+          catchUp = false; // the edge-frame park below owns this picture
           if (!m.paused) m.pause();
           if (l.br) endBridge(l, true); // (it ran past its end on the copy: the full file parks on its edge below)
           if (C.scrub){
@@ -830,13 +924,16 @@ export function createCompare(host){
           // No proxy yet. Seeking every full file on the way down lands them on different frames
           // (a long GOP cannot keep up) and can fail a decoder, which leaves the blocked-media
           // mark up and the compare stuck. Hold the current picture; the release seeks them once.
-          if (C.scrub){ m._want = null; continue; }
-          if (force || Math.abs(m.currentTime - want) > 0.45 / C.fps) wantTime(m, want);
+          if (C.scrub){ m._want = null; continue; } // _catch stays: the release seeks once
+          if (force || catchUp || Math.abs(m.currentTime - want) > 0.45 / C.fps) wantTime(m, want);
           else if (l.scrub && !l.scrub.hidden) settleScrub(l, m); // (a copy left up by a fast start, already matched)
+          catchUp = false;
           continue;
         }
         const br = bridge(l, m, local, now);
-        if (br){ if (br === "wait") waiting = true; continue; }
+        // (a layer shown again while playing starts on its copy too; the bridge owns its catch-up, so a hand-over
+        // a few frames off is not seeked again by the catch-up below)
+        if (br){ catchUp = false; if (br === "wait") waiting = true; continue; }
         // A seek in flight: wait for it to land, never restart it — unless it has hung for 8 s (an overloaded
         // decoder can drop one): asked again. (Sooner would restart honest slow seeks: 4K, long GOP.)
         if (m.seeking){
@@ -848,11 +945,12 @@ export function createCompare(host){
         }
         m._stuck = 0;
         const d = m.currentTime - local;
-        if (force || Math.abs(d) > 0.3){
+        if (force || catchUp || Math.abs(d) > 0.3){
           if (Math.abs(d) > 0.5 / C.fps){ m.currentTime = local; m._low = 0; waiting = true; }
           m.playbackRate = 1;
+          catchUp = false;
           if (waiting) continue;
-        }
+        } else catchUp = false;
         // At its own end (a clip running a little ahead, or one a hair shorter than its listed length): it stays
         // on its last frame — play() would restart it from 0 — and holds nobody.
         if (m.ended || (Number.isFinite(m.duration) && m.currentTime >= m.duration - 1e-3)){ m._low = 0; continue; }
@@ -875,12 +973,13 @@ export function createCompare(host){
         m.playbackRate = clamp(1 - d * 2, 0.85, 1.15);
         if (m.paused) m.play().catch(() => {});
       }
+      if (catchUp) l._catch = true;
     }
     if (run){
       // After the seeks above: a proxy still showing the drag, and a clip already on that frame
       // (no "seeked" will fire), hands back now. A seek still in flight hands back from "seeked".
       for (const l of C.layers){
-        if (!l.scrub || l.scrub.hidden) continue;
+        if (!l.vis || !l.scrub || l.scrub.hidden) continue;
         const m = l.media.find((x) => x._primary && x.tagName === "VIDEO");
         if (m) settleScrub(l, m);
       }
@@ -901,7 +1000,7 @@ export function createCompare(host){
   // and about once a second while playing. `gen` is this client's cache generation: a lightbox post already
   // in flight carries an older one and the server leaves these windows alone.
   function pushFocus(now){
-    const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO"));
+    const v = vids().filter((l) => l.vis && l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO"));
     if (!v.length) return;
     const due = C.focusDirty ? 150 : C.playing ? 1000 : Infinity;
     if (now - (C.focusAt || 0) < due) return;
@@ -962,7 +1061,7 @@ export function createCompare(host){
     const more = C.candidates.filter((a) => !C.layers.some((l) => l.id === a.id));
     box.innerHTML = C.layers.map((l) => {
       const v = isVideo(l.a);
-      return `<div class="cmp-chip${l.id === C.sel ? " sel" : ""}${l.vis ? "" : " off"}" data-id="${l.id}" draggable="true" title="${esc(l.a.path || l.a.name)} — click shows / hides (H) · middle-click removes · drag to reorder">
+      return `<div class="cmp-chip${l.id === C.sel ? " sel" : ""}${l.vis ? "" : " off"}" data-id="${l.id}" draggable="true" title="${esc(l.a.path || l.a.name)} — click shows / hides (H) · Ctrl+click solos this layer (again: all) · middle-click removes · drag to reorder">
         <i class="cmp-dot" style="background:${l.color}"></i>
         <span class="cmp-nm">${esc(l.a.name)}</span>
         ${v ? `<span class="cmp-off" title="Where this clip's first frame sits on the timeline — drag sideways to slide it (Shift slower), click to type · [ ] (Shift ×10)"><em data-a="ov">${l.start > 0 ? "+" : ""}${l.start}f</em></span>
@@ -1047,8 +1146,25 @@ export function createCompare(host){
     if (!l) return;
     if (l.vis && visible().length === 1){ toast("At least one layer stays visible"); return; }
     l.vis = !l.vis;
-    resetSplits();
-    build();
+    if (l.vis) l._catch = true; // it was not seeking while hidden: land on the clock once
+    if (l.vis && C.scrub) armScrubs(); // shown mid-drag: its proxy follows the pointer too
+    C.focusDirty = true;
+    retune();
+  }
+  // Ctrl+click: this layer alone, or every layer when it already is. The clicked layer ends up selected.
+  function solo(id){
+    const l = layer(id);
+    if (!l) return;
+    const alone = l.vis && C.layers.every((x) => x === l || !x.vis);
+    for (const x of C.layers){
+      const on = alone || x === l;
+      if (on && !x.vis) x._catch = true;
+      x.vis = on;
+    }
+    C.sel = id; // before retune, so a layer that just became the only one stays the annotator's viewer
+    if (C.scrub) armScrubs(); // (a layer shown mid-drag gets its proxy)
+    C.focusDirty = true;
+    retune();
   }
   function remove(id){
     if (C.layers.length <= 1){ close(); return; }
@@ -1059,8 +1175,8 @@ export function createCompare(host){
     if (!visible().length) C.layers[0].vis = true;
     if (C.sel === id) C.sel = frameLayer().id; // (a visible one: the annotator keeps a viewer)
     if (C.sound === id) C.sound = frameLayer().id;
-    resetSplits();
-    build();
+    C.focusDirty = true;
+    retune();
   }
   function setSound(id){
     C.sound = C.sound === id ? null : id;
@@ -1085,7 +1201,7 @@ export function createCompare(host){
     const [l] = C.layers.splice(from, 1);
     const to = beforeId ? C.layers.findIndex((x) => x.id === beforeId) : -1;
     if (to < 0) C.layers.push(l); else C.layers.splice(to, 0, l);
-    build();
+    retune();
   }
   function setPref(k, v){
     P[k] = v;
@@ -1094,7 +1210,7 @@ export function createCompare(host){
     if (k === "loop"){ paintTimeline(); return; }
     if (k === "dir"){ paintBar(); place(); return; }
     if (k === "thru"){ paintBar(); C?.stage.querySelectorAll(".cmp-box").forEach((b) => b.classList.toggle("thru", !!P.thru)); return; } // (no rebuild: only the look)
-    build();
+    retune(); // blend / swipe / layout: blend only restyles; a real skeleton change goes through build()
   }
   function fit(){ C.view = { zoom: 1, cx: 0.5, cy: 0.5 }; place(); }
   function editOffset(id, em){
@@ -1162,6 +1278,12 @@ export function createCompare(host){
     // Hold the clock while a clip still has the release time queued behind a seek already in flight.
     C.wait = false;
     for (const l of C.layers){
+      // A hidden clip's seek must not hold the clock, and its proxy must not keep decoding.
+      if (!l.vis){
+        if (l.scrub) releaseScrubDecoder(l.scrub);
+        for (const m of l.media) if (m.tagName === "VIDEO") m._want = null;
+        continue;
+      }
       // (playing: a copy armed by the press is kept — the fast start plays on it; bridge() drops it if unused)
       if (l.scrub && l.scrub.hidden && !C.playing) releaseScrubDecoder(l.scrub);
       for (const m of l.media){
@@ -1286,6 +1408,7 @@ export function createCompare(host){
         const l = layer(id);
         if (!l) return;
         if (e.target.closest(".cmp-off")) return; // (the offset field's padding)
+        if (e.ctrlKey || e.metaKey){ solo(id); return; }
         if (host.annotating?.()){ if (!l.vis) toggleVis(id); if (C && layer(id)?.vis) select(id); return; }
         toggleVis(id);
         if (C && layer(id)?.vis) select(id);
@@ -1438,7 +1561,7 @@ export function createCompare(host){
       if (!a) return;
       addLayer(a);
       resetSplits();
-      build();
+      retune();
       ensureScrubs();
       loadFps();
     });
@@ -1494,7 +1617,7 @@ export function createCompare(host){
   // (a detached box measures 0 and the view would go NaN).
   function liveBox(down){
     const b = down?.target?.closest?.(".cmp-box, .cmp-cell");
-    return b && b.isConnected ? b : C.stage.querySelector(".cmp-box, .cmp-cell");
+    return b && b.isConnected ? b : C.stage.querySelector(".cmp-box, .cmp-cell:not(.off)");
   }
   function bindStageInput(st){
     let s = null; // the picture scrub: the playhead it started from
@@ -1502,8 +1625,12 @@ export function createCompare(host){
       canStart: (e) => !!C && !!boxOf(e),
       claim: (e) => {
         const box = boxOf(e);
-        const id = layerAt(e, box);
-        if (id && id !== C.sel) select(id);
+        // A left press picks the layer under it. Middle (pan) and right (zoom) must not: that rebinding
+        // rebuilt the annotation layer and left a copy of every drawing, and the brush circle stuck.
+        if (e.button === 0){
+          const id = layerAt(e, box);
+          if (id && id !== C.sel) select(id);
+        }
         // A timeline scrub is running (another finger): this press does nothing, it must not pan the picture.
         if (C.scrub) return {};
         // (Alt+left pans, except while annotating: there Alt+left moves a split, see wantsPress.)
@@ -1592,7 +1719,7 @@ export function createCompare(host){
   }
   // 100 % of the frame layer's (first visible chip's) own pixels.
   function actual(){
-    const ref = frameLayer(), box = C.stage.querySelector(".cmp-box, .cmp-cell");
+    const ref = frameLayer(), box = C.stage.querySelector(".cmp-box, .cmp-cell:not(.off)"); // (a hidden cell measures 0)
     if (!box || !ref.nw) return;
     C.view.zoom = 1 / Math.min(box.clientWidth / ref.nw, box.clientHeight / ref.nh);
     place();
@@ -1646,7 +1773,8 @@ export function createCompare(host){
     C.playing = false;
     const l = layer(C.sel);
     // (a fast start: the copy has the frame on screen; the full file is parked ahead)
-    const m = !l || !isVideo(l.a) ? null : l.br ? (l.scrub && !l.scrub.hidden ? l.scrub : null) : l.media.find((x) => x._primary);
+    // (a hidden layer's element is parked where it was hidden: not the clock)
+    const m = !l || !l.vis || !isVideo(l.a) ? null : l.br ? (l.scrub && !l.scrub.hidden ? l.scrub : null) : l.media.find((x) => x._primary);
     // (minus the 0.1 frame syncVideos adds back, so a stop late in a frame does not move on to the next one)
     if (m && m.readyState >= 1 && !m.parentElement?.classList.contains("out")) C.T = l.start / C.fps + Math.max(0, m.currentTime - 0.1 / C.fps);
     else C.T = snapT(C.T);
@@ -1688,10 +1816,12 @@ export function createCompare(host){
     const rel = (el) => { const b = el.getBoundingClientRect(); return { x: b.left - R.left, y: b.top - R.top, w: b.width, h: b.height }; };
     const boxes = stacked() ? [root] : [...root.querySelectorAll(".cmp-cell")];
     for (const box of boxes){
+      if (box.classList.contains("off")) continue;
       const B = rel(box);
       cx.save();
       cx.beginPath(); cx.rect(B.x * dpr, B.y * dpr, B.w * dpr, B.h * dpr); cx.clip();
       for (const ly of box.querySelectorAll(".cmp-ly")){
+        if (ly.classList.contains("off")) continue;
         const m = ly.querySelector(".cmp-scrub:not([hidden])") || ly.querySelector(".cmp-m:not(.cmp-scrub)");
         if (!m) continue;
         cx.save();
@@ -1734,7 +1864,7 @@ export function createCompare(host){
     cx.font = `${11 * dpr}px system-ui, sans-serif`;
     cx.textBaseline = "middle";
     for (const lb of root.querySelectorAll(".cmp-lbl")){
-      if (lb.hidden) continue;
+      if (lb.hidden || lb.classList.contains("off")) continue;
       const L = rel(lb), text = lb.textContent.trim();
       if (!L.w || !text) continue;
       cx.fillStyle = "rgba(0,0,0,.6)";
@@ -1773,6 +1903,9 @@ function injectStyles(){
 .cmp-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: grid; gap: 2px; background: #000; touch-action: none; user-select: none; }
 .cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
+/* Blend stays in the stack. The annotation layer is a sibling of it, so it is painted once. */
+.cmp-stack { position: absolute; inset: 0; isolation: isolate; z-index: 0; }
+.cmp-ly.off, .cmp-cell.off, .cmp-lbl.off { display: none !important; }
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
 /* isolation: the scrub proxy is z-index 2 so it paints over its own file. The bottom layer is not
    clipped. Without a stacking context here its proxy joins the box and covers every other swipe

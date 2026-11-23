@@ -129,8 +129,11 @@
     colour, bold / italic / underline,
     alignment, background box (colour, opacity), outline; double-click a text to edit it again
     (`Ctrl+Enter` or Esc finishes).
-  - While drawing: `Shift` keeps lines, arrows, a pin's line and straight brush strokes horizontal or vertical
-    (also when dragging a line's end), makes rectangles square and ellipses round. Select tool: click /
+  - While drawing: **Shift+click** draws a straight line from the last point of that tool (brush, pencil, marker,
+    lasso, stroke arrows, line, arrow, eraser) to this click, as in Photoshop. A click with the line or arrow
+    that leaves no mark still counts as that point, so the next Shift+click can start there. Holding `Shift` and dragging keeps
+    lines, arrows, a pin's line and straight brush strokes horizontal or vertical
+    (also when dragging a line's end), and makes rectangles square and ellipses round. Select tool: click /
     drag a box on empty space to select. `Ctrl`+click or a `Ctrl`+drag box (even one starting on a drawing)
     toggles, as in the library grid; `Shift`+click, a `Shift`+drag box and `Ctrl+Shift`+drag add. In 3D, where
     empty space orbits, `Ctrl`+drag or the *Box* switch draws the box. Drag to move (Shift locks the axis), Alt+drag duplicates,
@@ -634,7 +637,8 @@
     only (no video), a left drag pans. **`Shift` slows every drag down** — scrub, zoom, pan, a split, a clip's
     offset — and can be pressed or let go mid-drag without a jump.
   - Layers bar at the bottom: **click a chip** shows / hides that layer (`H`; one brought back becomes the
-    selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), drag a
+    selected layer, `↑` / `↓` select). **Ctrl+click** (Cmd+click) solos it — that layer alone, or every layer
+    if it already is the only one. **Middle-click** removes it (or ×), drag a
     chip to reorder (touch: hold it, then drag; the whole chip follows) — the order is the order of the splits, the stack (first on top) and the tiles and is kept
     with a note written in the comparison. The first visible chip's picture sets the frame every layer is fitted
     to. A new comparison puts the file it was opened from first.
@@ -656,14 +660,14 @@
     the eye (while drawing), the compare button (closes the comparison), annotate and ✕.
   - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
     **selected layer** — notes and drawings go to that file, at its own frame (a video layer's local
-    time). While annotating, a click on a layer chip picks that layer (showing it if hidden) instead of hiding it — that is how you annotate another file. A note written here remembers the
+    time). While annotating, a click on a layer chip picks that layer (showing it if hidden) instead of hiding it — that is how you annotate another file. Ctrl+click still solos. A note written here remembers the
     comparison — the files, their order, layout (with Swipe on / off) and offsets: its card in the viewer has
     *⧉ Compare · N files*, which opens it again on the note's frame, and `K` on that file brings the same
     files back (the newest such note wins) instead of its versions. While annotating, the left button draws: `Alt`+drag
     moves the nearest split (as it scrubs a video in the viewer), and a finger or stylus that lands on a split
     moves it instead of drawing. The tools' keys (`[` `]` brush size, `R` `V` `L` tools, `S` screenshot, `Shift+,` / `.`
     markers) win over the compare's; leave annotating (`A` / Esc) to shift layers by key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
-    layer in its split, stack or tile, Difference, the split lines and names — with the drawings on top.
+    layer in its split, stack or tile, Difference, the split lines and names — with the drawings on top. Adding the note stores that same picture (not only the file the note belongs to).
   - Wheel zooms around the cursor (`Shift` slower), double-click (double-tap) or `F` fits (there is no Fit button), `0` shows the first visible layer at 100 %. `Esc` / `K` closes.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
   is kept; a Shift-range or a marquee adds them in grid order) and press Space over one of them, or
