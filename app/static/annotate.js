@@ -2803,6 +2803,8 @@ export function createAnnotator(host){
         </div>
         <hr>
         <button type="button" data-ex="import">Import review file…</button>
+        <div class="an-mbg"><hr><div class="an-mlbl" title="When drawings reach past the frame, exported pictures widen to them; this fills the added margin">Backdrop past the frame</div>
+          <div class="an-mbgrow"><span class="an-seg"><button type="button" data-xbg="auto" title="The colour of the frame's edge">Auto</button><button type="button" data-xbg="color" title="A colour of your choice">Colour</button></span><input type="color" class="an-xbgc" title="Backdrop colour"></div></div>
       </div>
       <div class="an-menu an-trk" hidden></div>
       <div class="an-rs"><span>State</span><div class="an-seg">
@@ -2829,6 +2831,7 @@ export function createAnnotator(host){
       </div>
       <input type="file" class="an-file" accept=".srev,.sightreview,application/json" hidden>`;
     el.addEventListener("pointerdown", (e) => e.stopPropagation());
+    el.addEventListener("error", (e) => { if (e.target?.dataset?.np) npMissing(e.target); }, true);  // a stored preview gone
     // The reviewer name lives in the user panel (index.html openUserPanel), the same one as the sidebar's person button.
     const who = el.querySelector(".an-user");
     who.onclick = () => host.userPanel?.(who);
@@ -2836,9 +2839,21 @@ export function createAnnotator(host){
     const menu = el.querySelector(".an-menu:not(.an-trk)"), exBtn = el.querySelector("[data-act=export]");
     exBtn.onclick = () => {
       menu.hidden = !menu.hidden;
+      if (!menu.hidden){ paintXbg(); menu.querySelector(".an-mbg").hidden = isBoard() || S.kind === "model3d"; }  // (2D pictures only)
       // A sequence: the same exports for every clip of it that has notes (the host walks the clips).
       if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard();
     };
+    // Export backdrop past the frame: Auto, or a colour (the swatch also switches to Colour when one is picked).
+    const xbgc = menu.querySelector(".an-xbgc");
+    const paintXbg = () => {
+      const v = exportBgSetting();
+      menu.querySelectorAll("[data-xbg]").forEach((b) => b.classList.toggle("on", (b.dataset.xbg === "auto") === (v === "auto")));
+      if (v !== "auto") xbgc.value = v;
+    };
+    xbgc.value = readJSON("sight.annotate.exportBgColor", "#000000");
+    menu.querySelectorAll("[data-xbg]").forEach((b) => { b.onclick = () => { writeJSON("sight.annotate.exportBg", b.dataset.xbg === "auto" ? "auto" : xbgc.value); paintXbg(); }; });
+    xbgc.addEventListener("input", () => { writeJSON("sight.annotate.exportBg", xbgc.value); writeJSON("sight.annotate.exportBgColor", xbgc.value); paintXbg(); });
+    paintXbg();
     menu.querySelectorAll("[data-exall]").forEach((b) => { b.onclick = () => { menu.hidden = true; host.seqExport?.(b.dataset.exall); }; });
     host.registerAutoClose?.(menu, () => { menu.hidden = true; }, exBtn);
     menu.querySelectorAll("[data-ex]").forEach((b) => {
@@ -2945,6 +2960,7 @@ export function createAnnotator(host){
     el.classList.toggle("an-board", b);
     el.querySelectorAll("[data-ex]:not([data-ex=text])").forEach((x) => { x.hidden = b; });
     el.querySelector(".an-menu:not(.an-trk) > hr").hidden = b;
+    el.querySelector(".an-mbg").hidden = b;
     // a link ▾ per connected tracker, none on a board (no media entity) (docs/PLAN-trackers.md decisions 10, 11)
     paintTrkBtns(b);
   }
@@ -3200,8 +3216,12 @@ export function createAnnotator(host){
     if (!v || !S.b3) return null;
     const ex = explode ?? v.explode ?? host.getV3D?.()?.explode ?? 0;
     const id = S.asset?.id + "|" + vk + "|" + JSON.stringify(v.cam) + "|" + JSON.stringify(v.hidden) + "|x" + ex + "|a" + JSON.stringify(v.anim);
+    const tok = "m" + npHash(id);  // its stored copy (PF.disk, npPut)
+    pfAsset();
+    if (PF.collect){ PF.collect.add(tok); return null; }
     const hit = PIC3.get(id);
     if (hit) return hit;
+    if (PF.disk?.has(tok)){ const u = npUrl(tok); PIC3.set(id, u); return u; }
     // No camera move while a drag (orbit, stroke) is on; the picture comes with the next refresh.
     if (S.drag) return null;
     const save = curCam();
@@ -3216,11 +3236,12 @@ export function createAnnotator(host){
     if (moveMeshes) S.b3.setHidden(saveHid);
     let url = null;
     if (src?.width && src?.height){
-      const sc = Math.min(1, 640 / Math.max(src.width, src.height));
+      const sc = Math.min(1, NP_SIDE / Math.max(src.width, src.height));
       const cv = document.createElement("canvas");
       cv.width = Math.max(1, Math.round(src.width * sc)); cv.height = Math.max(1, Math.round(src.height * sc));
       cv.getContext("2d").drawImage(src, 0, 0, cv.width, cv.height);
-      url = cv.toDataURL("image/jpeg", 0.85);
+      url = cv.toDataURL("image/jpeg", 0.82);
+      npPut(tok, cv);
     }
     if (!same) S.b3.setCam(save);
     if (url) PIC3.set(id, url);
@@ -3243,7 +3264,7 @@ export function createAnnotator(host){
     const vk = goVk || n.data.ctx?.vk || null;
     const url = view3dPic(vk, explodeOf(vk, [n, ...list]));
     const vw = g.w * 1000 / g.h;
-    const img = url ? `<img src="${url}" alt="">` : "";
+    const img = url ? `<img src="${url}"${npAttr(url)} alt="">` : "";
     const ct = RC.captionOf(n.data, { vk });
     return `<div class="an-nprev${cls}${ct ? " an-hascap" : ""}"${goVk ? ` data-vk="${goVk}"` : ""} style="aspect-ratio:${g.w} / ${g.h}" title="${ct ? esc(ct) : goVk ? "Go to this view" : "Show this note's drawings"}">${img}<svg viewBox="${-vw / 2} -500 ${vw} 1000" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
   }
@@ -3320,7 +3341,7 @@ export function createAnnotator(host){
       if (t == null) return "";
       if (at != null) pt = ` data-pt="${t}"`;
       const url = previewFrame(t);
-      img = (url ? `<img src="${url}" alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`) + (at != null ? `<span class="an-fno">f${frameNo(t)}</span>` : "");
+      img = (url ? `<img src="${url}"${npAttr(url)} alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`) + (at != null ? `<span class="an-fno">f${frameNo(t)}</span>` : "");
     } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
     // A note's own picture with a text of its own gets a mark (a reply's picture: list = its drawings, at = null).
     const tt = S.kind === "video" ? at ?? n.data.ctx?.t : null;
@@ -3331,20 +3352,115 @@ export function createAnnotator(host){
   // kept per time for the open asset.
   // failed: the asset whose clip no player could show (the file and its server copy both failed); its
   // frames are not asked for again until the asset is reset.
-  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0, tries: new Map(), failed: null };
+  // Stored previews (0.113): every frame / 3D still made here is also sent to the server (PUT
+  // /api/review/nprev/<aid>/<key>, Library.note_previews) as a small JPEG (NP_SIDE), so the next opening of the
+  // panel loads files instead of seeking / rendering again. disk: the keys stored for PF.aid (null until the list
+  // is in), diskV: their version (the file's stamp, in the URL). Keys: "f<t.3>" a video frame, "m<hash>" a 3D
+  // still (pic3Id). collect: a Set while previewKeys() gathers the keys the live notes show (nothing is made then).
+  const NP_SIDE = 360;
+  const PF = { aid: null, v: null, cache: new Map(), want: [], busy: false, gen: 0, tries: new Map(), failed: null, disk: null, diskV: "", diskP: null, collect: null };
   function resetPF(){
     if (PF.v){ PF.v.removeAttribute("src"); PF.v.load(); PF.v.remove(); }
     PF.v = null; PF.aid = null; PF.cache.clear(); PF.want = []; PF.busy = false; PF.gen++; PF.tries = new Map(); PF.failed = null;
+    PF.disk = null; PF.diskV = ""; PF.diskP = null;
+    clearTimeout(pruneTimer);
     PIC3.clear();
   }
+  // PF follows the open asset (a new one resets it and starts loading its stored keys).
+  function pfAsset(){
+    if (PF.aid !== (S.asset?.id || null)){ resetPF(); PF.aid = S.asset?.id || null; }
+    if (PF.aid && !PF.diskP && !isBoard()){
+      const aid = PF.aid, gen = PF.gen;
+      PF.diskP = host.api(`/api/review/nprev/${encodeURIComponent(aid)}`).then((r) => {
+        if (PF.gen !== gen) return;
+        PF.disk = new Set(r?.keys || []); PF.diskV = r?.v || "";
+      }, () => { if (PF.gen === gen) PF.disk = new Set(); });
+    }
+    return PF.diskP || Promise.resolve();
+  }
+  const npUrl = (tok) => `/api/review/nprev/${encodeURIComponent(PF.aid)}/${tok}.jpg?v=${encodeURIComponent(PF.diskV)}`;
+  // Stores a preview made here (best effort: a failed upload only means it is made again next time).
+  // The upload carries the file version it listed (diskV): the server refuses it if the file changed since.
+  // (A 3D still is often taken before the list is in: it waits for it, so it knows the version.)
+  function npPut(tok, cv){
+    const aid = PF.aid, gen = PF.gen;
+    if (!aid) return;
+    if (!PF.diskV){ pfAsset().then(() => { if (PF.gen === gen && PF.diskV) npPut(tok, cv); }); return; }
+    const ver = PF.diskV;
+    if (PF.disk?.has(tok)) return;
+    cv.toBlob((b) => {
+      if (!b || PF.gen !== gen) return;
+      host.api(`/api/review/nprev/${encodeURIComponent(aid)}/${tok}?v=${encodeURIComponent(ver)}`, { method: "PUT", headers: { "content-type": "image/jpeg" }, body: b })
+        .then(() => { if (PF.gen === gen) PF.disk?.add(tok); }, () => {});
+    }, "image/jpeg", 0.82);
+  }
+  // A stored preview that is gone (another window pruned it, the file changed): forget it and make it again.
+  function npMissing(img){
+    const tok = img.dataset.np;
+    if (!tok || PF.aid !== S.asset?.id) return;
+    img.removeAttribute("data-np");
+    PF.disk?.delete(tok);
+    if (tok[0] === "f"){
+      const key = tok.slice(1);
+      PF.cache.delete(key);
+      img.removeAttribute("src"); img.dataset.ft = key;
+      if (!PF.want.includes(key)) PF.want.push(key);
+      queueMicrotask(pumpPF);
+    } else {
+      for (const [id, u] of PIC3) if (u.includes(`/${tok}.jpg`)) PIC3.delete(id);
+      if (panelShown()) renderPanel();
+    }
+  }
+  const npTok = (url) => { const m = /^\/api\/review\/nprev\/[^/]+\/([A-Za-z0-9.-]+)\.jpg/.exec(url || ""); return m ? m[1] : ""; };
+  const npAttr = (url) => { const t = npTok(url); return t ? ` data-np="${t}"` : ""; };
+  // A short stable token for a long key (cyrb53: 53 bits, as hex).
+  function npHash(str){
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < str.length; i++){ const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+  }
   function previewFrame(t){
-    const key = Number(t).toFixed(3);
-    if (PF.aid !== S.asset?.id){ resetPF(); PF.aid = S.asset?.id || null; }
+    const key = Number(t).toFixed(3), tok = "f" + key;
+    pfAsset();
+    if (PF.collect){ PF.collect.add(tok); return null; }
     const hit = PF.cache.get(key);
     if (hit) return hit;
+    if (PF.disk?.has(tok)){ const u = npUrl(tok); PF.cache.set(key, u); return u; }
     if (!PF.want.includes(key)) PF.want.push(key);
     queueMicrotask(pumpPF);
     return null;
+  }
+  // The keys of every preview the live notes and replies show (rendering them with PF.collect on: no frame is
+  // sought, no still taken), and the server told to drop the rest. Run after a note / reply is deleted.
+  let pruneTimer = 0;
+  function schedulePrune(){
+    clearTimeout(pruneTimer);
+    pruneTimer = setTimeout(prunePreviews, 1500);
+  }
+  function prunePreviews(){
+    // Only on a fully loaded view: a missing player / 3D host / geometry would collect no keys and drop them all.
+    if (!PF.aid || PF.aid !== S.asset?.id || isBoard() || !PF.disk || !geom()?.w) return;
+    if (!(S.kind === "video" ? S.b2 && geom()?.nw : S.kind === "model3d" && S.b3)) return;
+    const keep = new Set(), hid = S.hiddenReplies;
+    PF.collect = keep; S.hiddenReplies = new Set();
+    try {
+      for (const n of notesSorted()){ notePreview(n); for (const r of liveReplies(n)) if (!r.event) replyPreview(n, r); }
+    } finally { PF.collect = null; S.hiddenReplies = hid; }
+    if (![...PF.disk].some((k) => !keep.has(k))) return;
+    const aid = PF.aid, gen = PF.gen;
+    host.api(`/api/review/nprev/${encodeURIComponent(aid)}/prune`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keep: [...keep] }) })
+      .then(() => {
+        if (PF.gen !== gen || !PF.disk) return;
+        for (const k of [...PF.disk]){
+          if (keep.has(k)) continue;
+          PF.disk.delete(k);
+          // (an undo brings the note back: its picture is made and stored again, not read from a deleted file)
+          if (k[0] === "f") PF.cache.delete(k.slice(1));
+          else for (const [id, u] of PIC3) if (u.includes(`/${k}.jpg`)) PIC3.delete(id);
+        }
+      }, () => {});
   }
   // The player has its first picture, or `ms` has passed: a browser that does not decode the file
   // may stay silent, and the pump must not wait on it for ever (it then stops for good).
@@ -3385,40 +3501,47 @@ export function createAnnotator(host){
   }
   async function pumpPF(){
     if (PF.busy || !PF.want.length || !PF.aid) return;
-    if (PF.failed === PF.aid){ PF.want = []; return; }
     PF.busy = true;
     // A reset (another asset, or the same one reopened) ends this run: its generation is gone.
     const aid = PF.aid, gen = PF.gen;
+    const show = (key, url) => {
+      PF.cache.set(key, url);
+      S.ui?.querySelectorAll(`img[data-ft="${key}"]`).forEach((im) => { const t = npTok(url); if (t) im.dataset.np = t; im.src = url; im.removeAttribute("data-ft"); });
+    };
     try {
-      if (!PF.v){
-        const nv = document.createElement("video");
-        nv.muted = true; nv.preload = "auto"; nv.playsInline = true;
-        // Kept in the document, hidden as a 1 px box: a video that is not in the page is not decoded by
-        // every browser (WebKit on macOS gave no picture for its seeks), so the seeks showed nothing.
-        nv.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
-        document.body.appendChild(nv);
-        PF.v = nv;
-        nv.src = `/api/file/${aid}`;
-        // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
-        let playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
-        if (!playable){
-          const res = await convertForPlayback(aid, null, () => PF.gen === gen);
-          if (res.ok && PF.gen === gen){
-            nv.src = `/api/file/${aid}?copy=${Date.now()}`;
-            playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
+      await pfAsset();  // the stored frames first: they need no player
+      if (PF.gen !== gen) return;
+      while (PF.want.length && PF.gen === gen){
+        const key = PF.want.shift(), tok = "f" + key;
+        if (PF.disk?.has(tok)){ show(key, npUrl(tok)); continue; }
+        if (PF.failed === aid) continue;
+        if (!PF.v){
+          const nv = document.createElement("video");
+          nv.muted = true; nv.preload = "auto"; nv.playsInline = true;
+          // Kept in the document, hidden as a 1 px box: a video that is not in the page is not decoded by
+          // every browser (WebKit on macOS gave no picture for its seeks), so the seeks showed nothing.
+          nv.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+          document.body.appendChild(nv);
+          PF.v = nv;
+          nv.src = `/api/file/${aid}`;
+          // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
+          let playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
+          if (!playable){
+            const res = await convertForPlayback(aid, null, () => PF.gen === gen);
+            if (res.ok && PF.gen === gen){
+              nv.src = `/api/file/${aid}?copy=${Date.now()}`;
+              playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
+            }
+          }
+          if (PF.gen !== gen) return;
+          if (!playable){
+            // Nothing can show this clip: drop the player and give up on its unstored frames (no 4 s-per-frame retries).
+            PF.failed = aid; PF.tries = new Map();
+            nv.removeAttribute("src"); nv.load(); nv.remove(); PF.v = null;
+            continue;
           }
         }
-        if (PF.gen !== gen) return;
-        if (!playable){
-          // Nothing can show this clip: drop the player and give up on the asset (no 4 s-per-frame retries).
-          PF.failed = aid; PF.want = []; PF.tries = new Map();
-          nv.removeAttribute("src"); nv.load(); nv.remove(); PF.v = null;
-          return;
-        }
-      }
-      const v = PF.v;
-      while (PF.want.length && PF.gen === gen){
-        const key = PF.want.shift();
+        const v = PF.v;
         const landed = await pfSeek(v, landAt(Number(key)));
         if (PF.gen !== gen) break;
         if (!landed || !v.videoWidth || v.readyState < 2){
@@ -3428,13 +3551,12 @@ export function createAnnotator(host){
           if (n < 3) PF.want.push(key);
           continue;
         }
-        const w = Math.min(480, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
+        const sc = Math.min(1, NP_SIDE / Math.max(v.videoWidth, v.videoHeight));
         const c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        c.getContext("2d").drawImage(v, 0, 0, w, h);
-        const url = c.toDataURL("image/jpeg", 0.8);
-        PF.cache.set(key, url);
-        S.ui?.querySelectorAll(`img[data-ft="${key}"]`).forEach((im) => { im.src = url; im.removeAttribute("data-ft"); });
+        c.width = Math.max(1, Math.round(v.videoWidth * sc)); c.height = Math.max(1, Math.round(v.videoHeight * sc));
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        show(key, c.toDataURL("image/jpeg", 0.82));
+        npPut(tok, c);
       }
     } catch (e){
       if (PF.gen !== gen) return; // a reset ended this run; its failure is expected
@@ -3527,6 +3649,7 @@ export function createAnnotator(host){
       for (const x of drawn) S.items.delete(x);
     });
     S.hiddenReplies.delete(rid);
+    schedulePrune();
   }
   const replyDrawings = (id, rid) => [...S.items.values()].filter((it) => isDrawing(it) && it.data.note === id && it.data.reply === rid);
   function renderPending(){
@@ -3634,6 +3757,7 @@ export function createAnnotator(host){
       const ids = [id, ...[...S.items.values()].filter((it) => it.data.note === id).map((it) => it.id)];
       commit(ids, () => { for (const x of ids) S.items.delete(x); });
       if (S.pinFocus === id) S.pinFocus = null;
+      schedulePrune();  // its stored previews that no other note shows
       return;
     }
     if (t.dataset.shot){
@@ -4241,6 +4365,46 @@ export function createAnnotator(host){
     cx.setTransform(1, 0, 0, 1, 0, 0);
     return { cv, dpr };
   }
+  // The area an exported 2D picture covers, in native pixels: the frame, grown to every drawing that reaches past
+  // its edge plus a margin of 3% of the frame's longer side on that side. Capped at three frames each way (a stray
+  // drawing far away must not make a giant picture of nothing).
+  function exportExtent(items, nw, nh){
+    let x0 = 0, y0 = 0, x1 = nw, y1 = nh;
+    for (const it of items){
+      const b = boundsOf(it);
+      if (!b.every(Number.isFinite) || (b[2] - b[0] <= 0 && b[3] - b[1] <= 0)) continue;
+      x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
+    }
+    const pad = 0.03 * Math.max(nw, nh);
+    if (x0 < 0) x0 = Math.max(-3 * nw, x0 - pad);
+    if (y0 < 0) y0 = Math.max(-3 * nh, y0 - pad);
+    if (x1 > nw) x1 = Math.min(4 * nw, x1 + pad);
+    if (y1 > nh) y1 = Math.min(4 * nh, y1 + pad);
+    return [Math.floor(x0), Math.floor(y0), Math.ceil(x1), Math.ceil(y1)];
+  }
+  // The backdrop of an exported picture where it reaches past the frame: a set colour, or "auto" = the mean
+  // colour of the frame's outer edge, so the margin reads as the frame going on. Kept in the settings
+  // ("sight.annotate.exportBg"); set in the Export menu.
+  const exportBgSetting = () => { const v = readJSON("sight.annotate.exportBg", "auto"); return typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : "auto"; };
+  function exportBackdrop(media){
+    const v = exportBgSetting();
+    if (v !== "auto") return v;
+    try {
+      const N = 32, c = document.createElement("canvas");
+      c.width = N; c.height = N;
+      const cx = c.getContext("2d", { willReadFrequently: true });
+      cx.drawImage(media, 0, 0, N, N);
+      const d = cx.getImageData(0, 0, N, N).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++){
+        if (x > 1 && x < N - 2 && y > 1 && y < N - 2) continue;  // the outer two-pixel ring of the frame only
+        const i = (y * N + x) * 4, a = d[i + 3] / 255;
+        r += d[i] * a; g += d[i + 1] * a; b += d[i + 2] * a; n++;  // a transparent edge counts as black
+      }
+      const h = (x) => Math.round(x / n).toString(16).padStart(2, "0");
+      return "#" + h(r) + h(g) + h(b);
+    } catch { return "#000000"; }
+  }
   // The full frame at native resolution (images / video), or the 3D view as rendered — used for
   // the PDF. `filter(it)` picks the drawings.
   function composeNative(filter, maxSide = 2000){
@@ -4249,13 +4413,30 @@ export function createAnnotator(host){
     if (S.b2){
       const m = S.b2.media, nw = g.nw, nh = g.nh;
       if (!nw || !nh) return null;
-      const s = Math.min(1, maxSide / Math.max(nw, nh));
+      const items = [...S.items.values()].filter((it) => isDrawing(it) && filter(it));
+      // Drawings past the frame's edge widen the picture to them (plus a small margin on that side), over the
+      // export backdrop (exportBackdrop: a set colour, or Auto = the frame's edge colour). [x0, y0]: the frame's
+      // top-left in the picture, in native pixels.
+      const [x0, y0, x1, y1] = exportExtent(items, nw, nh), W = x1 - x0, H = y1 - y0;
+      const s = Math.min(1, maxSide / Math.max(W, H));
       const cv = document.createElement("canvas");
-      cv.width = Math.round(nw * s); cv.height = Math.round(nh * s);
+      cv.width = Math.max(1, Math.round(W * s)); cv.height = Math.max(1, Math.round(H * s));
       const cx = cv.getContext("2d");
-      cx.setTransform(s, 0, 0, s, 0, 0);
-      try { cx.drawImage(m, 0, 0, nw, nh); } catch { return null; }
-      drawItems(cx, [...S.items.values()].filter((it) => isDrawing(it) && filter(it)));
+      // The frame's rectangle in the picture's pixels: the margin strips around it get the backdrop (not under it,
+      // so a see-through picture looks the same widened or not), and the frame stamp sits on it (bakeFrame).
+      // Whole pixels, so the frame's edge meets the margin without a half-covered seam.
+      const fx = Math.round(-x0 * s), fy = Math.round(-y0 * s);
+      const fw = Math.max(1, Math.min(cv.width - fx, Math.round(nw * s))), fh = Math.max(1, Math.min(cv.height - fy, Math.round(nh * s)));
+      cv.frameRect = [fx, fy, fw, fh];
+      if (W > nw || H > nh){
+        cx.fillStyle = exportBackdrop(m);
+        const r = (x, y, w, h) => { if (w > 0 && h > 0) cx.fillRect(x, y, w, h); };
+        r(0, 0, cv.width, fy); r(0, fy + fh, cv.width, cv.height - fy - fh);
+        r(0, fy, fx, fh); r(fx + fw, fy, cv.width - fx - fw, fh);
+      }
+      try { cx.drawImage(m, fx, fy, fw, fh); } catch { return null; }
+      cx.setTransform(fw / nw, 0, 0, fh / nh, fx, fy);
+      drawItems(cx, items);
       return cv;
     }
     if (S.b3){
@@ -4368,7 +4549,9 @@ export function createAnnotator(host){
     if (!cv || !stampOn(aid)) return;
     const st = S.stamp, text = stampText(t, st.mode);
     if (!text) return;
-    const b = stampBox(text, cv.width, st), [x, y] = stampXY(st.pos, cv.width, cv.height, b), cx = cv.getContext("2d");
+    // On the frame, sized to it, also when the picture was widened past it (composeNative frameRect).
+    const [fx, fy, fw, fh] = cv.frameRect || [0, 0, cv.width, cv.height];
+    const b = stampBox(text, fw, st), [sx, sy] = stampXY(st.pos, fw, fh, b), x = fx + sx, y = fy + sy, cx = cv.getContext("2d");
     cx.save();
     // composeNative leaves its downscale on the context: draw the label in device pixels.
     cx.setTransform(1, 0, 0, 1, 0, 0);
@@ -5222,7 +5405,10 @@ function injectStyles(){
 .an-menu button { text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--fg); font-size: 12px; }
 .an-menu button:hover { background: var(--surface-2); }
 .an-mlbl { padding: 4px 10px 2px; font-size: 10.5px; color: var(--muted); }
-.an-mseq[hidden] { display: none; }
+.an-mseq[hidden], .an-mbg[hidden] { display: none; }
+.an-mbgrow { display: flex; align-items: center; gap: 8px; padding: 2px 10px 6px; }
+.an-mbgrow .an-seg button { text-align: center; padding: 0 9px; height: 26px; }
+.an-xbgc { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; }
 .an-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 2px; }
 .an-rs { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; color: var(--subtle); font-size: 11px; }
 .an-rs .an-seg { flex: 1; display: flex; }

@@ -658,6 +658,25 @@ use `ctxShown` (every drawing on that frame). Cards show the note's own drawings
 over the clean picture / a video frame from a hidden second player (`previewFrame`, per asset). In 3D
 the pictures are stills from each view (`view3dPic`, kept per asset / view / camera / hidden meshes / explode, not per shading: a light change
 does not re-render them; made with the camera moved and put back; skipped during a drag); `view3dBox` draws the drawings in the host's units.
+Preview store (0.113): each video frame / 3D still made for a card (≤ `NP_SIDE` 360 px JPEG) is also PUT to
+`/api/review/nprev/<aid>/<key>` (`Library.save_note_preview`, file `thumbs/nprev/<aid>_<size>_<mtime_ns>_<key>.jpg`;
+key `f<t.toFixed(3)>` for a frame, `m<cyrb53 of the PIC3 id>` for a still, `[A-Za-z0-9.-]{1,64}`). `pfAsset()` loads
+the stored keys (`PF.disk`) once per asset; `previewFrame` / `pumpPF` / `view3dPic` serve a stored one by URL
+(`?v=` = the file stamp) and create the hidden player only for a frame that is not stored. A changed source file
+makes them stale (dropped by the next listing); asset delete / rename / changed-file cleanups glob
+`thumbs/nprev/<aid>_*` too (**not** `thumbs/video`: a finished playback copy deletes every non-scrub `<aid>_*`
+there). After a note / reply delete `schedulePrune` runs every live note's `notePreview` / `replyPreview` with
+`PF.collect` set (keys only — no seek, no render; hidden replies included; skipped until the player / 3D host /
+geometry is up) and POSTs `/prune {keep}`. A PUT carries the listed stamp (`?v=`) and is refused if the file changed
+since; the server ignores ids that are not `asset_id()` hex (no glob reaches the prune). An `<img data-np>` that
+fails to load (pruned elsewhere) drops the key and makes the picture again (`npMissing`). Stored 3D stills keep
+what their key does not cover (lights, live hidden meshes when the view has none, textures / sidecar files) until
+the main file changes. Exported margins: only the strips around the frame are filled; `bakeFrame` places the
+stamp on the frame (`cv.frameRect`).
+Export past the frame (0.113): `composeNative` (2D) widens the picture to `exportExtent` (frame ∪ drawing bounds,
++3 % of the frame's longer side on an overflowing side, capped at 3 frames each way) over `exportBackdrop`
+(`sight.annotate.exportBg`: `"auto"` = mean of the frame's outer edge ring, or `#rrggbb`; Export menu). Exports
+for the HTML page (`forPage`) draw no drawings, so their pictures stay the bare frame the page maps rows onto.
 A note may hold drawings on several frames / views (each row keeps its own ctx): `pendingDrawings`
 = loose drawings shown now + every loose one created since `S.openedAt` (any frame / view);
 **No "note's own frame" (0.47+):** a video note stands on the frames its own drawings are on plus

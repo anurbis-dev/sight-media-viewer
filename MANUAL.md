@@ -253,6 +253,11 @@
     empty space still picks the model's mesh), and the select tool's *Box* button makes a plain drag
     box-select — the touch way. The zoom settings (Speed, Drag axis, Invert) apply to the 3D
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
+  - **Drawings past the frame** in exports (PDF, ZIP, report pictures): the picture widens to take them
+    in, with a small margin. *Export ▾ → Backdrop past the frame*: **Auto** (the colour of the frame's
+    edge, so the margin reads as the frame going on) or **Colour** (pick one; picking also switches to it).
+  - **Note pictures in the panel** are small (360 px) and kept on disk: a video frame or 3D view is made
+    once, later openings of the panel only load it; they go when their note (or reply) is deleted.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
     a note's pictures side by side in rows under its words, then its replies — saved to Downloads and shown in the file manager; a video note brings only the frames it has drawings or picture texts on; each video frame is captioned with its file name, frame number and timecode, e.g. "clip.mp4 · f128 / 0:05+3" — the frames after the full second — and carries that label, small, in its top-left corner), *Notes as ZIP* — a folder per note ("Note 01" …) with its
     pictures, drawings burned in, each named by the file and the frame / view as under it in the reports

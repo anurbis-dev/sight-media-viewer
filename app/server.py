@@ -1101,6 +1101,35 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             raise HTTPException(404)
         return FileResponse(p, headers={"Cache-Control": "max-age=31536000, immutable"})
 
+    # Review panel previews, stored by the browser (Library.note_previews).
+    @app.get("/api/review/nprev/{aid}")
+    def note_previews(aid: str) -> dict:
+        return lib.note_previews(aid)
+
+    @app.get("/api/review/nprev/{aid}/{key}.jpg")
+    def note_preview(aid: str, key: str) -> FileResponse:
+        p = lib.note_preview_path(aid, key)
+        if not p:
+            raise HTTPException(404)
+        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "max-age=31536000, immutable"})
+
+    @app.put("/api/review/nprev/{aid}/{key}")
+    async def put_note_preview(aid: str, key: str, request: Request, v: str = "") -> dict:
+        if int(request.headers.get("content-length") or 0) > lib.NPREV_MAX_BYTES:
+            raise HTTPException(413, "too large")
+        data = await request.body()
+        if not await asyncio.to_thread(lib.save_note_preview, aid, key, data, v):
+            raise HTTPException(400, "bad preview")
+        return {"ok": True}
+
+    @app.post("/api/review/nprev/{aid}/prune")
+    async def prune_note_previews(aid: str, request: Request) -> dict:
+        body = await json_body(request)
+        keep = body.get("keep")
+        if not isinstance(keep, list):
+            raise HTTPException(400, "keep list required")
+        return {"removed": await asyncio.to_thread(lib.prune_note_previews, aid, keep)}
+
     def _review_out(path: Path, reveal: bool) -> dict:
         if reveal:
             try:

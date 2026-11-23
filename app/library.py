@@ -2096,6 +2096,11 @@ class Library:
                 src.replace(self.thumbs / "video" / (new_id + src.name[len(old_id):]))
             except OSError:
                 pass
+        for src in (self.thumbs / "nprev").glob(f"{old_id}_*"):
+            try:
+                src.replace(self.thumbs / "nprev" / (new_id + src.name[len(old_id):]))
+            except OSError:
+                pass
         self.execute(
             """
             UPDATE assets SET tags=?, note=?, rating=?, added_at=MIN(added_at, ?),
@@ -2204,6 +2209,7 @@ class Library:
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb", self.thumbs / "usdz" / f"{aid}.anim",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
                 *(self.thumbs / "video").glob(f"{aid}_*"),
+                *(self.thumbs / "nprev").glob(f"{aid}_*"),
             ):
                 try:
                     p.unlink(missing_ok=True)
@@ -3728,6 +3734,7 @@ class Library:
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb", self.thumbs / "usdz" / f"{aid}.anim",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
                 *(self.thumbs / "video").glob(f"{aid}_*"),
+                *(self.thumbs / "nprev").glob(f"{aid}_*"),
             ):
                 try:
                     p.unlink(missing_ok=True)
@@ -4848,6 +4855,84 @@ class Library:
             self.execute("UPDATE OR IGNORE tag_order SET name=? WHERE lower(name)=?", (new_name, want))
             self.execute("UPDATE OR IGNORE tag_meta SET name=? WHERE lower(name)=?", (new_name, want))
         return n
+
+    # ---- Review panel previews (annotate.js previewFrame / view3dPic) ------------------------------
+    # The review panel's note pictures (a video frame, a 3D still) are made in the browser, which is slow (a
+    # seek or a render each); it stores each one here so the next opening of the panel only loads files.
+    # "thumbs/nprev/<aid>_<size>_<mtime_ns>_<key>.jpg": a changed source file makes them stale (dropped on the
+    # next listing); the asset delete / rename / changed-file paths cover "<aid>_*" too. The browser prunes
+    # them when notes go (prune_note_previews with the keys its live notes still show).
+    NPREV_KEY = re.compile(r"^[A-Za-z0-9.-]{1,64}$")
+    NPREV_AID = re.compile(r"^[0-9a-f]{16}$")  # asset_id(): also keeps glob characters out of the patterns below
+    NPREV_MAX_BYTES = 4 * 1048576
+
+    def _nprev_prefix(self, aid: str) -> str | None:
+        if not self.NPREV_AID.match(aid or ""):
+            return None
+        a = self.get_asset(aid)
+        stamp = self._play_stamp(a["path"]) if a else None
+        return f"{aid}_{stamp}_" if stamp else None
+
+    def note_previews(self, aid: str) -> dict:
+        """The keys stored for asset ``aid`` (its current file only; stale ones are deleted) and the stamp
+        that versions their URLs."""
+        prefix = self._nprev_prefix(aid)
+        if not prefix:  # no such asset, or its file is offline: nothing listed, nothing deleted
+            return {"keys": [], "v": ""}
+        keys = []
+        for p in (self.thumbs / "nprev").glob(f"{aid}_*.jpg"):
+            if p.name.startswith(prefix):
+                keys.append(p.name[len(prefix):-4])
+            else:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        return {"keys": sorted(keys), "v": prefix[len(aid) + 1:-1]}
+
+    def note_preview_path(self, aid: str, key: str) -> Path | None:
+        if not self.NPREV_KEY.match(key or ""):
+            return None
+        prefix = self._nprev_prefix(aid)
+        p = self.thumbs / "nprev" / f"{prefix}{key}.jpg" if prefix else None
+        return p if p and p.is_file() else None
+
+    def save_note_preview(self, aid: str, key: str, data: bytes, version: str = "") -> bool:
+        """Stores one preview. ``version``: the stamp the browser listed (note_previews "v") — a preview made
+        from an older version of the file than the one there now is refused, not stored as current."""
+        if not self.NPREV_KEY.match(key or "") or not data or len(data) > self.NPREV_MAX_BYTES or data[:2] != b"\xff\xd8":
+            return False
+        prefix = self._nprev_prefix(aid)
+        if not prefix or prefix != f"{aid}_{version}_":
+            return False
+        d = self.thumbs / "nprev"
+        d.mkdir(parents=True, exist_ok=True)
+        final = d / f"{prefix}{key}.jpg"
+        tmp = d / f"{prefix}{key}.{secrets.token_hex(4)}.part"
+        try:
+            tmp.write_bytes(data)
+            tmp.replace(final)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            return False
+        return True
+
+    def prune_note_previews(self, aid: str, keep: list[str]) -> int:
+        """Deletes asset ``aid``'s stored previews whose key is not in ``keep``; returns how many went."""
+        keep_set = {k for k in keep if isinstance(k, str)}
+        prefix = self._nprev_prefix(aid)
+        if not prefix:  # no such asset / its file offline: leave everything alone
+            return 0
+        gone = 0
+        for p in (self.thumbs / "nprev").glob(f"{aid}_*.jpg"):
+            if p.name.startswith(prefix) and p.name[len(prefix):-4] in keep_set:
+                continue
+            try:
+                p.unlink(missing_ok=True)
+                gone += 1
+            except OSError:
+                pass
+        return gone
 
     def get_asset(self, aid: str) -> dict | None:
         rows = self.query("SELECT * FROM assets WHERE id=?", (aid,))
