@@ -581,7 +581,9 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .vctx .on::before { content: "✓  "; }
 .vctx button[disabled] { opacity: .4; cursor: default; }
 .vtrack { flex: 1; height: 12px; border-radius: 999px; background: var(--surface-3); position: relative; cursor: pointer; touch-action: none; }
-.vcache { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #2f9d5b; border-radius: inherit; pointer-events: none; opacity: .85; }
+/* Green = bytes of this file actually in RAM (several runs when the cache has holes). Clipped to the pill. */
+.vcaches { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
+.vcaches i { position: absolute; top: 0; bottom: 0; background: #2f9d5b; opacity: .85; }
 .vplay { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; background: var(--fg); border-radius: 1px; pointer-events: none; box-shadow: 0 0 0 1px rgb(0 0 0 / .35); }
 /* Sequence (clips back to back): one segment per clip above the clip's own timeline. */
 .seqbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px 0; border-top: 1px solid var(--border); background: var(--bg); flex: none; }
@@ -591,7 +593,10 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .seqbar .seq-b.on { color: var(--accent); }
 .seq-track { flex: 1; min-width: 0; height: 18px; position: relative; border-radius: 4px; overflow: hidden; background: var(--surface-3); cursor: pointer; touch-action: none; }
 .seq-segs { position: absolute; inset: 0; display: flex; }
-.seq-seg { flex: none; height: 100%; min-width: 2px; box-sizing: border-box; padding: 0 5px; border-right: 1px solid var(--bg); background: color-mix(in oklab, var(--accent) 34%, var(--surface-3)); color: var(--fg); font-size: 10px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.seq-seg { position: relative; flex: none; height: 100%; min-width: 2px; box-sizing: border-box; padding: 0 5px; border-right: 1px solid var(--bg); background: color-mix(in oklab, var(--accent) 34%, var(--surface-3)); color: var(--fg); font-size: 10px; line-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+/* Each clip's own RAM cache, along the bottom of its segment (the shade behind the name is the clip, not the cache). */
+.seq-caches { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; pointer-events: none; }
+.seq-caches i { position: absolute; top: 0; bottom: 0; background: #2f9d5b; }
 .seq-seg:nth-child(even) { background: color-mix(in oklab, var(--accent) 17%, var(--surface-3)); }
 .seq-seg.cur { box-shadow: inset 0 0 0 1px var(--accent); }
 .seq-marks { position: absolute; inset: 0; pointer-events: none; }
@@ -1893,22 +1898,58 @@ const cmp = createCompare({
   onPlaced: () => cmpAnnot.viewChanged(),
   onAnnotButton: () => cmpToggleAnnot(),
   annotating: () => cmpAnnot.isOn(),
+  cacheGen: () => cacheGen, // compare's focus posts carry it, so a late lightbox post cannot take the windows back
   abortAnnot: () => cmpAnnot.abortGesture(), // a second finger: a pinch drops the stroke the first one began
   onClose: () => {
     cmpAnnot.unmount();
     cmpAnnotAsset = null; cmpView = null;
-    // The server's RAM windows followed the compare's clips: back to the lightbox's video, or dropped.
+    // Replacing this comparison with another: retire its posts, and leave the lightbox held.
+    // Handing the windows back here races the new comparison onto the same generation.
+    // Notes on the lightbox file were written here: re-read them before the new comparison's
+    // onOpen clears the set, or they are never loaded again.
+    if (compareSwap){
+      bumpCacheGen();
+      if (light && cmpAnnotUsed.has(light.id)) annot.reload();
+      return;
+    }
+    // The windows were the compare's. A new generation, then the lightbox's video again — or drop them.
+    if (light) light.focusHeld = false;
+    const gen = bumpCacheGen();
     if (light?.video && light.asset) pushVideoFocus(light.video, light.asset, 0);
-    else fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true }) }).catch(() => {});
+    else fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true, gen }) }).catch(() => {});
     // The lightbox underneath shows a file annotated here: re-read its notes (the stage stays as it is).
     if (light && cmpAnnotUsed.has(light.id)) annot.reload();
   },
 });
 let cmpAnnotAsset = null;
-function openCompare(ids, focus, session){
+let cacheGen = 0; // bumped when the owner of the RAM windows changes (compare opens, compare closes)
+let compareSwap = 0; // openCompare calls still in flight: their close must not hand the windows back
+function bumpCacheGen(){ return ++cacheGen; }
+async function openCompare(ids, focus, session){
+  // Own the windows before the pause: pause fires timeupdate, which would post this clip's focus and
+  // leave the whole budget on it. A post already in flight is aborted and, if the server still runs it,
+  // carries the old generation.
+  bumpCacheGen();
+  if (light){
+    light.focusHeld = true;
+    clearTimeout(light.focusTimer);
+    light.focusTimer = 0;
+    light.focusAbort?.abort();
+  }
   for (const m of [light?.video, light?.audio]) { try { m?.pause(); } catch {} }
-  if (light) clearTimeout(light.focusTimer); // (a late lightbox focus would replace the compare's RAM windows)
-  return cmp.open(ids, focus, session);
+  compareSwap++;
+  let ok = false;
+  try { ok = await cmp.open(ids, focus, session); }
+  finally { compareSwap--; }
+  // Nothing opened, and no other open is still in flight (one finishing early must not drop the hold).
+  // The lightbox owns the windows again, or they are released when no video is left — focusHeld had
+  // blocked that release while this open was in flight.
+  if (!ok && !cmp.isOpen() && compareSwap === 0){
+    if (light) light.focusHeld = false;
+    if (light?.video && light.asset) pushVideoFocus(light.video, light.asset, 0);
+    else fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true, gen: cacheGen }) }).catch(() => {});
+  }
+  return ok;
 }
 // A note written in the compare: open that comparison again, on the note's frame, with annotating on.
 async function openCompareSession(sess, note){
@@ -6025,12 +6066,62 @@ async function mountWave(hostId, aid, src, autoplay){
 }
 // The video's RAM cache lives on the server (SlidingVideoCache): the player tells it where the
 // playhead is and how much RAM the settings allow, it keeps a window of the file filled around that
-// spot (sliding with the playhead) and reports the window back — that is the green strip on the
-// timeline. The <video> itself just streams /api/file/<id>, which is served through that window,
-// so playback starts at once instead of after the whole file has been downloaded.
+// spot (sliding with the playhead) and reports back the blocks actually in RAM — those runs are the
+// green on the timeline (a hole stays a hole; the planned window is not drawn). Bytes map onto the
+// clip the same way the playhead's byte is chosen (size · t / duration). The <video> itself just
+// streams /api/file/<id>, which is served through that window, so playback starts at once instead
+// of after the whole file has been downloaded.
+function cacheSpans(snap){
+  if (!snap || !(snap.size > 0)) return [];
+  if (Array.isArray(snap.spans)) return snap.spans;
+  return snap.end > snap.start ? [[snap.start, snap.end]] : [];
+}
+function cacheBarHtml(snap){
+  const spans = cacheSpans(snap), size = snap && snap.size;
+  if (!spans.length || !(size > 0)) return "";
+  let html = "";
+  for (const pair of spans){
+    const a = Number(pair[0]), b = Number(pair[1]);
+    if (!(b > a)) continue;
+    const l = Math.max(0, Math.min(100, a / size * 100));
+    const w = Math.max(0, Math.min(100, b / size * 100) - l);
+    if (w <= 0) continue;
+    html += `<i style="left:${l.toFixed(3)}%;width:${w.toFixed(3)}%"></i>`;
+  }
+  return html;
+}
+function paintCacheBars(el, snap){
+  if (!el) return;
+  const html = cacheBarHtml(snap);
+  if (el._html === html) return;
+  el._html = html;
+  el.innerHTML = html;
+}
 function applyCacheSnap(snap){
   if (!light || !snap) return;
   light.snap = snap;
+  // A sequence: this reply is the clip on screen. Keep it with the others the poll gathered.
+  if (light.seq){
+    const id = light.seq.list[light.seq.i]?.id;
+    if (id){ light.seqSnaps = light.seqSnaps || {}; light.seqSnaps[id] = snap; }
+  }
+  paintVBar();
+}
+function applyCacheFiles(j){
+  if (!light || !j) return;
+  const files = j.files || {};
+  // A sequence poll is the whole answer: merge would keep a green run on a clip this request did not
+  // include. Past 64 clips that is the one just left behind — its window is already gone (only the open
+  // clip and its neighbours are held, and those ids are always in the request).
+  let snaps;
+  if (light.seq){
+    const keep = new Set(light.seq.list.map((a) => a.id));
+    snaps = {};
+    for (const id of Object.keys(files)) if (keep.has(id)) snaps[id] = files[id];
+  } else snaps = Object.assign({}, files);
+  light.seqSnaps = snaps;
+  const id = light.seq ? light.seq.list[light.seq.i]?.id : light.asset?.id;
+  if (id && files[id]) light.snap = files[id];
   paintVBar();
 }
 function paintVBar(){
@@ -6041,17 +6132,8 @@ function paintVBar(){
   vposPaint(cur, dur);
   const play = light.bar.querySelector(".vplay");
   play.style.left = (dur > 0 ? (cur / dur) * 100 : 0) + "%";
-  const cache = light.bar.querySelector(".vcache");
+  paintCacheBars(light.bar.querySelector(".vcaches"), light.snap);
   const snap = light.snap;
-  if (snap && snap.size > 0 && (snap.end > snap.start)){
-    const a = (snap.start / snap.size) * 100;
-    const b = (snap.end / snap.size) * 100;
-    cache.style.left = a + "%";
-    cache.style.width = Math.max(0, b - a) + "%";
-  } else {
-    cache.style.left = "0%";
-    cache.style.width = "0%";
-  }
   light.bar.querySelector("[data-mem]").textContent = snap ? `RAM ${Math.round(snap.bytes / 1048576)} / ${snap.mb} MB` : "";
   if (light.seq) paintSeqBar(false);
 }
@@ -6059,7 +6141,7 @@ function paintVBar(){
 // so the last position always gets through). Every post carries the RAM budget from the settings,
 // so the saved value applies from the first video after a restart, not only after the slider moves.
 function pushVideoFocus(el, a, minGap){
-  if (!light || light.video !== el) return;
+  if (!light || light.video !== el || light.focusHeld) return; // compare owns the windows while it is open
   clearTimeout(light.focusTimer);
   const wait = minGap - (performance.now() - light.focusAt);
   if (wait > 0){ light.focusTimer = setTimeout(() => pushVideoFocus(el, a, 0), wait); return; }
@@ -6071,11 +6153,15 @@ function pushVideoFocus(el, a, minGap){
   const nb = (k) => (s && k !== s.i && s.list[k] ? s.list[k].id : undefined);
   const next = s ? nb(s.i + 1 < n ? s.i + 1 : s.loop ? 0 : -1) : undefined;
   const prev = s ? nb(s.i > 0 ? s.i - 1 : s.loop ? n - 1 : -1) : undefined;
+  light.focusAbort?.abort();
+  const ac = new AbortController();
+  light.focusAbort = ac;
   fetch("/api/video/focus", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id: a.id, t: t || 0, duration: Number.isFinite(el.duration) ? el.duration : 0, mb: clampCache(state.theme.videoCache), ahead: clampAhead(state.theme.videoAhead), next, prev }),
-  }).then((r) => r.json()).then((snap) => { if (light && light.video === el) applyCacheSnap(snap); }).catch(() => {});
+    body: JSON.stringify({ id: a.id, t: t || 0, duration: Number.isFinite(el.duration) ? el.duration : 0, mb: clampCache(state.theme.videoCache), ahead: clampAhead(state.theme.videoAhead), next, prev, gen: cacheGen }),
+    signal: ac.signal,
+  }).then((r) => r.json()).then((snap) => { if (light && light.video === el && !light.focusHeld) applyCacheSnap(snap); }).catch(() => {});
 }
 // keep: the element already streams the file (a preloaded sequence clip) — don't reload it.
 function startVideoCache(el, a, keep){
@@ -6083,11 +6169,30 @@ function startVideoCache(el, a, keep){
   if (!keep) el.src = `/api/file/${a.id}`;
   watchPlayable(el, a);
   pushVideoFocus(el, a, 0);
-  // The window keeps filling after the focus reply, so poll to keep the strip honest.
+  // The window keeps filling after the focus reply, so poll to keep the strip honest. A sequence asks
+  // for every clip; only a clip that has a window (the one on screen, and its neighbours) comes back with runs.
   light.cacheTimer = setInterval(() => {
     if (!light || light.video !== el) return;
-    fetch(`/api/video/cache?aid=${a.id}`).then((r) => r.json()).then((snap) => { if (light && light.video === el) applyCacheSnap(snap); }).catch(() => {});
+    const ids = light.seq && light.seq.list.length > 1 ? seqCacheIds(light.seq) : null;
+    const q = ids ? `aids=${ids.map(encodeURIComponent).join(",")}` : `aid=${encodeURIComponent(a.id)}`;
+    fetch(`/api/video/cache?${q}`).then((r) => r.json()).then((j) => {
+      if (!light || light.video !== el || !j) return;
+      if (j.files) applyCacheFiles(j); else applyCacheSnap(j);
+    }).catch(() => {});
   }, 500);
+}
+// Up to 64 clips per poll (the server's cap). The clip on screen and its two neighbours go first, so a
+// long sequence still shows the windows that are actually being filled.
+function seqCacheIds(s){
+  const ids = s.list.map((a) => a.id), n = ids.length;
+  if (n <= 64) return ids;
+  const at = (k) => ids[(k + n) % n];
+  const near = new Set([at(s.i)]);
+  if (s.i + 1 < n || s.loop) near.add(at(s.i + 1));
+  if (s.i > 0 || s.loop) near.add(at(s.i - 1));
+  const out = ids.filter((id) => near.has(id));
+  for (const id of ids){ if (out.length >= 64) break; if (!near.has(id)) out.push(id); }
+  return out;
 }
 // The browser decodes only some codecs. When the file gives no picture (an error, or metadata without
 // a video size), the server makes a playback copy (video-playable.js) and the player switches to it,
@@ -6119,7 +6224,9 @@ function releaseMedia(free){
   clearInterval(light.cacheTimer);
   clearTimeout(light.focusTimer);
   light.cacheTimer = light.focusTimer = 0;
-  if (free) fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true }) }).catch(() => {});
+  light.focusAbort?.abort();
+  // Compare still open: its clips keep the windows. A release here would drop them.
+  if (free && !light.focusHeld) fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: true, gen: cacheGen }) }).catch(() => {});
 }
 
 // The lightbox view's turn (0 / 90 / 180 / 270°) and mirror per file, remembered across sessions.
@@ -7082,6 +7189,7 @@ function openSequence(list){
   toggleLight(list[0]);
   if (!light) return;
   light.seq = { list, i: 0, durs: list.map((a) => Number(a.duration) || 0), loop: false, buf: null, pendT: null, pendPlay: null, marks: list.map(() => []) };
+  light.seqSnaps = {};
   list.forEach((a, k) => { if (k) seqLoadMarks(k); }); // clip 0 is on screen: annotate reports its marks
   seqProbe(light.seq);
   light.el.querySelector(".seqbar").hidden = false;
@@ -7095,6 +7203,7 @@ function endSequence(){
   seqDropHold();
   light.seqStill = null;
   light.seq = null;
+  light.seqSnaps = null;
   light.el.querySelector(".seqbar").hidden = true;
 }
 // Known durations; an unknown one (not probed yet) borrows the average so the bar still splits sensibly.
@@ -7231,7 +7340,7 @@ function paintSeqBar(segs){
   const d = seqDurs(), total = d.reduce((a, x) => a + x, 0) || 1;
   if (segs){
     bar.querySelector(".seq-segs").innerHTML = s.list.map((a, k) =>
-      `<div class="seq-seg${k === s.i ? " cur" : ""}" style="width:${(d[k] / total * 100).toFixed(4)}%" title="${esc(`${k + 1}. ${a.name}`)}">${esc(a.name)}</div>`).join("");
+      `<div class="seq-seg${k === s.i ? " cur" : ""}" style="width:${(d[k] / total * 100).toFixed(4)}%" title="${esc(`${k + 1}. ${a.name}`)}"><span class="seq-caches"></span>${esc(a.name)}</div>`).join("");
     bar.querySelector("[data-seq=loop]").classList.toggle("on", s.loop);
     let acc = 0, mk = "";
     s.list.forEach((a, k) => {
@@ -7245,6 +7354,14 @@ function paintSeqBar(segs){
   const T = d.slice(0, s.i).reduce((a, x) => a + x, 0) + Math.min(cur, d[s.i]);
   bar.querySelector(".seq-head").style.left = (T / total * 100) + "%";
   bar.querySelector("[data-gt]").textContent = `${fmtTime(T)} / ${fmtTime(total)}`;
+  paintSeqCaches();
+}
+// Green on each segment: that clip's own blocks in RAM, as a fraction of its file (same map as its timeline).
+function paintSeqCaches(){
+  const s = light?.seq;
+  if (!s) return;
+  const segs = light.el.querySelectorAll(".seq-seg");
+  s.list.forEach((a, k) => paintCacheBars(segs[k]?.querySelector(".seq-caches"), light.seqSnaps?.[a.id]));
 }
 // Open clip k at local time t (t < 0: that far before its end), playing or paused. Not seamless: the
 // cut by playback goes through seqAdvance, which adopts the preloaded clip instead.
@@ -7689,7 +7806,7 @@ function toggleLight(a){
     </div>
     <div class="vbar" hidden>
       <span class="vtime vcur" data-cur title="Position — click: type a frame to jump to · right-click / long-press: display">0:00</span>
-      <div class="vtrack"><i class="vcache"></i><i class="vplay"></i></div>
+      <div class="vtrack" title="Green is the part of this file held in RAM"><span class="vcaches"></span><i class="vplay"></i></div>
       <span class="vtime dur" data-dur>0:00</span>
       <span class="vsndw"><button class="vib" data-snd type="button" aria-label="Sound"></button><div class="vpop" hidden><i></i><b></b></div></span>
       <button class="vib" data-loop type="button" aria-label="Loop"></button>
@@ -7817,7 +7934,8 @@ function showInLight(a, opts = {}){
   const bar = light.bar;
   if (bar){
     bar.hidden = a.kind !== "video";
-    bar.querySelector(".vcache").style.width = "0%";
+    const caches = bar.querySelector(".vcaches");
+    if (caches){ caches._html = ""; caches.innerHTML = ""; }
     bar.querySelector(".vplay").style.left = "0%";
     bar.querySelector("[data-mem]").textContent = "";
   }

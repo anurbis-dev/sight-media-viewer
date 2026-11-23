@@ -694,6 +694,7 @@ class SlidingVideoCache:
         self.heads: list[str] = []  # the files whose playheads the windows follow (the rest: sequence neighbours)
         self.seq: tuple[str, str] = ("", "")  # (next, previous) file of the lightbox's sequence
         self.pending = 0  # blocks the loader still has to fetch
+        self.focus_gen = 0  # newest applied client generation; a lower one does not move the windows
         self._weight = 1.0  # cost of a block behind a playhead, in blocks ahead (_plan)
         self._gen = 0  # bumped whenever a window moves; the loader re-plans when it changes
         self._stop = False
@@ -776,31 +777,67 @@ class SlidingVideoCache:
         self._gen += 1
         self.cv.notify_all()
 
+    def _totals(self) -> tuple[int, int, bool]:
+        """(bytes held, budget MB, loader still fetching). Caller holds the lock."""
+        total = sum(len(b) for w in self.wins.values() for b in w.blocks.values())
+        return total, self.budget_mb, self.pending > 0
+
+    def _spans(self, w: _Window) -> list[list[int]]:
+        """Half-open byte ranges of the blocks actually in RAM, contiguous runs merged, in order.
+        The planned window (``ranges``) is not included: a block counts only once it has been read."""
+        if w.size <= 0 or not w.blocks:
+            return []
+        last = w.last
+        ks = sorted(k for k in w.blocks if 0 <= k <= last)
+        if not ks:
+            return []
+        out: list[list[int]] = []
+        lo = hi = ks[0]
+        for k in ks[1:]:
+            if k == hi + 1:
+                hi = k
+                continue
+            out.append([lo * self.CHUNK, min(w.size, (hi + 1) * self.CHUNK)])
+            lo = hi = k
+        out.append([lo * self.CHUNK, min(w.size, (hi + 1) * self.CHUNK)])
+        return out
+
+    def _one(self, w: _Window | None, total: int, mb: int, busy: bool) -> dict:
+        """One file's snapshot. ``start``/``end`` stay the cached run that contains the playhead (a point,
+        ``start == end``, when that block is not loaded yet) so older clients keep their meaning; ``spans``
+        is every cached run."""
+        if w is None:
+            return {"start": 0, "end": 0, "size": 0, "bytes": total, "mb": mb, "busy": busy, "spans": []}
+        spans = self._spans(w)
+        start = end = 0
+        if w.size > 0:
+            start = end = min(w.head, (w.size - 1) // self.CHUNK) * self.CHUNK
+            for a, b in spans:
+                if a <= start < b:
+                    start, end = a, b
+                    break
+        return {
+            "start": start,
+            "end": end,
+            "size": w.size,
+            "bytes": total,
+            "mb": mb,
+            "busy": busy,
+            "spans": spans,
+        }
+
     def snapshot(self, path: str | None = None) -> dict:
         with self.lock:
-            total = sum(len(b) for w in self.wins.values() for b in w.blocks.values())
+            total, mb, busy = self._totals()
             w = self.wins.get(str(path)) if path else self.wins.get(self.path)
-            if w is None:
-                return {"start": 0, "end": 0, "size": 0, "bytes": total, "mb": self.budget_mb, "busy": False}
-            start = end = 0
-            if w.size > 0:
-                k = min(w.head, (w.size - 1) // self.CHUNK)
-                start = end = k * self.CHUNK
-                if k in w.blocks:  # the run of cached blocks that contains the playhead
-                    lo = hi = k
-                    while lo - 1 in w.blocks:
-                        lo -= 1
-                    while hi + 1 in w.blocks:
-                        hi += 1
-                    start, end = lo * self.CHUNK, min(w.size, (hi + 1) * self.CHUNK)
-            return {
-                "start": start,
-                "end": end,
-                "size": w.size,
-                "bytes": total,
-                "mb": self.budget_mb,
-                "busy": self.pending > 0,
-            }
+            return self._one(w, total, mb, busy)
+
+    def snapshots(self, paths: list[str]) -> dict[str, dict]:
+        """``path -> snapshot`` for each path, one lock. A path with no window still gets an empty snapshot
+        (``size`` 0, ``spans`` []), and every snapshot's ``bytes`` is the total held across all windows."""
+        with self.lock:
+            total, mb, busy = self._totals()
+            return {str(p): self._one(self.wins.get(str(p)), total, mb, busy) for p in paths}
 
     def configure(self, mb: int | None = None, ahead=None) -> None:
         """Budget in MB and / or the ahead share (percent, 50-90); a change re-plans the windows at once."""
@@ -812,15 +849,29 @@ class SlidingVideoCache:
             self.budget, self.ahead = nxt, share
             self._replan()  # shrinking evicts right away, growing starts filling the extra room
 
-    def release(self) -> None:
-        """Drop every window (the player closed) so a 2 GB budget doesn't stay resident."""
+    def _claim(self, gen: int | None) -> bool:
+        """Caller holds the lock. ``None`` always applies (a post with no generation). A generation
+        lower than the newest applied one is a late post from a player that no longer owns the windows."""
+        if gen is None:
+            return True
+        if gen < self.focus_gen:
+            return False
+        self.focus_gen = gen
+        return True
+
+    def release(self, gen: int | None = None) -> bool:
+        """Drop every window (the player closed) so a 2 GB budget doesn't stay resident.
+        False when ``gen`` is older than the windows' owner: they stay."""
         with self.cv:
+            if not self._claim(gen):
+                return False
             self.wins = {}
             self.heads = []
             self.seq = ("", "")
             self.pending = 0
             self._gen += 1
             self.cv.notify_all()
+            return True
 
     def close(self) -> None:
         with self.cv:
@@ -829,16 +880,16 @@ class SlidingVideoCache:
             self.heads = []
             self.cv.notify_all()
 
-    def focus(self, path: str, pos: int, next_path: str = "", prev_path: str = "") -> None:
+    def focus(self, path: str, pos: int, next_path: str = "", prev_path: str = "", gen: int | None = None) -> bool:
         """One playing file: move its window so byte ``pos`` (the playhead) sits inside it; ``next_path`` /
         ``prev_path``: the sequence's neighbours, which take the part of the window past the clip's end / start.
-        Other files' windows go."""
-        self.focus_many([(path, pos)], str(next_path or ""), str(prev_path or ""))
+        Other files' windows go. False when ``gen`` is older than the current owner: the windows stay."""
+        return self.focus_many([(path, pos)], str(next_path or ""), str(prev_path or ""), gen)
 
-    def focus_many(self, items: list[tuple[str, int]], next_path: str = "", prev_path: str = "") -> None:
+    def focus_many(self, items: list[tuple[str, int]], next_path: str = "", prev_path: str = "", gen: int | None = None) -> bool:
         """Windows for exactly these files, each with its playhead at byte ``pos``; the budget is split between
         them. A file already held keeps the blocks that stay inside its (possibly smaller) window. Neighbours are
-        used with one file only (the lightbox)."""
+        used with one file only (the lightbox). False when ``gen`` is older than the current owner."""
         stats = []
         for path, pos in items:
             path = str(path)
@@ -856,6 +907,8 @@ class SlidingVideoCache:
                     continue
                 extra.append((p, (st.st_size, st.st_mtime_ns)))
         with self.cv:
+            if not self._claim(gen):
+                return False
             wins: dict[str, _Window] = {}
             for path, stamp in [(p, s) for p, _, s in stats] + extra:
                 w = wins.get(path) or self.wins.get(path)
@@ -869,6 +922,7 @@ class SlidingVideoCache:
             have = {p for p, _ in extra}
             self.seq = (next_path if next_path in have else "", prev_path if prev_path in have else "")
             self._replan()
+            return True
 
     def _missing(self) -> list[tuple[str, int]]:
         """(path, block) still to load, ordered so ``pop()`` yields the cheapest first: outwards from a playhead,

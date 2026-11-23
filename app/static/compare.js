@@ -131,8 +131,9 @@ export function createCompare(host){
     C = {
       el, stage: el.querySelector(".cmp-stage"), layers: [], ref: null, sel: null, sound: null, splits: [],
       view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0,
-      candidates: [], built: "",
+      candidates: [], built: "", snaps: {}, focusDirty: true, // post the split windows on the first tick, paused or not
     };
+    C.cacheTimer = setInterval(pollCaches, 500);
     host.onOpen?.(el); // (the annotator mounts on the overlay before the first rebuild reports a viewer)
     assets.forEach((a) => addLayer(a));
     const focus = C.layers.find((l) => l.a.id === focusId) || C.layers[0];
@@ -160,6 +161,9 @@ export function createCompare(host){
   }
   function close(){
     if (!C) return;
+    cancelAnimationFrame(C.raf); // before onClose bumps the cache generation, so this tick cannot post the new one
+    C.raf = 0;
+    clearInterval(C.cacheTimer);
     // A drag registers window listeners that finish it. Drop them before C goes away, or the
     // release after a mid-drag close keeps the detached compare, and the next drag's listener leaks.
     C.input?.destroy(); // (ends a picture drag, forgets fingers still down: they never send a pointerup here)
@@ -168,7 +172,6 @@ export function createCompare(host){
     host.onClose?.();
     C.ro?.disconnect();
     if (C.pBase) P = prefsToSave();
-    cancelAnimationFrame(C.raf);
     if (C.onResize) window.removeEventListener("resize", C.onResize);
     for (const l of C.layers){ dropScrub(l); for (const m of l.media) releaseMedia(m); }
     C.el.remove();
@@ -762,8 +765,10 @@ export function createCompare(host){
       }
     }
   }
-  // Tell the server where every clip's playhead is, so its RAM window (split between the clips) follows them:
-  // about once a second while playing, soon after a jump.
+  // Tell the server where every clip's playhead is, so its RAM window (split between the clips) follows them.
+  // Posted as soon as the comparison opens (paused too), again when a duration arrives or the playhead jumps,
+  // and about once a second while playing. `gen` is this client's cache generation: a lightbox post already
+  // in flight carries an older one and the server leaves these windows alone.
   function pushFocus(now){
     const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO")); // (a hidden ★ can decode under tiles)
     if (!v.length) return;
@@ -775,7 +780,30 @@ export function createCompare(host){
     const mb = host.cacheMb?.(), ahead = host.cacheAhead?.();
     if (mb) body.mb = mb;
     if (ahead) body.ahead = ahead;
-    fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => {});
+    if (host.cacheGen) body.gen = host.cacheGen();
+    const gen = C;
+    fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+      .then((r) => r.json())
+      .then((j) => {
+        if (C !== gen || !j?.clips) return;
+        C.snaps = Object.assign(C.snaps || {}, j.clips);
+        paintCmpCaches();
+      }).catch(() => {});
+  }
+  // While the windows fill, each lane's green is re-read. A paused compare does not post again until the
+  // playhead moves or a clip's duration arrives; the poll is what keeps the green growing meanwhile.
+  function pollCaches(){
+    if (!C) return;
+    const gen = C;
+    const ids = vids().map((l) => l.id);
+    if (!ids.length) return;
+    fetch(`/api/video/cache?aids=${ids.slice(0, 64).map(encodeURIComponent).join(",")}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (C !== gen || !j?.files) return;
+        C.snaps = j.files;
+        paintCmpCaches();
+      }).catch(() => {});
   }
 
   // ---- painting --------------------------------------------------------------------------------
@@ -805,6 +833,33 @@ export function createCompare(host){
       </div>`;
     }).join("") + (more.length ? `<button type="button" class="cmp-b cmp-addb" data-a="add" title="Add another version">+ Add</button>` : "");
   }
+  // Green on a lane: that file's blocks actually in RAM, as a fraction of the file, laid along the clip's span.
+  // The faint colour is only where the clip sits. Bytes map like the playhead (size · t / duration).
+  function cacheBarHtml(snap){
+    if (!snap || !(snap.size > 0) || !Array.isArray(snap.spans)) return "";
+    let html = "";
+    for (const pair of snap.spans){
+      const a = Number(pair[0]), b = Number(pair[1]);
+      if (!(b > a)) continue;
+      const l = Math.max(0, Math.min(100, a / snap.size * 100));
+      const w = Math.max(0, Math.min(100, b / snap.size * 100) - l);
+      if (w <= 0) continue;
+      html += `<i style="left:${l.toFixed(3)}%;width:${w.toFixed(3)}%"></i>`;
+    }
+    return html;
+  }
+  function paintCmpCaches(){
+    const box = C?.el.querySelector(".cmp-spans");
+    if (!box) return;
+    box.querySelectorAll(".cmp-lane").forEach((lane) => {
+      const el = lane.querySelector(".cmp-caches");
+      if (!el) return;
+      const html = cacheBarHtml(C.snaps?.[lane.dataset.id]);
+      if (el._html === html) return;
+      el._html = html;
+      el.innerHTML = html;
+    });
+  }
   function paintTimeline(){
     const tl = C.el.querySelector(".cmp-tl");
     const v = vids();
@@ -813,9 +868,10 @@ export function createCompare(host){
     const [lo, hi] = range(), span = Math.max(1e-6, hi - lo);
     C.el.querySelector(".cmp-spans").innerHTML = v.filter((l) => l.vis).map((l) => {
       const a = (l.start / C.fps - lo) / span * 100, w = (l.dur || 0) / span * 100;
-      return `<i style="left:${a}%;width:${w}%;background:${l.color}" title="${esc(l.a.name)}"></i>`;
+      return `<span class="cmp-lane" data-id="${l.id}" style="left:${a}%;width:${Math.max(0, w)}%" title="${esc(l.a.name)} — green is the part in RAM"><i style="background:${l.color}"></i><span class="cmp-caches"></span></span>`;
     }).join("");
     C.el.querySelector("[data-a=loop]").classList.toggle("on", P.loop);
+    paintCmpCaches();
     paintTime();
   }
   function paintTime(fast){
@@ -1559,7 +1615,10 @@ function injectStyles(){
 .cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
-.cmp-ly { position: absolute; inset: 0; pointer-events: none; }
+/* isolation: the scrub proxy is z-index 2 so it paints over its own file. The reference layer is not
+   clipped. Without a stacking context here its proxy joins the box and covers every other swipe
+   region, so a drag shows only the reference (★; it starts as the file the lightbox had open). */
+.cmp-ly { position: absolute; inset: 0; pointer-events: none; isolation: isolate; }
 .cmp-ly.out .cmp-m { opacity: .12; }
 .cmp-m { position: absolute; object-fit: contain; max-width: none; image-rendering: auto;
   /* Windows promotes a plain <video> to a hardware overlay. Only a couple of those exist, so the
@@ -1586,9 +1645,12 @@ function injectStyles(){
 .cmp-tl[hidden] { display: none; }
 .cmp-time { min-width: 150px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; }
 .cmp-track { flex: 1; position: relative; height: 26px; border-radius: 6px; background: var(--surface-2); cursor: pointer; overflow: hidden; touch-action: none; }
-.cmp-spans i { position: absolute; height: 4px; border-radius: 2px; opacity: .85; }
-.cmp-spans i:nth-child(1) { top: 3px; } .cmp-spans i:nth-child(2) { top: 8px; } .cmp-spans i:nth-child(3) { top: 13px; } .cmp-spans i:nth-child(4) { top: 18px; }
-.cmp-spans i:nth-child(n+5) { top: 21px; height: 2px; }
+.cmp-spans .cmp-lane { position: absolute; height: 4px; border-radius: 2px; overflow: hidden; pointer-events: none; }
+.cmp-spans .cmp-lane:nth-child(1) { top: 3px; } .cmp-spans .cmp-lane:nth-child(2) { top: 8px; } .cmp-spans .cmp-lane:nth-child(3) { top: 13px; } .cmp-spans .cmp-lane:nth-child(4) { top: 18px; }
+.cmp-spans .cmp-lane:nth-child(n+5) { top: 21px; height: 2px; }
+.cmp-spans .cmp-lane > i { position: absolute; inset: 0; opacity: .35; }
+.cmp-spans .cmp-caches { position: absolute; inset: 0; }
+.cmp-spans .cmp-caches i { position: absolute; top: 0; bottom: 0; background: #2f9d5b; }
 .cmp-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 3px rgb(0 0 0 / .8); }
 .cmp-layers { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .cmp-chip { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 6px 0 9px; border-radius: 8px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; max-width: 420px; }

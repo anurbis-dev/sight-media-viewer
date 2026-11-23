@@ -31,6 +31,7 @@ class VideoCache(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.c.close()
+        self.c._thread.join(timeout=5)  # the loader may still hold a file open (Windows cannot delete it then)
         self.tmp.cleanup()
 
     def ranges(self, name: str) -> list[tuple[int, int]]:
@@ -110,6 +111,55 @@ class VideoCache(unittest.TestCase):
         self.assertEqual(r, [(0, 4)] if len(r) == 1 else r)
         self.assertEqual(len(missing), len(set(missing)))
         self.assertLessEqual(sum(hi - lo + 1 for lo, hi in r), 5)
+
+    def _halt_loader(self) -> None:
+        """Stop the background loader so a test can plant blocks and read them back unchanged."""
+        with self.c.cv:
+            self.c._stop = True
+            self.c.cv.notify_all()
+        self.c._thread.join(timeout=5)
+
+    def test_older_generation_keeps_the_windows(self) -> None:
+        a, b, c = self.files["a"], self.files["b"], self.files["c"]
+        self.assertTrue(self.c.focus_many([(a, 10 * MB), (b, 10 * MB)], gen=2))
+        self.assertEqual(set(self.c.wins), {a, b})
+        self.assertFalse(self.c.focus(a, 10 * MB, gen=1))  # a late lightbox post
+        self.assertFalse(self.c.release(1))
+        self.assertEqual(set(self.c.wins), {a, b})
+        self.assertTrue(self.c.focus(c, 0, gen=2))  # the same generation still follows the playhead
+        self.assertEqual(set(self.c.wins), {c})
+        self.assertTrue(self.c.release(3))
+        self.assertEqual(self.c.wins, {})
+        self.assertTrue(self.c.focus(a, 0))  # no generation (older client, a settings post) still applies
+        self.assertEqual(set(self.c.wins), {a})
+
+    def test_snapshot_spans_are_loaded_blocks(self) -> None:
+        # The green on a timeline is these spans. The planned window must not show up before the bytes are in RAM,
+        # and a hole between runs must stay a hole. start/end remains the one run that contains the playhead.
+        self._halt_loader()
+        self.c.focus(self.files["a"], 50 * MB, self.files["b"])
+        self.assertTrue(self.ranges("a"))  # a window is planned
+        empty = self.c.snapshot(self.files["a"])
+        self.assertEqual(empty["spans"], [])
+        self.assertEqual(empty["start"], empty["end"])
+        self.assertGreater(empty["size"], 0)
+        with self.c.lock:
+            w = self.c.wins[self.files["a"]]
+            for k in (10, 48, 49, 50, 52):
+                w.blocks[k] = b"a"
+        many = self.c.snapshots([self.files["a"], self.files["b"], self.files["c"]])
+        self.assertEqual(many[self.files["a"]]["spans"], [
+            [10 * MB, 11 * MB],
+            [48 * MB, 51 * MB],
+            [52 * MB, 53 * MB],
+        ])
+        self.assertEqual((many[self.files["a"]]["start"], many[self.files["a"]]["end"]), (48 * MB, 51 * MB))
+        self.assertEqual(many[self.files["b"]]["spans"], [])  # neighbour slot, nothing read yet
+        self.assertGreater(many[self.files["b"]]["size"], 0)
+        self.assertEqual(many[self.files["c"]]["spans"], [])
+        self.assertEqual(many[self.files["c"]]["size"], 0)  # no window: nothing to draw
+        self.assertEqual(many[self.files["a"]]["bytes"], many[self.files["c"]]["bytes"])
+        self.assertEqual(many[self.files["a"]]["bytes"], 5)
 
     def test_stream_from_neighbour(self) -> None:
         self.c.focus(self.files["a"], 95 * MB, self.files["b"])

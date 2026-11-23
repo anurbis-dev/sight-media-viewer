@@ -623,11 +623,12 @@
     goes on from where you let go. Each clip gets a small scrub copy (a keyframe every few frames) as soon as
     the comparison opens, and a drag shows those, so several clips follow the pointer together. Until a copy
     is ready, the picture stays where it was; letting go jumps every clip to that frame together. A clip
-    you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead. Each clip has a **first-frame offset** (drag the number on its chip sideways to
+    you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead as soon as the comparison opens, paused or playing. Each clip has a **first-frame offset** (drag the number on its chip sideways to
     slide the clip frame by frame and line it up by eye, `Shift` slower; click it to type a number; or `[` / `]`
     for the selected clip, `Shift` ×10): where its first frame sits on the
-    timeline, to line up clips that start or run differently. The coloured bars on the timeline show
-    each clip's span; 🔈 picks whose sound plays.
+    timeline, to line up clips that start or run differently. Each clip has a faint bar showing where it
+    sits on the timeline; the green on that bar is the part of the file actually held in RAM (it grows as
+    the cache fills, from the playhead, and a gap stays a gap). 🔈 picks whose sound plays.
   - The right end of the top bar is the viewer's: the notes button (`C`, reads the selected layer's notes),
     the eye (while drawing), the compare button (closes the comparison), annotate and ✕.
   - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
@@ -647,7 +648,8 @@
   click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back
   to back in the full-screen viewer, cut to cut with no black frame. The bar above the timeline shows
   every clip as a segment (alternating shades, name inside); tap or drag it to move through the whole
-  sequence, the timeline under it is the current clip's own. Dragging on the picture scrubs the whole sequence
+  sequence, the timeline under it is the current clip's own. A green strip along the bottom of a segment is
+  that clip's RAM cache (only the bytes already in memory). Dragging on the picture scrubs the whole sequence
   too: it runs on past a clip's start or end into the neighbouring clip (the last frame stays on screen until
   the next clip's frame is ready — no black flash). ⏮ / ⏭ or `←` / `→` go to the previous /
   next clip's start, `Home` to the first clip, ⟲ or `Shift+L` loops the whole sequence; `,` / `.` step
@@ -821,8 +823,9 @@
   right-drag zoom to slow it.
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
-  The green strip on the timeline is the RAM cache: a window around the playhead whose size is
-  set in Settings → RAM cache (32–2048 MB) and which slides as you play or scrub. Settings → Cache ahead
+  The green on the timeline is the RAM cache actually in memory: the parts of the file held around the
+  playhead (a gap is left empty). Its budget is
+  set in Settings → RAM cache (32–2048 MB) and it slides as you play or scrub. Settings → Cache ahead
   (50–90 %, 70 % by default) is the part of it ahead of the playhead; the rest stays behind it, and both
   fill outwards from the playhead. In a sequence the window runs on into the next clip's start near a
   clip's end (and into the previous clip's end near its start), so a cut either way reads from memory.

@@ -691,6 +691,18 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
     @app.post("/api/video/focus")
     async def video_focus(request: Request) -> dict:
         body = await json_body(request)
+
+        def client_gen() -> int | None:
+            # Who owns the windows. A late post from the previous owner (a lower gen) must not move them.
+            raw = body.get("gen")
+            if raw is None or isinstance(raw, bool):
+                return None
+            try:
+                gen = int(raw)
+            except (TypeError, ValueError):
+                return None
+            return gen if gen >= 0 else None
+
         if body.get("mb") is not None or body.get("ahead") is not None:
             try:
                 mb = int(body["mb"]) if body.get("mb") is not None else None
@@ -698,11 +710,12 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
                 mb = None
             lib.video_cache.configure(mb, body.get("ahead"))  # ahead: percent of the window ahead of the playhead
         if body.get("release"):
-            lib.video_cache.release()
+            lib.video_cache.release(client_gen())
             return {"ok": True, "mb": lib.video_cache.budget_mb}
         if isinstance(body.get("items"), list):
             # The version compare: one window per clip, the budget split between them (SlidingVideoCache).
             focus = []
+            clips: dict[str, str] = {}  # asset id -> playback path (the snapshot key)
             for it in body["items"][:32]:
                 a = lib.get_asset(str(it.get("id") or "")) if isinstance(it, dict) else None
                 if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
@@ -716,8 +729,18 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
                 play = lib.playback_path(a)
                 size = os.path.getsize(play)
                 focus.append((play, max(0, min(size, int(size * (t / duration)) if duration > 0 else 0))))
-            lib.video_cache.focus_many(focus)
-            return {"ok": True, "files": len(focus), "mb": lib.video_cache.budget_mb, "bytes": lib.video_cache.snapshot()["bytes"]}
+                clips[str(a["id"])] = play
+            lib.video_cache.focus_many(focus, gen=client_gen())
+            snaps = lib.video_cache.snapshots(list(dict.fromkeys(clips.values())))
+            sample = next(iter(snaps.values()), None)
+            return {
+                "ok": True,
+                "files": len(focus),
+                "mb": sample["mb"] if sample else lib.video_cache.budget_mb,
+                "bytes": sample["bytes"] if sample else 0,
+                # Per clip, keyed by asset id: the blocks actually in RAM (spans), so each timeline can draw them.
+                "clips": {aid: snaps[p] for aid, p in clips.items()},
+            }
         aid = str(body.get("id") or "")
         if not aid:
             return {"ok": True, "mb": lib.video_cache.budget_mb}
@@ -742,13 +765,28 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
                 return ""
             return str(lib.playback_path(n))
 
-        lib.video_cache.focus(play, pos, neighbour("next"), neighbour("prev"))
+        lib.video_cache.focus(play, pos, neighbour("next"), neighbour("prev"), client_gen())
         snap = lib.video_cache.snapshot(play)
         snap.update({"ok": True, "pos": pos, "mb": lib.video_cache.budget_mb})
         return snap
 
     @app.get("/api/video/cache")
-    def video_cache_state(aid: str = "") -> dict:
+    def video_cache_state(aid: str = "", aids: str = "") -> dict:
+        # aids: several clips at once (a sequence, a comparison). Each entry is that file's real RAM
+        # runs; bytes / mb / busy are the cache as a whole, same as a one-file snapshot.
+        ids = [x.strip() for x in aids.split(",") if x.strip()][:64] if aids.strip() else []
+        if ids:
+            paths: dict[str, str] = {}
+            for i in ids:
+                a = lib.get_asset(i)
+                if not a or a.get("kind") != "video":
+                    continue
+                paths[i] = str(lib.playback_path(a))
+            snaps = lib.video_cache.snapshots(list(dict.fromkeys(paths.values())))
+            files = {i: snaps[p] for i, p in paths.items()}
+            sample = next(iter(files.values()), None)
+            base = sample or lib.video_cache.snapshot()
+            return {"files": files, "bytes": base["bytes"], "mb": base["mb"], "busy": base["busy"]}
         if not aid:
             return lib.video_cache.snapshot()
         a = lib.get_asset(aid)

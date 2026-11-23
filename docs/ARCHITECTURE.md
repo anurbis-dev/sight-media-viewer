@@ -172,7 +172,19 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   start, before its first to the previous file's end, else to the other side. Blocks load cheapest first: ahead
   cost = distance, behind = distance × ahead / (1 − ahead), neighbours continue the cost from the clip's edge.
   Neighbours only with one playing file (the compare splits the budget, no neighbours). Not a byte-to-time map:
-  the playhead's byte is `size · t / duration`.
+  the playhead's byte is `size · t / duration`. `snapshot` / `snapshots` report `spans`: half-open byte runs of
+  blocks **actually in RAM** (holes stay holes; the planned window is not drawn). `start`/`end` is still the one
+  run that contains the playhead (`start == end` when that block is not loaded). `GET /api/video/cache?aids=`
+  (up to 64 ids) and the compare's focus reply `clips` return one snapshot per asset id. The lightbox timeline,
+  each sequence segment and each compare lane draw those runs in green (`#2f9d5b`), mapped `byte / size` along
+  that clip. The sequence segment's shade and the compare lane's faint colour are the clip's place, not the cache.
+  Body `gen` is the client's generation for who owns the windows. Compare bumps it on open and again on close;
+  the lightbox sends the current one and does not post while compare is open. A lower `gen` does not move or
+  release the windows, so a focus post already in flight cannot take them back. Compare posts the split as
+  soon as it opens, paused or playing. Replacing one comparison with another bumps once more and leaves the
+  lightbox held; overlapping opens are counted, so the first to finish cannot hand the windows back. If an
+  open fails and none is left up, the hold drops: the lightbox video is focused again, or the windows are
+  released when nothing is playing.
 - Video playback: `/api/file/{id}` (and the focus / cache endpoints) serve `lib.playback_path(a)`, which is
   the source or its converted copy in `thumbs/video/<aid>_<size>_<mtime_ns>.<ext>`. The copy is made
   only when the browser fails on the source: the player calls `POST /api/video/transcode` (see
@@ -975,8 +987,8 @@ elements' boxes, the layers' `clip-path: inset()` regions, `mix-blend-mode: diff
 Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared
 zoom / pan as doc-normalised centre + zoom over fit). Swipe: the reference is drawn whole at the
 bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
-to visible layer i — with `mix-blend-mode: difference` in Difference mode; tile layouts put a copy
-of the reference under each cell for the same effect. Video: `C.T` is a wall-clock timeline;
+to visible layer i — with `mix-blend-mode: difference` in Difference mode. Tile layouts put a canvas copy
+of the reference under each other cell for that same Difference blend (Over tiles do not). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The reference stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the reference (whichever layer is ★; that starts as the file the lightbox had open). Video: `C.T` is a wall-clock timeline;
 layer local time = T − start/fps; `syncVideos()` holds the clock
 (`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
 never seek towards a running clock. Clips outside their span pause (dimmed). Compare `<video>` elements
