@@ -4,11 +4,18 @@
 // strip), "col" (vertical strip) — one cell per layer. Pan / zoom are shared by every cell.
 // Stack options (P.swipe, P.blend; the bar shows them only in Stack):
 //   Swipe on — the view is cut into regions by N-1 draggable split lines, region i shows visible
-//   layer i over the reference (★), which is drawn whole underneath. Swipe off — no splits: the
-//   layers lie full-frame in chip order, the first visible chip on top.
+//   layer i over the base (the first visible chip), which is drawn whole underneath. Swipe off — no
+//   splits: the layers lie full-frame in chip order, the first visible chip on top.
+//   There is no separate "reference" layer (it was dropped in 0.114): the first visible chip is the
+//   base — it sets the frame every layer is fitted to and lies under the swipe regions. Reorder the
+//   chips to change it; a fresh compare puts the file it was opened from first.
 //   Blend "over" — layers are drawn as they are; "difference" — mix-blend-mode: difference. Swipe
 //   off: every layer over the ones below it (the bottom one plain). Swipe on: each region's layer
-//   over the reference underneath (regions do not overlap, so that is all that lies below).
+//   over the base underneath (regions do not overlap, so that is all that lies below).
+//   See-through (P.thru, off by default): off — every Stack layer is opaque over its whole box (black past
+//   its picture and under its alpha), so a smaller / transparent file never shows the layer below. On — the
+//   empty space and alpha show through, and a clip outside its span is not drawn (what is under it shows).
+//   Outside its span a clip otherwise shows its edge frame at full strength (no dimmed ghost).
 // A stored layout "swipe" (prefs, a note's FORMAT.md `compare`) is Stack with Swipe on; notes write
 // "swipe" / "stack" for Stack with Swipe on / off, so an older Sight still opens the swipe look.
 // Video: one timeline for all layers. Each layer has a start offset in frames (where its first
@@ -84,7 +91,7 @@ export function flash(text, ms = 2400){
 
 export function createCompare(host){
   injectStyles();
-  let P = { layout: "stack", swipe: true, blend: "over", dir: "x", loop: true };
+  let P = { layout: "stack", swipe: true, blend: "over", dir: "x", loop: true, thru: false };
   try { P = { ...P, ...(JSON.parse(localStorage.getItem(PREF_KEY)) || {}) }; } catch {}
   {
     // (stored before 0.112: layout "swipe", no swipe key — that is Stack with Swipe on)
@@ -110,7 +117,7 @@ export function createCompare(host){
   let C = null; // the open session
 
   // ---- open / close ----------------------------------------------------------------------------
-  // session (optional): a comparison stored with a note — {ids, ref, sel, layout, blend, dir, starts: {id: frames}}.
+  // session (optional): a comparison stored with a note — {ids, ref, sel, layout, blend, dir, starts: {id: frames}} (`ref` is ignored).
   async function open(ids, focusId, session){
     const assets = [];
     for (const id of ids){
@@ -130,8 +137,9 @@ export function createCompare(host){
         <div class="cmp-seg" data-g="layout">${LAYOUTS.map(([k, n], i) => `<button type="button" data-v="${k}" title="${n} (${i + 1})">${n}</button>`).join("")}</div>
         <button type="button" class="cmp-b" data-a="swipe" title="Swipe — cut the stack with split lines, one region per layer; off: the layers lie whole, the first chip on top (S)">Swipe</button>
         <button type="button" class="cmp-b" data-a="dir" title="Split direction (V)"></button>
-        <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against the ones below it (with Swipe: against the reference ★) — equal pixels go black (D)">Difference</button></div>
-        <span class="cmp-hint">Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · dbl-click / F fit · S swipe · D difference · [ ] shift layer · ↑↓ layer · R reference · H hide · Esc</span>
+        <button type="button" class="cmp-b" data-a="thru" title="See-through — a layer's alpha and the space past its picture show the layers below, and a clip past its end disappears; off: every layer covers the ones below it whole (T)">See-through</button>
+        <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against the ones below it (with Swipe: against the first layer) — equal pixels go black (D)">Difference</button></div>
+        <span class="cmp-hint">Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · dbl-click / F fit · S swipe · D difference · T see-through · [ ] shift layer · ↑↓ layer · H hide · Esc</span>
         <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost cmp-lbtn on" data-a="close" type="button" style="width:40px;padding:0" title="Close the comparison (K)" aria-label="Close the comparison" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
@@ -155,7 +163,7 @@ export function createCompare(host){
       <div class="cmp-toast"></div>`;
     document.body.appendChild(el);
     C = {
-      el, stage: el.querySelector(".cmp-stage"), layers: [], ref: null, sel: null, sound: null, splits: [],
+      el, stage: el.querySelector(".cmp-stage"), layers: [], sel: null, sound: null, splits: [],
       view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0,
       candidates: [], built: "", snaps: {}, focusDirty: true, // post the split windows on the first tick, paused or not
     };
@@ -163,10 +171,13 @@ export function createCompare(host){
     host.onOpen?.(el); // (the annotator mounts on the overlay before the first rebuild reports a viewer)
     assets.forEach((a) => addLayer(a));
     const focus = C.layers.find((l) => l.a.id === focusId) || C.layers[0];
-    C.ref = focus.a.id; C.sel = focus.a.id; C.sound = focus.a.id;
+    C.sel = focus.a.id; C.sound = focus.a.id;
+    // A fresh compare puts the file it was opened from first: it is the base (sets the frame, lies under the
+    // swipe regions, on top of a Stack), so the picture you came from stays what you see. A note's session
+    // keeps its stored order (an old note's `ref` is ignored: the order is what the user arranged).
+    if (!session) C.layers = [focus, ...C.layers.filter((l) => l !== focus)];
     if (session){
       C.pBase = { ...P }; C.userSet = new Set();
-      if (layer(session.ref)) C.ref = session.ref;
       if (layer(session.sel)) C.sel = C.sound = session.sel;
       for (const l of C.layers){ const f = Number(session.starts?.[l.id]); if (Number.isFinite(f)) l.start = Math.round(f); }
       const lay = readLayout(session.layout);
@@ -234,7 +245,9 @@ export function createCompare(host){
 
   // ---- layout ----------------------------------------------------------------------------------
   const visible = () => C.layers.filter((l) => l.vis);
-  const refLayer = () => C.layers.find((l) => l.id === C.ref) || C.layers[0];
+  // The base: the first visible chip. Its picture sets the frame every layer is fitted to; with Swipe it lies
+  // whole under the regions (a hidden layer is never the base, so hiding it really takes it off the screen).
+  const baseLayer = () => visible()[0] || C.layers[0];
   function resetSplits(){
     const n = visible().length;
     C.splits = Array.from({ length: Math.max(0, n - 1) }, (_, i) => (i + 1) / n);
@@ -436,7 +449,7 @@ export function createCompare(host){
     v._want = null;
     try { v.pause(); v.removeAttribute("src"); v.load(); } catch {}
   }
-  // Rebuilds the stage DOM (layout, visibility, reference or blend changed). Media elements are
+  // Rebuilds the stage DOM (layout, visibility, order or blend changed). Media elements are
   // recreated, so video positions are restored from the shared clock on the next tick.
   function build(){
     for (const l of C.layers){ for (const m of l.media) releaseMedia(m); l.media = []; }
@@ -446,15 +459,15 @@ export function createCompare(host){
     st.className = "cmp-stage lay-" + P.layout + [...st.classList].filter((c) => c.startsWith("cur-")).map((c) => " " + c).join(""); // (cursors.js keeps its classes)
     setCursor(st, "base", vids().length ? null : "grab"); // pictures only: a left drag pans
     setCursor(st, "hover", null); // (the splits are rebuilt: the next pointer move finds one again)
-    const vis = visible(), ref = refLayer(), diff = diffOn();
+    const vis = visible(), diff = diffOn();
     if (!vis.length){ st.innerHTML = `<div class="cmp-empty">All layers are hidden</div>`; paintAll(); return; }
-    const label = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}${l === ref ? " ★" : ""}`;
+    const label = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
     if (stacked() && !P.swipe){
       // Swipe off: every visible layer whole, the last chip at the bottom and the first on top. Over: the top
       // one covers the rest (a clip outside its span dims and shows what is under it). Difference: each layer
-      // over everything below it, the bottom one plain. The reference only sets the frame here.
+      // over everything below it, the bottom one plain. The first (top) layer sets the frame.
       const box = document.createElement("div");
-      box.className = "cmp-box";
+      box.className = "cmp-box" + (P.thru ? " thru" : "");
       st.appendChild(box);
       [...vis].reverse().forEach((l, k) => {
         const w = document.createElement("div");
@@ -474,15 +487,15 @@ export function createCompare(host){
     } else if (stacked()){
       if (C.splits.length !== vis.length - 1) resetSplits();
       const box = document.createElement("div");
-      box.className = "cmp-box";
+      box.className = "cmp-box" + (P.thru ? " thru" : "");
       st.appendChild(box);
-      // The reference sits underneath, whole; the others are cut to their regions on top of it.
+      // The first visible layer sits underneath, whole (it is region 0); the others are cut to their regions on top.
       const base = document.createElement("div");
       base.className = "cmp-ly base";
-      base.appendChild(mkMedia(ref, true));
+      base.appendChild(mkMedia(vis[0], true));
       box.appendChild(base);
       vis.forEach((l, i) => {
-        if (l === ref) return;
+        if (!i) return;
         const w = document.createElement("div");
         w.className = "cmp-ly";
         w.dataset.i = String(i);
@@ -559,10 +572,10 @@ export function createCompare(host){
     };
     host.onView({ asset: l.a, wrap, media, isVid: isVideo(l.a), geom, unturn: (x, y) => [x, y] });
   }
-  // Positions every media element (shared zoom / pan, reference size) and the swipe regions.
+  // Positions every media element (shared zoom / pan, the base layer's size) and the swipe regions.
   function place(){
     if (!C) return;
-    const ref = refLayer();
+    const ref = baseLayer();
     const rw = ref.nw || 1600, rh = ref.nh || 900;
     const boxes = stacked() ? [...C.stage.querySelectorAll(".cmp-box")] : [...C.stage.querySelectorAll(".cmp-cell")];
     for (const box of boxes){
@@ -680,9 +693,9 @@ export function createCompare(host){
       // uncovers the pre-drag picture and leaves that decoder running.
       if (l.scrub && !l.scrub.paused) l.scrub.pause();
       for (const m of l.media){
-        // Leave the dim alone while the pointer is down. Dropping it (opacity back to 1) promotes
-        // the clip to a hardware overlay, and Windows then cancels the drag.
-        if (!C.scrub) m.parentElement?.classList.toggle("out", !inside);
+        // (also mid-drag: `.out` changes only a clip-path (See-through hides the clip with inset(50%)), never the
+        // opacity — an opacity going back to 1 promoted the clip to a hardware overlay and Windows cancelled the drag)
+        m.parentElement?.classList.toggle("out", !inside);
         if (m.tagName !== "VIDEO") continue;
         if (!inside){
           if (!m.paused) m.pause();
@@ -693,6 +706,10 @@ export function createCompare(host){
               m._want = null;
               wantTime(sc, edge + 0.1 / C.fps, C.scrubGen);
             } else m._want = null;
+          } else if (m.readyState >= 1 && !m.error && !m.seeking && m._want == null && !atPlayhead(l, m)){
+            // Parked on its edge frame (frame 0 before it starts, the last frame after it ends): a rebuilt element
+            // starts at 0 and a jump (End, a key) does not play it there, and the layer is drawn opaque.
+            wantTime(m, clipLocal(l) + 0.1 / C.fps);
           }
           continue;
         }
@@ -784,7 +801,7 @@ export function createCompare(host){
   // and about once a second while playing. `gen` is this client's cache generation: a lightbox post already
   // in flight carries an older one and the server leaves these windows alone.
   function pushFocus(now){
-    const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO")); // (a hidden ★ still decodes as the swipe base)
+    const v = vids().filter((l) => l.dur > 0 && l.media.some((m) => m.tagName === "VIDEO"));
     if (!v.length) return;
     const due = C.focusDirty ? 150 : C.playing ? 1000 : Infinity;
     if (now - (C.focusAt || 0) < due) return;
@@ -832,20 +849,22 @@ export function createCompare(host){
     sw.hidden = !stacked();
     sw.classList.toggle("on", !!P.swipe);
     sw.setAttribute("aria-pressed", P.swipe ? "true" : "false");
+    const th = el.querySelector("[data-a=thru]");
+    th.hidden = !stacked();
+    th.classList.toggle("on", !!P.thru);
+    th.setAttribute("aria-pressed", P.thru ? "true" : "false");
     const dir = el.querySelector("[data-a=dir]");
     dir.hidden = !swiping();
     dir.textContent = P.dir === "x" ? "⇹ Side by side" : "⇳ Top / bottom";
   }
   function paintLayers(){
     const box = C.el.querySelector(".cmp-layers");
-    const ref = refLayer();
     const more = C.candidates.filter((a) => !C.layers.some((l) => l.id === a.id));
     box.innerHTML = C.layers.map((l) => {
       const v = isVideo(l.a);
       return `<div class="cmp-chip${l.id === C.sel ? " sel" : ""}${l.vis ? "" : " off"}" data-id="${l.id}" draggable="true" title="${esc(l.a.path || l.a.name)} — click shows / hides (H) · middle-click removes · drag to reorder">
         <i class="cmp-dot" style="background:${l.color}"></i>
         <span class="cmp-nm">${esc(l.a.name)}</span>
-        <button type="button" data-a="ref" class="${l === ref ? "on" : ""}" title="${l === ref ? "Reference" : "Make reference (R)"} — its picture sets the frame; with Swipe it lies whole under the regions, the base the others are compared against">${l === ref ? "★" : "☆"}</button>
         ${v ? `<span class="cmp-off" title="Where this clip's first frame sits on the timeline — drag sideways to slide it (Shift slower), click to type · [ ] (Shift ×10)"><em data-a="ov">${l.start > 0 ? "+" : ""}${l.start}f</em></span>
           <button type="button" data-a="snd" class="${C.sound === l.id ? "on" : ""}" title="${C.sound === l.id ? "Sound from this clip" : "Play this clip's sound"}">${C.sound === l.id ? "🔊" : "🔈"}</button>` : ""}
         <button type="button" data-a="lb" title="Open in the viewer">⤢</button>
@@ -923,7 +942,6 @@ export function createCompare(host){
     C.syncNow = true;
     paintLayers(); paintTimeline();
   }
-  function setRef(id){ if (!layer(id)) return; C.ref = id; build(); }
   function toggleVis(id){
     const l = layer(id);
     if (!l) return;
@@ -938,10 +956,9 @@ export function createCompare(host){
     dropScrub(gone);
     for (const m of gone?.media || []) releaseMedia(m);
     C.layers = C.layers.filter((l) => l.id !== id);
-    if (C.ref === id) C.ref = C.layers[0].id;
-    if (C.sel === id) C.sel = C.ref;
-    if (C.sound === id) C.sound = C.ref;
     if (!visible().length) C.layers[0].vis = true;
+    if (C.sel === id) C.sel = baseLayer().id; // (a visible one: the annotator keeps a viewer)
+    if (C.sound === id) C.sound = baseLayer().id;
     resetSplits();
     build();
   }
@@ -976,6 +993,7 @@ export function createCompare(host){
     savePrefs();
     if (k === "loop"){ paintTimeline(); return; }
     if (k === "dir"){ paintBar(); place(); return; }
+    if (k === "thru"){ paintBar(); C?.stage.querySelectorAll(".cmp-box").forEach((b) => b.classList.toggle("thru", !!P.thru)); return; } // (no rebuild: only the look)
     build();
   }
   function fit(){ C.view = { zoom: 1, cx: 0.5, cy: 0.5 }; place(); }
@@ -1121,6 +1139,7 @@ export function createCompare(host){
       if (a === "close") close();
       else if (a === "annot") host.onAnnotButton?.();
       else if (a === "swipe") setPref("swipe", !P.swipe);
+      else if (a === "thru") setPref("thru", !P.thru);
       else if (a === "dir") setPref("dir", P.dir === "x" ? "y" : "x");
     });
     el.querySelector(".cmp-tl").addEventListener("click", (e) => {
@@ -1152,8 +1171,7 @@ export function createCompare(host){
       if (b?.dataset.a === "add"){ showAddMenu(b); return; }
       if (!chip || performance.now() - offDragAt < 300) return; // (the click that ends an offset slide)
       const id = chip.dataset.id, a = b?.dataset.a;
-      if (a === "ref") setRef(id);
-      else if (a === "ov") editOffset(id, b);
+      if (a === "ov") editOffset(id, b);
       else if (a === "snd") setSound(id);
       else if (a === "lb"){ const l = layer(id); close(); host.openInLight?.(l.a); }
       else if (a === "rm") remove(id);
@@ -1410,7 +1428,7 @@ export function createCompare(host){
         if (!C) return;
         const box = liveBox(down);
         if (!box) return;
-        const ref = refLayer(), rw = ref.nw || 1600, rh = ref.nh || 900;
+        const ref = baseLayer(), rw = ref.nw || 1600, rh = ref.nh || 900;
         const sc = Math.min(box.clientWidth / rw, box.clientHeight / rh) * C.view.zoom;
         if (!(sc > 0)) return;
         C.view.cx -= dx / (rw * sc);
@@ -1452,7 +1470,7 @@ export function createCompare(host){
   }
   // Zoom to z keeping the box point (mx, my) — px from the box's top-left — where it is.
   function zoomAt(box, z, mx, my, base){
-    const ref = refLayer(), W = box.clientWidth, H = box.clientHeight;
+    const ref = baseLayer(), W = box.clientWidth, H = box.clientHeight;
     const rw = ref.nw || 1600, rh = ref.nh || 900, s0 = Math.min(W / rw, H / rh);
     const b = base || C.view;
     const ox = mx - W / 2, oy = my - H / 2;
@@ -1467,9 +1485,9 @@ export function createCompare(host){
     const k = e.pointerType === "mouse" && !host.annotating?.() ? splitNear(e) : -1;
     setCursor(C.stage, "hover", k < 0 ? null : P.dir === "x" ? "resize-x" : "resize-y");
   }
-  // 100 % of the reference's own pixels.
+  // 100 % of the base layer's own pixels.
   function actual(){
-    const ref = refLayer(), box = C.stage.querySelector(".cmp-box, .cmp-cell");
+    const ref = baseLayer(), box = C.stage.querySelector(".cmp-box, .cmp-cell");
     if (!box || !ref.nw) return;
     C.view.zoom = 1 / Math.min(box.clientWidth / ref.nw, box.clientHeight / ref.nh);
     place();
@@ -1491,9 +1509,10 @@ export function createCompare(host){
       ...LAYOUTS.map(([k, , combo]) => [combo, () => setPref("layout", k)]),
       ["KeyD", () => { if (stacked()) setPref("blend", P.blend === "difference" ? "over" : "difference"); else toast("Over / Difference are Stack options (1)"); }],
       ["KeyS", () => { if (stacked()) setPref("swipe", !P.swipe); else toast("Swipe is a Stack option (1)"); }],
+      ["KeyT", () => { if (stacked()) setPref("thru", !P.thru); else toast("See-through is a Stack option (1)"); }],
       ["KeyV", () => { if (swiping()) setPref("dir", P.dir === "x" ? "y" : "x"); }],
       ["KeyF", () => fit()], ["Digit0", () => actual()],
-      ["KeyH", () => toggleVis(C.sel)], ["KeyR", () => setRef(C.sel)],
+      ["KeyH", () => toggleVis(C.sel)],
       ["KeyL", () => setPref("loop", !P.loop)],
     ]);
     // Everything else stays inside the compare view (the library / lightbox keys underneath
@@ -1501,7 +1520,7 @@ export function createCompare(host){
     return !hotkey(e, "Ctrl+KeyK");
   }
 
-  // What a note made here remembers (FORMAT.md `compare`): the files, their order, reference, selected layer,
+  // What a note made here remembers (FORMAT.md `compare`): the files, their order (the first is the base), selected layer,
   // look and each clip's offset.
   function session(){
     if (!C) return null;
@@ -1509,7 +1528,10 @@ export function createCompare(host){
     for (const l of C.layers) if (isVideo(l.a) && l.start) starts[l.id] = l.start;
     // (Stack is written as "swipe" / "stack" — Swipe on / off — so an older Sight still opens the swipe look)
     const layout = stacked() ? (P.swipe ? "swipe" : "stack") : P.layout;
-    return { ids: C.layers.map((l) => l.id), ref: C.ref, sel: C.sel, layout, blend: P.blend, dir: P.dir, starts };
+    // (`ref` = the first id, read only by a Sight before 0.114, which still has a reference layer: there it
+    // makes the same layer the base; this Sight ignores it)
+    const ids = C.layers.map((l) => l.id);
+    return { ids, ref: ids[0], sel: C.sel, layout, blend: P.blend, dir: P.dir, starts };
   }
   // The annotator stops: on the frame the selected clip is showing (its drawing is stored at that element
   // time), not the clock's snapped / drifted one.
@@ -1575,13 +1597,23 @@ export function createCompare(host){
           cx.clip();
         }
         if (ly.style.mixBlendMode === "difference") cx.globalCompositeOperation = "difference";
-        if (ly.classList.contains("out")) cx.globalAlpha = 0.12;
+        const thru = box.classList.contains("thru");
+        if (thru && ly.classList.contains("out")){ cx.restore(); continue; } // (not drawn, as on screen)
         const x = parseFloat(m.style.left) || 0, y = parseFloat(m.style.top) || 0, w = parseFloat(m.style.width) || 0, h = parseFloat(m.style.height) || 0;
         const nw = m.videoWidth || m.naturalWidth || w, nh = m.videoHeight || m.naturalHeight || h;
+        // An opaque Stack layer is a group on screen: its picture over black, then blended. Drawn the same way
+        // (a black layer first, then composited), so alpha pixels in Difference match the screen.
+        let dst = cx, off = null;
+        if (stacked() && !thru){
+          off = document.createElement("canvas"); off.width = cv.width; off.height = cv.height;
+          dst = off.getContext("2d");
+          dst.fillStyle = "#000"; dst.fillRect(B.x * dpr, B.y * dpr, B.w * dpr, B.h * dpr);
+        }
         if (nw && nh && w && h){
           const s = Math.min(w / nw, h / nh);
-          try { cx.drawImage(m, (B.x + x + (w - nw * s) / 2) * dpr, (B.y + y + (h - nh * s) / 2) * dpr, nw * s * dpr, nh * s * dpr); } catch {}
+          try { dst.drawImage(m, (B.x + x + (w - nw * s) / 2) * dpr, (B.y + y + (h - nh * s) / 2) * dpr, nw * s * dpr, nh * s * dpr); } catch {}
         }
+        if (off) cx.drawImage(off, 0, 0);
         cx.restore();
       }
       cx.restore();
@@ -1635,11 +1667,14 @@ function injectStyles(){
 .cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
-/* isolation: the scrub proxy is z-index 2 so it paints over its own file. The reference layer is not
-   clipped. Without a stacking context here its proxy joins the box and covers every other swipe
-   region, so a drag shows only the reference (★; it starts as the file the lightbox had open). */
+/* isolation: the scrub proxy is z-index 2 so it paints over its own file. The base layer (the first
+   visible chip) is not clipped. Without a stacking context here its proxy joins the box and covers
+   every other swipe region, so a drag shows only the base. */
 .cmp-ly { position: absolute; inset: 0; pointer-events: none; isolation: isolate; }
-.cmp-ly.out .cmp-m { opacity: .12; }
+/* Stack: a layer covers the ones below it whole (black past its picture / under its alpha) unless See-through
+   is on; then a clip outside its span is not drawn. Tile cells: an out clip just shows its edge frame. */
+.cmp-box:not(.thru) .cmp-ly { background: #000; }
+.cmp-box.thru .cmp-ly.out .cmp-m { clip-path: inset(50%); } /* (a clip-path, not opacity: see syncVideos) */
 .cmp-m { position: absolute; object-fit: contain; max-width: none; image-rendering: auto;
   /* Windows promotes a plain <video> to a hardware overlay. Only a couple of those exist, so the
      clips that do not get one keep their old picture until playback stops. The overlay is also a

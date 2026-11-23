@@ -133,7 +133,8 @@ data = {
   sg?: {site, id, v},                 // 0.99+: the ShotGrid Note it is synced with (host, Note id, Version id), docs/SHOTGRID.md
   compare?: {                         // 0.68+: written in Sight's version compare — that comparison
     ids: [assetId],                   //   its files in layer order (2+, this note's file among them)
-    ref, sel,                         //   reference layer and the selected one (= this note's file)
+    sel,                              //   the selected layer (= this note's file); the first id is the base
+    ref?,                             //   0.114+: written as ids[0] for older Sights (their reference layer); ignored on read
     layout: "swipe"|"stack"|"grid"|"row"|"col", //   0.112+: "swipe" = Stack with Swipe on, "stack" = Swipe off
     blend: "over"|"difference", dir: "x"|"y",    //   (blend applies in Stack only)
     starts: {assetId: frames}         //   video layers' first-frame offsets (0 omitted)

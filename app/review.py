@@ -148,38 +148,50 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
     return f'<img src="{name}" style="width:{width:.0f}pt"/>'
 
 
+def _cap_parts(title, text, caption) -> tuple[str, str]:
+    """(title, text) of a note picture; a payload without frameTitle / title (before 0.48) has only
+    `caption`, "<title> — <text>" — kept whole as the title, since the title itself may hold " — "."""
+    if title is not None:
+        return str(title or ""), str(text or "")
+    return str(caption or ""), ""
+
+
 def _pic_rows(pics: list, max_h: float, min_h: float, indent: float = 0.0) -> str:
     """A note's / reply's pictures in rows, each row filled across the text column: the pictures of a
     row share one height, chosen so that they span the row. A row takes pictures while that height
     stays at least min_h, and never goes taller than max_h (a lone picture then stops short of the
-    right edge). A caption under each picture. pics: [(name, w, h, caption)].
+    right edge). Under each picture its title (small, grey) and then its own text in the note's picture-text
+    style (`.ptext`, as the HTML page does), so a screenshot's text looks like any other picture's.
+    pics: [(name, w, h, title, text)].
     PyMuPDF's Story does not wrap a table row, so the rows are packed here."""
     gap = 6.0  # each cell's right padding, the last one's included (it shows nothing)
     room_w = CONTENT_W - indent - 1.0  # 1 pt of slack against rounding
     out: list[str] = []
-    row: list[tuple[str, float, str]] = []  # (name, aspect w/h, caption)
+    row: list[tuple[str, float, str, str]] = []  # (name, aspect w/h, title, text)
+    esc = lambda s: html.escape(str(s)).replace("\n", "<br/>")
 
     def flush() -> None:
         if not row:
             return
-        h = min(max_h, (room_w - gap * len(row)) / sum(a for _, a, _ in row))
+        h = min(max_h, (room_w - gap * len(row)) / sum(r[1] for r in row))
         cells = ""
-        for n, a, c in row:
+        for n, a, title, text in row:
             w = h * a
             cells += (
                 f'<td style="width:{w:.1f}pt;padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
-                + (f'<p class="cap" style="width:{w:.1f}pt;margin:1pt 0 0 0">{html.escape(str(c))}</p>' if c else "")
+                + (f'<p class="cap" style="width:{w:.1f}pt;margin:1pt 0 0 0">{esc(title)}</p>' if title else "")
+                + (f'<p class="ptext" style="width:{w:.1f}pt;margin:{1 if title else 2}pt 0 0 0">{esc(text)}</p>' if text else "")
                 + "</td>")
         out.append(f'<table style="border-collapse:collapse;margin:4pt 0 2pt {indent:.0f}pt"><tr>{cells}</tr></table>')
         row.clear()
 
-    for name, w, h, cap in pics:
+    for name, w, h, title, text in pics:
         a = w / h
-        used = sum(x for _, x, _ in row)
+        used = sum(r[1] for r in row)
         # The picture starts a new row when, with it, the shared height would drop below min_h.
         if row and (room_w - gap * (len(row) + 1)) / (used + a) < min_h:
             flush()
-        row.append((name, a, cap or ""))
+        row.append((name, a, str(title or "").strip(), str(text or "").strip()))
     flush()
     return "".join(out)
 
@@ -250,16 +262,16 @@ def build_pdf(payload: dict, root: Path, out: Path, number: bool = True) -> int:
         pics = []
         frame = put_image(decode_data_url(n.get("frame") or ""))
         if frame:
-            pics.append((*frame, n.get("frameCaption") or ""))
+            pics.append((*frame, *_cap_parts(n.get("frameTitle"), n.get("frameText"), n.get("frameCaption"))))
         for m in n.get("more") or []:
             pic = put_image(decode_data_url((m or {}).get("frame") or "")) if isinstance(m, dict) else None
             if pic:
-                pics.append((*pic, m.get("caption") or ""))
+                pics.append((*pic, *_cap_parts(m.get("title"), m.get("text"), m.get("caption"))))
         shot_caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
         for sid in n.get("shots") or []:
             shot = put_image(shot_bytes(str(sid)))
             if shot:
-                pics.append((*shot, str(shot_caps.get(str(sid)) or "")))
+                pics.append((*shot, "", str(shot_caps.get(str(sid)) or "")))
         parts.append(_pic_rows(pics, 240, 120))
         for r in n.get("replies") or []:
             if r.get("event"):  # resolve / in progress / reopen entry in the thread
@@ -271,7 +283,7 @@ def build_pdf(payload: dict, root: Path, out: Path, number: bool = True) -> int:
             text = f"<br/>{esc(r.get('text'))}" if r.get("text") else ""
             parts.append(f'<p class="reply"><span class="who">{who}</span>{text}</p>')
             rshots = [s for s in (put_image(shot_bytes(str(sid))) for sid in r.get("shots") or []) if s]
-            parts.append(_pic_rows([(*s, "") for s in rshots], 240, 100, indent=16))
+            parts.append(_pic_rows([(*s, "", "") for s in rshots], 240, 100, indent=16))
         parts.append("</div>")
     story = pymupdf.Story(html="".join(parts), user_css=_PDF_CSS, archive=pymupdf.Archive(tmp))
     mediabox = pymupdf.Rect(0, 0, *PAGE)

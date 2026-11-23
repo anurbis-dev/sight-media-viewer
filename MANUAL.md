@@ -176,7 +176,7 @@
     are kept. A long text scrolls by the wheel, a drag on the text or a middle-button drag (the words
     follow the mouse); then only the plate's head (number / label) moves the plate. In the note card the texts are listed under its pictures (a mark in a preview's
     corner shows which have one); click one to go to that frame / view, double-click to edit it.
-    The PDF report and the reviewer page show them under the pictures. The arrow button on a note adds a
+    The PDF report and the reviewer page show them under the pictures, in the same size for every picture (a screenshot's text included). The arrow button on a note adds a
     **reply** (Enter sends); double-click a reply to edit it, × deletes it. **Dictation:** the mic button under the note field (and next to a reply, note or picture text while you edit it) listens and types what you say at the cursor; click it again, Esc or Alt+M stops; the small language chip next to it (RU / EN…) switches between the two languages you used last in one tap (Alt+Shift+M from the field; mid-dictation it carries on in the new language); right-click / long-press the chip or the mic for all languages (default: the browser's). Needs Chrome, Edge or Safari; Chrome / Edge send the audio to Google, so it is online only. Or use **any speech-to-text service you like** (Settings → Dictation → Engine *My service*): paste its OpenAI-compatible transcription address (a local whisper server such as `http://localhost:8000/v1/audio/transcriptions`, or OpenAI, Groq…), the model name and, if it needs one, an API key, then *Save*. Whisper-type services detect the language by themselves (leave the language on *Auto*); each phrase is sent after you pause, so words appear phrase by phrase. The key stays on the Sight server (never shown again; *Forget key* removes it; changing the address drops it). Resolving or reopening
     a note — or marking it in progress — adds a line to its thread (*✓ Resolved by Anna · date*), so
     the history shows who did it and when; these lines cannot be edited or deleted. Pictures a
@@ -619,18 +619,24 @@
       top layer. Hide a layer (`H`) or drag the chips to see the ones under it.
     - **Over** shows the layers as they are; **Difference** (`D`) — identical pixels turn black, so any
       change stands out. With Swipe off, each layer is blended over all the layers below it (the bottom
-      one stays as it is); with Swipe on, each region shows its layer against the reference (★, `R` makes
-      the selected layer the reference), which lies whole under the regions.
+      one stays as it is); with Swipe on, each region shows its layer against the first layer, which lies whole under
+      the regions.
+    - Every Stack layer covers the layers below it completely, whatever its size: the space past its picture
+      and its transparent pixels are black. **See-through** (button, or `T`; off by default) lets that space and
+      the alpha show the layers below, and hides a clip while the playhead is outside it. A clip shorter than
+      the others shows its last frame after it ends (its first frame before it starts), at full strength.
   - On the picture, as in the viewer: **click** plays / pauses, **left drag** scrubs every clip (the width of the
     view is the whole timeline), **right drag** zooms, **middle drag** (or `Alt`+drag) pans. A press selects the
     layer under it. Touch: tap plays / pauses, one finger scrubs, two fingers pinch-zoom and pan. With pictures
     only (no video), a left drag pans. **`Shift` slows every drag down** — scrub, zoom, pan, a split, a clip's
     offset — and can be pressed or let go mid-drag without a jump.
   - Layers bar at the bottom: **click a chip** shows / hides that layer (`H`; one brought back becomes the
-    selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), ☆ reference (its picture sets the
-    frame every layer is fitted to), drag a
+    selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), drag a
     chip to reorder (touch: hold it, then drag; the whole chip follows) — the order is the order of the splits, the stack (first on top) and the tiles and is kept
-    with a note written in the comparison, ⤢ opens the file in the viewer, *+ Add* brings in another version.
+    with a note written in the comparison. The **first visible chip is the base**: its picture sets the frame every
+    layer is fitted to, and with Swipe it lies whole under the regions (Difference compares against it). A new
+    comparison puts the file it was opened from first; drag another chip to the front to change the base.
+    ⤢ opens the file in the viewer, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
     `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
     the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
@@ -648,15 +654,14 @@
   - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
     **selected layer** — notes and drawings go to that file, at its own frame (a video layer's local
     time). While annotating, a click on a layer chip picks that layer (showing it if hidden) instead of hiding it — that is how you annotate another file. A note written here remembers the
-    comparison — the files, their order, reference, layout (with Swipe on / off) and offsets: its card in the viewer has
+    comparison — the files, their order, layout (with Swipe on / off) and offsets: its card in the viewer has
     *⧉ Compare · N files*, which opens it again on the note's frame, and `K` on that file brings the same
     files back (the newest such note wins) instead of its versions. While annotating, the left button draws: `Alt`+drag
     moves the nearest split (as it scrubs a video in the viewer), and a finger or stylus that lands on a split
     moves it instead of drawing. The tools' keys (`[` `]` brush size, `R` `V` `L` tools, `S` screenshot, `Shift+,` / `.`
-    markers) win over the compare's; leave annotating (`A` / Esc) to shift layers or change the reference by
-    key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
+    markers) win over the compare's; leave annotating (`A` / Esc) to shift layers by key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
     layer in its split, stack or tile, Difference, the split lines and names — with the drawings on top.
-  - Wheel zooms around the cursor (`Shift` slower), double-click (double-tap) or `F` fits (there is no Fit button), `0` shows the reference at 100 %. `Esc` / `K` closes.
+  - Wheel zooms around the cursor (`Shift` slower), double-click (double-tap) or `F` fits (there is no Fit button), `0` shows the first visible layer at 100 %. `Esc` / `K` closes.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
   is kept; a Shift-range or a marquee adds them in grid order) and press Space over one of them, or
   click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back

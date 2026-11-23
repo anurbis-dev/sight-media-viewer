@@ -240,8 +240,8 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   (`atPlayhead` uses the same edge), then `releaseScrubDecoder` runs. Closing Compare during a drag
   removes the window listeners that finish it. `.cmp-m` is `clip-path: inset(0)` so Windows does not promote the compare videos to hardware
   overlays (a clip without one stays on its old picture until playback stops, and the overlay cancels
-  a drag whose timeline it covers). Losing pointer capture mid-drag does not end it. The dim
-  (`.out`) is not toggled while the pointer is down. After each scrub copy, `_prune_scrub_copies` keeps the newest 20 / 1 GB in all
+  a drag whose timeline it covers). Losing pointer capture mid-drag does not end it. The `.out`
+  mark changes only a clip-path (never opacity), so it is updated mid-drag too. After each scrub copy, `_prune_scrub_copies` keeps the newest 20 / 1 GB in all
   (`SCRUB_KEEP_FILES` / `SCRUB_KEEP_BYTES`), never the one just made. The playback-copy cleanup removes stale files of its own kind only
   (scrub vs playback); the asset rename / delete globs `<aid>_*` cover both.
 - Scrub audio (lightbox, speaker right-click / long press, `vsnd.scrub`): not a blip of the `<video>`.
@@ -1022,26 +1022,31 @@ must not drive the element: annotate.js goes through `vidPause` / `vidSeek`, whi
 the annotator's capture `onDown` leave the press to compare (whose Alt+left pans only when not annotating).
 `host.captureView(dpr)` (→ `cmp.captureView`) paints the screenshot: the Stack box or whole stage from the media
 elements' boxes, the layers' `clip-path: inset()` regions, `mix-blend-mode: difference` as canvas
-`difference`, `.out` at 0.12, split lines and labels; `{cv, ox, oy}` places the annotated surface in it
+`difference`, an opaque Stack layer as a black fill under it, a See-through `.out` layer skipped, split lines and labels; `{cv, ox, oy}` places the annotated surface in it
 (`composeView` draws the drawings there; an area capture offsets its rect).
 
 **Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
-Every layer's media is placed in the reference layer's frame (`object-fit: contain`, shared
+Every layer's media is placed in the base layer's frame (`baseLayer()` = the first visible chip; there is
+no separate reference layer since 0.114 — a fresh open moves the focus file to the front) (`object-fit: contain`, shared
 zoom / pan as doc-normalised centre + zoom over fit). Layouts: `stack` / `grid` / `row` / `col` (`P.layout`);
 Stack has two options, `P.swipe` and `P.blend` (`swiping()` / `diffOn()`; the bar hides Swipe, the split
-direction and Over / Difference outside Stack, and cells never blend). Stack + Swipe: the reference is drawn whole at the
+direction and Over / Difference outside Stack, and cells never blend). Stack + Swipe: the base is drawn whole at the
 bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
-to visible layer i — with `mix-blend-mode: difference` in Difference mode (each region against the reference).
+to visible layer i — with `mix-blend-mode: difference` in Difference mode (each region against the base).
 Stack without Swipe: every visible layer whole, DOM bottom → top = chips last → first (first chip on top), no
 splits (`C.splits` is kept for when Swipe comes back); Difference blends every layer but the bottom one over
 all below it; names: the top layer's (Over) or all, top first (Difference); a press selects the top layer
 (Over) or keeps the selection (Difference). A stored layout `"swipe"` (prefs before 0.112, notes) reads as
 Stack + Swipe (`readLayout`); `session()` writes `"swipe"` / `"stack"` for Stack with Swipe on / off. There is
 no Fit button (double-click / `F`); compare has no turn / mirror (the lightbox's per-file view turn is not
-applied: `geom().turn` is empty). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The reference stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the reference (whichever layer is ★; that starts as the file the lightbox had open). The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
+applied: `geom().turn` is empty). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The base stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the base. The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
 layer local time = T − start/fps; `syncVideos()` holds the clock
 (`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
-never seek towards a running clock. Clips outside their span pause (dimmed). Compare `<video>` elements
+never seek towards a running clock. Clips outside their span pause, parked on their edge frame (frame 0 / the last; `syncVideos` seeks an
+element that is not there, e.g. after `build()` or a jump), drawn at full strength. Stack layers are opaque
+(`.cmp-box:not(.thru) .cmp-ly { background: #000 }`), so a smaller picture, alpha or an ended clip never shows
+the layer below; **See-through** (`P.thru`, a pref, not in notes; `T`) puts `.thru` on the box: alpha / empty
+space show through and an `.out` clip is cut away (`clip-path: inset(50%)`, never opacity: `.out` is toggled mid-drag too). Compare `<video>` elements
 use `clip-path: inset(0)` so Windows does not promote them to hardware overlays. A timeline drag shows
 each clip's scrub proxy when that copy can; until then the picture holds and the release seeks every
 clip once (a clip the playhead has left goes to its last frame, one it has not reached goes to its first). The proxy stays until that frame is presented. `SlidingVideoCache` holds one RAM window per file, budget split evenly (`focus_many`). Keys go through `cmp.onKey` first while it is
