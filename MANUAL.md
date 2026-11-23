@@ -612,15 +612,18 @@
   - Layouts (`1`–`4`): **Stack** — all layers in one view, on top of each other. **Tile**, **Row** (horizontal
     strip), **Column** (vertical strip) — one cell per layer.
   - Stack has its own options in the top bar (hidden in the other layouts):
-    - **Swipe** (button, or `S`): on — the stack is cut by split lines, one region per layer (the first chip
-      on the left / top); press right on a split line to move it (anywhere else the press is the picture's,
+    - The stack is the chip order, the first chip on top; every layer lies on its own level, as in Open RV.
+    - **Swipe** (button, or `S`): on — split lines cut the stack like RV wipes: each layer keeps only the view
+      before its own line, and past the line you see the layers below it (the bottom layer is never cut). So
+      region 1 shows the first chip, region 2 the second, and so on (the first chip on the left / top); press right on a split line to move it (anywhere else the press is the picture's,
       see below), `V` (or the button next to Swipe) switches between side-by-side and top / bottom splits.
       Off — no split lines: every layer lies whole, the first chip on top; a press on the picture selects that
       top layer. Hide a layer (`H`) or drag the chips to see the ones under it.
     - **Over** shows the layers as they are; **Difference** (`D`) — identical pixels turn black, so any
-      change stands out. With Swipe off, each layer is blended over all the layers below it (the bottom
-      one stays as it is); with Swipe on, each region shows its layer against the first layer, which lies whole under
-      the regions.
+      change stands out. Each layer is compared with all the layers below it, so the picture is the
+      difference of the whole visible stack (with 5 files, of all 5); hide a layer (`H`) to take it out. With
+      Swipe, a region holds its layer and every layer below it, so each region shows the difference of what
+      is left there.
     - Every Stack layer covers the layers below it completely, whatever its size: the space past its picture
       and its transparent pixels are black. **See-through** (button, or `T`; off by default) lets that space and
       the alpha show the layers below, and hides a clip while the playhead is outside it. A clip shorter than
@@ -633,14 +636,14 @@
   - Layers bar at the bottom: **click a chip** shows / hides that layer (`H`; one brought back becomes the
     selected layer, `↑` / `↓` select), **middle-click** removes it (or ×), drag a
     chip to reorder (touch: hold it, then drag; the whole chip follows) — the order is the order of the splits, the stack (first on top) and the tiles and is kept
-    with a note written in the comparison. The **first visible chip is the base**: its picture sets the frame every
-    layer is fitted to, and with Swipe it lies whole under the regions (Difference compares against it). A new
-    comparison puts the file it was opened from first; drag another chip to the front to change the base.
+    with a note written in the comparison. The first visible chip's picture sets the frame every layer is fitted
+    to. A new comparison puts the file it was opened from first.
     ⤢ opens the file in the viewer, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
     `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
     the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
-    goes on from where you let go. Each clip gets a small scrub copy (a keyframe every few frames) as soon as
+    goes on from where you let go. A click or drag while playing starts again almost at once: each clip
+    plays from its small scrub copy for a moment while the full file catches up, then the full file takes over. Each clip gets a small scrub copy (a keyframe every few frames) as soon as
     the comparison opens, and a drag shows those, so several clips follow the pointer together. Until a copy
     is ready, the picture stays where it was; letting go jumps every clip to that frame together. A clip
     you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead as soon as the comparison opens, paused or playing. Each clip has a **first-frame offset** (drag the number on its chip sideways to

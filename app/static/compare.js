@@ -3,15 +3,14 @@
 // Layouts: "stack" — every visible layer stacked in one view; "grid" (tiles), "row" (horizontal
 // strip), "col" (vertical strip) — one cell per layer. Pan / zoom are shared by every cell.
 // Stack options (P.swipe, P.blend; the bar shows them only in Stack):
-//   Swipe on — the view is cut into regions by N-1 draggable split lines, region i shows visible
-//   layer i over the base (the first visible chip), which is drawn whole underneath. Swipe off — no
-//   splits: the layers lie full-frame in chip order, the first visible chip on top.
-//   There is no separate "reference" layer (it was dropped in 0.114): the first visible chip is the
-//   base — it sets the frame every layer is fitted to and lies under the swipe regions. Reorder the
-//   chips to change it; a fresh compare puts the file it was opened from first.
-//   Blend "over" — layers are drawn as they are; "difference" — mix-blend-mode: difference. Swipe
-//   off: every layer over the ones below it (the bottom one plain). Swipe on: each region's layer
-//   over the base underneath (regions do not overlap, so that is all that lies below).
+//   The stack is always the chip order, the first visible chip on top, each layer on its own level.
+//   Swipe on — N-1 draggable split lines; like an Open RV wipe, layer i keeps only the view before its
+//   line (the bottom layer is never cut), so region i shows layer i over everything below it. Swipe
+//   off — every layer whole. There is no "reference" layer (dropped in 0.114); the first visible chip
+//   only sets the frame every layer is fitted to. A fresh compare puts the file it was opened from first.
+//   Blend "over" — layers are drawn as they are; "difference" — mix-blend-mode: difference on every
+//   layer but the bottom one: each layer against everything below it, i.e. the difference of the
+//   whole visible stack (with Swipe: of the layers left in that region).
 //   See-through (P.thru, off by default): off — every Stack layer is opaque over its whole box (black past
 //   its picture and under its alpha), so a smaller / transparent file never shows the layer below. On — the
 //   empty space and alpha show through, and a clip outside its span is not drawn (what is under it shows).
@@ -138,7 +137,7 @@ export function createCompare(host){
         <button type="button" class="cmp-b" data-a="swipe" title="Swipe — cut the stack with split lines, one region per layer; off: the layers lie whole, the first chip on top (S)">Swipe</button>
         <button type="button" class="cmp-b" data-a="dir" title="Split direction (V)"></button>
         <button type="button" class="cmp-b" data-a="thru" title="See-through — a layer's alpha and the space past its picture show the layers below, and a clip past its end disappears; off: every layer covers the ones below it whole (T)">See-through</button>
-        <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against the ones below it (with Swipe: against the first layer) — equal pixels go black (D)">Difference</button></div>
+        <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against all the layers below it: the difference of the whole visible stack (hide a layer to take it out) — equal pixels go black (D)">Difference</button></div>
         <span class="cmp-hint">Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · dbl-click / F fit · S swipe · D difference · T see-through · [ ] shift layer · ↑↓ layer · H hide · Esc</span>
         <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
@@ -172,8 +171,7 @@ export function createCompare(host){
     assets.forEach((a) => addLayer(a));
     const focus = C.layers.find((l) => l.a.id === focusId) || C.layers[0];
     C.sel = focus.a.id; C.sound = focus.a.id;
-    // A fresh compare puts the file it was opened from first: it is the base (sets the frame, lies under the
-    // swipe regions, on top of a Stack), so the picture you came from stays what you see. A note's session
+    // A fresh compare puts the file it was opened from first: it sets the frame and is the top of a Stack, so the picture you came from stays what you see. A note's session
     // keeps its stored order (an old note's `ref` is ignored: the order is what the user arranged).
     if (!session) C.layers = [focus, ...C.layers.filter((l) => l !== focus)];
     if (session){
@@ -245,9 +243,8 @@ export function createCompare(host){
 
   // ---- layout ----------------------------------------------------------------------------------
   const visible = () => C.layers.filter((l) => l.vis);
-  // The base: the first visible chip. Its picture sets the frame every layer is fitted to; with Swipe it lies
-  // whole under the regions (a hidden layer is never the base, so hiding it really takes it off the screen).
-  const baseLayer = () => visible()[0] || C.layers[0];
+  // The first visible chip: its picture sets the frame every layer is fitted to.
+  const frameLayer = () => visible()[0] || C.layers[0];
   function resetSplits(){
     const n = visible().length;
     C.splits = Array.from({ length: Math.max(0, n - 1) }, (_, i) => (i + 1) / n);
@@ -345,7 +342,7 @@ export function createCompare(host){
   // its "seeked" is an older frame, and hiding on it uncovers that frame for the real seek.
   function settleScrub(l, m){
     const sc = l?.scrub;
-    if (!C || C.scrub || !sc || sc.hidden || sc._settle) return;
+    if (!C || C.scrub || !sc || sc.hidden || sc._settle || l.br) return; // (a fast start hands over itself)
     if (m.seeking || m._want != null || !atPlayhead(l, m)) return;
     // A newer drag bumps the token, so this hand-off cannot hide the proxy the next drag is showing.
     const token = ++sc._settleToken;
@@ -452,7 +449,11 @@ export function createCompare(host){
   // Rebuilds the stage DOM (layout, visibility, order or blend changed). Media elements are
   // recreated, so video positions are restored from the shared clock on the next tick.
   function build(){
-    for (const l of C.layers){ for (const m of l.media) releaseMedia(m); l.media = []; }
+    for (const l of C.layers){
+      for (const m of l.media) releaseMedia(m);
+      l.media = [];
+      if (l.br){ l.br = null; if (l.scrub){ l.scrub.hidden = true; releaseScrubDecoder(l.scrub); } } // (new elements start over)
+    }
     const st = C.stage;
     st.innerHTML = "";
     // (prefixed: a bare "row" is the sidebar's menu-row class, whose fixed height flattened the Row layout to nothing)
@@ -462,61 +463,54 @@ export function createCompare(host){
     const vis = visible(), diff = diffOn();
     if (!vis.length){ st.innerHTML = `<div class="cmp-empty">All layers are hidden</div>`; paintAll(); return; }
     const label = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
-    if (stacked() && !P.swipe){
-      // Swipe off: every visible layer whole, the last chip at the bottom and the first on top. Over: the top
-      // one covers the rest (a clip outside its span dims and shows what is under it). Difference: each layer
-      // over everything below it, the bottom one plain. The first (top) layer sets the frame.
+    if (stacked()){
+      // One stack, the last chip at the bottom and the first on top, each layer on its own level (as Open RV).
+      // Over: a layer covers the ones below it (opaque unless See-through). Difference: each layer is blended with
+      // everything below it, the bottom one plain — the difference of the whole visible stack; hiding a layer takes
+      // it out. Swipe cuts layers, it does not change the stack: like an RV wipe, layer i keeps only the part of the
+      // view before its split line (region i and the regions before it), so region i shows layer i over everything
+      // below it, and the bottom layer is never cut. The first (top) visible layer sets the frame.
+      const sw = !!P.swipe;
+      if (sw && C.splits.length !== vis.length - 1) resetSplits();
       const box = document.createElement("div");
       box.className = "cmp-box" + (P.thru ? " thru" : "");
       st.appendChild(box);
-      [...vis].reverse().forEach((l, k) => {
+      const n = vis.length;
+      for (let i = n - 1; i >= 0; i--){
+        const l = vis[i], bottom = i === n - 1;
         const w = document.createElement("div");
-        w.className = "cmp-ly" + (k ? "" : " base");
-        if (diff && k) w.style.mixBlendMode = "difference";
+        w.className = "cmp-ly" + (bottom ? " base" : "");
+        if (sw && !bottom) w.dataset.i = String(i); // (place() cuts it at its split line)
+        if (diff && !bottom) w.style.mixBlendMode = "difference";
         w.appendChild(mkMedia(l, true));
         box.appendChild(w);
-      });
-      // Names, top layer first: Over shows only the one on top (the one you see), Difference all of them.
-      (diff ? vis : vis.slice(0, 1)).forEach((l, j) => {
-        const lb = document.createElement("div");
-        lb.className = "cmp-lbl";
-        lb.style.top = `${10 + j * 26}px`;
-        lb.innerHTML = label(l);
-        box.appendChild(lb);
-      });
-    } else if (stacked()){
-      if (C.splits.length !== vis.length - 1) resetSplits();
-      const box = document.createElement("div");
-      box.className = "cmp-box" + (P.thru ? " thru" : "");
-      st.appendChild(box);
-      // The first visible layer sits underneath, whole (it is region 0); the others are cut to their regions on top.
-      const base = document.createElement("div");
-      base.className = "cmp-ly base";
-      base.appendChild(mkMedia(vis[0], true));
-      box.appendChild(base);
-      vis.forEach((l, i) => {
-        if (!i) return;
-        const w = document.createElement("div");
-        w.className = "cmp-ly";
-        w.dataset.i = String(i);
-        if (diff) w.style.mixBlendMode = "difference";
-        w.appendChild(mkMedia(l, true));
-        box.appendChild(w);
-      });
-      vis.forEach((l, i) => {
-        const lb = document.createElement("div");
-        lb.className = "cmp-lbl";
-        lb.dataset.i = String(i);
-        lb.innerHTML = label(l);
-        box.appendChild(lb);
-      });
-      C.splits.forEach((p, i) => {
-        const h = document.createElement("div");
-        h.className = "cmp-split";
-        h.dataset.k = String(i);
-        h.innerHTML = "<b></b>";
-        box.appendChild(h);
-      });
+      }
+      if (sw){
+        // A name per region (place() lays them out).
+        vis.forEach((l, i) => {
+          const lb = document.createElement("div");
+          lb.className = "cmp-lbl";
+          lb.dataset.i = String(i);
+          lb.innerHTML = label(l);
+          box.appendChild(lb);
+        });
+        C.splits.forEach((p, i) => {
+          const h = document.createElement("div");
+          h.className = "cmp-split";
+          h.dataset.k = String(i);
+          h.innerHTML = "<b></b>";
+          box.appendChild(h);
+        });
+      } else {
+        // Names, top layer first: Over shows only the one on top (the one you see), Difference all of them.
+        (diff ? vis : vis.slice(0, 1)).forEach((l, j) => {
+          const lb = document.createElement("div");
+          lb.className = "cmp-lbl";
+          lb.style.top = `${10 + j * 26}px`;
+          lb.innerHTML = label(l);
+          box.appendChild(lb);
+        });
+      }
     } else {
       // (no blend in cells: Over / Difference are Stack options)
       const n = vis.length;
@@ -572,10 +566,10 @@ export function createCompare(host){
     };
     host.onView({ asset: l.a, wrap, media, isVid: isVideo(l.a), geom, unturn: (x, y) => [x, y] });
   }
-  // Positions every media element (shared zoom / pan, the base layer's size) and the swipe regions.
+  // Positions every media element (shared zoom / pan, the frame layer's size) and the swipe regions.
   function place(){
     if (!C) return;
-    const ref = baseLayer();
+    const ref = frameLayer();
     const rw = ref.nw || 1600, rh = ref.nh || 900;
     const boxes = stacked() ? [...C.stage.querySelectorAll(".cmp-box")] : [...C.stage.querySelectorAll(".cmp-cell")];
     for (const box of boxes){
@@ -590,9 +584,11 @@ export function createCompare(host){
     const box = boxes[0];
     if (!box) return;
     const edges = [0, ...C.splits, 1], horiz = P.dir === "x";
+    // An RV wipe: layer i keeps the view up to its split line (everything before it); what lies past the line
+    // is the layers below.
     for (const w of box.querySelectorAll(".cmp-ly[data-i]")){
-      const i = Number(w.dataset.i), a = edges[i] * 100, b = (1 - edges[i + 1]) * 100;
-      w.style.clipPath = horiz ? `inset(0 ${b}% 0 ${a}%)` : `inset(${a}% 0 ${b}% 0)`;
+      const i = Number(w.dataset.i), b = (1 - edges[i + 1]) * 100;
+      w.style.clipPath = horiz ? `inset(0 ${b}% 0 0)` : `inset(0 0 ${b}% 0)`;
     }
     for (const lb of box.querySelectorAll(".cmp-lbl")){
       const i = Number(lb.dataset.i);
@@ -670,6 +666,101 @@ export function createCompare(host){
   // small drift is corrected with playbackRate. Paused or scrubbing: one seek per clip at a time, the
   // latest time queued behind it. A drag uses the short-GOP proxy when it is ready and leaves the full
   // file on its last frame until the pointer goes up.
+  // Fast start (0.116): a jump while playing (a click / drag on the timeline, the loop wrapping, a stall) needs
+  // a seek of every full file, and a long-GOP file decodes from its previous keyframe first — ~0.5 s for 1080p
+  // with a 10 s GOP, seconds for 4K. The RAM cache does not help there: the bytes are in memory, the decode
+  // is not. So playback starts on the clip's short-GOP scrub copy (960 px, it seeks in a frame or two) at once,
+  // while the full file seeks to a point a little ahead (`lead`, from how long its last seek took) and waits
+  // there, paused; when the clock reaches that point the full file plays and the copy is hidden. If the clock
+  // gets there first, the full file is aimed further ahead (the lead grows). l.br = {target, t0} while it runs.
+  // Clips without a copy (under 3 s, still encoding) keep the old way: the clock waits for their seek.
+  const fullEnd = (l, m) => (Number.isFinite(m.duration) ? m.duration : l.dur) - 1e-3;
+  function leadOf(l, miss){
+    return Math.min(6, Math.max(0.3, (l.seekCost || 0.6) * 1.5 + 0.15) * 1.5 ** (miss || 0));
+  }
+  // Sends the full file to `local + lead` and parks it there, paused. A seek already in flight (the release's)
+  // is not restarted: the target is queued behind it (one seek per element, pumpTime sends it on "seeked").
+  function aimFull(l, m, local, now){
+    const b = l.br;
+    b.target = Math.max(0, Math.min(fullEnd(l, m), local + leadOf(l, b.miss)));
+    b.t0 = now; b.landed = false;
+    if (!m.paused) m.pause();
+    wantTime(m, b.target);
+    b.queued = m._want != null; // (behind a seek in flight: its time is not this seek's — timed from when it is sent)
+  }
+  function endBridge(l, hide){
+    const sc = l.scrub;
+    l.br = null;
+    if (!sc) return;
+    if (!sc.paused) sc.pause();
+    if (hide){ sc.hidden = true; releaseScrubDecoder(sc); }
+  }
+  // Returns null when the clip plays the old way, "wait" while the copy is not ready to go, "go" otherwise.
+  function bridge(l, m, local, now){
+    let sc = l.scrub;
+    // Back to the old way: a copy armed by the press but not used is dropped (its decoder is wanted), and a copy
+    // left on screen is hidden (paused over a running clock it would freeze the picture).
+    const giveBack = () => {
+      if (l.br) endBridge(l, true);
+      else if (sc && sc.getAttribute("src") && !C.scrub && (sc.hidden || l.brJumped)){ sc.hidden = true; releaseScrubDecoder(sc); }
+      l.brJumped = false;
+      return null;
+    };
+    // A bridge that cannot go on: its copy failed / is gone (the queued target is dropped too), or the clock
+    // jumped (a click, the loop wrapping, a big offset change) — then it starts over from there. A tick moves the
+    // clock at most 0.25 s, so a bigger step is a jump.
+    if (l.br && (!sc || sc.error)){ m._want = null; endBridge(l, true); return null; }
+    if (l.br && Math.abs(local - l.br.last) > 0.3){ endBridge(l, false); l.brJumped = true; } // (the copy stays up for a new bridge)
+    if (!l.br){
+      const far = m.seeking || m._want != null || Math.abs(m.currentTime - local) > 0.3;
+      // (no bridge where the full file could not be parked ahead of the clock before the clip's end)
+      if (!far || !sc || !l.scrubReady || sc.error || !(fullEnd(l, m) - local > leadOf(l, 0) + 0.3)) return giveBack();
+      if (!sc.getAttribute("src")) sc.src = `/api/video/scrub/${l.id}`;
+      sc._settle = false;
+      sc._settleToken = (sc._settleToken || 0) + 1; // (a hide still waiting from a drag must not take it now)
+      sc._want = null;
+      l.brJumped = false;
+      l.br = { target: 0, t0: now, landed: false, miss: 0, last: local };
+      aimFull(l, m, local, now);
+    }
+    const b = l.br;
+    b.last = local;
+    if (b.queued && m._want == null){ b.queued = false; b.t0 = now; } // (pumpTime has just sent the target)
+    // The full file: parked ahead, then it takes over.
+    if (m.seeking || m._want != null){
+      if (m.seeking && now - b.t0 > 8000){ b.t0 = now; m.currentTime = b.target; } // (a dropped seek, as below)
+    } else {
+      if (!b.landed){ b.landed = true; const c = Math.min(4, (now - b.t0) / 1000); l.seekCost = l.seekCost ? (l.seekCost + c) / 2 : c; }
+      const roomAhead = fullEnd(l, m) - local > leadOf(l, b.miss + 1) + 0.3;
+      if (m.paused && local > b.target + 0.25){
+        // The clock got there first: aim further ahead, or near the end give the clip back to the old way.
+        if (!roomAhead) return giveBack();
+        b.miss++; aimFull(l, m, local, now);
+      } else if (local >= b.target - 0.5 / C.fps){
+        if (C.wait){ if (!m.paused) m.pause(); }
+        else if (m.paused){ m.playbackRate = 1; m.play().catch(() => {}); }
+        // Playing near the clock: it presents its own frames now — hand over (the normal path trims the drift).
+        else if (m.currentTime > b.target + 0.5 / C.fps && Math.abs(m.currentTime - local) < 0.15){ endBridge(l, true); return "go"; }
+        // Playing but late (a slow start after a paused seek): a bigger lead would not help — hand over, the normal
+        // path closes the gap (playbackRate, or a seek that holds the clock). A full file that does not move: re-aim.
+        else if (local > b.target + 1.5){
+          if (m.currentTime > b.target + 0.5 / C.fps){ endBridge(l, true); return null; }
+          m.pause(); if (!roomAhead) return giveBack(); b.miss++; aimFull(l, m, local, now);
+        }
+      } else if (!m.paused) m.pause();
+    }
+    // The copy follows the clock, as a full file would.
+    sc = l.scrub;
+    if (sc.readyState < 1 || sc.seeking) return "wait";
+    const ds = sc.currentTime - local;
+    if (Math.abs(ds) > 0.3){ sc.currentTime = local; return "wait"; }
+    if (!canGo(sc, l, local)) return "wait";
+    sc.hidden = false;
+    if (C.wait){ if (!sc.paused) sc.pause(); return "go"; }
+    sc.playbackRate = clamp(1 - ds * 2, 0.85, 1.15);
+    if (sc.paused) sc.play().catch(() => {});
+    return "go";
+  }
   function canGo(m, l, local){
     if (m.readyState >= 3) return true; // HAVE_FUTURE_DATA
     if (m.readyState < 2 || !m.paused) return false;
@@ -691,7 +782,10 @@ export function createCompare(host){
       // the playhead has left the clip. settleScrub hides it after the full file has presented the
       // edge (frame 0, the playhead, or the last frame) and then drops the decoder. Hiding first
       // uncovers the pre-drag picture and leaves that decoder running.
-      if (l.scrub && !l.scrub.paused) l.scrub.pause();
+      if (l.scrub && !l.scrub.paused && !l.br) l.scrub.pause(); // (a fast start plays its copy)
+      // A copy armed by a press but left hidden holds a decoder that playback needs: dropped (a clip in its span
+      // while playing decides in bridge(), which may still use it).
+      if (!C.scrub && !l.br && l.scrub?.hidden && l.scrub.getAttribute("src") && !(run && inside)) releaseScrubDecoder(l.scrub);
       for (const m of l.media){
         // (also mid-drag: `.out` changes only a clip-path (See-through hides the clip with inset(50%)), never the
         // opacity — an opacity going back to 1 promoted the clip to a hardware overlay and Windows cancelled the drag)
@@ -699,6 +793,7 @@ export function createCompare(host){
         if (m.tagName !== "VIDEO") continue;
         if (!inside){
           if (!m.paused) m.pause();
+          if (l.br) endBridge(l, true); // (it ran past its end on the copy: the full file parks on its edge below)
           if (C.scrub){
             const sc = l.scrub;
             const edge = local < 0 ? 0 : Math.max(0, (l.dur || 0) - 1e-3);
@@ -719,6 +814,8 @@ export function createCompare(host){
         if (!run){
           m._low = 0;
           if (!m.paused) m.pause();
+          // (stopped mid fast start: the copy stays on the frame until the full file has it — settleScrub)
+          if (l.br){ endBridge(l, !!l.scrub?.hidden); m._want = null; }
           const sc = l.scrub;
           const want = local + 0.1 / C.fps;
           // The proxy follows the pointer. The full file is not seeked until the drag ends, so two
@@ -735,8 +832,11 @@ export function createCompare(host){
           // mark up and the compare stuck. Hold the current picture; the release seeks them once.
           if (C.scrub){ m._want = null; continue; }
           if (force || Math.abs(m.currentTime - want) > 0.45 / C.fps) wantTime(m, want);
+          else if (l.scrub && !l.scrub.hidden) settleScrub(l, m); // (a copy left up by a fast start, already matched)
           continue;
         }
+        const br = bridge(l, m, local, now);
+        if (br){ if (br === "wait") waiting = true; continue; }
         // A seek in flight: wait for it to land, never restart it — unless it has hung for 8 s (an overloaded
         // decoder can drop one): asked again. (Sooner would restart honest slow seeks: 4K, long GOP.)
         if (m.seeking){
@@ -957,8 +1057,8 @@ export function createCompare(host){
     for (const m of gone?.media || []) releaseMedia(m);
     C.layers = C.layers.filter((l) => l.id !== id);
     if (!visible().length) C.layers[0].vis = true;
-    if (C.sel === id) C.sel = baseLayer().id; // (a visible one: the annotator keeps a viewer)
-    if (C.sound === id) C.sound = baseLayer().id;
+    if (C.sel === id) C.sel = frameLayer().id; // (a visible one: the annotator keeps a viewer)
+    if (C.sound === id) C.sound = frameLayer().id;
     resetSplits();
     build();
   }
@@ -1041,7 +1141,11 @@ export function createCompare(host){
     C.scrubGen = (C.scrubGen || 0) + 1;
     armScrubs();
     for (const l of C.layers) if (l.scrub){
-      l.scrub.hidden = true;
+      // A fast start in progress: the drag takes its copy. A copy on screen stays up (the full file is parked
+      // ahead, a frame the user has not reached) until the drag's first seek of it lands.
+      const keep = !!l.br && !l.scrub.hidden;
+      l.br = null;
+      if (!keep) l.scrub.hidden = true;
       l.scrub._settle = false;
       l.scrub._settleToken = (l.scrub._settleToken || 0) + 1; // drops a hand-off still waiting to hide it
     }
@@ -1058,7 +1162,8 @@ export function createCompare(host){
     // Hold the clock while a clip still has the release time queued behind a seek already in flight.
     C.wait = false;
     for (const l of C.layers){
-      if (l.scrub && l.scrub.hidden) releaseScrubDecoder(l.scrub);
+      // (playing: a copy armed by the press is kept — the fast start plays on it; bridge() drops it if unused)
+      if (l.scrub && l.scrub.hidden && !C.playing) releaseScrubDecoder(l.scrub);
       for (const m of l.media){
         if (m.tagName === "VIDEO" && (m.seeking || m._want != null)) C.wait = true;
       }
@@ -1428,7 +1533,7 @@ export function createCompare(host){
         if (!C) return;
         const box = liveBox(down);
         if (!box) return;
-        const ref = baseLayer(), rw = ref.nw || 1600, rh = ref.nh || 900;
+        const ref = frameLayer(), rw = ref.nw || 1600, rh = ref.nh || 900;
         const sc = Math.min(box.clientWidth / rw, box.clientHeight / rh) * C.view.zoom;
         if (!(sc > 0)) return;
         C.view.cx -= dx / (rw * sc);
@@ -1470,7 +1575,7 @@ export function createCompare(host){
   }
   // Zoom to z keeping the box point (mx, my) — px from the box's top-left — where it is.
   function zoomAt(box, z, mx, my, base){
-    const ref = baseLayer(), W = box.clientWidth, H = box.clientHeight;
+    const ref = frameLayer(), W = box.clientWidth, H = box.clientHeight;
     const rw = ref.nw || 1600, rh = ref.nh || 900, s0 = Math.min(W / rw, H / rh);
     const b = base || C.view;
     const ox = mx - W / 2, oy = my - H / 2;
@@ -1485,9 +1590,9 @@ export function createCompare(host){
     const k = e.pointerType === "mouse" && !host.annotating?.() ? splitNear(e) : -1;
     setCursor(C.stage, "hover", k < 0 ? null : P.dir === "x" ? "resize-x" : "resize-y");
   }
-  // 100 % of the base layer's own pixels.
+  // 100 % of the frame layer's (first visible chip's) own pixels.
   function actual(){
-    const ref = baseLayer(), box = C.stage.querySelector(".cmp-box, .cmp-cell");
+    const ref = frameLayer(), box = C.stage.querySelector(".cmp-box, .cmp-cell");
     if (!box || !ref.nw) return;
     C.view.zoom = 1 / Math.min(box.clientWidth / ref.nw, box.clientHeight / ref.nh);
     place();
@@ -1520,7 +1625,7 @@ export function createCompare(host){
     return !hotkey(e, "Ctrl+KeyK");
   }
 
-  // What a note made here remembers (FORMAT.md `compare`): the files, their order (the first is the base), selected layer,
+  // What a note made here remembers (FORMAT.md `compare`): the files, their order (the first is on top), selected layer,
   // look and each clip's offset.
   function session(){
     if (!C) return null;
@@ -1529,7 +1634,7 @@ export function createCompare(host){
     // (Stack is written as "swipe" / "stack" — Swipe on / off — so an older Sight still opens the swipe look)
     const layout = stacked() ? (P.swipe ? "swipe" : "stack") : P.layout;
     // (`ref` = the first id, read only by a Sight before 0.114, which still has a reference layer: there it
-    // makes the same layer the base; this Sight ignores it)
+    // makes the same layer the frame; this Sight ignores it)
     const ids = C.layers.map((l) => l.id);
     return { ids, ref: ids[0], sel: C.sel, layout, blend: P.blend, dir: P.dir, starts };
   }
@@ -1539,7 +1644,9 @@ export function createCompare(host){
     dropClick();
     if (!C || !C.playing) return;
     C.playing = false;
-    const l = layer(C.sel), m = l && isVideo(l.a) ? l.media.find((x) => x._primary) : null;
+    const l = layer(C.sel);
+    // (a fast start: the copy has the frame on screen; the full file is parked ahead)
+    const m = !l || !isVideo(l.a) ? null : l.br ? (l.scrub && !l.scrub.hidden ? l.scrub : null) : l.media.find((x) => x._primary);
     // (minus the 0.1 frame syncVideos adds back, so a stop late in a frame does not move on to the next one)
     if (m && m.readyState >= 1 && !m.parentElement?.classList.contains("out")) C.T = l.start / C.fps + Math.max(0, m.currentTime - 0.1 / C.fps);
     else C.T = snapT(C.T);
@@ -1667,9 +1774,9 @@ function injectStyles(){
 .cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
-/* isolation: the scrub proxy is z-index 2 so it paints over its own file. The base layer (the first
-   visible chip) is not clipped. Without a stacking context here its proxy joins the box and covers
-   every other swipe region, so a drag shows only the base. */
+/* isolation: the scrub proxy is z-index 2 so it paints over its own file. The bottom layer is not
+   clipped. Without a stacking context here its proxy joins the box and covers every other swipe
+   region, so a drag shows only the bottom layer. */
 .cmp-ly { position: absolute; inset: 0; pointer-events: none; isolation: isolate; }
 /* Stack: a layer covers the ones below it whole (black past its picture / under its alpha) unless See-through
    is on; then a clip outside its span is not drawn. Tile cells: an out clip just shows its edge frame. */

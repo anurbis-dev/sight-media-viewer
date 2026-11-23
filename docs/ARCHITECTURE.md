@@ -1026,23 +1026,23 @@ elements' boxes, the layers' `clip-path: inset()` regions, `mix-blend-mode: diff
 (`composeView` draws the drawings there; an area capture offsets its rect).
 
 **Compare** (`compare.js`, `createCompare(host)`) — a fixed overlay above the lightbox (z 60).
-Every layer's media is placed in the base layer's frame (`baseLayer()` = the first visible chip; there is
+Every layer's media is placed in the frame layer's frame (`frameLayer()` = the first visible chip; there is
 no separate reference layer since 0.114 — a fresh open moves the focus file to the front) (`object-fit: contain`, shared
 zoom / pan as doc-normalised centre + zoom over fit). Layouts: `stack` / `grid` / `row` / `col` (`P.layout`);
 Stack has two options, `P.swipe` and `P.blend` (`swiping()` / `diffOn()`; the bar hides Swipe, the split
-direction and Over / Difference outside Stack, and cells never blend). Stack + Swipe: the base is drawn whole at the
-bottom, every other visible layer is clipped to its region (`clip-path: inset`) — region i belongs
-to visible layer i — with `mix-blend-mode: difference` in Difference mode (each region against the base).
-Stack without Swipe: every visible layer whole, DOM bottom → top = chips last → first (first chip on top), no
-splits (`C.splits` is kept for when Swipe comes back); Difference blends every layer but the bottom one over
-all below it; names: the top layer's (Over) or all, top first (Difference); a press selects the top layer
+direction and Over / Difference outside Stack, and cells never blend). Stack (0.116, as Open RV): one stack, DOM bottom → top = chips last → first (first chip on top), the bottom
+layer `.base`; Difference puts `mix-blend-mode: difference` on every layer but the bottom one (each against
+everything below it = the difference of the whole visible stack). Swipe only cuts: layer i (`data-i`, all but
+the bottom) gets `clip-path: inset` keeping the view up to `C.splits[i]` (an RV wipe), so region i shows layer
+i over every layer below it (in Difference: the difference of layers i..n-1); without Swipe nothing is cut
+(`C.splits` is kept for when Swipe comes back); names: the top layer's (Over) or all, top first (Difference); a press selects the top layer
 (Over) or keeps the selection (Difference). A stored layout `"swipe"` (prefs before 0.112, notes) reads as
 Stack + Swipe (`readLayout`); `session()` writes `"swipe"` / `"stack"` for Stack with Swipe on / off. There is
 no Fit button (double-click / `F`); compare has no turn / mirror (the lightbox's per-file view turn is not
-applied: `geom().turn` is empty). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The base stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the base. The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
+applied: `geom().turn` is empty). Each `.cmp-ly` is `isolation: isolate`: the scrub proxy is `z-index: 2` so it paints over its own file, and that context keeps it inside the layer. The bottom layer stays unclipped; without the context its proxy joined the box and covered the other regions, so a swipe drag showed only the bottom layer. The same context keeps a lower layer's proxy under the layers above it in a Stack without Swipe. Video: `C.T` is a wall-clock timeline;
 layer local time = T − start/fps; `syncVideos()` holds the clock
 (`C.wait`) while any in-span clip is seeking / not ready / > 0.3 s off, then resumes all together (small drift: playbackRate);
-never seek towards a running clock. Clips outside their span pause, parked on their edge frame (frame 0 / the last; `syncVideos` seeks an
+never seek towards a running clock. **Fast start** (0.116, `bridge()` / `aimFull()` / `endBridge()`, `l.br`): a jump while playing (clip in span, full element seeking / queued / > 0.3 s off) plays the clip's scrub copy at once while the full element seeks to `local + lead` (lead from the measured `l.seekCost`, ×1.5 per miss) and waits there paused; when the clock reaches the target it plays and, once on the clock past the target, the copy is hidden and its decoder dropped. Not for clips without a copy (< 3 s, still encoding) or within 0.5 s of their end. `settleScrub` skips a layer in a bridge; a drag start, `build()`, leaving the span or stopping ends it. `scrubEnd` keeps the copies armed by the press while playing (bridge() drops an unused one). Measured on 1080p GOP-250 ×3 in headless Edge: the clock moves 70–190 ms after a click (was 490–760 ms). Clips outside their span pause, parked on their edge frame (frame 0 / the last; `syncVideos` seeks an
 element that is not there, e.g. after `build()` or a jump), drawn at full strength. Stack layers are opaque
 (`.cmp-box:not(.thru) .cmp-ly { background: #000 }`), so a smaller picture, alpha or an ended clip never shows
 the layer below; **See-through** (`P.thru`, a pref, not in notes; `T`) puts `.thru` on the box: alpha / empty
