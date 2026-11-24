@@ -400,6 +400,295 @@ var SightReviewCore = (function(){
   // A closed pattern-filled stroke (the lasso): its fill (gap, hatchWidth) is independent of the outline's size.
   function isFillStroke(d){ return !!(d && d.close && d.pattern && d.pattern !== "none"); }
 
+  // ---- colour correction area (kind "grade", FORMAT.md) ------------------------------------------
+  // An area of the picture shown with its own hue / saturation / brightness / contrast. data.mode "lasso" = the
+  // closed outline through data.pts, filled; "brush" = a stroke data.size wide along data.pts (round ends).
+  // data.feather softens the edge (doc units). It has no fill or colour of its own: a client shows the picture
+  // corrected inside it (Sight: a backdrop-filter; exports: gradeCanvas) and, in the overlay, a dashed outline.
+  function gradeNum(d, k, lo, hi){ var v = Number(d[k]); return Number.isFinite(v) ? clamp(v, lo, hi) : 0; }
+  // hue: degrees −180…180; sat / bright / contrast: −100…100 (0 = unchanged; −100 sat = grey, −100 bright = black).
+  function gradeParams(d){
+    return { hue: gradeNum(d, "hue", -180, 180), sat: gradeNum(d, "sat", -100, 100), bright: gradeNum(d, "bright", -100, 100), contrast: gradeNum(d, "contrast", -100, 100) };
+  }
+  function gradeIdentity(d){ var g = gradeParams(d); return !g.hue && !g.sat && !g.bright && !g.contrast; }
+  // The CSS filter chain of an area (live view): brightness → contrast → saturate → hue-rotate. gradePixels is the
+  // same chain on pixels, so an export matches the screen.
+  function gradeFilter(d){
+    var g = gradeParams(d);
+    return "brightness(" + r2(1 + g.bright / 100) + ") contrast(" + r2(1 + g.contrast / 100) + ") saturate(" + r2(1 + g.sat / 100) + ") hue-rotate(" + r2(g.hue) + "deg)";
+  }
+  // The area as an SVG path, filled nonzero: the lasso's smoothed closed outline, or the brush stroke's outline (an even width).
+  // `d` is the area's data or a stroke being added / cut ({op, mode, pts, size}): the same shape rules. A lasso area with
+  // `rings` (0.119+, what adding / cutting leaves) is every ring, filled nonzero (outer rings and holes run opposite ways).
+  function gradePath(d){
+    if (d.mode === "brush") return strokeOutline({ sub: "pencil", data: { pts: d.pts, size: Math.max(0.1, Number(d.size) || 1), pen: false } });
+    return gradeRings(d).map(function(r){ return smoothPath(polyOf(r), true); }).join(" ");
+  }
+  // A lasso shape's closed rings: data.rings when it has valid ones, else [data.pts].
+  function gradeRings(d){
+    if (d.mode !== "brush" && Array.isArray(d.rings) && Array.isArray(d.pts)){
+      var rs = d.rings.filter(function(r){ return Array.isArray(r) && r.length >= 9 && r.length % 3 === 0 && r.every(Number.isFinite); });
+      // (Only while one ring is pts itself: a client before 0.119 that moved / scaled the area changed pts alone, and
+      // then pts is the truth.)
+      var same = function(r){ if (r.length !== d.pts.length) return false; for (var q = 0; q < r.length; q++) if (Math.abs(r[q] - d.pts[q]) > 1e-6) return false; return true; };
+      if (rs.length && rs.some(same)) return rs;
+    }
+    return [d.pts];
+  }
+  // A shape (the area's own or a part) that can be drawn: a brush needs a point, a lasso three.
+  function gradeShapeOk(s){
+    return !!s && Array.isArray(s.pts) && s.pts.length % 3 === 0 && s.pts.length >= (s.mode === "brush" ? 3 : 9) && s.pts.every(Number.isFinite);
+  }
+  // The area's shapes in order: its own, then the strokes being added / cut while one is drawn (data.parts, in memory
+  // only: Sight's annotate.js bakes them into new rings with gradeBake on release, they are never stored). A part that
+  // is not a valid shape is skipped.
+  function gradeShapes(d){
+    var out = [{ op: "add", mode: d.mode, pts: d.pts, size: d.size, rings: d.rings }];
+    if (Array.isArray(d.parts)) d.parts.forEach(function(p){ if (p && (p.op === "add" || p.op === "sub") && gradeShapeOk(p)) out.push(p); });
+    return out;
+  }
+  // Inside one shape (a lasso's outline within `tol` counts too; a brush shape = within its half width + tol).
+  function gradeShapeIn(s, x, y, tol){
+    if (s.mode !== "brush"){
+      var cnt = 0;
+      gradeRings(s).forEach(function(r){ if (r.length >= 9 && inPoly(polyOf(r), x, y)) cnt++; });
+      if (cnt % 2) return true;  // (inside an odd number of rings: in the area, not in one of its holes)
+    }
+    return gradeEdge(s, x, y, tol);
+  }
+  // Inside the area after its parts: the last shape that holds the point decides (add = in, sub = out). A cut takes
+  // no tolerance, so a click just inside a hole's edge is still out of the area.
+  function gradeIn(d, x, y, tol){
+    var inside = false;
+    gradeShapes(d).forEach(function(s){ if (gradeShapeIn(s, x, y, s.op === "sub" ? 0 : tol)) inside = s.op === "add"; });
+    return inside;
+  }
+  // The filter chain as numbers (Filter Effects: each function's matrix, results clamped to 0…1 between steps).
+  function gradeOps(d){
+    var g = gradeParams(d), s = 1 + g.sat / 100, a = g.hue * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a);
+    return {
+      b: 1 + g.bright / 100, c: 1 + g.contrast / 100,
+      S: [0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s],
+      H: [0.213 + cs * 0.787 - sn * 0.213, 0.715 - cs * 0.715 - sn * 0.715, 0.072 - cs * 0.072 + sn * 0.928,
+        0.213 - cs * 0.213 + sn * 0.143, 0.715 + cs * 0.285 + sn * 0.140, 0.072 - cs * 0.072 - sn * 0.283,
+        0.213 - cs * 0.213 - sn * 0.787, 0.715 - cs * 0.715 + sn * 0.715, 0.072 + cs * 0.928 + sn * 0.072],
+    };
+  }
+  var c01 = function(v){ return v < 0 ? 0 : v > 1 ? 1 : v; };
+  // Corrects RGBA bytes `px` in place (alpha kept).
+  function gradePixels(px, ops){
+    var b = ops.b, c = ops.c, off = 0.5 - 0.5 * c, S = ops.S, H = ops.H;
+    for (var i = 0; i < px.length; i += 4){
+      var r = c01(px[i] / 255 * b), g = c01(px[i + 1] / 255 * b), bl = c01(px[i + 2] / 255 * b);
+      r = c01(r * c + off); g = c01(g * c + off); bl = c01(bl * c + off);
+      var r1 = c01(S[0] * r + S[1] * g + S[2] * bl), g1 = c01(S[3] * r + S[4] * g + S[5] * bl), b1 = c01(S[6] * r + S[7] * g + S[8] * bl);
+      px[i] = Math.round(c01(H[0] * r1 + H[1] * g1 + H[2] * b1) * 255);
+      px[i + 1] = Math.round(c01(H[3] * r1 + H[4] * g1 + H[5] * b1) * 255);
+      px[i + 2] = Math.round(c01(H[6] * r1 + H[7] * g1 + H[8] * b1) * 255);
+    }
+  }
+  // Near a lasso shape's outline, or on a brush shape's stroke (one shape: `d` is the area's data or a part).
+  function gradeEdge(d, x, y, tol){
+    if (d.mode !== "brush") return gradeRings(d).some(function(pts){ return ringEdge(pts, 0, true, x, y, tol); });
+    return ringEdge(d.pts, (Number(d.size) || 0) / 2, false, x, y, tol);
+  }
+  function ringEdge(pts, r, closed, x, y, tol){
+    var n = pts.length / 3, i;
+    if (n === 1) return hyp(x - pts[0], y - pts[1]) <= r + tol;
+    for (i = 1; i < n; i++) if (segDist(x, y, pts[i * 3 - 3], pts[i * 3 - 2], pts[i * 3], pts[i * 3 + 1]) <= r + tol) return true;
+    return closed && n >= 3 && segDist(x, y, pts[n * 3 - 3], pts[n * 3 - 2], pts[0], pts[1]) <= tol;
+  }
+  // Inside any of a lasso area's rings (holes included) or on a brush area: where an add may start.
+  function gradeInRings(d, x, y){
+    if (d.mode === "brush") return gradeEdge(d, x, y, 0);
+    return gradeRings(d).some(function(r){ return r.length >= 9 && inPoly(polyOf(r), x, y); });
+  }
+  // Near the edge of any of the area's shapes (an eraser takes an area by its edge, not by its inside).
+  function gradeEdgeAny(d, x, y, tol){
+    return gradeShapes(d).some(function(s){ return gradeEdge(s, x, y, tol); });
+  }
+  // The area's bounds without padding: its own shape and the added parts (a cut never grows it).
+  function gradeBox(d){
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    gradeShapes(d).forEach(function(s){
+      if (s.op === "sub") return;
+      var r = s.mode === "brush" ? (Number(s.size) || 0) / 2 : 0;
+      (s.mode === "brush" ? [s.pts] : gradeRings(s)).forEach(function(pts){
+        for (var i = 0; i < pts.length; i += 3){ x0 = Math.min(x0, pts[i] - r); y0 = Math.min(y0, pts[i + 1] - r); x1 = Math.max(x1, pts[i] + r); y1 = Math.max(y1, pts[i + 1] + r); }
+      });
+    });
+    return [x0, y0, x1, y1];
+  }
+  // Bakes the strokes being added / cut (data.parts) into the area's outline: the shapes are filled in order on a grid
+  // of `cell` doc units, the grid's edges traced into closed rings (inside on the right, so holes run the other way) and
+  // thinned (Douglas-Peucker, one cell). Returns {pts, rings} — pts the biggest ring (what a client before 0.119 draws),
+  // rings all of them — or null when nothing is left. Needs a canvas (browser).
+  function gradeBake(d, cell){
+    var bb = gradeBox(d);
+    if (!(bb[2] > bb[0]) || !(bb[3] > bb[1])) return null;
+    cell = Math.max(cell, Math.max(bb[2] - bb[0], bb[3] - bb[1]) / 1400);
+    var x0 = bb[0] - 2 * cell, y0 = bb[1] - 2 * cell;
+    var W = Math.ceil((bb[2] - bb[0]) / cell) + 4, H = Math.ceil((bb[3] - bb[1]) / cell) + 4;
+    var cv = makeCanvas(W, H), cx = cv && cv.getContext("2d");
+    if (!cx || typeof Path2D === "undefined") return undefined;
+    cx.setTransform(1 / cell, 0, 0, 1 / cell, -x0 / cell, -y0 / cell);
+    cx.fillStyle = "#ffffff";
+    gradeShapes(d).forEach(function(sh){
+      cx.globalCompositeOperation = sh.op === "sub" ? "destination-out" : "source-over";
+      cx.fill(new Path2D(gradePath(sh)));
+    });
+    var a = cx.getImageData(0, 0, W, H).data, inside = new Uint8Array(W * H), i, j, any = false;
+    for (i = 0; i < W * H; i++) if (a[i * 4 + 3] >= 128){ inside[i] = 1; any = true; }
+    if (!any) return null;
+    var at = function(x, y){ return x >= 0 && y >= 0 && x < W && y < H && inside[y * W + x] === 1; };
+    // Directed pixel edges round every inside pixel, clockwise on screen (y down): from vertex → to vertex.
+    var VW = W + 1, out = new Map(), add = function(ax, ay, bx, by){
+      var k = ay * VW + ax, l = out.get(k);
+      if (!l) out.set(k, l = []);
+      l.push(by * VW + bx);
+    };
+    for (j = 0; j < H; j++) for (i = 0; i < W; i++){
+      if (!inside[j * W + i]) continue;
+      if (!at(i, j - 1)) add(i, j, i + 1, j);
+      if (!at(i + 1, j)) add(i + 1, j, i + 1, j + 1);
+      if (!at(i, j + 1)) add(i + 1, j + 1, i, j + 1);
+      if (!at(i - 1, j)) add(i, j + 1, i, j);
+    }
+    var rings = [];
+    out.forEach(function(list, start){
+      while (list.length){
+        var loop = [start], cur = list.pop(), prev = start, guard = 0;
+        while (cur !== start && guard++ < 4e6){
+          loop.push(cur);
+          var nx = out.get(cur);
+          if (!nx || !nx.length) break;
+          // At a corner where two pixels touch diagonally: turn right (keeps the two pixels apart, the ring simple).
+          var pick = nx.length - 1;
+          if (nx.length > 1){
+            var dx = (cur % VW) - (prev % VW), dy = Math.floor(cur / VW) - Math.floor(prev / VW);
+            for (var q = 0; q < nx.length; q++){
+              var ex = (nx[q] % VW) - (cur % VW), ey = Math.floor(nx[q] / VW) - Math.floor(cur / VW);
+              if (ex === -dy && ey === dx){ pick = q; break; }
+            }
+          }
+          prev = cur; cur = nx.splice(pick, 1)[0];
+        }
+        if (cur !== start || loop.length < 4) continue;
+        var poly = loop.map(function(v){ return [x0 + (v % VW) * cell, y0 + Math.floor(v / VW) * cell]; });
+        poly = cornerRing(thinRing(poly, cell), cell);
+        if (poly.length < 3) continue;
+        var ar = 0;
+        for (var m = 0; m < poly.length; m++){ var n2 = poly[(m + 1) % poly.length]; ar += poly[m][0] * n2[1] - n2[0] * poly[m][1]; }
+        if (Math.abs(ar) / 2 < 4 * cell * cell) continue;  // a speck
+        var flat = [];
+        poly.forEach(function(pt){ flat.push(r2(pt[0]), r2(pt[1]), 0.5); });
+        rings.push({ pts: flat, area: Math.abs(ar) });
+      }
+    });
+    if (!rings.length) return null;
+    rings.sort(function(p1, p2){ return p2.area - p1.area; });
+    return { pts: rings[0].pts, rings: rings.map(function(r){ return r.pts; }) };
+  }
+  // Ready for gradePath's smoothing (quadratics through edge midpoints, the points as controls): a point one cell from
+  // each corner along a long edge, so a corner rounds by about half a cell, not by half its edges; the ring starts in
+  // the middle of its longest edge (smoothPath leaves the first point a sharp corner).
+  function cornerRing(poly, cell){
+    var n = poly.length, out = [], i, best = 0, bl = -1;
+    if (n < 3) return poly;
+    for (i = 0; i < n; i++){
+      var a = poly[i], b = poly[(i + 1) % n], len = hyp(b[0] - a[0], b[1] - a[1]);
+      if (len > bl){ bl = len; best = i; }
+    }
+    var along = function(a, b, dd){ var l = hyp(b[0] - a[0], b[1] - a[1]) || 1; return [a[0] + (b[0] - a[0]) * dd / l, a[1] + (b[1] - a[1]) * dd / l]; };
+    var a0 = poly[best], b0 = poly[(best + 1) % n];
+    out.push([(a0[0] + b0[0]) / 2, (a0[1] + b0[1]) / 2]);
+    for (var k = 1; k <= n; k++){
+      var v = poly[(best + k) % n], pv = poly[(best + k - 1) % n], nx = poly[(best + k + 1) % n];
+      if (hyp(v[0] - pv[0], v[1] - pv[1]) > 2.5 * cell) out.push(along(v, pv, cell));
+      out.push(v);
+      if (hyp(nx[0] - v[0], nx[1] - v[1]) > 2.5 * cell) out.push(along(v, nx, cell));
+    }
+    return out;
+  }
+  // Douglas-Peucker on a closed ring (split at the point farthest from the first).
+  function thinRing(poly, tol){
+    var n = poly.length, far = 0, fd = -1, i;
+    for (i = 1; i < n; i++){ var dd = hyp(poly[i][0] - poly[0][0], poly[i][1] - poly[0][1]); if (dd > fd){ fd = dd; far = i; } }
+    var dp = function(a){
+      if (a.length < 3) return a;
+      var keep = new Uint8Array(a.length), st = [[0, a.length - 1]];
+      keep[0] = keep[a.length - 1] = 1;
+      while (st.length){
+        var se = st.pop(), s0 = se[0], s1 = se[1], bi = -1, bd = tol;
+        for (var k2 = s0 + 1; k2 < s1; k2++){ var dd2 = segDist(a[k2][0], a[k2][1], a[s0][0], a[s0][1], a[s1][0], a[s1][1]); if (dd2 > bd){ bd = dd2; bi = k2; } }
+        if (bi >= 0){ keep[bi] = 1; st.push([s0, bi], [bi, s1]); }
+      }
+      return a.filter(function(_, k3){ return keep[k3]; });
+    };
+    var h1 = dp(poly.slice(0, far + 1)), h2 = dp(poly.slice(far).concat([poly[0]]));
+    return h1.concat(h2.slice(1, -1));
+  }
+  function makeCanvas(w, h){
+    if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+    if (typeof document === "undefined") return null;
+    var c = document.createElement("canvas"); c.width = w; c.height = h; return c;
+  }
+  // Draws an area's correction onto a canvas that already holds the picture (its transform maps doc units): the
+  // pixels under the area are read, corrected, and drawn back through the area's (feathered) mask, so the canvas's
+  // clip still applies. Nothing happens where the canvas cannot be read (a tainted canvas) or without getTransform.
+  function gradeCanvas(cx, it){
+    // (A failure — a huge area past the canvas size limits — leaves the picture uncorrected, never breaks the export.)
+    try { gradeCanvas1(cx, it); } catch (_){}
+  }
+  function gradeCanvas1(cx, it){
+    var d = it.data;
+    if (gradeIdentity(d) || !cx.getTransform || !cx.getImageData || typeof Path2D === "undefined") return;
+    var m = cx.getTransform(), sc = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
+    var cw = cx.canvas.width, ch = cx.canvas.height, bb = boundsOf(it);
+    var f = Math.max(0, Number(d.feather) || 0), pad = f * 1.5 + 2 / sc;
+    var X0 = 1e30, Y0 = 1e30, X1 = -1e30, Y1 = -1e30;
+    [[bb[0] - pad, bb[1] - pad], [bb[2] + pad, bb[1] - pad], [bb[0] - pad, bb[3] + pad], [bb[2] + pad, bb[3] + pad]].forEach(function(p){
+      var qx = m.a * p[0] + m.c * p[1] + m.e, qy = m.b * p[0] + m.d * p[1] + m.f;
+      X0 = Math.min(X0, qx); X1 = Math.max(X1, qx); Y0 = Math.min(Y0, qy); Y1 = Math.max(Y1, qy);
+    });
+    var x0 = Math.max(0, Math.floor(X0)), y0 = Math.max(0, Math.floor(Y0)), x1 = Math.min(cw, Math.ceil(X1)), y1 = Math.min(ch, Math.ceil(Y1));
+    var w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return;
+    var img;
+    try { img = cx.getImageData(x0, y0, w, h); } catch (_){ return; }
+    var mk = makeCanvas(w, h), mx = mk && mk.getContext("2d");
+    if (!mx) return;
+    // The mask: the shapes in order (added white, cut out), then blurred as one by the feather (as the live view's SVG).
+    var sh = gradeShapes(d), mm = mx;
+    if (f > 0 && "filter" in mx && sh.length > 1){ var m1 = makeCanvas(w, h); mm = (m1 && m1.getContext("2d")) || mx; }
+    mm.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0);
+    if (f > 0 && mm === mx && "filter" in mx) mx.filter = "blur(" + r2(f * sc / 2) + "px)";
+    mm.fillStyle = "#ffffff";
+    sh.forEach(function(s){
+      mm.globalCompositeOperation = s.op === "sub" ? "destination-out" : "source-over";
+      mm.fill(new Path2D(gradePath(s)));
+    });
+    mm.globalCompositeOperation = "source-over";
+    if (mm !== mx){
+      mx.setTransform(1, 0, 0, 1, 0, 0);
+      mx.filter = "blur(" + r2(f * sc / 2) + "px)";
+      mx.drawImage(mm.canvas, 0, 0);
+    }
+    var ma = mx.getImageData(0, 0, w, h).data, px = img.data;
+    gradePixels(px, gradeOps(d));
+    // The mask becomes the alpha: drawn over the original it blends corrected × mask + original × (1 − mask).
+    for (var i = 3; i < px.length; i += 4) px[i] = Math.round(px[i] * ma[i] / 255);
+    mx.setTransform(1, 0, 0, 1, 0, 0); mx.filter = "none";
+    mx.clearRect(0, 0, w, h);
+    mx.putImageData(img, 0, 0);
+    cx.save();
+    try {
+      cx.setTransform(1, 0, 0, 1, 0, 0);
+      cx.globalAlpha = 1; cx.globalCompositeOperation = "source-over";
+      cx.drawImage(mk, x0, y0);
+    } finally { cx.restore(); }
+  }
+
   // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
   // Arrows spread evenly along the stroke (about data.step apart), each data.len long along the stroke's
   // normal, pointing away from it (dir "out") or at it ("in"), on one side ("left" / "right" of the
@@ -476,6 +765,13 @@ var SightReviewCore = (function(){
     var d = it.data, t = typeOf(it), op, rot, out, path;
     if (t === "brush" || t === "pencil") return fillPrims(d).concat([{ d: strokeOutline(it), fill: d.color, op: d.opacity != null ? d.opacity : 1 }]);
     if (t === "arrows") return arrowsPrims(d);
+    if (t === "grade"){
+      // No fill: a dashed outline (black under white dashes, readable on any picture), about 0.4 % of the area's size —
+      // what a picture without the correction shows (note previews, an SVG overlay). Canvases apply it (drawCanvas).
+      // (Added / cut parts: every shape's outline, dashed alike.)
+      var gb = boundsOf(it), gw = Math.max(0.5, Math.max(gb[2] - gb[0], gb[3] - gb[1]) * 0.004), gp = gradeShapes(d).map(gradePath).join(" ");
+      return [{ d: gp, stroke: "#000000", sw: gw * 1.8, op: 0.5, join: "round", grade: true }, { d: gp, stroke: "#ffffff", sw: gw, op: 0.95, dash: [gw * 4, gw * 3], join: "round", grade: true }];
+    }
     if (t === "marker"){
       var mp = [];
       for (var i = 0; i < d.pts.length; i += 3) mp.push([d.pts[i], d.pts[i + 1]]);
@@ -663,9 +959,12 @@ var SightReviewCore = (function(){
 
   var zOf = function(it){ return (it.z != null ? it.z : it.z_index) || 0; };
   // All drawings of a list onto a canvas whose transform maps doc units, lowest z first.
+  // Colour correction areas first (they correct the picture under every drawing, as on screen), then the rest.
   function drawCanvas(cx, items, numOf){
-    items.slice().sort(function(a, b){ return zOf(a) - zOf(b); }).forEach(function(it){
-      primsOf(it, numOf).forEach(function(p){ primCanvas(cx, p); });
+    var list = items.slice().sort(function(a, b){ return zOf(a) - zOf(b); });
+    list.forEach(function(it){ if (typeOf(it) === "grade") gradeCanvas(cx, it); });
+    list.forEach(function(it){
+      if (typeOf(it) !== "grade") primsOf(it, numOf).forEach(function(p){ primCanvas(cx, p); });
     });
   }
   // SVG markup (no <svg> wrapper) for a list of drawings, lowest z first.
@@ -677,6 +976,7 @@ var SightReviewCore = (function(){
 
   function boundsOf(it){
     var d = it.data, t = typeOf(it), i;
+    if (t === "grade") return gradeBox(d);
     if (STROKE_TOOLS.has(t)){
       var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (i = 0; i < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
@@ -708,6 +1008,10 @@ var SightReviewCore = (function(){
     var d = it.data, t = typeOf(it), i;
     var b = boundsOf(it);
     if (x < b[0] - tol || y < b[1] - tol || x > b[2] + tol || y > b[3] + tol) return false;
+    if (t === "grade"){
+      // Inside the area (a click anywhere in it picks it): a lasso's outline, a brush area's stroke, after its parts.
+      return gradeIn(d, x, y, tol);
+    }
     if (t === "arrows"){
       // The guide's width all along; the arrows' reach only on their side(s) of the stroke.
       var reach = arrowsReach(d), np = d.pts.length / 3, near = (d.width || 2) / 2 + tol;
@@ -767,7 +1071,16 @@ var SightReviewCore = (function(){
   function transformItem(it, src, map, opts){
     var o = opts || {}, k = o.k != null ? o.k : 1, da = o.da || 0, sx = o.sx != null ? o.sx : 1, sy = o.sy != null ? o.sy : 1;
     var d = it.data, s = src.data, t = typeOf(it), c;
-    if (STROKE_TOOLS.has(t)){
+    if (t === "grade"){
+      for (var gi = 0; gi < s.pts.length; gi += 3){ c = map(s.pts[gi], s.pts[gi + 1]); d.pts[gi] = c[0]; d.pts[gi + 1] = c[1]; }
+      if (s.size != null) d.size = s.size * k;
+      if (s.feather != null) d.feather = s.feather * k;
+      if (Array.isArray(s.rings) && Array.isArray(d.rings)) s.rings.forEach(function(sr, ri){
+        var dr = d.rings[ri];
+        if (!Array.isArray(sr) || !Array.isArray(dr)) return;
+        for (var rj = 0; rj + 1 < sr.length; rj += 3){ c = map(sr[rj], sr[rj + 1]); dr[rj] = c[0]; dr[rj + 1] = c[1]; }
+      });
+    } else if (STROKE_TOOLS.has(t)){
       for (var i = 0; i < s.pts.length; i += 3){ c = map(s.pts[i], s.pts[i + 1]); d.pts[i] = c[0]; d.pts[i + 1] = c[1]; }
       if (s.size != null) d.size = s.size * k;
       if (s.width != null) d.width = s.width * k;
@@ -976,6 +1289,8 @@ var SightReviewCore = (function(){
     var d = it.data || {}, t = typeOf(it);
     if (it.kind === "note") return true;
     if (STROKE_TOOLS.has(t)) return Array.isArray(d.pts) && d.pts.length >= 3;
+    // (data.rings is optional; a ring that is not a shape is skipped when drawn, never makes the area invalid.)
+    if (t === "grade") return Array.isArray(d.pts) && d.pts.length >= (d.mode === "brush" ? 3 : 9) && d.pts.every(Number.isFinite);
     if (t === "line" || t === "arrow") return Array.isArray(d.pts) && d.pts.length === 4;
     if (t === "rect" || t === "ellipse") return [d.x, d.y, d.w, d.h].every(Number.isFinite);
     if (t === "text" || t === "pin") return Number.isFinite(d.x) && Number.isFinite(d.y);
@@ -1288,7 +1603,8 @@ var SightReviewCore = (function(){
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
-    hatchMetrics: hatchMetrics, isFillStroke: isFillStroke, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
+    hatchMetrics: hatchMetrics, isFillStroke: isFillStroke,
+    gradeParams: gradeParams, gradeIdentity: gradeIdentity, gradeFilter: gradeFilter, gradePath: gradePath, gradeShapes: gradeShapes, gradeIn: gradeIn, gradeEdge: gradeEdge, gradeEdgeAny: gradeEdgeAny, gradeInRings: gradeInRings, gradeBake: gradeBake, gradeOps: gradeOps, gradePixels: gradePixels, gradeCanvas: gradeCanvas, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
     sizeOpDrag: sizeOpDrag, opAfter: opAfter,

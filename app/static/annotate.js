@@ -46,6 +46,13 @@ const ICON = {
   arrow: ico(`<path d="M5 19 19 5"/><path d="M10 5h9v9"/>`),
   lasso: ico(RC.TOOL_ICONS.lasso),
   arrows: ico(RC.TOOL_ICONS.arrows),
+  // Colour correction: a half-filled circle (the area's look changes) inside a dashed area.
+  grade: ico(`<path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.6 2.4"/>`),
+  gLasso: ico(RC.TOOL_ICONS.lasso),
+  gBrush: ico(`<path d="M19.5 3.5a2.1 2.1 0 0 1 3 3L13 16l-3-3z"/><path d="M10 13c-3 0-4.5 2-4.5 4.2 0 1.4-1 2.3-2.5 2.8 5 1.2 9.5-.2 9.5-4.3z"/>`),
+  gLines: ico(`<rect x="4" y="5" width="16" height="14" rx="2" stroke-dasharray="3 2.4"/>`),
+  gAdd: ico(`<circle cx="10" cy="12" r="6.5" stroke-dasharray="2.4 2.2"/><path d="M18 5v6M15 8h6"/>`),
+  gSub: ico(`<circle cx="10" cy="12" r="6.5" stroke-dasharray="2.4 2.2"/><path d="M15 8h6"/>`),
   rect: ico(`<rect x="4" y="6" width="16" height="12" rx="2"/>`),
   ellipse: ico(`<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>`),
   text: ico(`<path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>`),
@@ -78,6 +85,7 @@ const TOOLS = [
   ["marker", "KeyM", "Highlighter", ICON.marker],
   ["lasso", "KeyL", "Lasso — a closed stroke filled with a pattern", ICON.lasso],
   ["eraser", "KeyE", "Eraser — or hold Ctrl with any tool", ICON.eraser],
+  ["grade", "KeyG", "Colour correction — hue, saturation, brightness / contrast inside an area drawn with a lasso or a brush; click inside an area to pick it", ICON.grade],
   null,
   ["arrow", "KeyW", "Arrow — a line with Start / End heads set to none · Shift keeps it horizontal / vertical", ICON.arrow],
   ["arrows", "Shift+KeyW", "Stroke arrows — arrows along a freehand stroke", ICON.arrows],
@@ -115,9 +123,14 @@ const DEFAULT_STYLES = {
   text: { font: "sans", size: 28, color: "#ffffff", bold: false, italic: false, underline: false, align: "left", bgOn: true, bg: "#000000", bgOpacity: 0.6, outline: 0, outlineColor: "#000000", opacity: 1 },
   pin: { color: "#ff3b30", size: 30 },
   image: { border: 0, borderColor: "#ffffff", shadow: 0, opacity: 1 },
+  // Colour correction area (kind "grade"): drawn as a lasso outline or a brush stroke `size` wide; `feather` softens
+  // the edge. hue in degrees, the rest −100…100 (0 = unchanged). A new area takes the last values set.
+  grade: { mode: "lasso", size: 60, feather: 6, hue: 0, sat: 0, bright: 0, contrast: 0 },
 };
+// The correction values of a grade area (a change to a selected area also becomes the tool's, for the next one).
+const GRADE_KEYS = new Set(["hue", "sat", "bright", "contrast", "feather"]);
 // Keys whose value is a length (converted between screen px and doc units).
-const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border", "gap", "step", "len", "hatchWidth"]);
+const LEN_KEYS = new Set(["size", "width", "radius", "outline", "border", "gap", "step", "len", "hatchWidth", "feather"]);
 // Fill patterns of a lasso (review-core PATTERNS, its names and icons — the same set as the drawing canvas's);
 // "random" (the tool only) picks one per stroke.
 const PATTERN_OPTS = RC.PATTERNS.map((id) => [id, RC.PATTERN_LABELS[id], ico(RC.patternIcon(id))]);
@@ -182,6 +195,14 @@ const P = {
     ["left", "Left of the stroke", ico(`<path d="M3 16h17M17 13l3 3-3 3"/><path d="M8 12V5M14 12V5"/>`)],
     ["right", "Right of the stroke", ico(`<path d="M3 8h17M17 5l3 3-3 3"/><path d="M8 12v7M14 12v7"/>`)],
     ["both", "Both sides", ico(`<path d="M3 12h17M17 9l3 3-3 3"/><path d="M8 9V3M14 9V3M8 15v6M14 15v6"/>`)]] },
+  // Colour correction (grade): how the area is drawn (the tool only), the brush's width, the soft edge, the correction.
+  gmode: { k: "mode", t: "seg", label: "Area", options: [["lasso", "Lasso — draw round the area", ICON.gLasso], ["brush", "Brush — paint the area", ICON.gBrush]], create: true },
+  gsize: { k: "size", t: "num", label: "Size", min: 2, max: 800, exp: true, unit: "px", when: (g) => g("mode") === "brush" },
+  feather: { k: "feather", t: "num", label: "Soft", title: "Soft edge — how far the correction fades out at the area's edge", min: 0, max: 300, exp: false, unit: "px" },
+  hue: { k: "hue", t: "num", label: "Hue", title: "Hue shift (right-click: 0)", min: -180, max: 180, int: true, signed: true, unit: "°" },
+  sat: { k: "sat", t: "num", label: "Sat", title: "Saturation (right-click: 0)", min: -100, max: 100, int: true, signed: true },
+  bright: { k: "bright", t: "num", label: "Bright", title: "Brightness (right-click: 0)", min: -100, max: 100, int: true, signed: true },
+  contrast: { k: "contrast", t: "num", label: "Contrast", title: "Contrast (right-click: 0)", min: -100, max: 100, int: true, signed: true },
   guide: { k: "guide", t: "toggle", label: "Guide", title: "Guide — draw the stroke itself under the arrows", ico: ico(`<path d="M3 15c3-6 6 6 9 0s6-6 9 0"/>`) },
 };
 const ARROWS_PROPS = [P.color, P.width, P.opacity, P.ahead, P.headSize, P.step, P.alen, P.adir, P.aside, P.guide, { ...P.dash, when: (g) => g("guide") !== false }];
@@ -203,6 +224,7 @@ const PROPS = {
   text: [P.font, P.tsize, P.color, P.bold, P.italic, P.underline, P.align, P.bgOn, P.bg, P.bgOpacity, P.outline, P.outlineColor, P.opacity],
   pin: [P.color, P.psize],
   image: [P.border, P.borderColor, P.shadow, P.opacity],
+  grade: [P.gmode, P.gsize, P.feather, P.hue, P.sat, P.bright, P.contrast],
   select: [],
 };
 
@@ -534,7 +556,7 @@ export function createAnnotator(host){
   const readKey = host.board ? "sight.annotate.read.board" : "sight.annotate.read";
   const S = {
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
-    tool: "brush", styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
+    tool: "brush", gradeLines: readJSON("sight.annotate.gradeLines", true) !== false, styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
     asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
     sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
@@ -1276,9 +1298,11 @@ export function createAnnotator(host){
     el.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
     const root = document.createElement("div");
     root.className = "an-layer";
-    root.innerHTML = `<svg class="an-doc" xmlns="${SVGNS}"></svg><svg class="an-ui" xmlns="${SVGNS}"></svg>`;
+    // .an-grades: the colour correction areas (backdrop-filter over the media, under every drawing).
+    root.innerHTML = `<div class="an-grades"></div><svg class="an-doc" xmlns="${SVGNS}"></svg><svg class="an-ui" xmlns="${SVGNS}"></svg>`;
     el.appendChild(root);
-    S.layer = { root, doc: root.firstElementChild, ui: root.lastElementChild, els: new Map() };
+    S.layer = { root, grades: root.firstElementChild, doc: root.children[1], ui: root.lastElementChild, els: new Map(), gr: new Map() };
+    paintGradeLines();
     return S.layer;
   }
   function syncViewBox(){
@@ -1288,14 +1312,71 @@ export function createAnnotator(host){
     L.ui.setAttribute("viewBox", `0 0 ${g.w} ${g.h}`);
     const tc = S.b2 ? S.b2.geom().turn || "" : "";
     if (L.root.style.transform !== tc){ L.root.style.transformOrigin = "0 0"; L.root.style.transform = tc; }
+    for (const [id, div] of L.gr){ const it = S.items.get(id); if (it) placeGrade(it, div, g); }
   }
   function renderItem(it){
     const L = S.layer;
     if (!L) return;
     let g = L.els.get(it.id);
     if (!g){ g = document.createElementNS(SVGNS, "g"); g.dataset.id = it.id; L.els.set(it.id, g); }
-    g.innerHTML = primsOf(it, numOf).map(primSvg).join("");
+    if (typeOf(it) === "grade"){ g.innerHTML = gradeSvg(it); renderGrade(it); }
+    else g.innerHTML = primsOf(it, numOf).map(primSvg).join("");
     g.__z = it.z;
+  }
+  // ---- colour correction areas (kind "grade") -----------------------------------------------------
+  // On screen an area is a div over its bounds in .an-grades: backdrop-filter = its correction (RC.gradeFilter), masked
+  // by an SVG of the area (feathered) in doc units — so a pan / zoom only moves the div (placeGrade), the mask is
+  // remade when the area's shape changes. In .an-doc it has only a dashed outline (a mask hides the outline's inner
+  // half and the lines where a brush stroke crosses itself, so the dashes run along the area's edge).
+  const gradePad = (d) => Math.max(0, Number(d.feather) || 0) * 1.5 + 1;
+  function gradeSvg(it){
+    // (The margin holds the outer half of the 4 px outline at 1/8 of today's zoom too: zooming does not re-render.)
+    // Added / cut parts (data.parts): the outline mask is "outside the final area" (shapes in order, an added one black,
+    // a cut white), so every visible line is a real edge; a cut's lines are also kept to the added shapes (a cut
+    // reaching past the area draws no line out there).
+    const d = it.data, sh = RC.gradeShapes(d), ps = sh.map((s) => RC.gradePath(s)), b = boundsOf(it), m = 32 * k() + 2;
+    const sel = S.sel.has(it.id) ? " on" : "";
+    const mb = `maskUnits="userSpaceOnUse" x="${r2(b[0] - m)}" y="${r2(b[1] - m)}" width="${r2(b[2] - b[0] + 2 * m)}" height="${r2(b[3] - b[1] + 2 * m)}"`;
+    const lines = (p) => `<path d="${p}" fill="none" stroke="#000" stroke-opacity=".6" stroke-width="4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><path class="an-ants" d="${p}" fill="none" stroke="#fff" stroke-width="2.4" stroke-dasharray="5 4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+    const outer = sh.map((s, i) => `<path d="${ps[i]}" fill="${s.op === "sub" ? "#fff" : "#000"}"/>`).join("");
+    const addP = ps.filter((_, i) => sh[i].op !== "sub").join(" "), subP = ps.filter((_, i) => sh[i].op === "sub").join(" ");
+    const subMask = subP ? `<mask id="angs-${it.id}" ${mb}>${sh.map((s, i) => s.op === "sub" ? "" : `<path d="${ps[i]}" fill="#fff"/>`).join("")}</mask>` : "";
+    return `<g class="an-gline${sel}"><mask id="angm-${it.id}" ${mb}><rect x="${r2(b[0] - m)}" y="${r2(b[1] - m)}" width="${r2(b[2] - b[0] + 2 * m)}" height="${r2(b[3] - b[1] + 2 * m)}" fill="#fff"/>${outer}</mask>${subMask}<g mask="url(#angm-${it.id})">${lines(addP)}${subP ? `<g mask="url(#angs-${it.id})">${lines(subP)}</g>` : ""}</g></g>`;
+  }
+  function renderGrade(it){
+    const L = S.layer;
+    if (!L) return;
+    let div = L.gr.get(it.id);
+    if (!div){ div = document.createElement("div"); div.className = "an-grade"; L.gr.set(it.id, div); }
+    const d = it.data, b = boundsOf(it), pad = gradePad(d);
+    const box = [b[0] - pad, b[1] - pad, b[2] - b[0] + 2 * pad, b[3] - b[1] + 2 * pad].map(r2);
+    const f = Math.max(0, Number(d.feather) || 0), sh = RC.gradeShapes(d), paths = sh.map((s) => RC.gradePath(s));
+    const key = box.join() + "|" + f + "|" + sh.map((s, i) => s.op + paths[i]).join("|");
+    if (div.__key !== key){
+      div.__key = key;
+      const filt = f > 0 ? `<filter id="f" filterUnits="userSpaceOnUse" x="${box[0]}" y="${box[1]}" width="${box[2]}" height="${box[3]}"><feGaussianBlur stdDeviation="${r2(f / 2)}"/></filter>` : "";
+      const fa = f > 0 ? ' filter="url(#f)"' : "";
+      // With parts: the shapes in order in a luminance mask (added white, cut black) over one white rect, blurred as a
+      // whole (a CSS mask-image reads the SVG's alpha, so a black fill alone would not cut).
+      const bx = `x="${box[0]}" y="${box[1]}" width="${box[2]}" height="${box[3]}"`;
+      const body = sh.length > 1
+        ? `<mask id="s" maskUnits="userSpaceOnUse" ${bx}>${sh.map((s, i) => `<path d="${paths[i]}" fill="${s.op === "sub" ? "#000" : "#fff"}"/>`).join("")}</mask><g${fa}><rect ${bx} fill="#fff" mask="url(#s)"/></g>`
+        : `<path d="${paths[0]}" fill="#fff"${fa}/>`;
+      const svg = `<svg xmlns="${SVGNS}" viewBox="${box.join(" ")}" preserveAspectRatio="none">${filt}${body}</svg>`;
+      const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+      div.style.maskImage = div.style.webkitMaskImage = url;
+    }
+    div.__box = box;
+    const fl = RC.gradeIdentity(d) ? "none" : RC.gradeFilter(d);
+    if (div.style.backdropFilter !== fl) div.style.backdropFilter = div.style.webkitBackdropFilter = fl;
+    div.classList.toggle("id", fl === "none");
+    placeGrade(it, div, geom());
+  }
+  function placeGrade(it, div, g){
+    const b = div.__box;
+    if (!b || !g) return;
+    div.style.left = r2(g.ox + b[0] * g.s) + "px"; div.style.top = r2(g.oy + b[1] * g.s) + "px";
+    div.style.width = r2(Math.max(0, b[2] * g.s)) + "px"; div.style.height = r2(Math.max(0, b[3] * g.s)) + "px";
   }
   // Drawings stay on show (not editable) with annotating off: always on a board; on a picture / video during
   // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D too (the camera moves them: followOff ticks).
@@ -1320,9 +1401,14 @@ export function createAnnotator(host){
     const list = [...S.items.values()].filter(isDrawing).sort((a, b) => a.z - b.z);
     const keep = new Set(list.map((it) => it.id));
     for (const [id, g] of L.els) if (!keep.has(id)){ g.remove(); L.els.delete(id); }
-    for (const it of list){ renderItem(it); L.doc.appendChild(L.els.get(it.id)); }
+    for (const [id, div] of L.gr) if (!keep.has(id) || typeOf(S.items.get(id)) !== "grade"){ div.remove(); L.gr.delete(id); }
+    for (const it of list){
+      renderItem(it); L.doc.appendChild(L.els.get(it.id));
+      if (L.gr.has(it.id)) L.grades.appendChild(L.gr.get(it.id));
+    }
     paintVisibility();
     L.root.hidden = !S.on && !shownOff();  // shown, not editable, while annotation is off (shownOff)
+    L.root.classList.toggle("an-edit", !!S.on);  // colour correction outlines only while drawing
     paintStamp();
     paintBadge();
     if (followOff()) startTick();   // a playing video's drawings follow its frame
@@ -1342,6 +1428,9 @@ export function createAnnotator(host){
       const ghost = op != null && op > 0.02;
       g.style.display = vis || ghost ? "" : "none";
       g.style.opacity = ghost ? String(Math.round(op * 100) / 100) : "";
+      const gd = L.gr.get(id);
+      // (Another frame's correction is not faded in by the onion skin: only its outline is.)
+      if (gd) gd.style.display = vis ? "" : "none";
     }
     // What the view mode hides must not stay selected: Delete / nudge / copy would act on it unseen.
     let unsel = false;
@@ -1401,7 +1490,7 @@ export function createAnnotator(host){
     if (S.drag?.sizeOp) html += sizeOpSvg(S.drag);
     else if (S.hover && !S.region && !altCam()){
       const t = effTool(), st = S.styles[t];
-      if (!S.drag?.eraser && (freehand(t) || t === "eraser")){
+      if (!S.drag?.eraser && (freehand(t) || t === "eraser" || (t === "grade" && st.mode === "brush"))){
         const r = Math.max(1, (st.size ?? st.width ?? 2) / 2);
         html += `<circle class="an-cursor${t === "eraser" ? " er" : ""}" cx="${r2(S.hover[0])}" cy="${r2(S.hover[1])}" r="${r2(r)}"/>`;
       }
@@ -1410,13 +1499,16 @@ export function createAnnotator(host){
       html += `<circle class="an-cursor er" cx="${r2(S.hover[0])}" cy="${r2(S.hover[1])}" r="${r2(Math.max(1, S.styles.eraser.size / 2))}"/>`;
     }
     L.ui.innerHTML = html;
+    // A selected colour correction area's outline marches.
+    for (const [id, g] of L.els){ const gl = g.firstElementChild; if (gl?.classList.contains("an-gline")) gl.classList.toggle("on", S.sel.has(id)); }
   }
 
   // ---- pointer input --------------------------------------------------------------------------
   function hitAt(x, y, tolPx = 6){
     const tol = tolPx * k();
     const list = visibleDrawings().sort((a, b) => b.z - a.z);
-    return list.find((it) => hitTest(it, x, y, tol)) || null;
+    // A colour correction area is under every drawing on screen (whatever its z): a mark inside it is picked first.
+    return list.find((it) => typeOf(it) !== "grade" && hitTest(it, x, y, tol)) || list.find((it) => typeOf(it) === "grade" && hitTest(it, x, y, tol)) || null;
   }
   function handleAt(sx, sy){
     for (const [id, x, y] of handles()) if (hyp(sx - x, sy - y) <= 8) return id;
@@ -1652,8 +1744,13 @@ export function createAnnotator(host){
     const el = surfaceEl();
     const [x, y] = toDoc(e);
     const [sx, sy] = local(e);
+    // Colour correction: Shift (or the bar's +) pressed inside an area adds the stroke to it, Ctrl (or −) cuts it out
+    // of it, for as long as the drag goes on. Ctrl / − outside any area is the eraser, as with every tool.
+    const gop = S.tool === "grade" && !penEraser && !S.region && !e.altKey ? (e.ctrlKey && !e.metaKey ? "sub" : e.shiftKey ? "add" : S.gradeOp || "") : "";
+    const gTarget = gop ? gradeTargetAt(x, y, gop) : null;
+    if (gTarget){ grab(e); beginGradePart(gTarget, gop, x, y); return; }
     // Ctrl held: the eraser for this stroke (the select tool keeps Ctrl+click for the selection).
-    const tool = penEraser || (e.ctrlKey && !e.metaKey && S.tool !== "select" && !S.region) ? "eraser" : S.tool;
+    const tool = penEraser || gop === "sub" || (e.ctrlKey && !e.metaKey && S.tool !== "select" && !S.region) ? "eraser" : S.tool;
 
     if (S.region){
       grab(e);
@@ -1723,6 +1820,51 @@ export function createAnnotator(host){
     }
     beginMark(tool, x, y, sx, sy, e);
   }
+  // The colour correction area a Shift / Ctrl press at (x, y) works on: a selected one under it first, else the top one.
+  // An add may also start in one of its holes (to fill it back).
+  function gradeTargetAt(x, y, op){
+    const list = visibleDrawings().filter((g) => typeOf(g) === "grade" && editable(g) && !baked(g) && (hitTest(g, x, y, 2 * k()) || (op === "add" && RC.gradeInRings(g.data, x, y))));
+    return list.find((g) => S.sel.has(g.id)) || list.sort((a, b) => b.z - a.z)[0] || null;
+  }
+  // Starts a part of an area (data.parts, FORMAT.md): drawn like a new area (the tool's lasso or brush) straight into
+  // the area, so the screen shows the result live; onUp keeps it as one undo step, a click leaves the area as it was.
+  function beginGradePart(target, op, x, y){
+    const st = styleDoc("grade"), brush = st.mode === "brush";
+    const part = { op, mode: brush ? "brush" : "lasso", ...(brush ? { size: r2(st.size) } : {}), pts: [r2(x), r2(y), 0.5] };
+    const before = snap(target);
+    target.data.parts = [...(Array.isArray(target.data.parts) ? target.data.parts : []), part];
+    S.sel = new Set([target.id]);
+    // (D.stroke is a stand-in that holds only the part: onMove adds points to it like to any stroke.)
+    S.drag = { stroke: { id: target.id, data: part }, part: { target, before }, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k(), toolName: "grade", press: [x, y] };
+    renderItem(target); renderSel(); renderProps();
+  }
+  function finishGradePart(D){
+    const { target, before } = D.part, part = D.stroke.data, d = part, np = d.pts.length / 3;
+    let len = 0;
+    for (let i = 3; i < d.pts.length; i += 3) len += hyp(d.pts[i] - d.pts[i - 3], d.pts[i + 1] - d.pts[i - 2]);
+    let area = 0;
+    for (let i = 0; i < np; i++){ const j = (i + 1) % np; area += d.pts[i * 3] * d.pts[j * 3 + 1] - d.pts[j * 3] * d.pts[i * 3 + 1]; }
+    // The stroke is baked into the area's outline (new rings, RC.gradeBake on a grid of half a screen pixel); the
+    // stroke itself is never stored. Then back to the state before the press, and the change as one commit (undo).
+    const tiny = len / k() < 3 || (d.mode !== "brush" && (np < 3 || Math.abs(area) / 2 / (k() * k()) < 16));
+    const res = tiny ? undefined : RC.gradeBake(target.data, 0.5 * k());
+    S.items.set(target.id, structuredClone(before));
+    if (res === undefined){
+      // a click / a scribble with no inside (or no canvas to bake on): nothing changes, the area stays picked
+      renderAll(); renderSel(); renderProps();
+      return;
+    }
+    if (!res){  // everything cut away: the area goes
+      commit([target.id], () => S.items.delete(target.id));
+      S.sel.delete(target.id); renderSel(); renderProps();
+      return;
+    }
+    const final = { ...structuredClone(before.data), mode: "lasso", pts: res.pts };
+    delete final.size; delete final.parts; delete final.rings;
+    if (res.rings.length > 1) final.rings = res.rings;
+    commit([target.id], () => { S.items.get(target.id).data = final; });
+    S.sel = new Set([target.id]); renderSel(); renderProps();
+  }
   // Brush, pencil, marker, lasso, stroke arrows, line, arrow, eraser: Shift+click joins clicks.
   const lineTool = (t) => freehand(t) || t === "arrows" || t === "line" || t === "arrow" || t === "eraser";
   function beginMark(tool, x, y, sx, sy, e){
@@ -1740,6 +1882,17 @@ export function createAnnotator(host){
       const it = newItem("stroke", "arrows", { color: st.color, width: st.width, opacity: st.opacity, dash: st.dash, head1: st.head1, headSize: st.headSize, step: st.step, len: st.len, dir: st.dir, side: st.side, guide: st.guide !== false, pts: [r2(x), r2(y), 0.5] });
       S.items.set(it.id, it);
       S.drag = { stroke: it, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k(), toolName: tool };
+      renderAll();
+      return;
+    }
+    if (tool === "grade"){
+      // A colour correction area, drawn like a stroke: the lasso's outline or the brush's path (no pressure).
+      // A click (no drag) inside an area picks it instead (onUp).
+      const st = styleDoc(tool), brush = st.mode === "brush";
+      const it = newItem("grade", null, { mode: brush ? "brush" : "lasso", ...(brush ? { size: r2(st.size) } : {}), feather: r2(st.feather || 0),
+        hue: st.hue || 0, sat: st.sat || 0, bright: st.bright || 0, contrast: st.contrast || 0, pts: [r2(x), r2(y), 0.5] });
+      S.items.set(it.id, it);
+      S.drag = { stroke: it, sm: [x, y], smooth: 0.5, start: [x, y], minStep: 0.75 * k(), toolName: tool, grade: true, press: [x, y] };
       renderAll();
       return;
     }
@@ -1832,10 +1985,10 @@ export function createAnnotator(host){
     if (D.stroke){
       const it = D.stroke, d = it.data;
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-      if (e.shiftKey){
+      if (e.shiftKey && !D.part){  // (an area's part: Shift is "add", held all through the drag)
         // Shift: straight stroke from where it started, horizontal or vertical.
         const [ex, ey] = snapAngle(D.start[0], D.start[1], x, y);
-        const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, (d.size || d.width * 2) / 3)));
+        const n = Math.max(2, Math.ceil(hyp(ex - D.start[0], ey - D.start[1]) / Math.max(D.minStep * 4, (d.size || d.width * 2 || 24 * k()) / 3)));
         d.pts = [];
         for (let i = 0; i <= n; i++) d.pts.push(r2(D.start[0] + (ex - D.start[0]) * i / n), r2(D.start[1] + (ey - D.start[1]) * i / n), 1);
         D.straight = true;
@@ -1852,7 +2005,7 @@ export function createAnnotator(host){
         }
         D.last = [x, y, d.pen ? clamp(e.pressure || 0, 0, 1) : 0.5];
       }
-      renderItem(it);
+      renderItem(D.part ? D.part.target : it);
       renderSel();  // the brush circle follows the pointer while the stroke is drawn
       return;
     }
@@ -1886,7 +2039,8 @@ export function createAnnotator(host){
       D.marquee[2] = sx; D.marquee[3] = sy;
       const [ax, ay] = toDocS(Math.min(D.marquee[0], sx), Math.min(D.marquee[1], sy));
       const [bx, by] = toDocS(Math.max(D.marquee[0], sx), Math.max(D.marquee[1], sy));
-      const inBox = new Set(visibleDrawings().filter((it) => { const b = boundsOf(it); return b[0] <= bx && b[2] >= ax && b[1] <= by && b[3] >= ay; }).map((it) => it.id));
+      // A colour correction area only when the box holds all of it (a box round marks inside a big area leaves it out).
+      const inBox = new Set(visibleDrawings().filter((it) => { const b = boundsOf(it); return typeOf(it) === "grade" ? b[0] >= ax && b[2] <= bx && b[1] >= ay && b[3] <= by : b[0] <= bx && b[2] >= ax && b[1] <= by && b[3] >= ay; }).map((it) => it.id));
       S.sel = new Set(D.base);
       for (const id of inBox){ if (D.toggle && D.base.has(id)) S.sel.delete(id); else S.sel.add(id); }
       renderSel();
@@ -1938,9 +2092,29 @@ export function createAnnotator(host){
         const d = it.data, n = d.pts.length;
         if (hyp(D.last[0] - d.pts[n - 3], D.last[1] - d.pts[n - 2]) > 0.01) d.pts.push(r2(D.last[0]), r2(D.last[1]), r2(D.last[2]));
       }
+      if (D.part){ finishGradePart(D); return; }  // (it is a stand-in: the area itself stays)
       S.items.delete(it.id);
       const dEnd = it.data, nEnd = dEnd.pts.length;
       const end = nEnd >= 3 ? [dEnd.pts[nEnd - 3], dEnd.pts[nEnd - 2]] : null;
+      if (D.grade){
+        // A colour correction area: a click picks the area under it (else nothing); a lasso needs a real outline.
+        const d = it.data, np = d.pts.length / 3;
+        let len = 0;
+        for (let i = 3; i < d.pts.length; i += 3) len += hyp(d.pts[i] - d.pts[i - 3], d.pts[i + 1] - d.pts[i - 2]);
+        const b = boundsOf(it), small = Math.max(b[2] - b[0], b[3] - b[1]) / k();
+        let area = 0;  // (shoelace: a Shift-straight lasso has none)
+        for (let i = 0; i < np; i++){ const j = (i + 1) % np; area += d.pts[i * 3] * d.pts[j * 3 + 1] - d.pts[j * 3] * d.pts[i * 3 + 1]; }
+        if (len / k() < 3 || (d.mode !== "brush" && (np < 3 || small < 4 || Math.abs(area) / 2 / (k() * k()) < 16))){
+          renderAll();
+          const hit = len / k() < 3 ? visibleDrawings().filter((g) => typeOf(g) === "grade").sort((a, b2) => b2.z - a.z).find((g) => hitTest(g, D.press[0], D.press[1], 4 * k())) : null;
+          if (hit){ S.sel = new Set([hit.id]); renderSel(); renderProps(); }
+          return;
+        }
+        commit([it.id], () => S.items.set(it.id, it));
+        // The new area stays selected: the bar shows its correction to tune at once.
+        S.sel = new Set([it.id]); renderSel(); renderProps();
+        return;
+      }
       if (typeOf(it) === "arrows"){
         // An arrows stroke needs some length (a click would leave a dot with no arrows).
         let len = 0;
@@ -2112,7 +2286,8 @@ export function createAnnotator(host){
     if (D.eraser){ onUp({ pointerId: -1 }); return; }
     S.drag = null;
     if (D.sizeOp){ endSizeOp(D, true); return; }
-    if (D.stroke || D.shape || D.pin) S.items.delete((D.stroke || D.shape || D.pin).id);
+    if (D.part) S.items.set(D.part.target.id, structuredClone(D.part.before));  // an area's part: the area as it was
+    else if (D.stroke || D.shape || D.pin) S.items.delete((D.stroke || D.shape || D.pin).id);
     else if (D.src) for (const [id, src] of D.src) if (src) S.items.set(id, structuredClone(src));
     renderAll();
     renderSel(); renderProps();
@@ -2167,11 +2342,18 @@ export function createAnnotator(host){
   }
 
 
+  // A drawing's elements off the layer at once (its outline and, for a colour correction area, its correction).
+  function dropEls(id){
+    S.layer?.els.get(id)?.remove(); S.layer?.els.delete(id);
+    S.layer?.gr.get(id)?.remove(); S.layer?.gr.delete(id);
+  }
   function eraseAt(x, y){
     const D = S.drag, rad = S.styles.eraser.size / 2 * k();
     for (const it of visibleDrawings()){
       if (!hitTest(it, x, y, rad)) continue;
       const t = typeOf(it);
+      // A colour correction area goes only when the eraser touches its edge: erasing a mark inside it keeps it.
+      if (t === "grade" && !RC.gradeEdgeAny(it.data, x, y, rad)) continue;
       // A baked drawing is removed whole (a deletion) but never cut into pieces (an edit).
       if (D.partial && STROKE_TOOLS.has(t) && !baked(it)){
         const pts = it.data.pts, keep = [];
@@ -2188,7 +2370,7 @@ export function createAnnotator(host){
         } else if (cur.length) keep.push(cur);
         if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
         if (it.data.close) it.data.close = false;
-        if (!keep.length){ S.items.delete(it.id); S.layer?.els.get(it.id)?.remove(); S.layer?.els.delete(it.id); continue; }
+        if (!keep.length){ S.items.delete(it.id); dropEls(it.id); continue; }
         it.data.pts = keep[0];
         renderItem(it);
         for (const piece of keep.slice(1)){
@@ -2202,8 +2384,7 @@ export function createAnnotator(host){
       } else {
         if (!D.before.has(it.id)) D.before.set(it.id, snap(it));
         S.items.delete(it.id);
-        S.layer?.els.get(it.id)?.remove();
-        S.layer?.els.delete(it.id);
+        dropEls(it.id);
       }
     }
   }
@@ -2237,14 +2418,23 @@ export function createAnnotator(host){
         const [x, y] = toDocS(sx, sy);
         c = S.ctrlHeld ? "default" : hitAt(x, y) ? "move" : S.kind === "model3d" && !S.box3d ? "" : "default";
       }
-    } else if (freehand(effTool()) || effTool() === "eraser") c = "none";
+    } else if (freehand(effTool()) || effTool() === "eraser" || (effTool() === "grade" && S.styles.grade.mode === "brush")) c = "none";
+    else if (S.tool === "grade"){ const [x, y] = toDocS(sx, sy); c = !S.ctrlHeld && !S.gradeOp && visibleDrawings().some((g) => typeOf(g) === "grade" && hitTest(g, x, y, 4 * k())) ? "pointer" : "crosshair"; }
     else if (S.tool === "text") c = "text";
     else if (S.tool === "image") c = "copy";
     // The "tool" layer (cursors.js): a running view gesture (pan / zoom / turn) still shows its own cursor over it.
     setCursor(el, "tool", c || null);
   }
   // The tool a press would use now: Ctrl held turns any drawing tool into the eraser.
-  const effTool = () => S.ctrlHeld && S.tool !== "select" && !S.region ? "eraser" : S.tool;
+  // (Not with the colour correction tool over an area, or while a part of one is drawn: Ctrl there cuts the area.)
+  const effTool = () => {
+    if (S.drag?.part) return S.tool;
+    if (S.tool === "grade" && !S.region && (S.ctrlHeld || S.gradeOp === "sub")){
+      if (S.hover && gradeTargetAt(...toDocS(...S.hover))) return S.tool;
+      return "eraser";
+    }
+    return S.ctrlHeld && S.tool !== "select" && !S.region ? "eraser" : S.tool;
+  };
   function ctrlChanged(on){
     if (S.ctrlHeld === on) return;
     S.ctrlHeld = on;
@@ -2640,7 +2830,7 @@ export function createAnnotator(host){
     list = list.filter((p) => !p.when || p.when((key) => propValue(tg, { k: key })));
     if (!tg.items && tg.type === "rect" && S.styles.rect.shape === "ellipse") list = list.filter((p) => p.k !== "radius");
     let html = "";
-    if (tg.items) html += `<span class="an-pl">${tg.items.length > 1 ? tg.items.length + " selected" : (tg.type || "")}</span>`;
+    if (tg.items) html += `<span class="an-pl">${tg.items.length > 1 ? tg.items.length + " selected" : (tg.type === "grade" ? "colour" : tg.type || "")}</span>`;
     for (const p of list){
       const v = propValue(tg, p);
       if (p.t === "color"){
@@ -2675,6 +2865,12 @@ export function createAnnotator(host){
       html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="refdisk" title="Pick pictures on this computer — or click the frame where they should go">From disk…</button>`;
       if (host.toggleLibrary) html += `<button type="button" class="an-tg" data-cmd="reflib" title="Show the library beside the player and drag pictures from it onto the frame (Tab)">Library</button><button type="button" class="an-tg" data-cmd="refsel" title="Add the pictures selected in the library">Add selected</button>`;
     }
+    if (tg.type === "grade"){
+      // + / −: what a drag that starts inside an area does (touch has no Shift / Ctrl; on: every drag until turned off).
+      // Only with this tool in hand (the select tool has no use for them).
+      if (S.tool === "grade") html += `<button type="button" class="an-tg${S.gradeOp === "add" ? " on" : ""}" data-cmd="gadd" title="Add to an area — a drag that starts inside an area adds to it (or hold Shift)">${ICON.gAdd}</button><button type="button" class="an-tg${S.gradeOp === "sub" ? " on" : ""}" data-cmd="gsub" title="Cut from an area — a drag that starts inside an area cuts it out of it, outside it erases (or hold Ctrl)">${ICON.gSub}</button>`;
+      html += `<button type="button" class="an-tg" data-cmd="greset" title="Reset hue, saturation, brightness and contrast to 0">Reset</button><button type="button" class="an-tg${S.gradeLines ? " on" : ""}" data-cmd="glines" title="Show the areas' dashed outlines while drawing (off: judge the correction without them)">${ICON.gLines}</button>`;
+    }
     if (tg.items && tg.type === "image" && tg.items.length === 1 && editable(tg.items[0])){
       html += `<span class="an-sep"></span><button type="button" class="an-tg${cropItem() ? " on" : ""}" data-cmd="crop" title="Crop — drag the edges, drag inside to move the picture (double-click the picture; Enter / Esc to finish)">Crop</button>`;
       if (tg.items[0].data.crop) html += `<button type="button" class="an-tg" data-cmd="uncrop" title="Show the whole picture again">Reset crop</button>`;
@@ -2694,7 +2890,8 @@ export function createAnnotator(host){
   }
   function fmtNum(p, v){
     if (p.auto && !(v > 0)) return "Auto";
-    if (v == null || Number.isNaN(v)) return "—";
+    if (v == null || Number.isNaN(v)) return p.int ? "0" + (p.unit || "") : "—";
+    if (p.int) return (p.signed && v > 0 ? "+" : "") + Math.round(v) + (p.unit || "");
     if (p.pct) return Math.round(v * 100) + "%";
     if (p.unit === "×") return (Math.round(v * 10) / 10) + "×";
     return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + (p.unit === "px" ? "" : p.unit || "");
@@ -2713,7 +2910,28 @@ export function createAnnotator(host){
     if (!ids.length) return;
     // (An Auto value — hatchWidth 0 — is not stored: the field goes.)
     commit(ids, () => { for (const id of ids){ const it = S.items.get(id); if (PROPS[propType(it)]?.some((q) => q.k === p.k)){ if (p.auto && !(dv > 0)) delete it.data[p.k]; else it.data[p.k] = dv; } } }, merge ? "prop:" + p.k : null);
+    // A colour correction set on an area is the tool's too: the next area starts from it.
+    if (tg.type === "grade" && GRADE_KEYS.has(p.k)){ S.styles.grade[p.k] = v; saveStyles(); }
   }
+  // Colour correction: every value of the tool / the selected areas back to 0 (one undo step).
+  function resetGrade(){
+    const tg = propsTarget(), keys = ["hue", "sat", "bright", "contrast"];
+    for (const key of keys) S.styles.grade[key] = 0;
+    saveStyles();
+    if (tg.items){
+      const ids = tg.items.filter((it) => typeOf(it) === "grade" && editable(it)).map((it) => it.id);
+      if (ids.length) commit(ids, () => { for (const id of ids){ const d = S.items.get(id).data; for (const key of keys) d[key] = 0; } });
+    }
+    renderProps();
+  }
+  // The areas' dashed outlines on / off while drawing (a device preference): to judge the correction without them.
+  function toggleGradeLines(){
+    S.gradeLines = !S.gradeLines;
+    writeJSON("sight.annotate.gradeLines", S.gradeLines);
+    paintGradeLines();
+    renderProps();
+  }
+  function paintGradeLines(){ S.layer?.root.classList.toggle("an-nogl", !S.gradeLines); }
   function bindProps(el, tg, list){
     el.querySelectorAll("input[type=color][data-k]").forEach((inp) => {
       const p = list.find((q) => q.k === inp.dataset.k && q.t === "color");
@@ -2757,6 +2975,9 @@ export function createAnnotator(host){
     el.querySelector("[data-cmd=refsel]")?.addEventListener("click", () => addSelectedRefs());
     el.querySelector("[data-cmd=crop]")?.addEventListener("click", () => { if (!endCrop()) startCrop(); });
     el.querySelector("[data-cmd=uncrop]")?.addEventListener("click", () => { resetCrop(); renderProps(); });
+    el.querySelector("[data-cmd=greset]")?.addEventListener("click", () => resetGrade());
+    for (const op of ["add", "sub"]) el.querySelector(`[data-cmd=g${op}]`)?.addEventListener("click", () => { S.gradeOp = S.gradeOp === op ? "" : op; renderProps(); if (S.hover) updateCursor(...S.hover); renderSel(); });
+    el.querySelector("[data-cmd=glines]")?.addEventListener("click", () => toggleGradeLines());
     el.querySelectorAll(".an-num").forEach((n) => bindNum(n, list[Number(n.dataset.p)]));
   }
   // Compact number control: drag sideways, scroll, or click to type.
@@ -2774,7 +2995,8 @@ export function createAnnotator(host){
     const cur = () => get() || (p.auto ? autoNow() : 0);
     const set = (v, merge) => {
       v = p.auto && !(v > 0) ? 0 : clamp(v, p.min, p.k === "hatchWidth" ? Math.max(p.min, hatchCap(propsTarget())) : p.max);
-      if (!p.pct && p.unit !== "×") v = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
+      if (p.int) v = Math.round(v);
+      else if (!p.pct && p.unit !== "×") v = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
       else if (p.pct) v = Math.round(v * 100) / 100;
       if (p.k === "hatchWidth" && v > 0) v = Math.min(v, Math.max(p.min, hatchCap(propsTarget())));  // (rounding must not step over the cap)
       setProp(p, v, merge);
@@ -2830,6 +3052,7 @@ export function createAnnotator(host){
           if (dflt == null || !PROPS[ty]?.some((q) => q.k === p.k)) continue;
           if (p.auto && !(dflt > 0)) delete it.data[p.k];
           else it.data[p.k] = LEN_KEYS.has(p.k) && typeof dflt === "number" ? dflt * k() : dflt;
+          if (ty === "grade" && GRADE_KEYS.has(p.k)){ S.styles.grade[p.k] = dflt; saveStyles(); }
         }
       });
       renderProps();
@@ -2837,6 +3060,7 @@ export function createAnnotator(host){
   }
   function typeNum(el, p, v, done){
     const em = el.querySelector("em");
+    if (!em) return;  // (already being typed into: a double-click's second click)
     const inp = document.createElement("input");
     inp.className = "an-numedit";
     inp.value = p.pct ? Math.round(v * 100) : Math.round(v * 10) / 10;
@@ -5444,6 +5668,12 @@ function injectStyles(){
 .an-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; isolation: isolate; }
 .an-layer[hidden] { display: none; }
 .an-layer > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.an-grades { position: absolute; inset: 0; pointer-events: none; }
+.an-grade { position: absolute; pointer-events: none; mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; }
+.an-grade.id { visibility: hidden; }
+.an-layer:not(.an-edit) .an-gline, .an-layer.an-nogl .an-gline:not(.on) { display: none; }
+.an-gline.on .an-ants { animation: an-ants .8s linear infinite; }
+@keyframes an-ants { to { stroke-dashoffset: -18; } }
 .an-active { touch-action: none; }
 .an-ui .an-selbox { fill: none; stroke: #4c9aff; stroke-width: 1; stroke-dasharray: 3 3; }
 .an-ui .an-selall { fill: none; stroke: #4c9aff; stroke-width: 1; }

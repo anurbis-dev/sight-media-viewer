@@ -88,7 +88,7 @@
     active, it takes the place of Ctrl + right-drag explode. On a phone or tablet: press and hold with
     the tool, then drag (the phone app and the review page's drawing canvas).
   - Tools: `V` select · `B` brush (pen-tablet pressure changes the width) · `P` pencil ·
-    `M` highlighter · `L` lasso (a closed stroke filled with a pattern) · `E` eraser (whole object, or *Partial* to
+    `M` highlighter · `L` lasso (a closed stroke filled with a pattern) · `G` colour correction (below) · `E` eraser (whole object, or *Partial* to
     cut through strokes; the pen's eraser end erases too) · `W` arrow (set both heads to *none* for a plain line) ·
     `Shift+W` stroke arrows (arrows along a freehand stroke) · `R` / `O` the shape tool as
     a rectangle / an ellipse (its *Shape* switch ▭ / ◯ in the styles bar does the same by touch) · `T` text ·
@@ -99,6 +99,24 @@
     number. The tool's keys stay live once the number is set. `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
     the brush. The drawing tools and the notes panel are independent: the ✎ button / `Shift+A` shows / hides
     the tools only, the speech-bubble button / `C` the panel only.
+  - **Colour correction** (`G`, the half-filled circle in the toolbar): an area of the picture / frame shown with
+    its own *Hue* (shift in degrees), *Sat* (saturation), *Bright* (brightness) and *Contrast* (−100…+100, 0 =
+    unchanged; right-click a value for 0, *Reset* sets all four to 0). *Area* picks how it is drawn: **lasso** (draw
+    round it) or **brush** (paint it; *Size* is the brush width). *Soft* fades the correction out at the edge. The
+    area has no fill: while annotating it shows a dashed outline (marching while selected) and the corrected
+    picture inside; outside annotation mode only the correction shows (the eye / `Shift+H` hides it with the
+    drawings). The outline button next to *Reset* hides the dashed outlines while drawing, to judge the result.
+    A new area is selected at once, so its values can be tuned straight away, and starts from the last values
+    set. **Adding to / cutting from an area:** hold `Shift` and drag from inside an area to add what you draw (lasso
+    or brush, as set in *Area*) to it; hold `Ctrl` and drag from inside an area to cut it out (a cut inside makes a
+    hole, a cut through everything removes the area). The stroke is only a guide while you draw: on release it
+    becomes part of the area's new edge, and one `Ctrl+Z` undoes it. `Ctrl` + drag that starts outside every area is
+    the eraser, as with the other tools. On a touch screen the **+** and **−** buttons in the tool's bar do the same
+    (on until pressed again; − outside an area erases). A click inside an area (with this tool or the select tool) picks it — a mark drawn inside it is picked
+    before the area; drag / scale / rotate it like any drawing. The eraser removes an area only when it touches
+    its edge. On a video an area follows *Hold* like any drawing. Exported pictures (PDF, ZIP, note
+    screenshots) show the correction without the outline; the web review page and the phone app keep the
+    areas, but their live views show only the dashed outline for now.
   - **Reference images** (`Shift+I`, the picture button in the toolbar): put pictures on the frame /
     picture as references. Drop picture files from outside onto the frame (any tool — annotating turns on
     by itself), drag pictures from the library beside the player (below), click the frame with the tool to

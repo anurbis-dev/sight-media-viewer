@@ -536,6 +536,26 @@ pickers' shared look: `PATTERN_LABELS` / `patternIcon(id)` (the lasso's fill pat
 currentColor icon), `TOOL_ICONS` (lasso, stroke arrows) and `hatchMetrics(d)` (a lasso's spacing / hatch width as drawn — Sight's *Lines* control starts from it) — Sight's props bar and toolbar and review-draw.js both
 draw from them (review-draw reads them on open: RC is looked up then, not at its load).
 
+**Colour correction areas** (kind `grade`, FORMAT.md; tool `grade`, `G`) — live, each area is a div in
+`.an-grades` (the first child of `.an-layer`, under both SVGs, so it turns with the layer) over the area's bounds
+padded by 1.5 × feather: `backdrop-filter` = `RC.gradeFilter(d)`, masked by a data-URL SVG of `RC.gradePath(d)` in
+doc units (blurred by feather / 2). The mask is remade only when the path / box / feather change (`div.__key`);
+pan / zoom only moves the div (`placeGrade`, from `syncViewBox`). `.an-layer`'s `isolation: isolate` is not a
+backdrop root (Chromium: filter / opacity / mask / clip-path / backdrop-filter / blend are), so the backdrop is the
+media below — keep it that way: a `filter`, `opacity < 1` or `mask` on `.an-layer` or `.an-grades` would empty the
+backdrop and the correction would vanish. The SVG overlay holds only a dashed outline (`gradeSvg`: a mask hides
+its inner half, so a brush stroke crossing itself shows no inner lines), shown only while annotating
+(`.an-edit`) and per the outlines switch (`.an-nogl`, `sight.annotate.gradeLines`). Exports: `RC.drawCanvas`
+applies every area first (`gradeCanvas`: reads the pixels under the area, runs `gradePixels`, draws them back
+through the feathered mask with `drawImage`, so the canvas's clip holds), then the other drawings. `hitAt` picks a
+mark before an area whatever their z; the eraser takes an area only by an edge (`RC.gradeEdgeAny`).
+Adding / cutting (0.119): a Shift / Ctrl (or bar +/−, `S.gradeOp`) press inside an area (`gradeTargetAt`) starts
+`beginGradePart`: the stroke is pushed into the live item's `data.parts` (in memory only) and every renderer draws it
+through `RC.gradeShapes` (the mask: shapes in order, added white / cut black, in a luminance `<mask>`; canvas:
+`destination-out`). `finishGradePart` bakes it with `RC.gradeBake` (grid of half a screen pixel, pixel-edge
+tracing, Douglas-Peucker one cell, smoothed by `gradePath`'s smoothPath) into `pts` + `rings`, restores the
+pre-press snapshot and commits the baked data as one step; `parts` must never reach the server.
+
 **Tool vs. stored type** — a tool id is not always a drawing type: Sight's *Lasso* tool (`lasso`) makes a
 `stroke` / `brush` row with `data.close` (FORMAT.md), and annotate.js maps such a drawing back to the lasso's props
 with `propType(it)` (props bar, Ctrl + right-drag, `setProp`'s "does this key apply" check); everything that draws or

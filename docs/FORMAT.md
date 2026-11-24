@@ -105,7 +105,7 @@ One row per object; the same shape in the package and (plus Sight-only columns) 
 | Key | |
 |-----|--|
 | `id` | row id |
-| `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `image` · `status` |
+| `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `image` · `grade` · `status` |
 | `shape_kind` | `stroke`: `brush` · `pencil` · `marker` · `arrows` (0.81+); `shape`: `rect` · `ellipse` · `line` · `arrow`; else null |
 | `x` `y` `w` `h` | the drawing's bounding box in doc units — for queries only, the geometry is in `data`; null for notes / status |
 | `rotation`, `z_index` | `z_index` = paint order (higher on top); `rotation` stays 0 (rotation lives in `data.rot`) |
@@ -247,6 +247,18 @@ Per type (all lengths in doc units):
   never stretched), `iw, ih` (the stored picture's pixel size), `border` (frame width outside the box, doc
   units; 0 = none), `borderColor`, `shadow` (0…1, strength of a soft shadow down-right), `opacity`. Older
   clients (before 0.79) skip it as an unknown kind (`validItem` false) and keep the row.
+
+- **`grade`** (colour correction area, Sight 0.118+; `shape_kind` null): `mode` `lasso` (the closed outline
+  through `pts`, filled nonzero) | `brush` (a stroke `size` wide along `pts`, even width, round ends), `pts` (flat
+  `[x, y, p, …]` like a stroke; p unused), `rings` (0.119+, lasso only, optional: every closed outline of an area
+  that was added to / cut from — outer outlines and holes, filled nonzero, so holes run the other way; `pts` is then
+  the biggest ring, which is all a 0.118 client draws), `size` (brush only), `feather` (soft edge, doc units: the area's mask
+  blurred by feather / 2), `hue` (degrees, −180…180), `sat`, `bright`, `contrast` (−100…100, 0 = unchanged). No
+  colour or fill of its own: inside the area the picture is shown as the CSS filter chain
+  `brightness(1 + bright/100) contrast(1 + contrast/100) saturate(1 + sat/100) hue-rotate(hue deg)` (review-core
+  `gradeFilter`; `gradePixels` is the same on pixels), under every other drawing; overlapping areas apply in z
+  order. A client that cannot apply it draws a dashed outline (`primsOf`). Older clients skip it as an unknown
+  kind (`validItem` false) and keep the row.
 
 The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `primCanvas` in
 `review-core.js`; every client draws through it, so a drawing looks the same everywhere. An `image`
