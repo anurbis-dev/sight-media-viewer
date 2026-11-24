@@ -134,7 +134,8 @@
   - Shapes: width, dash (solid / dashed / dotted), fill on/off (off by default, 50 % when on), fill colour and
     opacity, corner radius (rectangle), overall opacity. Lines and arrows: start and end heads
     (none, triangle, open, diamond, dot, bar), straight / curved / elbow body, head size; drag the
-    middle handle of a selected line to bend it. **Stroke arrows** (`Shift+W`, its own toolbar button: a wave
+    middle handle of a selected line (mouse or finger) to bend it — in any direction: the curve passes through
+    the handle, so dragging it toward one end leans the arc that way; Shift keeps the arc symmetric. **Stroke arrows** (`Shift+W`, its own toolbar button: a wave
     with arrows) draws a freehand stroke with arrows along it, each turned to the stroke's normal —
     *Every* (distance between them), *Length*, *Tip* (head) and three icon buttons that step through their
     states on each click / tap: direction (away from the stroke / toward it), side (left / right / both,

@@ -229,8 +229,10 @@ Per type (all lengths in doc units):
   `dotted`, `fillOn`, `fill`, `fillOpacity`, `radius` (rect corners).
 - **`shape` line / arrow**: `pts: [x1, y1, x2, y2]`, `color`, `width`, `dash`, `head0` / `head1`
   (start / end) `none` | `triangle` | `open` | `diamond` | `dot` | `bar`, `headSize` (×), `body`
-  `straight` | `curve` | `elbow`, `bend` (curve: signed offset of the apex from the chord's
-  midpoint; default a quarter of the length). `arrow` and `line` differ only in defaults.
+  `straight` | `curve` | `elbow`, `bend` (curve: signed offset of the curve's middle point from the chord's
+  midpoint, across the chord; default a quarter of the length), `bendA` (optional, 0 when absent: the same
+  point's offset along the chord, positive toward `pts[2..3]`; the quadratic's control point is 2·H − M). A reader without
+  `bendA` draws a symmetric arc of the same `bend`. `arrow` and `line` differ only in defaults.
 - **`text`**: `text` (lines split by `\n`), `x, y` (top-left of the first line), `font` `sans` |
   `serif` | `mono` | `hand` | `impact`, `size` (px of the font), `color`, `bold`, `italic`,
   `underline`, `align` `left` | `center` | `right`, `bgOn`, `bg`, `bgOpacity` (box behind the text,

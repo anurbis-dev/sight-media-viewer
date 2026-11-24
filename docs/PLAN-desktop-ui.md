@@ -22,8 +22,10 @@ Mark done items with `[x]` and the version.
 - [x] 13. (0.122.10) HTML export: pictures are not enlarged when drawings go outside the file bounds.
 - [x] 14. (0.122.11) Compare mode: markers for frames with drawings are missing on the shared timeline.
 - [ ] 15. Notes panel screenshot captures the current drawing as well.
+      *(2026-11-24, not reproduced: the panel's 📷 / region shot already includes the drawings on screen — checked on a picture and on a video frame, the uploaded shot has the stroke. Need the owner's exact case: compare? a turned picture? a text being typed? after Add the picture goes clean?)*
 - [ ] 16. Large still images (~6 MB) take up to 5 s to open (macOS Preview: <1 s). Investigate and fix.
-- [ ] 17. Arrow: the middle handle can be dragged in any direction to bend arcs of any curvature.
+      *(2026-11-24, not reproduced on Windows / Chrome: an 11 MB 6000×4000 JPEG opens in ~230 ms — `/api/file` 60–130 ms, decode ~120 ms; a 16 MB PNG likewise. Need the file (format, size, colour profile), where it lives (network drive?) and a Chrome performance trace from the Mac.)*
+- [x] 17. (0.122.12) Arrow: the middle handle can be dragged in any direction to bend arcs of any curvature.
 
 ## L — large, cross-cutting
 - [ ] 18. Compare mode works for still images.

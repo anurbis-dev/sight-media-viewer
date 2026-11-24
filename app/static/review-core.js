@@ -155,7 +155,8 @@ var SightReviewCore = (function(){
   }
 
   // Points along a line/arrow body: straight, curved (quadratic, data.bend = signed offset of the
-  // control point from the chord's midpoint) or elbow (one right-angle corner).
+  // curve's apex from the chord's midpoint across the chord, data.bendA along it — 0 / absent: a symmetric
+  // arc) or elbow (one right-angle corner).
   function linePoints(d){
     var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3];
     if (d.body === "curve"){
@@ -175,15 +176,24 @@ var SightReviewCore = (function(){
   function bendCtrl(d){
     var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3];
     var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, l = hyp(x2 - x1, y2 - y1) || 1;
-    var b = d.bend != null ? d.bend : l * 0.25;
-    // Control point so that the curve's apex (t = .5) sits `b` away from the chord midpoint.
-    return [mx - (y2 - y1) / l * b * 2, my + (x2 - x1) / l * b * 2];
+    var b = d.bend != null ? d.bend : l * 0.25, a = Number(d.bendA) || 0;
+    // Control point so that the curve's point at t = .5 (the handle) sits `b` across and `a` along the chord
+    // from its midpoint: that point is (P1 + 2C + P2) / 4, so C = 2H − M.
+    return [mx - (y2 - y1) / l * b * 2 + (x2 - x1) / l * a * 2, my + (x2 - x1) / l * b * 2 + (y2 - y1) / l * a * 2];
   }
   function bendHandle(d){
     var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3];
     var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, l = hyp(x2 - x1, y2 - y1) || 1;
-    var b = d.bend != null ? d.bend : l * 0.25;
-    return [mx - (y2 - y1) / l * b, my + (x2 - x1) / l * b];
+    var b = d.bend != null ? d.bend : l * 0.25, a = Number(d.bendA) || 0;
+    return [mx - (y2 - y1) / l * b + (x2 - x1) / l * a, my + (x2 - x1) / l * b + (y2 - y1) / l * a];
+  }
+  // Sets bend / bendA so that the curve's middle (the handle) is at (x, y), for the chord in d.pts.
+  function setBendAt(d, x, y){
+    var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3], l = hyp(x2 - x1, y2 - y1) || 1;
+    var dx = x - (x1 + x2) / 2, dy = y - (y1 + y2) / 2;
+    d.bend = (dx * -(y2 - y1) + dy * (x2 - x1)) / l;
+    var a = (dx * (x2 - x1) + dy * (y2 - y1)) / l;
+    if (Math.abs(a) > 1e-9) d.bendA = a; else delete d.bendA;
   }
 
   function headPrims(kind, tip, from, w, size, color, op){
@@ -1183,7 +1193,8 @@ var SightReviewCore = (function(){
       var a = map(s.pts[0], s.pts[1]), b = map(s.pts[2], s.pts[3]);
       d.pts = [a[0], a[1], b[0], b[1]];
       d.width = s.width * k;
-      if (s.bend != null) d.bend = s.bend * k * (sx * sy < 0 ? -1 : 1);
+      // (a quadratic curve maps exactly under any affine map: its middle point goes where the map takes it)
+      if (s.bend != null || s.bendA || s.body === "curve"){ var hm = bendHandle(s); hm = map(hm[0], hm[1]); setBendAt(d, hm[0], hm[1]); }
     } else if (t === "rect" || t === "ellipse"){
       c = map(s.x + s.w / 2, s.y + s.h / 2);
       var rotd = !!s.rot || !!da;
@@ -1303,10 +1314,11 @@ var SightReviewCore = (function(){
         var p = m.shift ? snapHV(fx, fy, x, y) : [x, y];
         d.pts = h === "p0" ? [p[0], p[1], s.pts[2], s.pts[3]] : [s.pts[0], s.pts[1], p[0], p[1]];
       } else {
-        // Dragging the middle bends the line (a straight one turns into a curve).
-        var x1 = s.pts[0], y1 = s.pts[1], x2 = s.pts[2], y2 = s.pts[3], l = hyp(x2 - x1, y2 - y1) || 1;
+        // Dragging the middle bends the line (a straight one turns into a curve) through the pointer, in any
+        // direction: across the chord curves it, along it leans the arc toward one end. Shift: a symmetric arc.
         d.body = "curve";
-        d.bend = ((x - (x1 + x2) / 2) * -(y2 - y1) + (y - (y1 + y2) / 2) * (x2 - x1)) / l;
+        setBendAt(d, x, y);
+        if (m.shift) delete d.bendA;
       }
       return;
     }
