@@ -885,6 +885,7 @@ body.zoomed { overflow: hidden; }
 .fw.cover-w { width: 100%; margin: 0 0 4px; }
 .fw.sm { margin: 6px 0 0; }
 .fw.sm > img { border-radius: 8px; border: 1px solid var(--line); }
+.fw.sm > .ov { inset: 1px; width: auto; height: auto; border-radius: 7px; }
 .ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
 .field .atts .fw { margin: 0; width: fit-content; }
 .field .atts .fw > img { height: 56px; width: auto; border-radius: 8px; border: 1px solid var(--line); }
@@ -1093,7 +1094,8 @@ body.zoomed { overflow: hidden; }
   function overlay(f, list){
     var s = document.createElementNS(SVGNS, "svg");
     s.setAttribute("class", "ov"); s.setAttribute("viewBox", vbOf(f).join(" ")); s.setAttribute("preserveAspectRatio", "none");
-    s.innerHTML = RC.svgMarkup(list, numOf);
+    // (Colour correction areas: shown corrected over the picture f lies on, no outline — review-core gradeSvgMarkup.)
+    s.innerHTML = RC.svgMarkup(list, numOf, { media: f.src ? { href: f.src, vb: vbOf(f) } : null });
     return s;
   }
   // The picture with its drawings on top. cls: "cover-w" (the cover), "sm" (thumbnail), else a frame.

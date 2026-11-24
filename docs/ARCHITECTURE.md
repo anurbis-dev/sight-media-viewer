@@ -555,6 +555,24 @@ through `RC.gradeShapes` (the mask: shapes in order, added white / cut black, in
 `destination-out`). `finishGradePart` bakes it with `RC.gradeBake` (grid of half a screen pixel, pixel-edge
 tracing, Douglas-Peucker one cell, smoothed by `gradePath`'s smoothPath) into `pts` + `rings`, restores the
 pre-press snapshot and commits the baked data as one step; `parts` must never reach the server.
+Other clients (0.120): the HTML review page and the phone draw an area corrected inside the drawings' SVG overlay —
+`RC.svgMarkup(items, numOf, {media: {href, vb}})` prepends `gradeSvgMarkup`: the picture the overlay lies on, once
+as an `<image>` in `<defs>`, then per area a `<use>` through `gradeFilterSvg` (the CSS chain as SVG primitives in
+sRGB, equal to `gradePixels`) and a `<mask>` of `gradeMaskSvg` (the same markup annotate.js's live div uses as its
+CSS mask, over `gradePadBox`). An area overlapping earlier ones uses them as its source (nested `<use>`; past a cost
+of 32 renders it falls back to the plain picture). Ids are `rcg<seq>-…`, unique per page. With media the dashed
+outline is dropped unless `gradeLines: true` (review-draw.js shows it on the editable areas only). The phone's
+playing video has no picture URL: `gradeMirrors` puts one canvas per area in `.sv` (the frame's area box copied in
+on every `paintOverlay`, CSS `filter` = `gradeFilter`, CSS mask = the area's SVG in doc units fitted `meet`,
+`object-fit: contain`, turned by `turnEl` like the player) — overlapping areas do not compound there.
+
+review-draw.js (0.121) has its own *Colour correction* slot (`grade`, `G`): `pen.grade` (mode, `soft` index into
+`FEATHER` screen px, the four values — saved with the pen) is what a new area gets; `gPick` is the area the grade
+tool's sliders tune (the one just drawn, or picked by a tap), with the select tool it is the selected areas
+(`gTargets`). The sliders are drawn divs driven by pointer events (`gradeSlider`), not range inputs — the canvas
+eats touchmove and is `touch-action: none`. A slider drag edits copies (`gEdit`, made on its first move) and makes
+one undo step when it ends (`endGEdit`, also run by `stopAdj`). No add / cut (Shift / Ctrl drag) there: that stays
+Sight's (`gradeBake`).
 
 **Tool vs. stored type** — a tool id is not always a drawing type: Sight's *Lasso* tool (`lasso`) makes a
 `stroke` / `brush` row with `data.close` (FORMAT.md), and annotate.js maps such a drawing back to the lasso's props
@@ -591,7 +609,7 @@ the angle is atan2 about the pivot, so a longer arm turns finer.
 
 **Drawing canvas** (`app/static/review-draw.js`, `SightReviewDraw.open`) — shared by the HTML page
 (inlined) and the phone app. Tools: select / transform (`V`), brush, highlighter, arrow, rect,
-ellipse, **text**, eraser (Ctrl held = eraser for that stroke). Alt held over a drawing tool (`altCam()`, state `altHeld`,
+ellipse, **text**, colour correction (`G`), eraser (Ctrl held = eraser for that stroke). Alt held over a drawing tool (`altCam()`, state `altHeld`,
 class `.an-alt` on the lightbox) lets the press through to the viewer (`onDown` returns before `grab`) and
 makes the bar / notes panel pointer-inert. The bar (`.dtools`) is built from
 `SLOTS`: two slots hold kinds — *Arrows and lines* (`ARROWS`: heads / dash, `line` = shape_kind

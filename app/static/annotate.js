@@ -1328,7 +1328,6 @@ export function createAnnotator(host){
   // by an SVG of the area (feathered) in doc units — so a pan / zoom only moves the div (placeGrade), the mask is
   // remade when the area's shape changes. In .an-doc it has only a dashed outline (a mask hides the outline's inner
   // half and the lines where a brush stroke crosses itself, so the dashes run along the area's edge).
-  const gradePad = (d) => Math.max(0, Number(d.feather) || 0) * 1.5 + 1;
   function gradeSvg(it){
     // (The margin holds the outer half of the 4 px outline at 1/8 of today's zoom too: zooming does not re-render.)
     // Added / cut parts (data.parts): the outline mask is "outside the final area" (shapes in order, an added one black,
@@ -1348,21 +1347,13 @@ export function createAnnotator(host){
     if (!L) return;
     let div = L.gr.get(it.id);
     if (!div){ div = document.createElement("div"); div.className = "an-grade"; L.gr.set(it.id, div); }
-    const d = it.data, b = boundsOf(it), pad = gradePad(d);
-    const box = [b[0] - pad, b[1] - pad, b[2] - b[0] + 2 * pad, b[3] - b[1] + 2 * pad].map(r2);
+    // (The mask markup and the padded box are review-core's, shared with the HTML page / phone SVG correction.)
+    const d = it.data, box = RC.gradePadBox(it);
     const f = Math.max(0, Number(d.feather) || 0), sh = RC.gradeShapes(d), paths = sh.map((s) => RC.gradePath(s));
     const key = box.join() + "|" + f + "|" + sh.map((s, i) => s.op + paths[i]).join("|");
     if (div.__key !== key){
       div.__key = key;
-      const filt = f > 0 ? `<filter id="f" filterUnits="userSpaceOnUse" x="${box[0]}" y="${box[1]}" width="${box[2]}" height="${box[3]}"><feGaussianBlur stdDeviation="${r2(f / 2)}"/></filter>` : "";
-      const fa = f > 0 ? ' filter="url(#f)"' : "";
-      // With parts: the shapes in order in a luminance mask (added white, cut black) over one white rect, blurred as a
-      // whole (a CSS mask-image reads the SVG's alpha, so a black fill alone would not cut).
-      const bx = `x="${box[0]}" y="${box[1]}" width="${box[2]}" height="${box[3]}"`;
-      const body = sh.length > 1
-        ? `<mask id="s" maskUnits="userSpaceOnUse" ${bx}>${sh.map((s, i) => `<path d="${paths[i]}" fill="${s.op === "sub" ? "#000" : "#fff"}"/>`).join("")}</mask><g${fa}><rect ${bx} fill="#fff" mask="url(#s)"/></g>`
-        : `<path d="${paths[0]}" fill="#fff"${fa}/>`;
-      const svg = `<svg xmlns="${SVGNS}" viewBox="${box.join(" ")}" preserveAspectRatio="none">${filt}${body}</svg>`;
+      const svg = `<svg xmlns="${SVGNS}" viewBox="${box.join(" ")}" preserveAspectRatio="none">${RC.gradeMaskSvg(d, box, "")}</svg>`;
       const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
       div.style.maskImage = div.style.webkitMaskImage = url;
     }

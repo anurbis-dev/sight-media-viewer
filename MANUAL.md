@@ -115,8 +115,10 @@
     (on until pressed again; − outside an area erases). A click inside an area (with this tool or the select tool) picks it — a mark drawn inside it is picked
     before the area; drag / scale / rotate it like any drawing. The eraser removes an area only when it touches
     its edge. On a video an area follows *Hold* like any drawing. Exported pictures (PDF, ZIP, note
-    screenshots) show the correction without the outline; the web review page and the phone app keep the
-    areas, but their live views show only the dashed outline for now.
+    screenshots) show the correction without the outline. The web review page and the phone app show it too
+    (pictures, video frames and a playing video on the phone; the drawing canvas adds the dashed outline to the
+    areas you can edit there); a 3D view on the phone shows only the dashed outline. Their drawing canvas has the
+    tool too (`G`, the half-filled circle; below).
   - **Reference images** (`Shift+I`, the picture button in the toolbar): put pictures on the frame /
     picture as references. Drop picture files from outside onto the frame (any tool — annotating turns on
     by itself), drag pictures from the library beside the player (below), click the frame with the tool to
@@ -477,7 +479,7 @@
   the order they were made (on a video too — not by frame; Sight numbers them the same). *+ Note*
   adds a note — on a video at the frame on screen; while it is open the picture is clean (only its
   own drawing) and so is the timeline (only the frames it is drawn on). The pencil opens the drawing canvas (select / transform, brush with pen pressure,
-  highlighter, arrows and lines, shapes, text, eraser, the colour, undo / redo, clear, pinch / pan /
+  highlighter, arrows and lines, shapes, text, colour correction, eraser, the colour, undo / redo, clear, pinch / pan /
   turn), its buttons floating over the picture; on a video the tools sit above the transport, and when they do
   not fit the screen's width, drag the row sideways to reach the rest. A tap on *Arrows and lines* or *Shapes* takes it and
   shows its kinds in a row above the bar (arrow, open arrow, double arrow, dashed arrow, line, arrows
@@ -491,7 +493,13 @@
   button — a second row of patterns (none, solid, lines, grid, cross-hatch, dots, dashes, random) — and,
   for a pattern with lines or dots, a tap-to-cycle switch for the hatch lines: auto / thin / thick. With a
   keyboard, `L` takes the lasso and `Shift+W` arrows along a stroke, as in Sight; tapping the slot again with its row up puts the tool
-  down. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
+  down. *Colour correction* (`G`) shows a panel above the bar: **lasso** (draw round the area) or **brush** (paint
+  it; press and hold, then drag sideways for its width), the edge (tap to cycle hard / soft / very soft), *Reset*
+  (no correction), and sliders for *Hue*, *Saturation*, *Brightness* and *Contrast* (tap a slider's name, or
+  right-click the slider, for 0). The picture inside an area shows corrected. A new area starts from the values
+  set last and stays picked (blue outline): tap the tool again and the sliders tune it. A tap inside an area picks
+  it; with the select tool, the sliders tune the selected areas (move / scale them like any drawing). The eraser
+  takes an area only by its edge. *Text* has a row of switches: bold, italic, underline, the box behind the text, outline,
   alignment (left / centre / right) and font; switched on, the box shows its colours in a second
   row above (tap it again: no box), the font button opens the fonts there (sans, serif, mono,
   hand, impact). They style the

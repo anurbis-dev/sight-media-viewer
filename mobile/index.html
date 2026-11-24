@@ -127,6 +127,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .stage { position: absolute; inset: 0; overflow: hidden; touch-action: manipulation; }
 .stage img, .stage video, .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: 50% 50%; }
 .stage svg { pointer-events: none; }
+/* A video's colour correction areas (app.js gradeMirrors): the frame again, filtered and masked, fitted as the player. */
+.stage canvas.grm { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: 50% 50%; pointer-events: none; mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; }
 .stage .sv { position: absolute; inset: 0; transform-origin: 50% 50%; }
 .stage .scrubimg[hidden] { display: none; }
 /* Taps go to the player under it: the cached frame is hidden as its seek lands, often mid-tap, and

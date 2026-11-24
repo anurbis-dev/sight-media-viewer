@@ -689,6 +689,86 @@ var SightReviewCore = (function(){
     } finally { cx.restore(); }
   }
 
+  // ---- colour correction in SVG (the HTML review page, the phone) ----------------------------------
+  // Clients without Sight's backdrop-filter layer show an area corrected inside the drawings' SVG overlay: the picture
+  // under the overlay (`media` {href, vb}: its URL and the doc box it covers) drawn again through the area's filter
+  // (the CSS chain as SVG primitives, so it matches gradeFilter / gradePixels) and mask. Works wherever SVG filters do
+  // (iOS Safari included); a playing video needs another way (the phone mirrors its frame to a canvas per area).
+  // The area's box with room for the feathered edge [x, y, w, h] (annotate.js's live div uses the same).
+  function gradePadBox(it){
+    var b = boundsOf(it), pad = Math.max(0, Number(it.data.feather) || 0) * 1.5 + 1;
+    return [b[0] - pad, b[1] - pad, b[2] - b[0] + 2 * pad, b[3] - b[1] + 2 * pad].map(r2);
+  }
+  // The area's mask as SVG markup in doc units over `box`: white where the area is (shapes in order, added white, cut
+  // black, blurred as a whole by feather / 2). `id` prefixes the ids it uses (unique in the document it goes into).
+  // Read as alpha (a CSS mask-image) or as luminance (an SVG <mask>) it is the same mask.
+  function gradeMaskSvg(d, box, id){
+    var f = Math.max(0, Number(d.feather) || 0), sh = gradeShapes(d), paths = sh.map(gradePath);
+    var bx = 'x="' + box[0] + '" y="' + box[1] + '" width="' + box[2] + '" height="' + box[3] + '"';
+    var filt = f > 0 ? '<filter id="' + id + 'f" filterUnits="userSpaceOnUse" ' + bx + '><feGaussianBlur stdDeviation="' + r2(f / 2) + '"/></filter>' : "";
+    var fa = f > 0 ? ' filter="url(#' + id + 'f)"' : "";
+    // (With parts: a luminance mask over one white rect, blurred as a whole — a black fill alone would not cut an alpha mask.)
+    var body = sh.length > 1
+      ? '<mask id="' + id + 's" maskUnits="userSpaceOnUse" ' + bx + ">" + sh.map(function(s, i){ return '<path d="' + paths[i] + '" fill="' + (s.op === "sub" ? "#000" : "#fff") + '"/>'; }).join("") + "</mask><g" + fa + "><rect " + bx + ' fill="#fff" mask="url(#' + id + 's)"/></g>'
+      : '<path d="' + paths[0] + '" fill="#fff"' + fa + "/>";
+    return filt + body;
+  }
+  // The area's correction as an SVG <filter> over `box` (Filter Effects' own definitions of brightness / contrast /
+  // saturate / hue-rotate, in sRGB, each step clamped — as gradePixels).
+  function gradeFilterSvg(d, box, id){
+    var o = gradeOps(d), off = Math.round((0.5 - 0.5 * o.c) * 1e5) / 1e5;
+    var m = function(M){ return [M[0], M[1], M[2], 0, 0, M[3], M[4], M[5], 0, 0, M[6], M[7], M[8], 0, 0, 0, 0, 0, 1, 0].map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" "); };
+    var lin = function(sl, ic){ return ["R", "G", "B"].map(function(c){ return "<feFunc" + c + ' type="linear" slope="' + Math.round(sl * 1e5) / 1e5 + '" intercept="' + ic + '"/>'; }).join(""); };
+    return '<filter id="' + id + '" filterUnits="userSpaceOnUse" x="' + box[0] + '" y="' + box[1] + '" width="' + box[2] + '" height="' + box[3] + '" color-interpolation-filters="sRGB">' +
+      "<feComponentTransfer>" + lin(o.b, 0) + "</feComponentTransfer><feComponentTransfer>" + lin(o.c, off) + "</feComponentTransfer>" +
+      '<feColorMatrix type="matrix" values="' + m(o.S) + '"/><feColorMatrix type="matrix" values="' + m(o.H) + '"/></filter>';
+  }
+  var gradeSeq = 0, gradeUrls = typeof Map !== "undefined" ? new Map() : null;
+  // A data: URL (the review page inlines its pictures, several MB each) as a blob: URL, made once per picture, so the
+  // overlays' markup holds a short URL instead of another copy of the picture (other URLs as they are).
+  function gradeHref(href){
+    if (!gradeUrls || !/^data:/i.test(href) || typeof URL === "undefined" || !URL.createObjectURL || typeof Blob === "undefined") return href;
+    var u = gradeUrls.get(href);
+    if (u) return u;
+    try {
+      var i = href.indexOf(","), head = href.slice(5, i), body = href.slice(i + 1), bin, bytes;
+      bin = /;base64$/i.test(head) ? atob(body) : unescape(body);  // (percent-encoded bytes kept as bytes)
+      bytes = new Uint8Array(bin.length);
+      for (var k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k) & 255;
+      u = URL.createObjectURL(new Blob([bytes], { type: head.split(";")[0] || "application/octet-stream" }));
+    } catch (_){ u = href; }
+    gradeUrls.set(href, u);
+    return u;
+  }
+  // SVG markup of every area of `items` drawn corrected over `media` (lowest z first; an area that overlaps earlier ones
+  // corrects what they left, as gradeCanvas does — until that nesting gets too deep, then the plain picture).
+  function gradeSvgMarkup(items, media){
+    if (!media || !media.href || !media.vb) return "";
+    var list = items.filter(function(it){ return typeOf(it) === "grade" && !gradeIdentity(it.data) && gradeShapeOk(it.data); }).sort(function(a, b){ return zOf(a) - zOf(b); });
+    if (!list.length) return "";
+    var p = "rcg" + (++gradeSeq) + "-", vb = media.vb, img = p + "i", done = [], out = "";
+    var defs = '<image id="' + img + '" href="' + esc(gradeHref(media.href)) + '" x="' + r2(vb[0]) + '" y="' + r2(vb[1]) + '" width="' + r2(vb[2]) + '" height="' + r2(vb[3]) + '" preserveAspectRatio="none"/>';
+    list.forEach(function(it, k){
+      var box = gradePadBox(it), id = p + k, cost = 1, under = [];
+      if (!(box[2] > 0 && box[3] > 0)) return;
+      done.forEach(function(e){
+        if (e.box[0] < box[0] + box[2] && e.box[0] + e.box[2] > box[0] && e.box[1] < box[1] + box[3] && e.box[1] + e.box[3] > box[1]){ under.push(e); cost += e.cost; }
+      });
+      if (cost > 32){ under = []; cost = 1; }  // (each nested area is drawn again: keep the work bounded)
+      var src = img;
+      if (under.length){
+        src = id + "u";
+        defs += '<g id="' + src + '"><use href="#' + img + '"/>' + under.map(function(e){ return '<use href="#' + e.id + '"/>'; }).join("") + "</g>";
+      }
+      defs += gradeFilterSvg(it.data, box, id + "g") +
+        '<mask id="' + id + 'm" maskUnits="userSpaceOnUse" x="' + box[0] + '" y="' + box[1] + '" width="' + box[2] + '" height="' + box[3] + '">' + gradeMaskSvg(it.data, box, id + "m") + "</mask>" +
+        '<use id="' + id + '" href="#' + src + '" filter="url(#' + id + 'g)" mask="url(#' + id + 'm)"/>';
+      out += '<use href="#' + id + '"/>';
+      done.push({ id: id, box: box, cost: cost });
+    });
+    return out ? "<defs>" + defs + "</defs>" + out : "";
+  }
+
   // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
   // Arrows spread evenly along the stroke (about data.step apart), each data.len long along the stroke's
   // normal, pointing away from it (dir "out") or at it ("in"), on one side ("left" / "right" of the
@@ -968,8 +1048,17 @@ var SightReviewCore = (function(){
     });
   }
   // SVG markup (no <svg> wrapper) for a list of drawings, lowest z first.
-  function svgMarkup(items, numOf){
-    return items.slice().sort(function(a, b){ return zOf(a) - zOf(b); }).map(function(it){ return primsOf(it, numOf).map(primSvg).join(""); }).join("");
+  // opts.media {href, vb}: the picture the overlay lies on — colour correction areas are then shown corrected
+  // (gradeSvgMarkup, under every other drawing) and without their dashed outline, unless opts.gradeLines is true.
+  // opts.gradeLines false with no media: areas draw nothing (the host shows them its own way, e.g. a playing video).
+  function svgMarkup(items, numOf, opts){
+    opts = opts || {};
+    var lines = opts.gradeLines != null ? !!opts.gradeLines : !opts.media;
+    var under = opts.media ? gradeSvgMarkup(items, opts.media) : "";
+    return under + items.slice().sort(function(a, b){ return zOf(a) - zOf(b); }).map(function(it){
+      if (!lines && typeOf(it) === "grade") return "";
+      return primsOf(it, numOf).map(primSvg).join("");
+    }).join("");
   }
 
   // ---- bounds / hit testing / transforms --------------------------------------------------------
@@ -1604,7 +1693,7 @@ var SightReviewCore = (function(){
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
     setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
     hatchMetrics: hatchMetrics, isFillStroke: isFillStroke,
-    gradeParams: gradeParams, gradeIdentity: gradeIdentity, gradeFilter: gradeFilter, gradePath: gradePath, gradeShapes: gradeShapes, gradeIn: gradeIn, gradeEdge: gradeEdge, gradeEdgeAny: gradeEdgeAny, gradeInRings: gradeInRings, gradeBake: gradeBake, gradeOps: gradeOps, gradePixels: gradePixels, gradeCanvas: gradeCanvas, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
+    gradeParams: gradeParams, gradeIdentity: gradeIdentity, gradeFilter: gradeFilter, gradePath: gradePath, gradeShapes: gradeShapes, gradeIn: gradeIn, gradeEdge: gradeEdge, gradeEdgeAny: gradeEdgeAny, gradeInRings: gradeInRings, gradeBake: gradeBake, gradeOps: gradeOps, gradePixels: gradePixels, gradeCanvas: gradeCanvas, gradeShapeOk: gradeShapeOk, gradeHref: gradeHref, gradePadBox: gradePadBox, gradeMaskSvg: gradeMaskSvg, gradeFilterSvg: gradeFilterSvg, gradeSvgMarkup: gradeSvgMarkup, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
     xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
     sizeOpDrag: sizeOpDrag, opAfter: opAfter,

@@ -2060,12 +2060,13 @@ function bindPanelPull(plist, pb){
   }, { passive: true });
 }
 
-function overlay(vb, list, cls){
+// href: the picture the overlay lies on (colour correction areas are then shown corrected, review-core gradeSvgMarkup).
+function overlay(vb, list, cls, href){
   const s = document.createElementNS(SVGNS, "svg");
   s.setAttribute("viewBox", vb.join(" "));
   // cover: a thumbnail cut to fill its box (the picture is object-fit: cover, cut the same way).
   s.setAttribute("preserveAspectRatio", cls === "stage" ? "xMidYMid meet" : cls === "cover" ? "xMidYMid slice" : "none");
-  s.innerHTML = RC.svgMarkup(list, numOf);
+  s.innerHTML = RC.svgMarkup(list, numOf, { media: href ? { href, vb } : null });
   return s;
 }
 // A draft's drawing: the frame it was made on, plus (video) more frames of the same note.
@@ -2097,7 +2098,72 @@ function paintOverlay(){
   }
   els.svg.setAttribute("viewBox", (is3d() ? vbOf(R.v3d ? R.v3d.aspect() : 1) : [0, 0, docW() || 1, docH() || 1]).join(" "));
   refShots(R);
-  els.svg.innerHTML = RC.svgMarkup(stageDrawings(), numOf);
+  const list = stageDrawings(), vid = kindNow() === "video" && !!R.video;
+  // Colour correction areas: a picture shows them corrected in the SVG (its own URL, review-core); a video through
+  // canvases that mirror its frame (gradeMirrors); a 3D view has no picture to correct: the dashed outline.
+  // (The correction has its own group, rebuilt only when the areas or the picture change: paintOverlay runs on every
+  // keystroke in the composer and every frame of a playing video.)
+  const pic = kindNow() === "image" && els.picUrl ? els.picUrl : null;
+  let gG = els.svg.firstChild, gD = gG && gG.nextSibling;
+  if (!gD || gG.getAttribute("class") !== "gg"){
+    els.svg.textContent = "";
+    gG = els.svg.appendChild(document.createElementNS(SVGNS, "g")); gG.setAttribute("class", "gg");
+    gD = els.svg.appendChild(document.createElementNS(SVGNS, "g"));
+    els.gradeSig = null;
+  }
+  const grades = pic ? list.filter((it) => RC.typeOf(it) === "grade") : [];
+  const sig = pic + "|" + docW() + "x" + docH() + "|" + JSON.stringify(grades.map((it) => [it.z, it.data]));
+  if (sig !== els.gradeSig){ els.gradeSig = sig; gG.innerHTML = grades.length ? RC.gradeSvgMarkup(grades, { href: pic, vb: [0, 0, docW() || 1, docH() || 1] }) : ""; }
+  gD.innerHTML = RC.svgMarkup(list, numOf, vid || pic ? { gradeLines: false } : {});
+  gradeMirrors(vid ? list : []);
+}
+// A video's colour correction areas: one canvas per area in .sv, under the drawings' SVG, showing the frame on screen
+// (the player's, or the cached scrub frame over it) through the area's CSS filter (RC.gradeFilter) and a CSS mask of
+// the area (RC.gradeMaskSvg, in doc units, the SVG fitted "meet"). The canvas has the picture's shape and object-fit:
+// contain, and turnEl turns it as the player — so frame, mask and drawings line up. Only the area's box is drawn;
+// paintOverlay runs on every frame while playing (loop) and on every seek / pause, so this keeps up. Overlapping
+// areas each correct the plain frame here (Sight and exports apply one over the other).
+function gradeMirrors(list){
+  const sv = els && els.sv, v = R && R.video;
+  if (!sv) return;
+  const map = sv.__grm || (sv.__grm = new Map()), W = docW(), H = docH();
+  const areas = v && W > 0 && H > 0 ? list.filter((it) => RC.typeOf(it) === "grade" && !RC.gradeIdentity(it.data) && RC.gradeShapeOk(it.data)) : [];
+  const keep = new Set();
+  areas.forEach((it, i) => {
+    const key = `${it.id || "#" + i}|${W}x${H}|${JSON.stringify(it.data)}`;
+    if (keep.has(key)) return;
+    keep.add(key);
+    let c = map.get(key);
+    if (!c){
+      c = el("canvas", "grm");
+      const box = RC.gradePadBox(it), sc = Math.min(1, 1600 / Math.max(W, H));
+      c.width = Math.max(1, Math.round(W * sc)); c.height = Math.max(1, Math.round(H * sc));
+      c.__box = box; c.__sc = sc;
+      const svg = `<svg xmlns="${SVGNS}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${RC.gradeMaskSvg(it.data, box, "")}</svg>`;
+      c.style.maskImage = c.style.webkitMaskImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+      c.style.filter = RC.gradeFilter(it.data);
+      map.set(key, c);
+      sv.insertBefore(c, els.svg.parentNode === sv ? els.svg : null);
+      const st = els.stage;
+      turnEl(c, st.clientWidth, st.clientHeight, viewOf());
+    }
+    drawMirror(c);
+  });
+  for (const [key, c] of map) if (!keep.has(key)){ c.remove(); map.delete(key); }
+}
+// Every mirror again (the frame on screen changed without a paintOverlay: the cached frame went, a seek landed).
+function redrawMirrors(){ const sv = els && els.sv; if (sv && sv.__grm) sv.__grm.forEach(drawMirror); }
+function drawMirror(c){
+  const v = R && R.video, si = els && els.scrubImg;
+  const src = si && !si.hidden && si.complete && si.naturalWidth ? si : v;
+  const sw = src && (src.naturalWidth || src.videoWidth), sh = src && (src.naturalHeight || src.videoHeight);
+  if (!sw || !sh || (src === v && v.readyState < 2)) return;
+  const g = c.getContext("2d"), b = c.__box, W = docW(), H = docH();
+  // (Doc units → this frame's pixels: the cached frame may be smaller than the clip.)
+  const x0 = Math.max(0, b[0]), y0 = Math.max(0, b[1]), x1 = Math.min(W, b[0] + b[2]), y1 = Math.min(H, b[1] + b[3]);
+  g.clearRect(0, 0, c.width, c.height);
+  if (x1 <= x0 || y1 <= y0) return;
+  try { g.drawImage(src, x0 * sw / W, y0 * sh / H, (x1 - x0) * sw / W, (y1 - y0) * sh / H, x0 * c.__sc, y0 * c.__sc, (x1 - x0) * c.__sc, (y1 - y0) * c.__sc); } catch {}
 }
 // The view's turn (0 / 90 / 180 / 270°) and mirror, kept with the review (R.meta.view): the stage,
 // the full-screen viewer and the drawing canvas show the picture that way. View only — drawings
@@ -2114,7 +2180,7 @@ function turnEl(n, W, H, vw){
 function applyStageView(){
   if (!els || !els.stage) return;
   const st = els.stage, W = st.clientWidth, H = st.clientHeight, vw = viewOf();
-  st.querySelectorAll(":scope > .sv > img, :scope > .sv > video, :scope > .sv > svg").forEach((n) => turnEl(n, W, H, vw));
+  st.querySelectorAll(":scope > .sv > img, :scope > .sv > video, :scope > .sv > svg, :scope > .sv > canvas.grm").forEach((n) => turnEl(n, W, H, vw));
   if (is3d()) paintOverlay();  // the host's units follow its shape
   if (els.penB) els.penB.style.bottom = ((els.tp && !els.tp.hidden ? els.tp.offsetHeight + 8 : 0) + 14) + "px";
   applyPlayerView();
@@ -2567,12 +2633,12 @@ function buildStage(){
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
   if (a.kind !== "model3d") bindStage(stage);  // (3D: the model takes the fingers, model3d.js)
-  els.m3d = null; els.animUi = null; els.sqb = null;
+  els.m3d = null; els.animUi = null; els.sqb = null; els.picUrl = null;
   if (!(a.kind === "video" && R.url)){ seqDropHold(); seqPend = null; }  // nothing here to land on
   if (els.sel3d){ els.sel3d.remove(); els.sel3d = null; }
   if (a.kind === "model3d") buildStage3d(stage, missing);
   else if (a.kind === "image"){
-    const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; sv.appendChild(img); sv.appendChild(svg); stage.appendChild(sv); paintOverlay(); applyStageView(); };
+    const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; sv.appendChild(img); sv.appendChild(svg); stage.appendChild(sv); els.picUrl = url; paintOverlay(); applyStageView(); };
     if (R.url) show(R.url);
     else {
       getPicture().then((p) => { if (!els || els.stage !== stage) return; if (p) show(p.url); else missing("The picture is not on this device."); });
@@ -2587,6 +2653,14 @@ function buildStage(){
       // A cached frame shown over the player while a seek is on its way (ScrubCache).
       const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
       els.scrubImg = si;
+      // (A cached frame lands after its src was set: the correction mirrors draw it once it has.)
+      si.addEventListener("load", () => { if (sv.__grm) sv.__grm.forEach(drawMirror); });
+      // (A seek's frame is painted after "seeked" — Safari above all: draw again once it is on screen.)
+      v.addEventListener("seeked", () => {
+        if (!R || R.video !== v) return;
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => { if (R && R.video === v) redrawMirrors(); });
+        requestAnimationFrame(() => requestAnimationFrame(() => { if (R && R.video === v) redrawMirrors(); }));
+      });
       sv.appendChild(v); sv.appendChild(si); sv.appendChild(svg); stage.appendChild(sv);
       if (seqHoldEl) stage.appendChild(seqHoldEl);  // the last clip's frame, until this one shows its own
       const big = btn("playbig", null, () => togglePlay(), "Play"); big.innerHTML = ico("play", 30);
@@ -3578,7 +3652,7 @@ function showCached(t){
   if (u){ if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
   else si.hidden = true;
 }
-function hideCached(){ if (els && els.scrubImg) els.scrubImg.hidden = true; }
+function hideCached(){ if (els && els.scrubImg && !els.scrubImg.hidden){ els.scrubImg.hidden = true; redrawMirrors(); } }
 // The player says "seeked" before it has painted the new frame (Safari above all): the cached
 // picture goes only once a frame of the new position is on screen (rVFC; at most 250 ms), or the
 // old frame flashes up in between.
@@ -3915,7 +3989,7 @@ function markCap(box, n, pic){
 function picBox(f, list, cls){
   const w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img");
   i.src = f.url; i.alt = ""; i.draggable = false; w.appendChild(i);
-  if (list.length) w.appendChild(overlay(f.vb, list, "cover"));
+  if (list.length) w.appendChild(overlay(f.vb, list, "cover", f.url));
   return w;
 }
 // Fills a placeholder with a note's picture once it is there (cached, or taken from the video).
@@ -4811,7 +4885,7 @@ function viewer(o){
   async function show(no, slide){
     const nb = el("div", "vb");
     const img = el("img"); img.src = no.url; img.alt = ""; img.draggable = false; nb.appendChild(img);
-    if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows));
+    if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows, null, no.url));
     if (slide){
       await Promise.race([img.decode ? img.decode().catch(() => {}) : Promise.resolve(), new Promise((r) => setTimeout(r, SLIDE_WAIT))]);
       if (!v.isConnected) return;
