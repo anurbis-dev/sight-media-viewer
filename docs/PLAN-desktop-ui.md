@@ -16,7 +16,7 @@ Mark done items with `[x]` and the version.
 - [x] 9. (0.122.4) Notes panel gets an interactive (draggable) edge to resize it, like the other panels.
 
 ## M — medium, one subsystem
-- [ ] 10. Lightbox rotation pivots on the file's centre (after panning), not on the window centre.
+- [x] 10. (0.122.7) Lightbox rotation pivots on the file's centre (after panning), not on the window centre.
 - [ ] 11. The stroke marquee works in world coordinates, independent of the file's rotation.
 - [ ] 12. Interactive thumbnail size snaps to values where icons fill the window width (no empty strip on the right).
 - [ ] 13. HTML export: pictures are not enlarged when drawings go outside the file bounds.

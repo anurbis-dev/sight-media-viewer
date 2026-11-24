@@ -735,9 +735,10 @@ as `more [{frame, size, caption, title, text, file, ctx}]` (the note's first: `f
 The lightbox view's **turn / mirror / flip** (index.html `attachViewer`: `turn {rot, mir, mirV}` — `mir` left / right,
 `mirV` upside down, `#mirBtn` / `#mirVBtn`, `Shift+M` / `Shift+V`; localStorage `sight.viewTurn` as
 `[rot, mir]` or `[rot, mir, 1]` with `mirV`, so older entries load unflipped; newest 500 files) is a CSS prefix
-`rotate(rot) scale(mir ? -1 : 1, mirV ? -1 : 1)` about the window centre on the media and on
-annotate's layer root (`geom().turn`); `unturn(x, y)` (rotate back, then flip x / y) maps the pointer back, so pan / zoom and
-annotate's `local(e)` / `toDoc` work in the unturned frame. Doc units never change.
+`rotate(rot) scale(mir ? -1 : 1, mirV ? -1 : 1)` about the picture's centre `pivot()` = window centre + `vs.pan` on the
+media and on annotate's layer root (`geom().turn`); `unturn(x, y)` (rotate back, then flip x / y) maps the pointer back, so
+annotate's `local(e)` / `toDoc` work in the unturned frame. `vs.pan` is a screen-space offset of the picture centre (a pan
+adds the raw pointer delta; `zoomAt` moves the pivot `C' = m − k·(m − C)`). Doc units never change.
 
 **HTML reviewer page** (`review._HTML_TEMPLATE`, built by `build_html(report, pkg)` or, for a sequence,
 `build_html_all([(report, pkg)…], app_version, title)`) — data block `{clips: [{report, package, edits?}], bundle?, copy?}`

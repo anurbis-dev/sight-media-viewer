@@ -220,7 +220,7 @@
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
   - **Reset the toolbar** — hold the pen button (the one that turns annotating on) for about a second: every tool's colours, sizes
     and options, the hold time and the frame stamp's look return to their defaults (a normal click still toggles annotating).
-  - **Turn by hand** — Alt+drag on a picture turns it about its centre, to any angle (on a video Alt+drag
+  - **Turn by hand** — Alt+drag on a picture turns it about its own centre (where it is after panning, not the window centre; Shift+R too), to any angle (on a video Alt+drag
     scrubs; Ctrl+Alt+drag turns the video. A clip with few keyframes — many phone and screen
     recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy
     in the background and later drags show it, so every position along the way is drawn. Sight keeps

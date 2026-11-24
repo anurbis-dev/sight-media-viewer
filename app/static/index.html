@@ -6390,19 +6390,20 @@ function attachViewer(stage, a, src, opts = {}){
   let scEl = null; // the scrub copy over a video (see loadScrubCopy)
   const hud = stage.querySelector(".view-hud");
   const vs = { scale: 1, pan: { x: 0, y: 0 }, nat: { w: a.width || 0, h: a.height || 0 }, mode: "fit" };
-  // Turn / mirror about the window's centre, in front of the picture's own translate + scale;
-  // pan and zoom work in the unturned frame (unturn maps the pointer there).
+  // Turn / mirror about the picture's own centre C (the window's centre moved by the pan), in front of the
+  // picture's translate + scale. Pan and zoom are screen moves of C, so a panned picture turns in place.
   const turn = opts.embedded ? { rot: 0, mir: false, mirV: false } : loadTurn(a.id);
   // (the drawings' layer takes this same transform from geom().turn, and unturn is its exact inverse:
   // screen = C + R(rot)·S(mir, mirV)·(p − C), so p = C + S·R(−rot)·(screen − C))
+  const pivot = () => [wrap.clientWidth / 2 + vs.pan.x, wrap.clientHeight / 2 + vs.pan.y];
   function turnCss(){
     if (!turn.rot && !turn.mir && !turn.mirV) return "";
-    const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2;
+    const [cx, cy] = pivot();
     return `translate(${cx}px,${cy}px) rotate(${turn.rot}deg) scale(${turn.mir ? -1 : 1},${turn.mirV ? -1 : 1}) translate(${-cx}px,${-cy}px) `;
   }
   function unturn(x, y){
     if (!turn.rot && !turn.mir && !turn.mirV) return [x, y];
-    const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2, r = -turn.rot * Math.PI / 180;
+    const [cx, cy] = pivot(), r = -turn.rot * Math.PI / 180;
     const dx = x - cx, dy = y - cy;
     let ux = dx * Math.cos(r) - dy * Math.sin(r);
     let uy = dx * Math.sin(r) + dy * Math.cos(r);
@@ -6410,7 +6411,6 @@ function attachViewer(stage, a, src, opts = {}){
     if (turn.mirV) uy = -uy;
     return [cx + ux, cy + uy];
   }
-  function unturnVec(dx, dy){ const cx = wrap.clientWidth / 2, cy = wrap.clientHeight / 2, p = unturn(cx + dx, cy + dy); return [p[0] - cx, p[1] - cy]; }
   const paintMirBtns = () => {
     light?.el.querySelector("#mirBtn")?.classList.toggle("on", turn.mir);
     light?.el.querySelector("#mirVBtn")?.classList.toggle("on", turn.mirV);
@@ -6564,14 +6564,12 @@ function attachViewer(stage, a, src, opts = {}){
   // keeps whatever content is under the cursor/anchor fixed in place as scale changes.
   function zoomAt(newScale, mx, my){
     newScale = Math.min(16, Math.max(0.05, newScale));
-    [mx, my] = unturn(mx, my);
-    const w = wrap.clientWidth, h = wrap.clientHeight;
-    const xOld = (w - vs.nat.w * vs.scale) / 2 + vs.pan.x;
-    const yOld = (h - vs.nat.h * vs.scale) / 2 + vs.pan.y;
-    const cx = (mx - xOld) / vs.scale, cy = (my - yOld) / vs.scale;
+    // screen = C + scale·M·(q − centre) for a picture pixel q (M = the turn), so keeping q under (mx, my)
+    // only moves C toward the point: C' = m − k·(m − C), turned or not.
+    const [cx, cy] = pivot(), k = newScale / vs.scale;
     vs.scale = newScale;
-    vs.pan.x = mx - cx * newScale - (w - vs.nat.w * newScale) / 2;
-    vs.pan.y = my - cy * newScale - (h - vs.nat.h * newScale) / 2;
+    vs.pan.x = mx - k * (mx - cx) - wrap.clientWidth / 2;
+    vs.pan.y = my - k * (my - cy) - wrap.clientHeight / 2;
     vs.mode = "free";
     apply();
   }
@@ -6688,7 +6686,7 @@ function attachViewer(stage, a, src, opts = {}){
   const input = attachViewerInput(wrap, {
     claim: (e) => {
       if (!(e.button === 0 && e.altKey && (!isVid || e.ctrlKey || e.metaKey))) return null;
-      const r = wrap.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const r = wrap.getBoundingClientRect(), [px, py] = pivot(), cx = r.left + px, cy = r.top + py; // the picture's centre
       const d = { a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
       return {
         cursor: "rotate",
@@ -6722,8 +6720,7 @@ function attachViewer(stage, a, src, opts = {}){
       end: () => { if (!handed) endScrub(); handed = false; },
     } : null,
     pan: (dx, dy) => {
-      const [ux, uy] = unturnVec(dx, dy); // (pan is in the unturned frame)
-      vs.pan = { x: vs.pan.x + ux, y: vs.pan.y + uy };
+      vs.pan = { x: vs.pan.x + dx, y: vs.pan.y + dy }; // (a screen move of the picture's centre, turned or not)
       vs.mode = "free";
       apply();
     },
