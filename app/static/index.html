@@ -1646,11 +1646,14 @@ const savedLayout = loadLayout();
 // always stays below it, so it never takes part). Falls back to the default set whenever the
 // saved list doesn't match it exactly — a stale/edited value, or a future app version that adds
 // or removes a section.
-const NAV_SECTIONS = ["canvas", "types", "sources", "collections", "tags"];
+const NAV_SECTIONS = ["canvas", "types", "reviews", "sources", "collections", "tags"];
 function loadNavOrder(){
   const saved = savedLayout.navOrder;
-  if (Array.isArray(saved) && saved.length === NAV_SECTIONS.length && NAV_SECTIONS.every((k) => saved.includes(k))) return saved;
-  return [...NAV_SECTIONS];
+  if (!Array.isArray(saved)) return [...NAV_SECTIONS];
+  // Keep the user's order; a section added in a later version goes in at its default place.
+  const out = saved.filter((k, i) => NAV_SECTIONS.includes(k) && saved.indexOf(k) === i);
+  NAV_SECTIONS.forEach((k, i) => { if (!out.includes(k)) out.splice(i ? out.indexOf(NAV_SECTIONS[i - 1]) + 1 : 0, 0, k); });
+  return out;
 }
 // Resizable side panels: [default, min, max] width in px. Double-click a handle to go back to the default.
 const PANEL_W = { side: [208, 168, 420], insp: [260, 220, 560] };
@@ -3350,7 +3353,7 @@ function renderNav(){
   const y = sideScrollEl.scrollTop;
   nav.innerHTML = "";
   const set = (patch) => applyFilter(patch);
-  const sectionRenderers = { types: renderTypes, sources: renderSources, collections: renderCollections, tags: renderTags, canvas: renderCanvasBoards };
+  const sectionRenderers = { types: renderTypes, reviews: renderReviews, sources: renderSources, collections: renderCollections, tags: renderTags, canvas: renderCanvasBoards };
   for (const key of state.navOrder) sectionRenderers[key]?.(set);
   // a tracker project on screen: no library row is the current one
   if (trkListOn()) nav.querySelectorAll(".row.on:not(.trk-src):not(.trk-proj)").forEach((r) => r.classList.remove("on"));
@@ -3445,7 +3448,12 @@ function bindSectionDrag(wrap, key){
     mime: "application/x-sight-navsec",
     rowSelector: ".sec-row",
     idKey: "key",
-    onReorder: (keys) => { state.navOrder = keys; saveLayout(); renderNav(); },
+    onReorder: (keys) => {
+      // A section hidden right now (Reviews with nothing in it) is not in `keys`: keep it at its old place.
+      const out = [...keys];
+      state.navOrder.forEach((k, i) => { if (!out.includes(k)) out.splice(Math.min(i, out.length), 0, k); });
+      state.navOrder = out; saveLayout(); renderNav();
+    },
   });
 }
 
@@ -3513,13 +3521,23 @@ function renderTypes(set){
   missRow.className = "row" + (f.missing ? " on" : "");
   missRow.innerHTML = `${state.showIcons ? iconSpan("alertcircle", "var(--subtle)", 15) : ""}<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
   missRow.onclick = (e) => { if (e.target.closest("button")) purgeMissing(false); else set({ missing: true }); };
-  wrap.append(missRow);
-  // Review rows (lightbox review panel / annotate.js): only the ones with something in them, so a
-  // library nobody reviews keeps a short list. The active one stays even when it empties.
-  for (const [k, label] of REVIEW_ROWS){
-    const n = c["review_" + k] || 0;
-    if (n || f.review === k) wrap.append(row(label, n, f.review === k, () => set({ review: k }), "flag"));
-  }
+  // Hidden while nothing is missing; the active row stays so the user can see the (now empty) view.
+  if (c.missing || f.missing) wrap.append(missRow);
+}
+// Review rows (lightbox review panel / annotate.js) in their own "Reviews" section: only the rows with
+// something in them, and the whole section is hidden when none has (a library nobody reviews). The active
+// row stays even when it empties.
+function renderReviews(set){
+  const c = state.meta.counts || {};
+  const f = state.filter;
+  const rows = REVIEW_ROWS.filter(([k]) => (c["review_" + k] || 0) || f.review === k);
+  if (!rows.length) return;
+  const wrap = document.createElement("div");
+  wrap.append(sectionHeader("Reviews", "reviews", "", "flag"));
+  bindSectionDrag(wrap, "reviews");
+  nav.append(wrap);
+  if (state.navCollapse.reviews) return;
+  for (const [k, label] of rows) wrap.append(row(label, c["review_" + k] || 0, f.review === k, () => set({ review: k }), "flag"));
 }
 const REVIEW_ROWS = [["open", "Open notes"], ["review", "Needs review"], ["changes", "Changes requested"], ["approved", "Approved"]];
 const REVIEW_LABEL = { review: "Needs review", changes: "Changes", approved: "Approved" };

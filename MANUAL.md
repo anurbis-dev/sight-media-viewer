@@ -210,7 +210,7 @@
   - **Review state** — the *State* row at the top of the panel marks the file *Needs review*,
     *Changes* or *Approved*. Under it: who set the state last and when; *History* lists every
     change. The grid shows it as a pill on the card together with the number of open
-    notes, and the sidebar (under Types) gets *Open notes / Needs review / Changes requested /
+    notes, and the sidebar (its own *Reviews* section, hidden while empty) gets *Open notes / Needs review / Changes requested /
     Approved* rows that filter the library.
   - **Turn / mirror the view** — `Shift+R` turns a picture or video by 90°, the mirror button at
     the top of the viewer (`Shift+M`) mirrors it left to right, and the flip button next to it
@@ -728,7 +728,7 @@
   nothing. A bar at the bottom shows how many are selected, *▶▶ Play in sequence* (2+ videos) and ✕;
   ✕ or `Esc` ends it (a tap that misses a tile does nothing then). A stylus works like a finger. Moving
   the finger while holding just scrolls.
-- **Missing files** — files that were moved or deleted stay in the library as "Missing" (sidebar),
+- **Missing files** — files that were moved or deleted stay in the library as "Missing" (sidebar row, shown only while there are some),
   and show up right away (no need to switch views/sources to see it — the grid updates live).
   To clear them out: hover the Missing row and click 🧹 (whole library), run "Remove missing files
   from library" in the palette (whole library), or right-click empty grid space (no selection

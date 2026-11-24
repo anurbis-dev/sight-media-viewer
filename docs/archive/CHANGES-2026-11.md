@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.111.3 — 2026-11-23 — Lasso fill: hatch width capped by the spacing, independent of the outline
+- **What:** a lasso's hatch lines / dots are drawn at most 0.9 × the Spacing wide, so they never merge into solid; the Lines control clamps its drag, scroll and typed value to that cap and shows a larger stored value as the cap. The fill (Spacing, Lines) no longer follows the outline width: resizing the outline (Ctrl+right-drag in Sight, the hold-drag on the HTML / phone page) keeps them.
+- **Where:** app/static/review-core.js (`hatchMetrics`: `HATCH_CAP`, returns `cap` / `capStored`; `RC.isFillStroke`); app/static/annotate.js (`hatchCap`, `propValue`, `bindNum.set`, the size drag); app/static/review-draw.js (hold-drag size); docs/FORMAT.md (hatchWidth); MANUAL (Lines).
+- **Notes:** the cap is applied at draw time — stored values are never rewritten (lowering Spacing then raising it again brings the stored width back; an older client draws the wider stored value). Rows without `gap` (before 0.109) still fall back to `size` for the spacing, so they look the same; a resize first writes that `gap` into the row so it stops following the size. `capStored` is relative to the uncapped spacing, like `hatchWidth`. A selection of several lassos uses the smallest cap. Stroke arrows still scale `step` / `len` with the width. UI not driven in a browser (only node checks of `hatchMetrics`, merge parity and annot_tools_e2e).
+- **Review:** a fresh reviewer agent found no bugs; one nit (rounding after the clamp could store up to 0.5 over the cap) fixed by re-clamping after rounding; the same reviewer confirmed it.
+
 ## 0.111.2 — 2026-11-23 — Swipe scrub shows every layer
 - **What:** dragging in Swipe compare moves every layer. Before, the reference's scrub picture covered the other regions, so only the file that was open in the lightbox (the reference, until you change ★) followed the pointer.
 - **Where:** app/static/compare.js (`.cmp-ly` is `isolation: isolate`); ARCHITECTURE.
