@@ -136,6 +136,8 @@ button:disabled { cursor: default; opacity: .4; }
 .light-slot:not([hidden]) { flex: 1; min-width: 0; }
 body.light-split .insp, body.light-split #inspHandle, body.light-split .nav-canvas { display: none; }
 body.light-split .light { border-left: 1px solid var(--border); }
+/* The library's top bar ends at the divider (the lightbox covers the rest), and shrinks to fit there (fitTop). */
+body.light-split .main > .top, body.light-split .main > .trkbar { margin-right: calc(100vw - var(--light-l, 100vw)); }
 body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width: calc(var(--light-l, 100vw) - 24px); }
 .insp > .sec:first-child { margin-top: 0; }
 .insp .insp-name { font-weight: 600; font-size: var(--text-size); line-height: 1.25; margin: 6px 0 4px; overflow-wrap: anywhere; }
@@ -212,13 +214,22 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .sec.toggle:hover .chev { opacity: 1; }
 .sec.toggle.open .chev { transform: rotate(90deg); }
 .top { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); position: relative; }
-.search { flex: 1; height: var(--ctl-h); border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); padding: 0 var(--space-3); outline: none; }
+.search { flex: 1; min-width: 48px; width: 0; height: var(--ctl-h); border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); padding: 0 var(--space-3); outline: none; }
 .search:focus { border-color: var(--accent); }
 .top-tools { display: flex; gap: var(--space-2); align-items: center; position: relative; flex: none; }
 .top-tools .btn { padding: 0 10px; }
 .top-tools .btn .chev { font-size: 11px; opacity: .6; transform: rotate(90deg); transition: transform var(--motion-quick) var(--ease); }
 .top-tools .btn.active .chev { transform: rotate(-90deg); }
 .top-tools .btn.icon { width: var(--ctl-h); padding: 0; }
+/* The top bar shrinks in steps when the room runs out (fitTop: the library beside the lightbox, a narrow
+   window): .tl1 — short labels (Sort "DM", "Flt", "Seq"); .tl2 — icons only (no chevrons). */
+.tl-s, .tl-i { display: none; }
+.top.tl1 .tl-l, .top.tl2 .tl-l, .top.tl2 .tl-s, .top.tl2 .chev { display: none; }
+.top.tl1 .tl-s { display: inline; }
+.top.tl2 .tl-i { display: inline-block; vertical-align: -3px; }
+.top.tl2 .tl-ix { margin-right: 0 !important; }
+.top.tl2 .top-tools { gap: 4px; }
+.top.tl2 .top-tools .btn:not(.icon) { padding: 0 7px; }
 .top-tools .btn.on, .top-tools .btn.active { border-color: var(--accent); color: var(--fg); }
 .top-pop { position: absolute; z-index: 100; top: calc(100% + 6px); left: 0; min-width: 200px; max-height: 70vh; overflow: auto; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
 #viewOptPop { left: auto; right: 0; min-width: 170px; }
@@ -230,6 +241,7 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .top-pop .opt { padding: 0 10px; height: 34px; }
 /* Filter ▾ — the filter builder (filter-core.js): rows field · operator · value in All / Any groups */
 #filterPop { left: auto; right: 0; width: min(640px, calc(100vw - 24px)); padding: 8px; }
+#filterPop.flt-fixed { position: fixed; right: auto; }
 #filterPop .flt-group { display: flex; flex-direction: column; gap: 6px; }
 #filterPop .flt-group:not(.root) { padding: 6px 8px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--surface-3) 40%, transparent); }
 #filterPop .flt-ghead, #filterPop .flt-row, #filterPop .flt-gacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -831,14 +843,14 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
       <button class="btn ghost icon" id="splitBtn" type="button" title="Show the library beside the board (Tab)" hidden>◧</button>
       <input class="search" id="q" placeholder="Search names &amp; tags  /" />
       <div class="top-tools">
-        <button class="btn ghost" id="filterBtn" type="button" title="Filter by fields: conditions in All / Any groups">Filter<span class="chev">›</span></button>
+        <button class="btn ghost" id="filterBtn" type="button" title="Filter by fields: conditions in All / Any groups" aria-label="Filter"><span class="tl-l">Filter</span><span class="tl-s">Flt</span><svg class="tl-i" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/></svg><span class="chev">›</span></button>
         <div class="top-pop" id="filterPop" hidden></div>
-        <button class="btn ghost" id="sortBtn" type="button">Sort<span class="chev">›</span></button>
+        <button class="btn ghost" id="sortBtn" type="button" title="Sort" aria-label="Sort">Sort<span class="chev">›</span></button>
         <div class="top-pop" id="sortPop" hidden></div>
         <button class="btn ghost icon" id="viewOptBtn" type="button" title="Display options">▤</button>
         <div class="top-pop" id="viewOptPop" hidden></div>
-        <button class="btn ghost" id="seqBtn" type="button" title="Play the selected videos one after another, in the order they were selected (Space over a selected one)" hidden>▶▶ Sequence</button>
-        <button class="btn ghost" id="cmpSelBtn" type="button" title="Compare the selected images / videos side by side (K)" hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg>Compare</button>
+        <button class="btn ghost" id="seqBtn" type="button" title="Play the selected videos one after another, in the order they were selected (Space over a selected one)" aria-label="Play in sequence" hidden>▶▶<span class="tl-l"> Sequence</span><span class="tl-s"> Seq</span></button>
+        <button class="btn ghost" id="cmpSelBtn" type="button" title="Compare the selected images / videos side by side (K)" aria-label="Compare" hidden><svg class="tl-ix" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg><span class="tl-l">Compare</span><span class="tl-s">Cmp</span></button>
         <button class="btn ghost icon an-btn" id="boardNotesBtn" type="button" title="The board's notes — read them, click a picture to go there (C)" aria-label="Board notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost icon" id="boardEyeBtn" type="button" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost icon an-btn" id="boardAnnoBtn" type="button" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
@@ -883,16 +895,19 @@ const VIEW_MODE_KEY = "sight.viewMode";
 const SORT_KEY = "sight.sort";
 // [key, label] — key "" is the default (insertion/scan order, i.e. no sort). Sent to the server
 // as ?sort=<key>&order=asc|desc; see Library._SORT_EXPR (app/library.py) for what each maps to.
+// The top bar's sort / filter icons, shown when it is too narrow for labels (fitTop, .tl2).
+const SORT_ICON = `<svg class="tl-i" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h5"/></svg>`;
+const FILTER_ICON = `<svg class="tl-i" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/></svg>`;
 const SORT_OPTIONS = [
-  ["", "Manual"],
-  ["name", "Name"],
-  ["kind", "Type"],
-  ["added", "Date added"],
-  ["modified", "Date modified"],
-  ["size", "Size"],
-  ["res", "Resolution"],
-  ["rating", "Rating"],
-  ["tag", "Tag"],
+  ["", "Manual", "Man"],
+  ["name", "Name", "Name"],
+  ["kind", "Type", "Type"],
+  ["added", "Date added", "DA"],
+  ["modified", "Date modified", "DM"],
+  ["size", "Size", "Size"],
+  ["res", "Resolution", "Res"],
+  ["rating", "Rating", "Rate"],
+  ["tag", "Tag", "Tag"],
 ];
 
 // Every knob in Settings lives on one object, persisted as one blob — see §9/§10 of the
@@ -3022,6 +3037,7 @@ function paintSelection(){
   if (sb) sb.hidden = nSeq < 2;
   const cb = document.getElementById("cmpSelBtn");
   if (cb) cb.hidden = cmpCandidates(state.selectedIds).length < 2;
+  fitTop();
   syncTouchSel(nSeq);
   if (light) paintCmpBtn(); // (the files selected in the library beside the lightbox can be compared)
 }
@@ -10465,10 +10481,25 @@ function renderOptions(){
 // Sort button + its dropdown, next to the search bar. The asc/desc toggle is the dropdown's own
 // top row (data-act="dir") rather than a separate button — flipping it re-renders the row in
 // place and re-sorts immediately, without closing the dropdown.
+// The top bar's labels step down while the search box would get too narrow: full → short (.tl1) → icons (.tl2).
+function fitTop(){
+  const top = document.querySelector(".main > .top"), q = $("q");
+  if (!top || !q) return;
+  for (const lv of [0, 1, 2]){
+    top.classList.toggle("tl1", lv === 1);
+    top.classList.toggle("tl2", lv === 2);
+    if (lv === 2 || (q.offsetWidth >= 160 && top.scrollWidth <= top.clientWidth + 1)) break;
+  }
+}
+new ResizeObserver(() => fitTop()).observe(document.querySelector(".main > .top"));
 function renderSortBtn(){
   const opt = SORT_OPTIONS.find(([k]) => k === state.sort.key) || SORT_OPTIONS[0];
   const arrow = state.sort.key ? (state.sort.dir === "desc" ? " ↓" : " ↑") : "";
-  $("sortBtn").innerHTML = `${esc(state.sort.key ? "Sort: " + opt[1] : "Sort")}${esc(arrow)}<span class="chev">›</span>`;
+  const full = state.sort.key ? "Sort: " + opt[1] : "Sort";
+  const b = $("sortBtn");
+  b.innerHTML = `<span class="tl-l">${esc(full)}</span><span class="tl-s">${esc(state.sort.key ? opt[2] : "Sort")}</span>${SORT_ICON}${esc(arrow)}<span class="chev">›</span>`;
+  b.title = full + arrow;
+  fitTop();
   $("sortBtn").classList.toggle("active", topPopOpen === "sortPop");
 }
 function renderSortPop(){
@@ -10530,14 +10561,23 @@ function filterCtx(){
 function renderFilterBtn(){
   const c = filterCtx(), n = c.fields ? SightFilter.count(c.tree, c.fields) : (c.tree.c.length ? 1 : 0);
   const b = $("filterBtn");
-  b.innerHTML = `${n ? `Filter · ${n}` : "Filter"}<span class="chev">›</span>`;
+  b.innerHTML = `<span class="tl-l">${n ? `Filter · ${n}` : "Filter"}</span><span class="tl-s">${n ? `Flt·${n}` : "Flt"}</span>${FILTER_ICON}${n ? `<span class="tl-i" style="margin-left:2px">${n}</span>` : ""}<span class="chev">›</span>`;
   b.classList.toggle("on", !!n);
+  fitTop();
 }
 function renderFilterPop(){
   const pop = $("filterPop"), c = filterCtx(), my = ++fltSeq;
   const narrow = matchMedia("(max-width: 720px)").matches, top = Math.round($("filterBtn").getBoundingClientRect().bottom + 6);
   pop.style.top = narrow ? top + "px" : "";
   pop.style.maxHeight = narrow ? Math.max(160, window.innerHeight - top - 8) + "px" : "";
+  // Beside the lightbox the top bar ends at the divider, so the pop (right-aligned to the button, inside .main's
+  // overflow clip) would lose its left part: there it is fixed, from the library's left edge, over the lightbox.
+  const fix = !narrow && document.body.classList.contains("light-split");
+  pop.classList.toggle("flt-fixed", fix);
+  if (fix) pop.style.top = top + "px";
+  const fl = fix ? Math.round(document.querySelector(".main").getBoundingClientRect().left + 8) : 0;
+  pop.style.left = fix ? fl + "px" : "";
+  pop.style.width = fix ? Math.min(640, window.innerWidth - fl - 8) + "px" : "";
   const mount = (fields) => {
     pop.innerHTML = "";
     const host = document.createElement("div");

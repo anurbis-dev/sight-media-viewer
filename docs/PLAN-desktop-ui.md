@@ -29,7 +29,7 @@ Mark done items with `[x]` and the version.
 
 ## L — large, cross-cutting
 - [x] 18. (0.122.14) Compare mode works for still images. *(already worked — grid selection, drop onto the lightbox, annotate; the hint now fits pictures only. One picture with no versions in the lightbox is item 21.)*
-- [ ] 19. Tab browser = the main browser shrunk by a splitter (not a separate window); search box can get
+- [x] 19. (0.123.0) Tab browser = the main browser shrunk by a splitter (not a separate window); search box can get
       narrower, filter / sort labels shorten to 3–4 letters (e.g. Date Modified = DM), then icons only.
 - [ ] 20. Interactive scale of the whole UI: one slider in Settings scaling everything proportionally on top
       of the current per-element settings; plus a separate setting for icon-button size.

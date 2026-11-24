@@ -53,12 +53,15 @@
   It stays open while you flip through files and is remembered next time.
 - **PSD layers** — in the lightbox of a PSD press `D` (or the ☰ button bottom-right) for the layer
   list; click a layer to view it alone, "Composite" to return to the full image.
-- **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar It opens with the grid scrolled to the file being viewed.
+- **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar
   and the library grid on the left and the lightbox / video player on the right, with a divider to drag
   (the width is remembered; the sidebar's Canvas section is hidden there). Click a thumbnail to show it in the player (Ctrl / Shift-click only selects), drag pictures from the grid onto the frame
   as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
   way you left it. On a board `Tab` shows / hides the library beside it in the same way (◧ now sits at the
-  left of the top bar).
+  left of the top bar). It opens with the grid scrolled to the file being viewed. It is the library itself, top bar
+  included (search, Filter, Sort), cut at the divider: as it gets narrower the search box shrinks, then Filter /
+  Sort and the other buttons shorten to a few letters (Sort by Date modified = *DM*), then to icons only (the
+  full name is in the tooltip). The same happens in a narrow window.
 - **Reading notes** — the speech-bubble button in the lightbox's top bar (its badge counts the notes) or `C`
   opens the notes panel without the drawing tools: read the notes and replies, click a note or its picture to go
   to its frame / view (only its drawings show; Esc shows all again). The same button sits in the top bar for a
