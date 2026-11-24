@@ -53,6 +53,8 @@ rem DLLs for the virus scanner on a fresh build's first start). Keep the lists i
   --clean ^
   --add-data "%~dp0app\static;app\static" ^
   --add-data "%~dp0app\splash.png;app" ^
+  --add-data "%~dp0app\sight.ico;app" ^
+  --icon "%~dp0app\sight.ico" ^
   --add-data "%~dp0app\initial_filtering.ini;app" ^
   --collect-all pxr ^
   --exclude-module tkinter ^

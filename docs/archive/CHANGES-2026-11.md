@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.111.2 — 2026-11-23 — Swipe scrub shows every layer
+- **What:** dragging in Swipe compare moves every layer. Before, the reference's scrub picture covered the other regions, so only the file that was open in the lightbox (the reference, until you change ★) followed the pointer.
+- **Where:** app/static/compare.js (`.cmp-ly` is `isolation: isolate`); ARCHITECTURE.
+- **Notes:** the scrub proxy stays `z-index: 2` so it paints over its own file, inside the layer. The reference layer is not clipped (it is the backdrop, including for Difference). Labels (`z-index: 4`) and splits (`z-index: 5`) stay above the layers. `clip-path: inset(0)` on `.cmp-m` is unchanged (Windows hardware overlays). A layer whose scrub copy is not ready yet still holds its last frame until the pointer goes up; that is separate from this cover.
+- **Review:** a fresh reviewer confirmed the stacking fix and found no code bug. It found one doc miss: the new ARCHITECTURE sentences sat in front of “a copy of the reference under each cell for the same effect,” so that phrase read as the scrub cover. Those canvases are only the Difference blend under other tiles (Over tiles have none). The `.cmp-ly` comment also named the lightbox file as the covering clip; it is the reference (★), which starts as that file. Both wordings are fixed. The same reviewer confirmed them and found nothing new.
+
 ## 0.111.1 — 2026-11-23 — Compare takes the RAM cache as soon as it opens
 - **What:** opening a comparison splits the RAM cache across its clips straight away, paused or playing. A clip left open underneath no longer keeps the whole budget.
 - **Where:** app/library.py (`SlidingVideoCache._claim` / `focus_gen` on `focus`, `focus_many`, `release`); app/server.py (`POST /api/video/focus` body `gen`); app/static/index.html (`openCompare` holds the lightbox focus, `pushVideoFocus`); app/static/compare.js (posts on open); MANUAL; ARCHITECTURE; tests/test_video_cache.py.

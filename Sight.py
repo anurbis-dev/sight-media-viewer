@@ -366,6 +366,132 @@ def _find_browser_window(pids: set[int], user32) -> int | None:
     return found[0] if found else None
 
 
+# Taskbar identity (Windows). The browser's window carries the browser's own AppUserModelID, so the
+# taskbar shows "Microsoft Edge" whatever the page title says. Setting System.AppUserModel.ID on the
+# window (SHGetPropertyStoreForWindow) to APP_ID, and giving the Start Menu shortcut the same id, makes
+# Windows show the shortcut's name and icon instead. Tested: the window's id reads back as set.
+APP_ID = "Sight.MediaViewer"
+APP_NAME = "Sight Media Viewer"
+_IID_IPROPERTYSTORE = "886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"
+_PKEY_APPUSERMODEL_ID_FMTID = "9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"
+
+
+def _guid_bytes(text: str):
+    import ctypes
+    import uuid
+
+    return (ctypes.c_ubyte * 16)(*uuid.UUID(text).bytes_le)
+
+
+def _store_set_app_id(store: int) -> bool:
+    """Sets System.AppUserModel.ID = APP_ID on an IPropertyStore (vtable: 2 Release, 6 SetValue,
+    7 Commit) and commits it. `store` is the raw interface pointer."""
+    import ctypes
+
+    class PropKey(ctypes.Structure):
+        _fields_ = [("fmtid", ctypes.c_ubyte * 16), ("pid", ctypes.c_uint32)]
+
+    class PropVariant(ctypes.Structure):
+        _fields_ = [("vt", ctypes.c_uint16), ("r1", ctypes.c_uint16), ("r2", ctypes.c_uint16),
+                    ("r3", ctypes.c_uint16), ("p", ctypes.c_void_p), ("p2", ctypes.c_int64)]
+
+    # `release` is bound before the try, so the finally below can never hit an unbound name.
+    vtbl = ctypes.cast(ctypes.c_void_p(store), ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])
+    try:
+        set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(PropKey),
+                                       ctypes.POINTER(PropVariant))(vtbl[6])
+        commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtbl[7])
+        buf = ctypes.create_unicode_buffer(APP_ID)  # VT_LPWSTR; SetValue copies it, so buf lives until then
+        key = PropKey(_guid_bytes(_PKEY_APPUSERMODEL_ID_FMTID), 5)
+        pv = PropVariant(vt=31, p=ctypes.cast(buf, ctypes.c_void_p))
+        hr = set_value(store, ctypes.byref(key), ctypes.byref(pv))
+        if hr == 0:
+            hr = commit(store)
+        return hr == 0
+    finally:
+        release(store)
+
+
+def set_window_app_id(hwnd: int) -> bool:
+    """Gives one browser window APP_ID as its taskbar identity. Never raises: failing only means the
+    taskbar keeps the browser's name, as before."""
+    import ctypes
+
+    if sys.platform != "win32":
+        return False
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, 0)  # see set_shortcut_app_id()
+        store = ctypes.c_void_p()
+        hr = ctypes.windll.shell32.SHGetPropertyStoreForWindow(
+            ctypes.c_void_p(hwnd), ctypes.byref(_guid_bytes(_IID_IPROPERTYSTORE)), ctypes.byref(store))
+        return hr == 0 and bool(store.value) and _store_set_app_id(store.value)
+    except Exception:
+        return False
+
+
+def shortcut_path() -> Path | None:
+    """The Start Menu shortcut that names Sight in the taskbar (Windows)."""
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / f"{APP_NAME}.lnk"
+
+
+def ensure_start_menu_shortcut() -> None:
+    """Writes the 'Sight Media Viewer' Start Menu shortcut (Windows) if it is missing or points at
+    another copy of the app, then gives it APP_ID. Runs in a background thread at startup and never
+    raises: without it the taskbar just keeps the browser's name."""
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess as sp
+
+        lnk = shortcut_path()
+        if lnk is None:
+            return
+        if getattr(sys, "frozen", False):
+            target, args = sys.executable, ""
+        else:
+            pyw = Path(sys.executable).with_name("pythonw.exe")
+            target = str(pyw if pyw.exists() else sys.executable)
+            args = f'"{Path(__file__).resolve()}"'
+        # PowerShell only for the .lnk fields (WScript.Shell); the paths travel in the environment so
+        # no quoting is involved. Exits at once when the shortcut already matches.
+        icon = str(bundle_root() / "app" / "sight.ico")
+        script = (
+            "$p=$env:SIGHT_LNK; $t=$env:SIGHT_T; $a=$env:SIGHT_A; $w=$env:SIGHT_W; $i=$env:SIGHT_I; "
+            "$sh=New-Object -ComObject WScript.Shell; "
+            "if (Test-Path -LiteralPath $p) { $o=$sh.CreateShortcut($p); if ($o.TargetPath -eq $t -and $o.Arguments -eq $a -and $o.IconLocation -eq \"$i,0\") { exit 0 } }; "
+            "$s=$sh.CreateShortcut($p); $s.TargetPath=$t; $s.Arguments=$a; $s.WorkingDirectory=$w; $s.IconLocation=\"$i,0\"; "
+            "$s.Description='Sight media viewer'; $s.Save()"
+        )
+        env = dict(os.environ, SIGHT_LNK=str(lnk), SIGHT_T=target, SIGHT_A=args, SIGHT_I=icon,
+                   SIGHT_W=str(Path(__file__).resolve().parent))
+        sp.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], env=env,
+               creationflags=0x08000000, timeout=20, check=False)  # CREATE_NO_WINDOW
+        set_shortcut_app_id(lnk)
+    except Exception:
+        return
+
+
+def set_shortcut_app_id(lnk: Path) -> bool:
+    """Writes System.AppUserModel.ID = APP_ID into the .lnk (what ties the shortcut's name and icon to
+    the window's taskbar identity). Never raises."""
+    import ctypes
+
+    try:
+        # The thread that calls this (the startup thread) has not initialised COM, and without it the
+        # call fails with CO_E_NOTINITIALIZED. MTA; S_FALSE / RPC_E_CHANGED_MODE just mean it already is.
+        ctypes.windll.ole32.CoInitializeEx(None, 0)
+        store = ctypes.c_void_p()
+        hr = ctypes.windll.shell32.SHGetPropertyStoreFromParsingName(
+            str(lnk), None, 2, ctypes.byref(_guid_bytes(_IID_IPROPERTYSTORE)), ctypes.byref(store))  # GPS_READWRITE
+        return hr == 0 and bool(store.value) and _store_set_app_id(store.value)
+    except Exception:
+        return False
+
+
 def _offscreen_point() -> tuple[int, int]:
     """A fixed point far outside any plausible monitor arrangement — _open() launches the browser
     window there instead of hiding it (see reveal_when_ready() for why hiding doesn't work).
@@ -421,6 +547,7 @@ def reveal_when_ready(
             time.sleep(0.02)
     if hwnd is None:
         return
+    set_window_app_id(hwnd)  # the taskbar shows the Start Menu shortcut's name, not "Microsoft Edge"
     if maximized:
         user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
     _bring_to_front(hwnd, user32)
@@ -543,6 +670,8 @@ def _wait_for_ping(ready_port: int, timeout: float) -> None:
 def main() -> None:
     allow_foreground_handoff()
     fix_frozen_streams()
+    if sys.platform == "win32":
+        threading.Thread(target=ensure_start_menu_shortcut, daemon=True).start()
     import argparse
 
     parser = argparse.ArgumentParser(add_help=False)
