@@ -17,7 +17,7 @@ Mark done items with `[x]` and the version.
 
 ## M — medium, one subsystem
 - [x] 10. (0.122.7) Lightbox rotation pivots on the file's centre (after panning), not on the window centre.
-- [ ] 11. The stroke marquee works in world coordinates, independent of the file's rotation.
+- [x] 11. (0.122.8) The stroke marquee works in world coordinates, independent of the file's rotation.
 - [ ] 12. Interactive thumbnail size snaps to values where icons fill the window width (no empty strip on the right).
 - [ ] 13. HTML export: pictures are not enlarged when drawings go outside the file bounds.
 - [ ] 14. Compare mode: markers for frames with drawings are missing on the shared timeline.

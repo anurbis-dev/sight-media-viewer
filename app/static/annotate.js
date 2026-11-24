@@ -1280,8 +1280,42 @@ export function createAnnotator(host){
   // The pointer in the surface's px, in the viewer's unturned frame (the lightbox can turn /
   // mirror the view; the layer turns with the picture, so everything below works unturned).
   function local(e){
-    const r = surfaceEl().getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    const [x, y] = rawLocal(e);
     return S.b2?.unturn ? S.b2.unturn(x, y) : [x, y];
+  }
+  // The pointer in the surface's px as on screen (not unturned): the marquee box lives here, so it stays
+  // upright on screen however the picture is turned / mirrored.
+  function rawLocal(e){
+    const r = surfaceEl().getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  }
+  // A screen box [x0, y0, x1, y1] as its four corners in the unturned frame (the layer's own px).
+  function boxQuad(m){
+    const x0 = Math.min(m[0], m[2]), x1 = Math.max(m[0], m[2]), y0 = Math.min(m[1], m[3]), y1 = Math.max(m[1], m[3]);
+    const un = S.b2?.unturn || ((x, y) => [x, y]);
+    return [un(x0, y0), un(x1, y0), un(x1, y1), un(x0, y1)];
+  }
+  // Does the doc-space box b [x0, y0, x1, y1] touch the convex quad q (separating axes: the box's two and q's edges)?
+  function boxMeetsQuad(b, q){
+    const bc = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];
+    const axes = [[1, 0], [0, 1]];
+    for (let i = 0; i < 4; i++){ const a = q[i], c = q[(i + 1) % 4]; axes.push([c[1] - a[1], a[0] - c[0]]); }
+    for (const [ax, ay] of axes){
+      let p0 = Infinity, p1 = -Infinity, r0 = Infinity, r1 = -Infinity;
+      for (const [x, y] of q){ const d = x * ax + y * ay; p0 = Math.min(p0, d); p1 = Math.max(p1, d); }
+      for (const [x, y] of bc){ const d = x * ax + y * ay; r0 = Math.min(r0, d); r1 = Math.max(r1, d); }
+      if (p1 < r0 || r1 < p0) return false;
+    }
+    return true;
+  }
+  // Is the point inside the convex quad q (either winding: a mirror flips it)?
+  function inQuad(x, y, q){
+    let pos = false, neg = false;
+    for (let i = 0; i < 4; i++){
+      const a = q[i], c = q[(i + 1) % 4], z = (c[0] - a[0]) * (y - a[1]) - (c[1] - a[1]) * (x - a[0]);
+      if (z > 1e-9) pos = true; else if (z < -1e-9) neg = true;
+    }
+    return !(pos && neg);
   }
   function toDoc(e){
     const g = geom(), [x, y] = local(e);
@@ -1471,8 +1505,8 @@ export function createAnnotator(host){
       html += `<rect fill="none" stroke="#4c9aff" stroke-width="1" stroke-dasharray="3 3" x="${r2(Math.min(a[0], c[0]))}" y="${r2(Math.min(a[1], c[1]))}" width="${r2(Math.abs(c[0] - a[0]))}" height="${r2(Math.abs(c[1] - a[1]))}"/>`;
     }
     if (S.drag?.marquee){
-      const m = S.drag.marquee;
-      html += `<rect class="an-marquee" x="${r2(Math.min(m[0], m[2]))}" y="${r2(Math.min(m[1], m[3]))}" width="${r2(Math.abs(m[2] - m[0]))}" height="${r2(Math.abs(m[3] - m[1]))}"/>`;
+      // (drawn in the turned layer as the unturned corners of the screen box, so it shows upright)
+      html += `<polygon class="an-marquee" points="${boxQuad(S.drag.marquee).map(([px, py]) => `${r2(px)},${r2(py)}`).join(" ")}"/>`;
     }
     if (S.region?.rect){
       const m = S.region.rect, g = geom();
@@ -1775,7 +1809,8 @@ export function createAnnotator(host){
       // a mouse (plain empty space orbits), the Box button is touch's.
       if (ctrl && !e.altKey){
         grab(e);
-        S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: !e.shiftKey, hit: hit?.id || null, boxed: false, pid: e.pointerId };
+        const [rx, ry] = rawLocal(e);
+        S.drag = { marquee: [rx, ry, rx, ry], base: new Set(S.sel), toggle: !e.shiftKey, hit: hit?.id || null, boxed: false, pid: e.pointerId };
         renderSel(); renderProps();
         return;
       }
@@ -1799,7 +1834,8 @@ export function createAnnotator(host){
       if (e.altKey) return;
       grab(e);
       if (!e.shiftKey) S.sel.clear();  // Shift: the box adds (Ctrl took the branch above)
-      S.drag = { marquee: [sx, sy, sx, sy], base: new Set(S.sel), toggle: false, pid: e.pointerId };
+      const [rx, ry] = rawLocal(e);
+      S.drag = { marquee: [rx, ry, rx, ry], base: new Set(S.sel), toggle: false, pid: e.pointerId };
       renderSel(); renderProps();
       return;
     }
@@ -2027,13 +2063,13 @@ export function createAnnotator(host){
     if (D.eraser){ eraseAt(x, y); renderSel(); return; }
     if (D.marquee){
       if (D.pid !== e.pointerId) return;
-      if (!D.boxed && hyp(sx - D.marquee[0], sy - D.marquee[1]) <= 4) return;  // a click so far (onUp)
+      const [rx, ry] = rawLocal(e);  // (screen px: the box stays upright on screen whatever the picture's turn)
+      if (!D.boxed && hyp(rx - D.marquee[0], ry - D.marquee[1]) <= 4) return;  // a click so far (onUp)
       D.boxed = true;
-      D.marquee[2] = sx; D.marquee[3] = sy;
-      const [ax, ay] = toDocS(Math.min(D.marquee[0], sx), Math.min(D.marquee[1], sy));
-      const [bx, by] = toDocS(Math.max(D.marquee[0], sx), Math.max(D.marquee[1], sy));
+      D.marquee[2] = rx; D.marquee[3] = ry;
+      const q = boxQuad(D.marquee).map(([qx, qy]) => toDocS(qx, qy));  // the box in doc units (a turned quad)
       // A colour correction area only when the box holds all of it (a box round marks inside a big area leaves it out).
-      const inBox = new Set(visibleDrawings().filter((it) => { const b = boundsOf(it); return typeOf(it) === "grade" ? b[0] >= ax && b[2] <= bx && b[1] >= ay && b[3] <= by : b[0] <= bx && b[2] >= ax && b[1] <= by && b[3] >= ay; }).map((it) => it.id));
+      const inBox = new Set(visibleDrawings().filter((it) => { const b = boundsOf(it); return typeOf(it) === "grade" ? [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].every(([px, py]) => inQuad(px, py, q)) : boxMeetsQuad(b, q); }).map((it) => it.id));
       S.sel = new Set(D.base);
       for (const id of inBox){ if (D.toggle && D.base.has(id)) S.sel.delete(id); else S.sel.add(id); }
       renderSel();

@@ -154,7 +154,7 @@
     that leaves no mark still counts as that point, so the next Shift+click can start there. Holding `Shift` and dragging keeps
     lines, arrows, a pin's line and straight brush strokes horizontal or vertical
     (also when dragging a line's end), and makes rectangles square and ellipses round. Select tool: click /
-    drag a box on empty space to select. `Ctrl`+click or a `Ctrl`+drag box (even one starting on a drawing)
+    drag a box on empty space to select (the box stays upright on screen when the picture is turned). `Ctrl`+click or a `Ctrl`+drag box (even one starting on a drawing)
     toggles, as in the library grid; `Shift`+click, a `Shift`+drag box and `Ctrl+Shift`+drag add. In 3D, where
     empty space orbits, `Ctrl`+drag or the *Box* switch draws the box. Drag to move (Shift locks the axis), Alt+drag duplicates,
     corner handles scale (Shift keeps the ratio), the round knob rotates (Shift: 15° steps) — while
