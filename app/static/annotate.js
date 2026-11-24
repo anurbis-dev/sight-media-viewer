@@ -3093,7 +3093,7 @@ export function createAnnotator(host){
     h.title = "Drag to resize the panel (double-click: default width)";
     el.append(h);
     applyPanelW(hostEl);
-    window.addEventListener("resize", () => applyPanelW(hostEl));  // (a saved width is re-fitted to a smaller window)
+    if (!hostEl.isConnected || !hostEl._anPwWired){ hostEl._anPwWired = true; window.addEventListener("resize", () => { if (hostEl.isConnected) applyPanelW(hostEl); }); }  // (a saved width is re-fitted to a smaller window; one listener per host)
     let drag = null;
     h.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -3115,7 +3115,7 @@ export function createAnnotator(host){
       drag = null; h.classList.remove("on");
       writeJSON("sight.annotate.panelw", panelW);
       // A double tap resets on touch (touch-action: none swallows the browser's dblclick there).
-      if (!moved && e.pointerType !== "mouse"){ if (Date.now() - tapAt < 400){ tapAt = 0; h.dispatchEvent(new MouseEvent("dblclick")); } else tapAt = Date.now(); }
+      if (!moved && e.type === "pointerup" && e.pointerType !== "mouse"){ if (Date.now() - tapAt < 400){ tapAt = 0; h.dispatchEvent(new MouseEvent("dblclick")); } else tapAt = Date.now(); }
     };
     h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
     h.addEventListener("dblclick", () => { panelW = 0; applyPanelW(hostEl); writeJSON("sight.annotate.panelw", 0); });
