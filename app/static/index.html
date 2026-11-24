@@ -3585,6 +3585,17 @@ function toggleLightSplit(){
   applyViewDom();
   saveLayout();
   paintCmpBtn();
+  if (state.lightSplit) scrollGridToLight();
+}
+// The library beside the lightbox opens on the file being viewed (the grid was scrolled elsewhere, or is narrower now).
+// Once now and once after the resize observers have re-laid the grid out at its new width.
+function scrollGridToLight(){
+  const go = () => {
+    const id = light?.id, i = id ? state.items.findIndex((a) => a.id === id) : -1;
+    if (i >= 0 && lightSplitOn() && !grid.hidden) scrollGridToIndex(i);
+  };
+  go();
+  requestAnimationFrame(go);
 }
 new ResizeObserver(() => { if (lightSplitOn()) placeLightSplit(); }).observe(grid);
 

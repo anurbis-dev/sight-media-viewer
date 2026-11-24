@@ -53,7 +53,7 @@
   It stays open while you flip through files and is remembered next time.
 - **PSD layers** — in the lightbox of a PSD press `D` (or the ☰ button bottom-right) for the layer
   list; click a layer to view it alone, "Composite" to return to the full image.
-- **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar
+- **Library beside the player** — `Tab` (or ◧ at the left end of the lightbox's top bar) shows the sidebar It opens with the grid scrolled to the file being viewed.
   and the library grid on the left and the lightbox / video player on the right, with a divider to drag
   (the width is remembered; the sidebar's Canvas section is hidden there). Click a thumbnail to show it in the player (Ctrl / Shift-click only selects), drag pictures from the grid onto the frame
   as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
