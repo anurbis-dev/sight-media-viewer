@@ -3077,6 +3077,49 @@ export function createAnnotator(host){
   }
 
   // ---- review panel ---------------------------------------------------------------------------
+  // The panel's left edge is a handle: drag it to set the width (kept with the settings), double-click for the default.
+  // The width is the host's --an-pw (the CSS lays the bar, toasts and the picture out around it).
+  const PW = [240, 900, 320];  // min, max, default (px)
+  let panelW = readJSON("sight.annotate.panelw", 0);
+  // (the room: at most 80% of the window, 62% on a board — the picture / board must stay usable)
+  const panelRoom = (hostEl) => Math.min(PW[1], (hostEl.clientWidth || 1200) * (host.board ? 0.62 : 0.8));
+  function applyPanelW(hostEl){
+    if (!panelW){ hostEl.style.removeProperty("--an-pw"); return; }
+    hostEl.style.setProperty("--an-pw", Math.round(Math.min(panelRoom(hostEl), Math.max(PW[0], panelW))) + "px");
+  }
+  function bindPanelEdge(el, hostEl){
+    const h = document.createElement("div");
+    h.className = "an-edge";
+    h.title = "Drag to resize the panel (double-click: default width)";
+    el.append(h);
+    applyPanelW(hostEl);
+    window.addEventListener("resize", () => applyPanelW(hostEl));  // (a saved width is re-fitted to a smaller window)
+    let drag = null;
+    h.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      panelW = Number(readJSON("sight.annotate.panelw", panelW)) || 0;  // (another annotator instance may have set it)
+      drag = { id: e.pointerId, x: e.clientX, w: el.getBoundingClientRect().width };
+      h.classList.add("on");
+      try { h.setPointerCapture(e.pointerId); } catch {}
+    });
+    h.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      panelW = Math.round(Math.min(panelRoom(hostEl), Math.max(PW[0], drag.w + drag.x - e.clientX)));
+      applyPanelW(hostEl);
+    });
+    let tapAt = 0;
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const moved = Math.abs(e.clientX - drag.x) > 3;
+      drag = null; h.classList.remove("on");
+      writeJSON("sight.annotate.panelw", panelW);
+      // A double tap resets on touch (touch-action: none swallows the browser's dblclick there).
+      if (!moved && e.pointerType !== "mouse"){ if (Date.now() - tapAt < 400){ tapAt = 0; h.dispatchEvent(new MouseEvent("dblclick")); } else tapAt = Date.now(); }
+    };
+    h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
+    h.addEventListener("dblclick", () => { panelW = 0; applyPanelW(hostEl); writeJSON("sight.annotate.panelw", 0); });
+  }
   function buildPanel(lightEl){
     const el = document.createElement("aside");
     el.className = "an-panel";
@@ -3220,6 +3263,7 @@ export function createAnnotator(host){
       if (im) showShot(im.dataset.src);
     });
     lightEl.appendChild(el);
+    bindPanelEdge(el, lightEl);  // (after the innerHTML above, which would wipe it)
     return el;
   }
   function focusComposer(){
@@ -3248,6 +3292,7 @@ export function createAnnotator(host){
     if (S.ui){ S.ui.hidden = !show; S.ui.classList.toggle("an-read", !S.on); }
     paintBadge();
     S.light?.classList.toggle("an-panel-on", show);
+    if (show && S.light){ panelW = Number(readJSON("sight.annotate.panelw", panelW)) || 0; applyPanelW(S.light); }  // (the width another annotator instance set)
     paintBar();
     paintBoardPanel();
     if (show) renderPanel();
@@ -3582,7 +3627,7 @@ export function createAnnotator(host){
   }
   // A note's / reply's pictures (its frames with the drawings, attached pictures): one grid of equal
   // squares, each cut to fill (as the phone app shows them), as many to a row as fit at the size
-  // set by a right-drag up / down on the list — the library grid's thumbnail zoom (×0.9 per px, up =
+  // set by a right-drag up / down on the list — the library grid's thumbnail zoom (2.5 px per px, up =
   // bigger), kept with the settings ("sight.annotate.thumb").
   // A board note's picture: the board rectangle it was written at (ctx.bv; an older note: its drawings' bounds)
   // with its drawings in it, vector, over the board's colour. A click flies the camera there (flyToNote).
@@ -3599,6 +3644,7 @@ export function createAnnotator(host){
     return `<div class="an-nprev an-bprev" data-bv="${esc(n.id)}" style="aspect-ratio:${r2(r.w)} / ${r2(r.h)}" title="Go to where this note was written"><svg viewBox="${r2(r.x)} ${r2(r.y)} ${r2(r.w)} ${r2(r.h)}" preserveAspectRatio="xMidYMid meet">${RC.svgMarkup(own, numOf)}</svg></div>`;
   }
   const picGrid = (html) => html ? `<div class="an-pics">${html}</div>` : "";
+  const THUMB_PER_PX = 2.5;  // thumbnail px per px of right-drag (it was 0.9: the whole range took 300 px)
   const THUMB = [40, 320, 62];  // min, max, default (px): four to a row in the panel
   const clampThumb = (n) => Math.round(Math.min(THUMB[1], Math.max(THUMB[0], Number(n) || THUMB[2])));
   let noteThumb = clampThumb(readJSON("sight.annotate.thumb", THUMB[2])), thumbSave = 0;
@@ -3615,7 +3661,7 @@ export function createAnnotator(host){
     list.addEventListener("pointermove", (e) => {
       if (!drag || e.pointerId !== drag.id) return;
       if (!(e.buttons & 2)){ drag = null; return; }  // let go outside the window
-      const n = clampThumb(drag.size + (drag.y - e.clientY) * 0.9);
+      const n = clampThumb(drag.size + (drag.y - e.clientY) * THUMB_PER_PX);
       if (n === noteThumb) return;
       noteThumb = n; apply();
       clearTimeout(thumbSave); thumbSave = setTimeout(() => writeJSON("sight.annotate.thumb", noteThumb), 300);
@@ -5684,7 +5730,7 @@ function injectStyles(){
 .an-textedit { position: absolute; z-index: 6; margin: 0; padding: 0; border: 1px dashed #4c9aff; outline: none; resize: none; overflow: hidden; white-space: pre; min-width: 24px; box-sizing: content-box; }
 .an-top { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: 13; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; max-width: calc(100% - 140px); }
 .an-top[hidden] { display: none; }
-.an-host.an-panel-on .an-top { left: calc(50% - 160px); max-width: calc(100% - 460px); }
+.an-host.an-panel-on .an-top { left: calc(50% - var(--an-pw, 320px) / 2); max-width: calc(100% - var(--an-pw, 320px) - 140px); }
 .an-bar, .an-props { pointer-events: auto; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 10px; background: rgb(14 14 16 / .78); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--border); box-shadow: 0 10px 30px rgb(0 0 0 / .35); flex-wrap: wrap; justify-content: center; }
 .an-props { padding: 3px 6px; gap: 6px; font-size: 11px; color: var(--muted); min-height: 28px; box-sizing: border-box; }
 .an-props[hidden] { display: none; }
@@ -5723,13 +5769,16 @@ function injectStyles(){
 @media (pointer: coarse) { .an-seg.ico button { width: 34px; height: 34px; } .an-seg.ico svg { width: 20px; height: 20px; } }
 .an-toast { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 30; padding: 7px 14px; border-radius: 999px; font-size: 12px; color: var(--fg); background: rgb(10 10 11 / .82); border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity 160ms ease; white-space: nowrap; max-width: 80%; overflow: hidden; text-overflow: ellipsis; }
 .an-toast.on { opacity: 1; }
-.an-host.an-panel-on .an-toast { left: calc(50% - 160px); }
+.an-host.an-panel-on .an-toast { left: calc(50% - var(--an-pw, 320px) / 2); }
 .an-flash { position: absolute; inset: 0; z-index: 29; background: #fff; opacity: 0; pointer-events: none; }
 .an-flash.go { animation: an-flash .35s ease-out; }
 @keyframes an-flash { 0% { opacity: .35; } 100% { opacity: 0; } }
-.light.an-panel-on { padding-right: 320px; --an-right: 320px; }
-.light.an-panel-on .v3d-gear, .light.an-panel-on .v3d-panel, .light.an-panel-on .frame-pop { right: 336px; }
-.an-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 320px; z-index: 20; display: flex; flex-direction: column; background: var(--surface, #1b1c20); border-left: 1px solid var(--border); box-sizing: border-box; font-size: 12px; color: var(--fg); }
+.light.an-panel-on { padding-right: var(--an-pw, 320px); --an-right: var(--an-pw, 320px); }
+.light.an-panel-on .v3d-gear, .light.an-panel-on .v3d-panel, .light.an-panel-on .frame-pop { right: calc(var(--an-pw, 320px) + 16px); }
+.an-edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 9px; cursor: ew-resize; touch-action: none; z-index: 3; }
+.an-edge::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 2px; background: var(--accent, #4c8dff); opacity: 0; transition: opacity .12s; }
+.an-edge:hover::after, .an-edge.on::after { opacity: .8; }
+.an-panel { position: absolute; right: 0; top: 0; bottom: 0; width: var(--an-pw, 320px); z-index: 20; display: flex; flex-direction: column; background: var(--surface, #1b1c20); border-left: 1px solid var(--border); box-sizing: border-box; font-size: 12px; color: var(--fg); }
 .an-panel[hidden] { display: none; }
 .an-ph { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 14px; border-bottom: 1px solid var(--border); }
 .an-ph b { font-size: 13px; font-weight: 600; }
@@ -5898,7 +5947,7 @@ function injectStyles(){
 .an-mk:hover { transform: scale(1.35); }
 .an-cmpb { border: 1px solid var(--border-strong, #444); background: transparent; color: inherit; border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
 .an-cmpb:hover { border-color: var(--accent); }
-.cmp.an-panel-on { padding-right: 320px; --an-right: 320px; }
+.cmp.an-panel-on { padding-right: var(--an-pw, 320px); --an-right: var(--an-pw, 320px); }
 .cmp-annb.on { color: var(--accent); }
 .light-bar .an-btn { position: relative; }
 .light-bar .an-btn.on { color: var(--accent); }

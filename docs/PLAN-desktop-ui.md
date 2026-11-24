@@ -12,8 +12,8 @@ Mark done items with `[x]` and the version.
 - [ ] 5. A dropped file hangs too long where it was released while the drop zone under it is checked.
 - [ ] 6. Bug: dropping a file in annotation mode also adds it to the compare stack.
 - [x] 7. (0.122.3) Lightbox open + Tab: scroll the mini-browser to the current file.
-- [ ] 8. Notes panel: resizing the pictures needs a far too long mouse drag (raise the sensitivity).
-- [ ] 9. Notes panel gets an interactive (draggable) edge to resize it, like the other panels.
+- [x] 8. (0.122.4) Notes panel: resizing the pictures needs a far too long mouse drag (raise the sensitivity).
+- [x] 9. (0.122.4) Notes panel gets an interactive (draggable) edge to resize it, like the other panels.
 
 ## M — medium, one subsystem
 - [ ] 10. Lightbox rotation pivots on the file's centre (after panning), not on the window centre.

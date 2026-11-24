@@ -173,7 +173,7 @@
     picture of each frame in its card; click one of the other frames to go to it; the PDF / web page
     show every frame / view). A card's pictures — its frames and screenshots, a reply's too — are
     small equal squares, each cut to fill (as in the phone app), as many to a row as fit; right-drag up
-    / down on the list makes them bigger / smaller (like the thumbnails in the library grid), kept, the reviewer name (field at the top), and the date. While a new note is being made — you draw, or type in the field — the picture is clean:
+    / down on the list (a short drag goes a long way) makes them bigger / smaller (like the thumbnails in the library grid), kept; the panel's left edge is a handle — drag it (touch too) to set the panel width, double-click / double-tap to reset, the reviewer name (field at the top), and the date. While a new note is being made — you draw, or type in the field — the picture is clean:
     other notes' drawings are hidden until the note is added. *All / Open / In progress / Resolved*
     above the list filter the notes. `?` (or the ? button in the toolbar) opens a list of every annotation shortcut; Esc / ? / a click outside closes it, and nothing underneath reacts while it is open. `S` adds a screenshot of what you see, `Shift+S` one of an area
     you drag out; they go into the note you are writing. Click a note to jump to it (only its drawings
