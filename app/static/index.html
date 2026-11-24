@@ -136,8 +136,15 @@ button:disabled { cursor: default; opacity: .4; }
 .light-slot:not([hidden]) { flex: 1; min-width: 0; }
 body.light-split .insp, body.light-split #inspHandle, body.light-split .nav-canvas { display: none; }
 body.light-split .light { border-left: 1px solid var(--border); }
+/* Interface scale (Settings → Interface, applyUi): the app's chrome is CSS-zoomed by --ui-k on top of every
+   per-element setting — sidebar, top bars, inspector, the drawing toolbar, menus and pops; the pictures, grid tiles, boards and the
+   viewers' own overlays are not (a tile has its own size, a picture its own zoom). Icon buttons get --icon-k on
+   top. Under CSS zoom getBoundingClientRect / clientX are screen px but style px and offsetWidth are the zoomed
+   element's own: JS that places a zoomed element from screen coordinates divides by uiK() (placeMenu, uiPx). */
+.side, .main > .top, .main > .trkbar, .insp, .light-bar, .cmp-bar, .an-top, .ctx, .color-pop, .theme-pop { zoom: var(--ui-k, 1); }
+.btn.icon, .menu, .light-bar > .btn, .cmp-bar > .btn { zoom: var(--icon-k, 1); }
 /* The library's top bar ends at the divider (the lightbox covers the rest), and shrinks to fit there (fitTop). */
-body.light-split .main > .top, body.light-split .main > .trkbar { margin-right: calc(100vw - var(--light-l, 100vw)); }
+body.light-split .main > .top, body.light-split .main > .trkbar { margin-right: calc((100vw - var(--light-l, 100vw)) / var(--ui-k, 1)); } /* (zoomed: vw / px count ×k) */
 body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width: calc(var(--light-l, 100vw) - 24px); }
 .insp > .sec:first-child { margin-top: 0; }
 .insp .insp-name { font-weight: 600; font-size: var(--text-size); line-height: 1.25; margin: 6px 0 4px; overflow-wrap: anywhere; }
@@ -231,7 +238,7 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .top.tl2 .top-tools { gap: 4px; }
 .top.tl2 .top-tools .btn:not(.icon) { padding: 0 7px; }
 .top-tools .btn.on, .top-tools .btn.active { border-color: var(--accent); color: var(--fg); }
-.top-pop { position: absolute; z-index: 100; top: calc(100% + 6px); left: 0; min-width: 200px; max-height: 70vh; overflow: auto; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
+.top-pop { position: absolute; z-index: 100; top: calc(100% + 6px); left: 0; min-width: 200px; max-height: calc(70vh / var(--ui-k, 1)); overflow: auto; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
 #viewOptPop { left: auto; right: 0; min-width: 170px; }
 .top-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; height: 34px; padding: 0 10px; border-radius: 6px; color: var(--fg); }
 .top-pop button:hover { background: var(--surface-3); }
@@ -240,7 +247,7 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .top-pop .sep { height: 1px; margin: 4px 6px; background: var(--border); }
 .top-pop .opt { padding: 0 10px; height: 34px; }
 /* Filter ▾ — the filter builder (filter-core.js): rows field · operator · value in All / Any groups */
-#filterPop { left: auto; right: 0; width: min(640px, calc(100vw - 24px)); padding: 8px; }
+#filterPop { left: auto; right: 0; width: min(640px, calc((100vw - 24px) / var(--ui-k, 1))); padding: 8px; }
 #filterPop.flt-fixed { position: fixed; right: auto; }
 #filterPop .flt-group { display: flex; flex-direction: column; gap: 6px; }
 #filterPop .flt-group:not(.root) { padding: 6px 8px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--surface-3) 40%, transparent); }
@@ -440,14 +447,14 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-stage.framed .light-frame { border-radius: var(--frame-r); background: var(--surface); }
 .light-stage.framed .light-frame::after { display: block; }
 .light-stage.masked .light-frame { width: min(100cqw, calc(100cqh * var(--frame-ar))); height: min(100cqh, calc(100cqw / var(--frame-ar))); }
-.frame-pop { position: absolute; right: 16px; top: 56px; z-index: 12; width: 300px; padding: 10px; border-radius: var(--radius-lg); background: rgb(18 18 20 / .92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); box-shadow: 0 24px 64px rgb(0 0 0 / .5); }
+.frame-pop { position: absolute; right: 16px; top: calc(var(--bar-h, 47px) + 9px); z-index: 12; width: 300px; padding: 10px; border-radius: var(--radius-lg); background: rgb(18 18 20 / .92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); box-shadow: 0 24px 64px rgb(0 0 0 / .5); }
 .frame-pop[hidden] { display: none; }
 /* File info overlay (I) — Blender-style: plain text over the picture, top-left, see renderLightInfo.
    The "i" button sits in the stage's top-left corner (not in the bar), the panel opens beside it. */
-.info-fab { position: absolute; left: calc(16px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font: italic 700 16px/1 Georgia, "Times New Roman", serif; }
+.info-fab { position: absolute; left: calc(16px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(var(--bar-h, 47px) + 22px + var(--hud-in, 0px)); z-index: 10; width: 40px; height: 40px; border-radius: 999px; background: rgb(10 10 11 / .6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--fg); font: italic 700 16px/1 Georgia, "Times New Roman", serif; }
 .info-fab:hover { background: rgb(10 10 11 / .8); }
 .info-fab.on { color: var(--accent); border-color: var(--accent); }
-.light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(69px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
+.light-info { position: absolute; left: calc(64px + var(--hud-in, 0px) + var(--uv-left, 0px)); top: calc(var(--bar-h, 47px) + 22px + var(--hud-in, 0px)); z-index: 9; width: max-content; min-width: 260px; max-width: min(440px, calc(100vw - 80px)); max-height: calc(100vh - 150px); overflow: auto; padding: 10px 12px; border-radius: var(--radius-lg); background: rgb(10 10 11 / .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .06); font-size: 11px; line-height: 1.45; color: var(--fg); font-variant-numeric: tabular-nums; }
 .light-info[hidden] { display: none; }
 .stt-row[hidden] { display: none !important; }
 /* A tracker project's media (ShotGrid Versions, …) in the library grid (tracker-source.js): the filter bar, the filmstrip on a tile */
@@ -459,7 +466,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .trkb-seg button.on { background: var(--surface, #222); color: var(--fg); }
 .trkbar select { height: 28px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
 .trkbar select[hidden] { display: none; }
-.trkb-fpop { position: absolute; right: 14px; top: 100%; z-index: 30; width: 300px; max-height: 60vh; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
+.trkb-fpop { position: absolute; right: 14px; top: 100%; z-index: 30; width: 300px; max-height: calc(60vh / var(--ui-k, 1)); display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface, #1b1b1f); border: 1px solid var(--border); box-shadow: 0 20px 50px rgb(0 0 0 / .45); font-size: 12px; }
 .trkb-fpop[hidden] { display: none; }
 .trkb-fpop input[type=search] { height: 28px; padding: 0 8px; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
 .trkb-flist { overflow: auto; display: flex; flex-direction: column; }
@@ -555,7 +562,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 #boardAnnoBtn.on, #boardNotesBtn.on { color: var(--accent); }
 #boardNotesBtn { position: relative; }
 .v3d-help { padding: 6px 8px 2px; font-size: 11px; line-height: 1.55; color: var(--subtle); }
-.v3d-toast { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); z-index: 12; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--fg); background: rgb(10 10 11 / .75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease); }
+.v3d-toast { position: absolute; left: 50%; top: calc(var(--bar-h, 47px) + 9px); transform: translateX(-50%); z-index: 12; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--fg); background: rgb(10 10 11 / .75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease); }
 .v3d-toast.on { opacity: 1; }
 .v3d-panel h3 { margin: 12px 0 4px; padding: 0 8px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
 .v3d-panel h3:first-child { margin-top: 0; }
@@ -927,6 +934,7 @@ const DEFAULT_THEME = {
   cardHover: 32, // hover frame brightness, % of the frame color mixed in on top of the base style
   waveColor: "#5b8cff", waveMode: "mirror",
   zoomSpeed: 1, zoomAxis: "y", zoomInvert: false,
+  uiScale: 1, iconScale: 1, // Settings → Interface: the whole chrome's zoom, and icon buttons' on top (applyUi)
   maskShape: "free", maskRadius: 0, // fullscreen preview frame — see MASKS / applyLightFrame()
 };
 // Built-in theme presets, selectable in Settings alongside user-saved ones (renderThemeList()).
@@ -1373,9 +1381,9 @@ async function openUserPanel(anchor){
   inp.addEventListener("change", () => setReviewerName(inp.value));
   inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (hotkey(e, "Enter") || hotkey(e, "Escape")) closeUserPanel(); });
   paintUserTrackers();
-  const r = anchor.getBoundingClientRect(), w = 280;
-  pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + "px";
-  pop.style.top = Math.min(innerHeight - 200, r.bottom + 6) + "px";
+  const r = anchor.getBoundingClientRect(), w = 280 * uiK();
+  pop.style.left = uiPx(Math.max(8, Math.min(innerWidth - w - 8, r.right - w))) + "px";
+  pop.style.top = uiPx(Math.min(innerHeight - 200, r.bottom + 6)) + "px";
   pop.hidden = false;
   // one entry per element: point it at the button that opened the panel this time (the other may be gone)
   const ent = registerAutoClose(pop, closeUserPanel, anchor);
@@ -1672,6 +1680,28 @@ function loadNavOrder(){
 }
 // Resizable side panels: [default, min, max] width in px. Double-click a handle to go back to the default.
 const PANEL_W = { side: [208, 168, 420], insp: [260, 220, 560] };
+// The interface scale (CSS zoom of the chrome, see the --ui-k rule). uiPx: screen px → a zoomed element's style px.
+function uiK(){ return Math.min(1.75, Math.max(0.75, Number(state?.theme?.uiScale) || 1)); }
+const uiPx = (v) => v / uiK();
+// --bar-h on `host` = its top bar's height on screen (the bar is zoomed by the interface scale / icon size), so the
+// overlays placed under it (info, frame pop, the annotate toolbar) follow. Default 47 px (:root).
+// The bar's own height does not change with --ui-k, so applyUi re-measures every tracked bar (barHosts).
+const barHosts = new Set();
+function measureBarH(host, bar){ const h = bar.offsetHeight * uiK(); if (h) host.style.setProperty("--bar-h", h + "px"); }
+function trackBarH(host, bar){
+  if (!bar) return;
+  // (offsetHeight × the zoom, not the rect: the lightbox opens with a scale transition)
+  const pair = { host, bar };
+  barHosts.add(pair);
+  new ResizeObserver(() => { if (!host.isConnected){ barHosts.delete(pair); return; } measureBarH(host, bar); }).observe(bar);
+}
+window.sightTrackBarH = trackBarH; // (compare.js)
+// A zoomed pop / menu at screen point (x, y), kept inside the window.
+function placeMenu(m, x, y){
+  const k = uiK(), w = m.offsetWidth * k, h = m.offsetHeight * k;
+  m.style.left = uiPx(Math.max(8, Math.min(x, innerWidth - w - 8))) + "px";
+  m.style.top = uiPx(Math.max(8, Math.min(y, innerHeight - h - 8))) + "px";
+}
 function clampPanel(which, v){
   const [def, min, max] = PANEL_W[which];
   const n = Number(v);
@@ -2151,6 +2181,9 @@ function applyUi(){
   // no feature switches, their ss01 means something else.
   r.setProperty("--font-feat", t.font === "Inter" ? '"cv11", "ss01"' : "normal");
   r.setProperty("--text-size", t.textSize + "px");
+  r.setProperty("--ui-k", String(uiK()));
+  for (const p of barHosts){ if (p.host.isConnected) measureBarH(p.host, p.bar); else barHosts.delete(p); }
+  r.setProperty("--icon-k", String(Math.min(2, Math.max(0.75, Number(t.iconScale) || 1))));
   const cm = capMetrics(t);
   r.setProperty("--cap-n-lh", cm.nameLH + "px");
   r.setProperty("--cap-j-lh", cm.infoLH + "px");
@@ -3678,9 +3711,10 @@ function resizePanel(which, px){
   panelResizing = true;
   clearTimeout(panelResizeTimer); // cleared after the observer has seen the last width (it runs before paint)
   panelResizeTimer = setTimeout(() => { panelResizing = false; }, 200);
-  const other = which === "side" ? (state.details ? insp.offsetWidth : 0) : $("side").offsetWidth;
-  const room = Math.max(PANEL_W[which][1], window.innerWidth - other - MAIN_MIN);
-  state[which === "side" ? "sideW" : "inspW"] = Math.min(room, clampPanel(which, px));
+  // px and the room are screen px; the panels are zoomed (--ui-k), so their widths are their own px × uiK().
+  const k = uiK(), other = (which === "side" ? (state.details ? insp.offsetWidth : 0) : $("side").offsetWidth) * k;
+  const room = Math.max(PANEL_W[which][1], (window.innerWidth - other - MAIN_MIN) / k);
+  state[which === "side" ? "sideW" : "inspW"] = Math.min(room, clampPanel(which, px / k));
   applyPanelWidths();
 }
 function applyPanelWidths(){
@@ -5375,7 +5409,8 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     const camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 2000);
     camera.position.set(2, 1.4, 2.2);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // (a preview in the inspector is CSS-zoomed by the interface scale: its own px are drawn ×uiK on screen)
+    renderer.setPixelRatio(Math.min(devicePixelRatio * (isLightbox ? 1 : uiK()), 3));
     renderer.setSize(w, h);
     // The viewport can change under a live viewer (window resize, a lightbox mask/aspect change) —
     // both render loops call this each frame; it only does work when the host's size actually changed.
@@ -7259,9 +7294,7 @@ function vposMenu(x, y){
   };
   m.style.visibility = "hidden";
   light.el.append(m);
-  const w = m.offsetWidth, h = m.offsetHeight;
-  m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + "px";
-  m.style.top = Math.max(8, Math.min(y - h - 6, innerHeight - h - 8)) + "px";
+  placeMenu(m, x, y - m.offsetHeight * uiK() - 6);
   m.style.visibility = "";
   const away = (e) => { if (!m.contains(e.target)) vMenuClose(); };
   const esc = (e) => { if (e.key === "Escape"){ e.stopPropagation(); e.preventDefault(); vMenuClose(); } };
@@ -7962,6 +7995,7 @@ function toggleLight(a){
   wrap.querySelector("#lightClose").onclick = () => closeLight();
   wrap.querySelector("#libBtn").onclick = () => toggleLightSplit();
   document.body.append(wrap);
+  trackBarH(wrap, wrap.querySelector(".light-bar"));
   light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null, seq: null, vctl: null };
   bindSeqBar(wrap.querySelector(".seqbar"));
   bindVBarUi(light.bar);
@@ -8944,11 +8978,11 @@ function openColorPicker(inp){
   colorPop.hidden = false;
   cpRender();
   // Beside the swatch (the swatch counts as "near", so the rule arms as soon as the cursor moves).
-  const a = inp.getBoundingClientRect(), w = colorPop.offsetWidth, h = colorPop.offsetHeight;
+  const k = uiK(), a = inp.getBoundingClientRect(), w = colorPop.offsetWidth * k, h = colorPop.offsetHeight * k;
   let left = a.right + 6;
   if (left + w > window.innerWidth - 8) left = Math.max(8, a.left - w - 6);
-  colorPop.style.left = left + "px";
-  colorPop.style.top = Math.max(8, Math.min(a.top, window.innerHeight - h - 8)) + "px";
+  colorPop.style.left = uiPx(left) + "px";
+  colorPop.style.top = uiPx(Math.max(8, Math.min(a.top, window.innerHeight - h - 8))) + "px";
 }
 function closeColorPop(){
   if (colorPop.hidden) return;
@@ -9033,16 +9067,16 @@ function openSelectPop(sel){
   selPop.style.minWidth = "";
   selPop.hidden = false;
   const a = sel.getBoundingClientRect(), M = 8, GAP = 4;
-  selPop.style.minWidth = a.width + "px";
+  selPop.style.minWidth = uiPx(a.width) + "px";
   const below = window.innerHeight - a.bottom - GAP - M, above = a.top - GAP - M;
-  const h = selPop.offsetHeight, w = selPop.offsetWidth;
+  const h = selPop.offsetHeight * uiK(), w = selPop.offsetWidth * uiK();
   let top;
   if (h <= below) top = a.bottom + GAP;
   else if (h <= above) top = a.top - GAP - h;
-  else if (below >= above){ top = a.bottom + GAP; selPop.style.maxHeight = below + "px"; }
-  else { top = M; selPop.style.maxHeight = above + "px"; }
-  selPop.style.top = top + "px";
-  selPop.style.left = Math.max(M, Math.min(a.left, window.innerWidth - w - M)) + "px";
+  else if (below >= above){ top = a.bottom + GAP; selPop.style.maxHeight = uiPx(below) + "px"; }
+  else { top = M; selPop.style.maxHeight = uiPx(above) + "px"; }
+  selPop.style.top = uiPx(top) + "px";
+  selPop.style.left = uiPx(Math.max(M, Math.min(a.left, window.innerWidth - w - M))) + "px";
   selPop.querySelector("button.on")?.scrollIntoView({ block: "nearest" });
 }
 selPop.addEventListener("click", (e) => {
@@ -9105,9 +9139,7 @@ function showCtx(x, y, id){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = async (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
@@ -9173,9 +9205,7 @@ function showCanvasCtx(x, y){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
@@ -9297,9 +9327,7 @@ function showSourceCtx(x, y, sid){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = async (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
@@ -9324,9 +9352,7 @@ function showCollectionCtx(x, y, cid){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = (e) => {
     if (!e.target.closest('[data-act="icon"]')) return;
     const col = (state.meta.collections || []).find((c) => c.id === cid);
@@ -9354,9 +9380,7 @@ function showBoardCtx(x, y, bid){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = (e) => {
     if (!e.target.closest('[data-act="icon"]')) return;
     const bd = (state.meta.boards || []).find((b) => b.id === bid);
@@ -9384,9 +9408,7 @@ function showTagCtx(x, y, tag){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = (e) => {
     if (!e.target.closest('[data-act="icon"]')) return;
     showIconPicker(x, y, {
@@ -9440,9 +9462,7 @@ function showIconPicker(x, y, { icon, color, mode = "collection", onPick, onColo
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   const colorInp = $("ipColor");
   menu.onclick = (e) => {
     if (e.target.closest('[data-act="clear"]')){ hideCtx(); onClear(); return; }
@@ -9467,9 +9487,7 @@ function showGridCtx(x, y){
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  placeMenu(menu, x, y);
   menu.onclick = (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
@@ -10165,7 +10183,12 @@ function initSlider(container, { min, max, step = 1, value, unit = "", onChange,
     container.appendChild(inp);
     inp.focus();
     inp.select();
+    // Once only: removing the field blurs it, and that blur must neither commit again (an Escape then saved the
+    // typed value) nor remove it twice (a DOMException).
+    let closed = false;
     const done = (commit) => {
+      if (closed) return;
+      closed = true;
       if (commit){
         const v = Number(inp.value);
         if (Number.isFinite(v)) setValue(v, true);
@@ -10175,8 +10198,8 @@ function initSlider(container, { min, max, step = 1, value, unit = "", onChange,
     inp.onblur = () => done(true);
     inp.onkeydown = (ev) => {
       ev.stopPropagation();
-      if (ev.key === "Enter") done(true);
-      if (ev.key === "Escape") done(false);
+      if (hotkey(ev, "Enter")) done(true);
+      if (hotkey(ev, "Escape")) done(false);
     };
   }
 }
@@ -10285,8 +10308,8 @@ function openThemePop(anchor, userBase){
     <div class="opt"><input id="thSaveName" placeholder="Save as new…" style="flex:1;min-width:0;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface);padding:0 8px" /><button class="btn" id="thSaveGo" type="button" style="height:28px;width:auto;padding:0 10px">Save</button></div>`;
   const r = anchor.getBoundingClientRect();
   pop.style.minWidth = "220px";
-  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 236)) + "px";
-  pop.style.top = (r.bottom + 6) + "px";
+  pop.style.left = uiPx(Math.max(8, Math.min(r.left, window.innerWidth - 236 * uiK()))) + "px";
+  pop.style.top = uiPx(r.bottom + 6) + "px";
   const commit = (name, replaceIdx) => {
     const entry = { name, vars: { ...state.theme } };
     state.themes = replaceIdx >= 0 ? state.themes.map((t2, i) => i === replaceIdx ? entry : t2)
@@ -10336,7 +10359,7 @@ function renderThemeList(force){
     if (!t) return;
     // A preset saved before 0.54 has no accent; its frame colour was the accent then. One saved before
     // the section-title keys gets them derived from its own text colour / size.
-    state.theme = { ...DEFAULT_THEME, ...(t.vars.accent ? null : { accent: t.vars.border || DEFAULT_THEME.accent }), ...secFallback({ ...DEFAULT_THEME, ...t.vars, secColor: t.vars.secColor, secSize: t.vars.secSize }), ...t.vars };
+    state.theme = { ...DEFAULT_THEME, uiScale: state.theme.uiScale, iconScale: state.theme.iconScale, ...(t.vars.accent ? null : { accent: t.vars.border || DEFAULT_THEME.accent }), ...secFallback({ ...DEFAULT_THEME, ...t.vars, secColor: t.vars.secColor, secSize: t.vars.secSize }), ...t.vars };
     setThemeBase(v[0], t.name);
     masonryCache = null;
     saveTheme();
@@ -10429,6 +10452,10 @@ function renderOptions(){
       ${sliderRow("Thumb block thickness", "cardPad", 0, 32, 1, "px")}
       ${sliderRow("Menu row height", "menuRowH", Math.max(20, Math.round(t.textSize * 1.7)), 200, 1, "px")}
       ${sliderRow("Menu row gap", "menuGap", 0, 200, 1, "px")}
+
+      <div class="settings-sub">Interface</div>
+      ${sliderRow("Scale", "uiScale", 0.75, 1.75, 0.05, "×")}
+      ${sliderRow("Icon buttons", "iconScale", 0.75, 2, 0.05, "×")}
 
       <div class="settings-sub">Audio waveform</div>
       <label class="opt">Color <input type="color" data-color="waveColor" value="${t.waveColor}"></label>
@@ -10568,16 +10595,16 @@ function renderFilterBtn(){
 function renderFilterPop(){
   const pop = $("filterPop"), c = filterCtx(), my = ++fltSeq;
   const narrow = matchMedia("(max-width: 720px)").matches, top = Math.round($("filterBtn").getBoundingClientRect().bottom + 6);
-  pop.style.top = narrow ? top + "px" : "";
-  pop.style.maxHeight = narrow ? Math.max(160, window.innerHeight - top - 8) + "px" : "";
+  pop.style.top = narrow ? uiPx(top) + "px" : "";
+  pop.style.maxHeight = narrow ? uiPx(Math.max(160, window.innerHeight - top - 8)) + "px" : "";
   // Beside the lightbox the top bar ends at the divider, so the pop (right-aligned to the button, inside .main's
   // overflow clip) would lose its left part: there it is fixed, from the library's left edge, over the lightbox.
   const fix = !narrow && document.body.classList.contains("light-split");
   pop.classList.toggle("flt-fixed", fix);
-  if (fix) pop.style.top = top + "px";
+  if (fix) pop.style.top = uiPx(top) + "px";
   const fl = fix ? Math.round(document.querySelector(".main").getBoundingClientRect().left + 8) : 0;
-  pop.style.left = fix ? fl + "px" : "";
-  pop.style.width = fix ? Math.min(640, window.innerWidth - fl - 8) + "px" : "";
+  pop.style.left = fix ? uiPx(fl) + "px" : "";
+  pop.style.width = fix ? Math.min(640, uiPx(window.innerWidth - fl - 8)) + "px" : "";
   const mount = (fields) => {
     pop.innerHTML = "";
     const host = document.createElement("div");

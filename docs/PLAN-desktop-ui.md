@@ -31,7 +31,7 @@ Mark done items with `[x]` and the version.
 - [x] 18. (0.122.14) Compare mode works for still images. *(already worked — grid selection, drop onto the lightbox, annotate; the hint now fits pictures only. One picture with no versions in the lightbox is item 21.)*
 - [x] 19. (0.123.0) Tab browser = the main browser shrunk by a splitter (not a separate window); search box can get
       narrower, filter / sort labels shorten to 3–4 letters (e.g. Date Modified = DM), then icons only.
-- [ ] 20. Interactive scale of the whole UI: one slider in Settings scaling everything proportionally on top
+- [x] 20. (0.124.0) Interactive scale of the whole UI: one slider in Settings scaling everything proportionally on top
       of the current per-element settings; plus a separate setting for icon-button size.
 - [ ] 21. Compare mode and sequence playback merge into the lightbox: they become options of normal viewing
       when more than one file is being viewed.

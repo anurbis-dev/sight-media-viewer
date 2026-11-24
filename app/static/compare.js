@@ -168,6 +168,7 @@ export function createCompare(host){
       <div class="cmp-menu" hidden></div>
       <div class="cmp-toast"></div>`;
     document.body.appendChild(el);
+    window.sightTrackBarH?.(el, el.querySelector(".cmp-bar")); // (--bar-h: the annotate toolbar sits under the zoomed bar)
     C = {
       el, stage: el.querySelector(".cmp-stage"), layers: [], sel: null, sound: null, splits: [],
       view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0,

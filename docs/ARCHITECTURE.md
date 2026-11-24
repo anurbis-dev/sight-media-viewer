@@ -1571,3 +1571,10 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   A new version waits; the page shows *Reload* and only then sends `{type: "skip"}` and reloads on
   `controllerchange` (the first install's claim must not reload). `reg.update()` on becoming
   visible.
+
+## Interface scale (CSS zoom)
+Settings → Interface `uiScale` / `iconScale` → `--ui-k` / `--icon-k` (applyUi). The chrome (`.side`, `.main > .top`,
+`.trkbar`, `.insp`, `.light-bar`, `.cmp-bar`, `.an-top`, `.ctx`, `.color-pop`, `.theme-pop`) has `zoom: var(--ui-k)`;
+icon buttons `zoom: var(--icon-k)`. Under CSS zoom rects / clientX are screen px while a zoomed element's style px,
+vw / vh and offsetWidth are its own: place zoomed elements with `placeMenu` / `uiPx` (index.html), divide vw / vh calc
+by `--ui-k`. Overlays under a zoomed bar use `--bar-h` (`trackBarH`).

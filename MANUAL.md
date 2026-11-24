@@ -788,6 +788,11 @@
   the edge for the default width. The widths are remembered.
 - **Settings panel** — the *Settings* header at the bottom of the sidebar opens the panel over the whole
   sidebar; click the header again or press Esc to close it (it stays open across restarts until closed).
+- **Interface scale** — Settings → *Interface* → *Scale* (0.75–1.75×) enlarges or shrinks the whole interface
+  in proportion — sidebar, top bars, inspector, the drawing toolbar, menus and pops — on top of every other size
+  setting (text size, row height …). Pictures, thumbnails (their own size), boards and the viewers' controls
+  are not scaled. *Icon buttons* (0.75–2×) sizes the square icon buttons on top of that. Drag the value, or
+  click it and type a number; right-click resets. Works the same with a mouse or on a touch screen.
 - **Settings are remembered** — every option (Settings panel, 3D viewer rig, saved camera views,
   tile size, inspector/sidebar sections) and the app window's position, size and maximized state
   are saved to `settings.json` in the Sight data folder (`~/.sight`, or `SIGHT_HOME`) and come

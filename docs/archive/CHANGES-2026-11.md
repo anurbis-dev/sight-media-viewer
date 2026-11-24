@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.1 — 2026-11-24 — Sidebar: Missing hidden at 0, review rows in their own "Reviews" section
+- **What:** the *Missing* row under Types shows only while some files are missing (or its filter is on). The review rows (Open notes / Needs review / Changes requested / Approved) moved from Types into a new collapsible, drag-sortable *Reviews* section, hidden while all of them are empty. New backlog: `docs/PLAN-desktop-ui.md` (owner's desktop list, sorted S/M/L).
+- **Where:** app/static/index.html — `NAV_SECTIONS` (+ "reviews"), `loadNavOrder` (keeps a saved order, inserts a new section after its default predecessor), `renderTypes`, new `renderReviews`, `bindSectionDrag` onReorder (a hidden section keeps its place); MANUAL.
+- **Notes:** a section hidden at render time is not in the DOM, so a drag reorder re-inserts it from the old order — otherwise it would vanish from navOrder for good. Review (fresh agent): no bugs; its cosmetic note (new section landing at a fixed index in a custom order) is fixed. Browser: empty library shows neither Missing nor Reviews.
+
 ## 0.122.0 — 2026-11-24 — Windows taskbar shows "Sight Media Viewer", not Edge
 - **What:** on Windows the app window's taskbar button and Alt+Tab name come from a Start Menu shortcut "Sight Media Viewer" instead of "Microsoft Edge". The window is given the app id `Sight.MediaViewer` (System.AppUserModel.ID) and the shortcut carries the same id.
 - **Where:** Sight.py — `set_window_app_id()` (called from `reveal_when_ready()` once the window is found), `_store_set_app_id()`, `ensure_start_menu_shortcut()` (started in a background thread from `main()`), `set_shortcut_app_id()`, `shortcut_path()`; constants `APP_ID`, `APP_NAME`. app/version.py.

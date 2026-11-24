@@ -3120,8 +3120,11 @@ export function createAnnotator(host){
   // (the room: at most 80% of the window, 62% on a board — the picture / board must stay usable)
   const panelRoom = (hostEl) => Math.min(PW[1], (hostEl.clientWidth || 1200) * (host.board ? 0.62 : 0.8));
   function applyPanelW(hostEl){
-    if (!panelW){ hostEl.style.removeProperty("--an-pw"); return; }
-    hostEl.style.setProperty("--an-pw", Math.round(Math.min(panelRoom(hostEl), Math.max(PW[0], panelW))) + "px");
+    // --an-pwk: the same width inside Sight's zoomed .an-top (screen px ÷ --ui-k)
+    if (!panelW){ hostEl.style.removeProperty("--an-pw"); hostEl.style.removeProperty("--an-pwk"); return; }
+    const w = Math.round(Math.min(panelRoom(hostEl), Math.max(PW[0], panelW)));
+    hostEl.style.setProperty("--an-pw", w + "px");
+    hostEl.style.setProperty("--an-pwk", `calc(${w}px / var(--ui-k, 1))`);
   }
   function bindPanelEdge(el, hostEl){
     const h = document.createElement("div");
@@ -5199,6 +5202,9 @@ export function createAnnotator(host){
     const el = document.createElement("div");
     el.className = "an-offer";
     el.setAttribute("role", "alertdialog");
+    // (it lives on <body>: under the host's top bar, whose height Sight keeps in the host's --bar-h)
+    const bh = S.light ? getComputedStyle(S.light).getPropertyValue("--bar-h").trim() : "";
+    if (bh) el.style.top = `calc(${bh} + 9px)`;
     el.innerHTML = `<span>This review file holds ${n} note${n === 1 ? "" : "s"} / drawing${n === 1 ? "" : "s"} deleted in this library.</span>
       <button type="button" class="an-offer-go">Restore</button><button type="button" class="an-offer-x" title="Keep them deleted" aria-label="Keep them deleted">${ICON.close}</button>`;
     let timer = 0;
@@ -5764,9 +5770,9 @@ function injectStyles(){
 .an-pinedit { position: absolute; z-index: 6; margin: 0; padding: 0 4px; box-sizing: border-box; border: 1px solid #4c9aff; border-radius: 8px; outline: none; background: rgb(20 20 24 / .9); color: #fff; font-weight: 700; text-align: center; font-family: system-ui, sans-serif; }
 .an-pinedit::placeholder { color: rgb(255 255 255 / .55); }
 .an-textedit { position: absolute; z-index: 6; margin: 0; padding: 0; border: 1px dashed #4c9aff; outline: none; resize: none; overflow: hidden; white-space: pre; min-width: 24px; box-sizing: content-box; }
-.an-top { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: 13; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; max-width: calc(100% - 140px); }
+.an-top { position: absolute; left: 50%; top: calc((var(--bar-h, 47px) + 11px) / var(--ui-k, 1)); /* (Sight zooms it by --ui-k) */ transform: translateX(-50%); z-index: 13; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; max-width: calc(100% - 140px); }
 .an-top[hidden] { display: none; }
-.an-host.an-panel-on .an-top { left: calc(50% - var(--an-pw, 320px) / 2); max-width: calc(100% - var(--an-pw, 320px) - 140px); }
+.an-host.an-panel-on .an-top { left: calc(50% - var(--an-pwk, calc(320px / var(--ui-k, 1))) / 2); max-width: calc(100% - var(--an-pwk, calc(320px / var(--ui-k, 1))) - 140px / var(--ui-k, 1)); } /* (zoomed by --ui-k: --an-pwk / px are screen px ÷ k) */
 .an-bar, .an-props { pointer-events: auto; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 10px; background: rgb(14 14 16 / .78); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--border); box-shadow: 0 10px 30px rgb(0 0 0 / .35); flex-wrap: wrap; justify-content: center; }
 .an-props { padding: 3px 6px; gap: 6px; font-size: 11px; color: var(--muted); min-height: 28px; box-sizing: border-box; }
 .an-props[hidden] { display: none; }
@@ -5889,7 +5895,7 @@ function injectStyles(){
 .an-nprev img, .an-nprev svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .an-nprev .an-fno { position: absolute; left: 3px; top: 3px; z-index: 1; padding: 0 4px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; font: 600 10px/15px system-ui, sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
 .an-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
-.an-offer { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: max-content; z-index: 130; display: flex; align-items: center; gap: 10px; box-sizing: border-box; max-width: calc(100% - 32px); padding: 8px 8px 8px 14px; border-radius: 12px; font-size: 13px; color: var(--fg); background: rgb(10 10 11 / .92); border: 1px solid var(--border); box-shadow: 0 6px 24px rgb(0 0 0 / .45); }
+.an-offer { position: fixed; left: 50%; top: calc(var(--bar-h, 47px) + 9px); transform: translateX(-50%); width: max-content; z-index: 130; display: flex; align-items: center; gap: 10px; box-sizing: border-box; max-width: calc(100% - 32px); padding: 8px 8px 8px 14px; border-radius: 12px; font-size: 13px; color: var(--fg); background: rgb(10 10 11 / .92); border: 1px solid var(--border); box-shadow: 0 6px 24px rgb(0 0 0 / .45); }
 .an-offer span { flex: 1 1 auto; min-width: 0; }
 .an-offer button { flex: none; display: inline-grid; place-items: center; min-height: 32px; border-radius: 8px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
 .an-offer .an-offer-go { padding: 0 14px; color: var(--accent); }
@@ -5995,9 +6001,9 @@ function injectStyles(){
 .an-host.an-alt .an-panel, .an-host.an-alt .an-top *, .an-host.an-alt .an-panel * { pointer-events: none !important; }
 /* Board mode (the Canvas view hosts the annotator): the bar sits at the top of the view, the panel overlays its
    right edge, and what needs a picture is not offered. */
-.an-host.an-bhost { --an-pw: min(320px, 62%); }
-.an-host.an-bhost .an-top { top: 54px; max-width: calc(100% - 100px); }
-.an-host.an-bhost.an-panel-on .an-top { left: calc((100% - var(--an-pw)) / 2); max-width: calc(100% - var(--an-pw) - 24px); }
+.an-host.an-bhost { --an-pw: min(320px, 62%); --an-pwk: min(calc(320px / var(--ui-k, 1)), 62%); }
+.an-host.an-bhost .an-top { top: calc(54px / var(--ui-k, 1)); max-width: calc(100% - 100px / var(--ui-k, 1)); }
+.an-host.an-bhost.an-panel-on .an-top { left: calc(50% - var(--an-pwk) / 2); max-width: calc(100% - var(--an-pwk) - 24px / var(--ui-k, 1)); }
 .an-host.an-bhost.an-panel-on .an-toast { left: calc((100% - var(--an-pw)) / 2); }
 .an-host.an-bhost .an-panel { width: var(--an-pw); }
 .an-host.an-bhost .an-bar, .an-host.an-bhost .an-props { flex-wrap: wrap; justify-content: center; }
