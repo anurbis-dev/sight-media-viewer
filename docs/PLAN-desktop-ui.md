@@ -28,7 +28,7 @@ Mark done items with `[x]` and the version.
 - [x] 17. (0.122.12) Arrow: the middle handle can be dragged in any direction to bend arcs of any curvature.
 
 ## L — large, cross-cutting
-- [ ] 18. Compare mode works for still images.
+- [x] 18. (0.122.14) Compare mode works for still images. *(already worked — grid selection, drop onto the lightbox, annotate; the hint now fits pictures only. One picture with no versions in the lightbox is item 21.)*
 - [ ] 19. Tab browser = the main browser shrunk by a splitter (not a separate window); search box can get
       narrower, filter / sort labels shorten to 3–4 letters (e.g. Date Modified = DM), then icons only.
 - [ ] 20. Interactive scale of the whole UI: one slider in Settings scaling everything proportionally on top

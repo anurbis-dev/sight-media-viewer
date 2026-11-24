@@ -67,6 +67,10 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const isVideo = (a) => a.kind === "video";
 const mediaSrc = (a) => (a.ext === ".psd" ? `/api/psd/${a.id}/preview` : `/api/file/${a.id}`);
+// The top bar's hint: what the mouse does depends on whether any layer is a video (pictures only: a drag pans).
+const HINT_VIDEO = "Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · [ ] shift clip";
+const HINT_PICS = "Drag / middle-drag pan (Shift fine) · wheel / right-drag zoom";
+const HINT_KEYS = " · dbl-click / F fit · S swipe · D difference · T see-through · ↑↓ layer · H hide · Esc";
 export const comparable = (a) => !!a && a.status !== "missing" && (a.kind === "image" || a.kind === "video" || a.ext === ".psd");
 
 function fmtT(t, fps){
@@ -141,7 +145,7 @@ export function createCompare(host){
         <button type="button" class="cmp-b" data-a="dir" title="Split direction (V)"></button>
         <button type="button" class="cmp-b" data-a="thru" title="See-through — a layer's alpha and the space past its picture show the layers below, and a clip past its end disappears; off: every layer covers the ones below it whole (T)">See-through</button>
         <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against all the layers below it: the difference of the whole visible stack (hide a layer to take it out) — equal pixels go black (D)">Difference</button></div>
-        <span class="cmp-hint">Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · dbl-click / F fit · S swipe · D difference · T see-through · [ ] shift layer · ↑↓ layer · H hide · Esc</span>
+        <span class="cmp-hint"></span>
         <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost cmp-lbtn on" data-a="close" type="button" style="width:40px;padding:0" title="Close the comparison (K)" aria-label="Close the comparison" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
@@ -482,6 +486,7 @@ export function createCompare(host){
     // (prefixed: a bare "row" is the sidebar's menu-row class, whose fixed height flattened the Row layout to nothing)
     st.className = "cmp-stage lay-" + P.layout + curs.map((c) => " " + c).join(""); // (cursors.js keeps its classes)
     setCursor(st, "base", vids().length ? null : "grab"); // pictures only: a left drag pans
+    C.el.querySelector(".cmp-hint").textContent = (vids().length ? HINT_VIDEO : HINT_PICS) + HINT_KEYS;
     setCursor(st, "hover", null); // (the splits are rebuilt: the next pointer move finds one again)
     const name = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
     if (stacked()){
