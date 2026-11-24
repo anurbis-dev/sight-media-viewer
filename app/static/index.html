@@ -259,7 +259,7 @@ input::placeholder, textarea::placeholder { color: var(--subtle); }
    the view itself. With the browser's scroll anchoring on, Chromium "corrected" scrollTop by one
    row for that, the corrected position re-rendered the slice back, and the two flipped every frame
    (the grid blinked between two rows, seen while dragging slowly). */
-.grid { position: relative; overflow: auto; overflow-anchor: none; flex: 1; min-width: 0; min-height: 0; padding: var(--space-4); cursor: default; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.grid { position: relative; overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; /* (the tiles fill the width: a scrollbar coming and going would resize them, and that could loop) */ flex: 1; min-width: 0; min-height: 0; padding: var(--space-4); cursor: default; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 /* Touch selection mode (long-press a tile): a bar within thumb reach, above the narrow-screen drawers (z 20). */
 .touch-selbar { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; max-width: calc(100vw - 32px); box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-2, var(--bg)); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
 .touch-selbar[hidden] { display: none; }
@@ -2452,8 +2452,14 @@ function layout(){
   const gap = state.theme.gridGap;
   const compact = state.tile < COMPACT;
   if (compact) return { cols: 1, cell: w, rowH: 36 + gap, gap, compact: true, pad, meta: 0, mode: "grid" };
-  const cell = state.tile;
-  const cols = Math.max(1, Math.floor((w + gap) / (cell + gap)));
+  // The tile size snaps to the nearest column count whose tiles fill the width exactly (no empty strip on the
+  // right): state.tile is the size asked for (right-drag, window resize), the cell the size shown.
+  let cols = Math.max(1, Math.round((w + gap) / (state.tile + gap)));
+  // (quarter px down, from 1 px less than clientWidth, which is rounded: the row never overflows at 125 % / 150 %)
+  const fill = (c) => Math.floor(((w - 1 + gap) / c - gap) * 4) / 4;
+  if (fill(cols) > TILE_MAX) cols++;
+  else if (cols > 1 && fill(cols) < TILE_MIN) cols--;
+  const cell = fill(cols);
   // Captions "over" the thumbnail take no height; "below" it they take exactly capMetrics().h.
   const meta = capMetrics(state.theme).h;
   if (state.viewMode === "masonry"){

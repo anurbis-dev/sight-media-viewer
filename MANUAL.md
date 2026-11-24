@@ -765,7 +765,7 @@
   it was — except over one of two or more selected videos, where it plays them in sequence (below). ←/→ move to the next/previous asset and ↑/↓ move one row up/down in the
   thumbnail grid; `D` (or the panel button at the right end of the top bar, which also works by touch) toggles the
   details panel; its "File" block (preview + name + facts) collapses by its header; the total file
-  count sits in the Sources header; drag up/down on the grid resizes tiles.
+  count sits in the Sources header; right-drag up/down on the grid resizes tiles; the size snaps to the nearest one where a row of tiles fills the width exactly.
   `Esc` closes the preview; with none open it clears the thumbnail selection.
   Opening or stepping onto a heavy asset (a 3D model, a PSD, anything over 100 MB) with Space or
   the arrow keys has a short cooldown (~0.7 s), and holding the key down does nothing — so a burst
