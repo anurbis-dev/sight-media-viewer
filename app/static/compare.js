@@ -40,7 +40,7 @@
 // and Over / Difference only restyle the layers already on screen: the media elements stay, so a clip is not
 // loaded and seeked again.
 //
-// createCompare(host) — host: { api, putSetting, openInLight(id), versionsOf(id), and for annotating:
+// createCompare(host) — host: { api, putSetting, openInLight(asset, layerFiles) (⤢), paintModes(box, layerFiles), versionsOf(id), and for annotating:
 // onView(view) — the selected layer's viewer when its surface or its file changes (view: {asset, wrap, media,
 // isVid, geom, unturn} or null). Hiding a layer, or Over / Difference, keeps that element, so onView is not
 // called again. onPlaced() — pan / zoom / splits moved, onClose(), onAnnotButton() }.
@@ -146,6 +146,7 @@ export function createCompare(host){
         <button type="button" class="cmp-b" data-a="thru" title="See-through — a layer's alpha and the space past its picture show the layers below, and a clip past its end disappears; off: every layer covers the ones below it whole (T)">See-through</button>
         <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against all the layers below it: the difference of the whole visible stack (hide a layer to take it out) — equal pixels go black (D)">Difference</button></div>
         <span class="cmp-hint"></span>
+        <div class="vmodes cmp-modes" hidden></div>
         <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost cmp-lbtn on" data-a="close" type="button" style="width:40px;padding:0" title="Close the comparison (K)" aria-label="Close the comparison" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
@@ -488,6 +489,7 @@ export function createCompare(host){
     st.className = "cmp-stage lay-" + P.layout + curs.map((c) => " " + c).join(""); // (cursors.js keeps its classes)
     setCursor(st, "base", vids().length ? null : "grab"); // pictures only: a left drag pans
     C.el.querySelector(".cmp-hint").textContent = (vids().length ? HINT_VIDEO : HINT_PICS) + HINT_KEYS;
+    host.paintModes?.(C.el.querySelector(".cmp-modes"), C.layers.map((l) => l.a)); // (One / Sequence / Compare)
     setCursor(st, "hover", null); // (the splits are rebuilt: the next pointer move finds one again)
     const name = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
     if (stacked()){
@@ -1450,7 +1452,7 @@ export function createCompare(host){
       const id = chip.dataset.id, a = b?.dataset.a;
       if (a === "ov") editOffset(id, b);
       else if (a === "snd") setSound(id);
-      else if (a === "lb"){ const l = layer(id); close(); host.openInLight?.(l.a); }
+      else if (a === "lb"){ const l = layer(id), files = C.layers.map((x) => x.a); close(); host.openInLight?.(l.a, files); }
       else if (a === "rm") remove(id);
       else {
         // A plain click on the clip shows / hides it; one it brings back becomes the selected layer.
@@ -1939,7 +1941,10 @@ function injectStyles(){
   st.textContent = `
 .cmp { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #050506; color: var(--fg); opacity: 0; transition: opacity 140ms ease; font-size: 12px; }
 .cmp.on { opacity: 1; }
-.cmp-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface, #1b1c20); flex: none; }
+.cmp-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface, #1b1c20); flex: none; flex-wrap: wrap; }
+/* (a narrow compare — beside the library — wraps its bar instead of squeezing the buttons' labels; --bar-h follows) */
+.cmp-bar > * { flex-shrink: 0; }
+.cmp-bar > .cmp-hint { flex-shrink: 1; }
 .cmp-bar > b { font-size: 13px; margin-right: 4px; }
 .cmp-hint { flex: 1; min-width: 0; color: var(--subtle); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .cmp-seg { display: inline-flex; background: var(--surface-2); border-radius: 7px; padding: 2px; gap: 1px; }

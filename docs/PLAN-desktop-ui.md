@@ -33,7 +33,7 @@ Mark done items with `[x]` and the version.
       narrower, filter / sort labels shorten to 3–4 letters (e.g. Date Modified = DM), then icons only.
 - [x] 20. (0.124.0) Interactive scale of the whole UI: one slider in Settings scaling everything proportionally on top
       of the current per-element settings; plus a separate setting for icon-button size.
-- [ ] 21. Compare mode and sequence playback merge into the lightbox: they become options of normal viewing
+- [x] 21. (0.125.0) Compare mode and sequence playback merge into the lightbox: they become options of normal viewing
       when more than one file is being viewed.
 
 Rules: desktop + touch for every feature, shortcuts via `keys.js`, RECENT entry + MANUAL where user-visible.

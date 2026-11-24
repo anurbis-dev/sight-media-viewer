@@ -557,6 +557,17 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .btn[hidden] { display: none; }
 /* The lightbox's compare button: the count of files dropped on the picture to compare. */
 .cmp-lbtn { position: relative; }
+/* Viewing several files (lightSet): One / Sequence / Compare, the same switch in the lightbox and compare bars. */
+.vmodes { display: inline-flex; flex: none; background: var(--surface-2); border-radius: 7px; padding: 2px; gap: 1px; }
+.vmodes[hidden] { display: none; }
+.vmodes button { height: 26px; padding: 0 10px; border-radius: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.vmodes button:hover:not(:disabled) { color: var(--fg); }
+.vmodes button.on { background: var(--surface-3); color: var(--accent); }
+.vmodes button:disabled { opacity: .4; }
+@media (pointer: coarse) { .vmodes button { height: 36px; } }
+.light-bar { flex-wrap: wrap; } .light-bar > .light-hint { flex: 2 1 0; min-width: 0; } /* (a narrow viewer wraps its bar — the switch, ✕ — instead of pushing buttons off screen) */
+/* Compare opened from the lightbox beside the library keeps the library visible: it takes the lightbox's place. */
+body.light-split .cmp { left: var(--light-l, 0px); border-left: 1px solid var(--border); }
 .cmp-lbtn:disabled:active { transform: none; }
 .cmp-lbtn[data-n]::after { content: attr(data-n); position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 16px; font-weight: 600; }
 #boardAnnoBtn.on, #boardNotesBtn.on { color: var(--accent); }
@@ -1936,7 +1947,8 @@ const cmp = createCompare({
   cacheAhead: () => clampAhead(state.theme.videoAhead), // its share ahead of the playheads, percent
   assetById: (id) => assetById(id),
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
-  openInLight: (a) => { if (light) showInLight(a); else toggleLight(a); },
+  openInLight: (a, files) => switchViewMode("one", files || [a], a.id), // ⤢ = One on that layer (the set's order kept)
+  paintModes: (box, files) => paintModes(box, files, "cmp"), // the One / Sequence / Compare switch in its bar
   onOpen: (el) => { cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); bindAnnoReset(el.querySelector(".cmp-annb"), [annot, boardAnnot, cmpAnnot]); },
   onView: (view) => {
     cmpView = view;
@@ -2037,7 +2049,74 @@ function addToCompareStack(ids){
   paintCmpBtn();
   flashV3DToast(`${st.length + 1} files to compare — K or the ⧉ button opens them`);
 }
+// Viewing several files — the lightbox's set (lightCompareIds) or the compare's layers — offers One / Sequence /
+// Compare in the bar: the same files, viewed one at a time, played back to back (videos), or side by side.
+const VMODES = [["one", "One", "One file at a time (the viewer)"], ["seq", "Sequence", "Play the videos back to back"], ["cmp", "Compare", "Side by side / stacked (K)"]];
+const playableVid = (x) => x?.kind === "video" && x.status !== "missing";
+// The set as files, in its own order. The lightbox keeps the order it was given (light.vset: the selection /
+// sequence / compare order) while it still holds the file on screen and every file of the stack; else it is
+// rebuilt from lightCompareIds() (+ the sequence's clips). Files are kept as objects: a version from another
+// folder or a tracker download is not in state.items.
+function lightSetAssets(){
+  if (!light?.asset) return [];
+  // (a sequence's clips first, in its order; then the rest of the stack)
+  const ids = (light.seq?.list || []).map((x) => x.id);
+  for (const id of lightCompareIds() || [light.id]) if (!ids.includes(id)) ids.push(id);
+  const v = light.vset;
+  if (v && v.length === ids.length && ids.every((id) => v.some((x) => x.id === id))) return v;
+  const known = new Map([...(v || []), ...(light.seq?.list || []), light.asset].map((x) => [x.id, x]));
+  return ids.map((id) => known.get(id) || assetById(id) || canvasCtl?.assetOf?.(id)).filter(Boolean);
+}
+function paintModes(box, files, mode){
+  if (!box) return;
+  const html = files.length < 2 ? "" : VMODES.map(([m, label, title]) => `<button type="button" data-m="${m}" title="${title}" class="${m === mode ? "on" : ""}" ${m === "seq" && files.filter(playableVid).length < 2 ? "disabled" : ""}>${label}</button>`).join("");
+  box.hidden = !html;
+  if (box._html !== html){ box._html = html; box.innerHTML = html; } // (repainted on every selection change)
+  box._files = files;
+  box.onclick = (e) => {
+    const m = e.target.closest("button[data-m]")?.dataset.m;
+    if (m && m !== mode && !e.target.closest("button").disabled) switchViewMode(m, box._files);
+  };
+}
+function paintLightModes(){
+  if (!light) return;
+  paintModes(light.el.querySelector("#lightModes"), lightSetAssets(), light.seq ? "seq" : "one");
+}
+// files: the set in its order; focus: the file to show / start on (the compare's selected layer, else the lightbox's).
+function switchViewMode(m, files, focus){
+  focus ||= cmp.isOpen() ? cmp.selectedId() : light?.id;
+  // Back from a compare with the same files: the lightbox's order wins (compare puts its focus first).
+  const v = light?.vset;
+  if (v && v.length === files.length && files.every((x) => v.some((y) => y.id === x.id))) files = v;
+  const ids = files.map((x) => x.id);
+  if (m === "cmp"){ if (!cmp.isOpen()){ if (light) light.vset = files; openCompare(ids, focus); } return; }
+  if (cmp.isOpen()) cmp.close();
+  if (m === "one"){
+    if (light?.seq) endSequence();
+    const a = files.find((x) => x.id === focus) || files[0];
+    if (a) lightShowSet(a, files);
+    return;
+  }
+  // seq: the videos of the set, in its order, starting (playing) on the focus when it is one of them
+  const vids = files.filter(playableVid);
+  if (vids.length < 2) return;
+  const k = Math.max(0, vids.findIndex((x) => x.id === focus));
+  openSequence(vids);
+  if (!light?.seq) return;
+  light.vset = files;
+  light.cmpStack = ids.filter((id) => id !== light.id); // the set's pictures stay with it
+  if (k) seqGo(k, 0, true);
+  paintCmpBtn();
+}
+// Show `a` in the lightbox with `files` (objects, ordered) as its set — compare's ⤢ / One keep the files together.
+function lightShowSet(a, files){
+  if (light) { if (light.id !== a.id) showInLight(a); } else toggleLight(a);
+  if (!light) return;
+  if (files?.length > 1){ light.vset = files; light.cmpStack = files.map((x) => x.id).filter((id) => id !== a.id); }
+  paintCmpBtn();
+}
 function paintCmpBtn(){
+  paintLightModes();
   const b = light?.el.querySelector("#cmpBtn");
   if (!b) return;
   const a = light.asset, ids = lightCompareIds();
@@ -3326,7 +3405,7 @@ grid.addEventListener("click", (e) => {
   clickSelect(card.dataset.id, e);
   // Library beside the lightbox (Tab): a plain click shows that file in the lightbox. Ctrl / Shift stay a
   // selection (files to compare); a drag onto the frame is not a click, so it never switches the file.
-  if (lightSplitOn() && !e.shiftKey){
+  if (lightSplitOn() && !e.shiftKey && !cmp.isOpen()){ // (beside an open compare a click only selects)
     const a = state.items.find(x => x.id === card.dataset.id);
     if (a && a.trk){ if (lightItemId() !== a.id) openTrkItem(a); }
     else if (a && a.status !== "missing" && light.id !== a.id) showInLight(a);
@@ -7372,6 +7451,7 @@ function openSequence(list){
   light.el.querySelector(".t").textContent = `Clip 1/${list.length} · ${list[0].name}`;
   paintSeqBar(true);
   seqPreload();
+  paintCmpBtn(); // (the One / Sequence / Compare switch)
 }
 function endSequence(){
   if (!light?.seq) return;
@@ -7381,6 +7461,8 @@ function endSequence(){
   light.seq = null;
   light.seqSnaps = null;
   light.el.querySelector(".seqbar").hidden = true;
+  light.el.querySelector(".t").textContent = light.asset?.name || ""; // (not "Clip k/n" any more)
+  paintCmpBtn();
 }
 // Known durations; an unknown one (not probed yet) borrows the average so the bar still splits sensibly.
 // Marker times of clip k from its rows: a mark per frame with a drawing or a note's picture text on it — the
@@ -7928,6 +8010,7 @@ function toggleLight(a){
       <button class="btn ghost" id="libBtn" type="button" style="width:40px;padding:0" title="Library beside the player — drag pictures from it onto the frame as references (Tab)" aria-label="Show the library alongside">◧</button>
       <span class="t"></span>
       <span class="light-hint" id="lightHint"></span>
+      <div class="vmodes" id="lightModes" hidden></div>
       <button class="btn ghost an-btn" id="notesBtn" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
       <button class="btn ghost" id="drawEyeBtn" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
       <button class="btn ghost cmp-lbtn" id="cmpBtn" type="button" style="width:40px;padding:0" title="Compare (K)" aria-label="Compare" disabled hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
@@ -11106,7 +11189,10 @@ document.addEventListener("keydown", (e) => {
     if (!a || heavyKeyBlocked(e, a)) return;
     const seqList = state.selectedIds.includes(a.id) ? seqSelection() : [];
     if (seqList.length >= 2 && seqList.some((x) => x.id === a.id)){ openSequence(seqList); return; }
+    // Over one of 2+ selected images / videos: the viewer views that set (One / Compare in its bar, K compares it).
+    const set = state.selectedIds.includes(a.id) ? cmpCandidates(state.selectedIds) : [];
     toggleLight(a);
+    if (light && set.length >= 2 && comparable(a)) lightShowSet(a, set);
     return;
   }
   // Shift+← / Shift+→ on a video: its first / last frame — the whole sequence's when a sequence plays.

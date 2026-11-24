@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.2 — 2026-11-24 — Thumbnail "N open" chip clears after the last note is deleted
+- **What:** deleting the only open note in the lightbox review panel left "1 open" on the library card until a reload.
+- **Where:** app/static/annotate.js — `noteSig()`; `load()` now primes `notesSig` from the loaded rows.
+- **Notes:** `notesSig` was reset to "" per asset and never set by `load()`, so deleting the sole note gave sig "" == "" and `onReviewChanged` never fired. Verified in the browser (delete via panel, chip hidden). Review (fresh agent): no bugs. Known, left: `reload()` of the host does not call `onReviewChanged`; replies are not part of the signature (pre-existing).
+
 ## 0.122.1 — 2026-11-24 — Sidebar: Missing hidden at 0, review rows in their own "Reviews" section
 - **What:** the *Missing* row under Types shows only while some files are missing (or its filter is on). The review rows (Open notes / Needs review / Changes requested / Approved) moved from Types into a new collapsible, drag-sortable *Reviews* section, hidden while all of them are empty. New backlog: `docs/PLAN-desktop-ui.md` (owner's desktop list, sorted S/M/L).
 - **Where:** app/static/index.html — `NAV_SECTIONS` (+ "reviews"), `loadNavOrder` (keeps a saved order, inserts a new section after its default predecessor), `renderTypes`, new `renderReviews`, `bindSectionDrag` onReorder (a hidden section keeps its place); MANUAL.

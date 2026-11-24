@@ -699,6 +699,13 @@
     markers) win over the compare's; leave annotating (`A` / Esc) to shift layers by key. The screenshot (`S` / the camera, or an area with `Shift+S`) is the comparison as shown — every
     layer in its split, stack or tile, Difference, the split lines and names — with the drawings on top. Adding the note stores that same picture (not only the file the note belongs to).
   - Wheel zooms around the cursor (`Shift` slower), double-click (double-tap) or `F` fits (there is no Fit button), `0` shows the first visible layer at 100 %. `Esc` / `K` closes.
+- **Viewing several files: One / Sequence / Compare** — when the viewer holds more than one file (`Space` over
+  one of 2+ selected images / videos, files dropped onto the picture from the library beside it, a sequence, or a
+  comparison), its top bar shows **One · Sequence · Compare**: the same files one at a time (the viewer, `←` / `→`
+  as usual), played back to back (*Sequence*, videos only; greyed out with fewer than two), or side by side
+  (*Compare*, also `K`). The compare's top bar has the same switch, so you go back and forth without losing the
+  set; ⤢ on a compare chip also keeps it. Beside the library (`Tab`) the comparison opens in the viewer's place
+  and the library stays visible. Mouse, keyboard or touch alike.
 - **Play in sequence** — select two or more videos (Ctrl-click them in the order you want: that order
   is kept; a Shift-range or a marquee adds them in grid order) and press Space over one of them, or
   click *▶▶ Sequence* in the top bar (also in the right-click menu and the palette). The clips play back
