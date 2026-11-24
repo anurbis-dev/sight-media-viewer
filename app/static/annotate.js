@@ -707,6 +707,7 @@ export function createAnnotator(host){
       S.items.set(it.id, it);
       S.saved.add(it.id);
     }
+    notesSig = noteSig();  // the baseline: deleting the last note must differ from it and refresh the card's chip
     rebuildViews();
     renderAll();
     renderPanel();
@@ -897,9 +898,10 @@ export function createAnnotator(host){
     renderPending();
   }
   let notesSig = "", notesTimer = 0;
+  const noteSig = () => [...S.items.values()].filter((it) => it.kind === "note").map((n) => n.id + (n.data.status || "")).join();
   function afterChange(){
     modeCache = null;
-    const sig = [...S.items.values()].filter((it) => it.kind === "note").map((n) => n.id + (n.data.status || "")).join();
+    const sig = noteSig();
     if (sig !== notesSig){
       notesSig = sig;
       const id = S.asset?.id;

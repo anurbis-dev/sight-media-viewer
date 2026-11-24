@@ -6,7 +6,7 @@ Mark done items with `[x]` and the version.
 
 ## S — small, local fixes
 - [x] 1. (0.122.1) Filter type "Missing": hide it when there are no missing files (count 0).
-- [ ] 2. Check that the note-count chip on a thumbnail disappears once all notes and drawings are deleted.
+- [x] 2. (0.122.2) Check that the note-count chip on a thumbnail disappears once all notes and drawings are deleted.
 - [x] 3. (0.122.1) Smart items that belong to annotations move into a "Reviews" sidebar section (hidden when empty).
 - [ ] 4. Bug: a filter saved as a smart collection does not filter, or the current browser filter overrides it.
 - [ ] 5. A dropped file hangs too long where it was released while the drop zone under it is checked.
