@@ -6598,6 +6598,9 @@ function attachViewer(stage, a, src, opts = {}){
     apply();
   }
   function openMode(){
+    // A wrap not laid out yet (embedded pane) cannot tell fit from 100 %: the size observer picks once
+    // the wrap gets its size ("open" = still to choose).
+    if (!wrap.clientWidth || !wrap.clientHeight){ vs.mode = "open"; return; }
     const f = fitS();
     if (f < 0.999) toFit();
     else toOne();
@@ -6644,12 +6647,18 @@ function attachViewer(stage, a, src, opts = {}){
   el.addEventListener(isVid ? "loadedmetadata" : "load", onReady);
   if ((isVid && el.readyState >= 1) || (!isVid && el.complete && el.naturalWidth)) onReady();
   // Keep the picture framed when the viewport changes underneath it (window resize, or the
-  // lightbox mask / corner-radius popover reshaping the frame). The first callback is just the
-  // initial observation, so it is skipped.
-  let sized = false;
+  // lightbox mask / corner-radius popover reshaping the frame, the library split from Tab). Only a
+  // real size change counts: the initial observation is skipped by comparing with the size at attach —
+  // not by dropping the first callback, which already carries the new size when Tab is pressed before
+  // the observer's first delivery (the picture then stayed fitted to the old width).
+  let seenW = wrap.clientWidth, seenH = wrap.clientHeight;
   new ResizeObserver(() => {
-    if (!sized){ sized = true; return; }
-    if (vs.mode === "fit") toFit(); else apply();
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h){ seenW = seenH = 0; return; }  // closing / hidden: whatever size it comes back at is reframed
+    if (w === seenW && h === seenH) return;
+    seenW = w; seenH = h;
+    if (!vs.nat.w || !vs.nat.h) return;  // size unknown yet: onReady / the thumbnail's load frames it
+    if (vs.mode === "open") openMode(); else if (vs.mode === "fit") toFit(); else apply();
   }).observe(wrap);
   if (isVid){
     // timeupdate alone (a few ticks/sec) is what made the playhead visibly jump — a rAF
