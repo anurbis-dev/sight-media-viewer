@@ -1864,6 +1864,8 @@ const cmpAnnot = createAnnotator({
     cmp.relayout(); // the notes panel takes the right edge
   },
   onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
+  // The selected layer's timeline marks, live, for compare's shared timeline (not while its rows still load).
+  marksChanged: () => { if (cmpAnnotAsset && !cmpAnnot.loading()) cmp.setMarks(cmpAnnotAsset, cmpAnnot.marks()); },
   // The panel's versions row: open a version in the viewer / compare those versions.
   // (`keep`: as the lightbox annotator's — the file already showing re-reads its notes instead of opening again)
   openAsset: async (id, opts) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (opts?.keep && light?.id === a.id){ annot.reload(); return; } if (light) showInLight(a); else toggleLight(a); },

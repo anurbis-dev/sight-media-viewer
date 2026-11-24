@@ -20,7 +20,7 @@ Mark done items with `[x]` and the version.
 - [x] 11. (0.122.8) The stroke marquee works in world coordinates, independent of the file's rotation.
 - [x] 12. (0.122.9) Interactive thumbnail size snaps to values where icons fill the window width (no empty strip on the right).
 - [x] 13. (0.122.10) HTML export: pictures are not enlarged when drawings go outside the file bounds.
-- [ ] 14. Compare mode: markers for frames with drawings are missing on the shared timeline.
+- [x] 14. (0.122.11) Compare mode: markers for frames with drawings are missing on the shared timeline.
 - [ ] 15. Notes panel screenshot captures the current drawing as well.
 - [ ] 16. Large still images (~6 MB) take up to 5 s to open (macOS Preview: <1 s). Investigate and fix.
 - [ ] 17. Arrow: the middle handle can be dragged in any direction to bend arcs of any curvature.

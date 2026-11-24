@@ -670,7 +670,7 @@
     to. A new comparison puts the file it was opened from first.
     ⤢ opens the file in the viewer, *+ Add* brings in another version.
   - Video: one timeline for all clips, played in sync (`Space`, `,` / `.` frame, `Shift` ×10,
-    `Home`, `L` loop). A clip that is still loading or seeking holds the others on their frame ("loading" next to
+    `Home`, `L` loop). Frames with drawings or a note's picture show as ticks in the clip's colour (a taller one for a note); click or tap one to go to that frame. A clip that is still loading or seeking holds the others on their frame ("loading" next to
     the time) and they go on together. Drag the timeline (mouse or finger) to scrub every clip at once; playback
     goes on from where you let go. A click or drag while playing starts again almost at once: each clip
     plays from its small scrub copy for a moment while the full file catches up, then the full file takes over. Each clip gets a small scrub copy (a keyframe every few frames) as soon as

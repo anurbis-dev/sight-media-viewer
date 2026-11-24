@@ -1104,13 +1104,54 @@ export function createCompare(host){
     tl.hidden = !v.length;
     if (!v.length) return;
     const [lo, hi] = range(), span = Math.max(1e-6, hi - lo);
-    C.el.querySelector(".cmp-spans").innerHTML = v.filter((l) => l.vis).map((l) => {
+    const shown = v.filter((l) => l.vis);
+    let mks = "";
+    // Frames with drawings / a note's picture (annotate.js marks()): a tick in the layer's colour where the frame
+    // sits on the shared timeline (the layer's offset + the clip's own time); taller for a note's frame.
+    for (const l of shown){
+      if (l.marks === undefined) loadMarks(l);
+      for (const m of l.marks || []){
+        if (l.dur > 0 && m.t > l.dur + 1e-3) continue;
+        const x = (l.start / C.fps + m.t - lo) / span * 100;
+        if (x < -0.01 || x > 100.01) continue;
+        mks += `<i class="cmp-mk${m.note ? " note" : ""}" data-id="${l.id}" data-t="${m.t}" style="left:${x.toFixed(4)}%;--mk:${l.color}" title="${esc(l.a.name)} — ${m.note ? "note" : "drawing"} at ${fmtT(m.t, C.fps)}"></i>`;
+      }
+    }
+    C.el.querySelector(".cmp-spans").innerHTML = shown.map((l) => {
       const a = (l.start / C.fps - lo) / span * 100, w = (l.dur || 0) / span * 100;
       return `<span class="cmp-lane" data-id="${l.id}" style="left:${a}%;width:${Math.max(0, w)}%" title="${esc(l.a.name)} — green is the part in RAM"><i style="background:${l.color}"></i><span class="cmp-caches"></span></span>`;
-    }).join("");
+    }).join("") + mks; // (marks after the lanes: the lanes' nth-child rows count from the first child)
     C.el.querySelector("[data-a=loop]").classList.toggle("on", P.loop);
     paintCmpCaches();
     paintTime();
+  }
+  // A layer's timeline marks from its rows (the rule of index.html seqLoadMarks: a drawing's `ctx.t`, a note's
+  // "t:<s>" caption frames; note = a note's frame). The annotated layer's live marks replace them (setMarks).
+  async function loadMarks(l){
+    l.marks = null; // (asked: not again)
+    let rows = [];
+    try { rows = await host.api(`/api/annotations?asset_id=${encodeURIComponent(l.id)}`); } catch { return; }
+    if (!C || !C.layers.includes(l) || l.marks) return; // closed, removed, or live marks came first
+    const out = [];
+    const add = (t, note) => {
+      if (!(t >= 0)) return;
+      const m = out.find((x) => Math.abs(x.t - t) < 0.0015);
+      if (m) m.note = m.note || note; else out.push({ t, note });
+    };
+    for (const r of rows || []){
+      if (r.kind === "status" || r.data?.deleted) continue;
+      if (r.kind !== "note") add(Number(r.data?.ctx?.t), !!r.data?.note);
+      else for (const key of Object.keys(r.data?.captions || {})) if (key.startsWith("t:")) add(Number(key.slice(2)), true);
+    }
+    l.marks = out;
+    paintTimeline();
+  }
+  // The annotator's own marks for a layer's file ([{t, note}]), as they change.
+  function setMarks(id, marks){
+    if (!C) return;
+    let hit = false;
+    for (const l of C.layers) if (l.id === id && isVideo(l.a)){ l.marks = marks.map((m) => ({ t: m.t, note: !!m.note })); hit = true; }
+    if (hit) paintTimeline();
   }
   function paintTime(fast){
     if (!C) return;
@@ -1381,6 +1422,9 @@ export function createCompare(host){
     // The timeline: the playhead goes where the pointer is; with Shift held it moves a tenth as fast from there.
     track.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || C.scrub) return;
+      // A mark: the playhead goes exactly to its frame (the layer's clip time).
+      const mk = e.target.closest?.(".cmp-mk");
+      if (mk){ e.preventDefault(); seekLayer(mk.dataset.id, Number(mk.dataset.t)); return; }
       const d = { x: 0, T0: 0, fine: false, rel: false };
       const abs = (ev) => { const r = track.getBoundingClientRect(), [lo, hi] = range(); return lo + clamp((ev.clientX - r.left) / r.width, 0, 1) * (hi - lo); };
       startScrub(e, track, (ev) => {
@@ -1877,7 +1921,7 @@ export function createCompare(host){
     const W = C.viewWrap ? rel(C.viewWrap) : { x: 0, y: 0 };
     return { cv, ox: W.x, oy: W.y };
   }
-  return { open, close, isOpen: () => !!C, onKey, session, pause, seekLayer, relayout, selectedId: () => C?.sel || null, wantsPress, captureView,
+  return { open, close, isOpen: () => !!C, onKey, session, pause, seekLayer, relayout, setMarks, selectedId: () => C?.sel || null, wantsPress, captureView,
     ready: () => C?.fpsReady || Promise.resolve() };
 }
 
@@ -1938,6 +1982,9 @@ function injectStyles(){
 .cmp-tl[hidden] { display: none; }
 .cmp-time { min-width: 150px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; }
 .cmp-track { flex: 1; position: relative; height: 26px; border-radius: 6px; background: var(--surface-2); cursor: pointer; overflow: hidden; touch-action: none; }
+.cmp-spans .cmp-mk { position: absolute; top: 0; bottom: 0; width: 11px; margin-left: -5.5px; cursor: pointer; z-index: 1; }
+.cmp-spans .cmp-mk::after { content: ""; position: absolute; left: 4.5px; width: 2px; top: 14px; bottom: 2px; border-radius: 1px; background: var(--mk, #f5c542); }
+.cmp-spans .cmp-mk.note::after { top: 8px; }
 .cmp-spans .cmp-lane { position: absolute; height: 4px; border-radius: 2px; overflow: hidden; pointer-events: none; }
 .cmp-spans .cmp-lane:nth-child(1) { top: 3px; } .cmp-spans .cmp-lane:nth-child(2) { top: 8px; } .cmp-spans .cmp-lane:nth-child(3) { top: 13px; } .cmp-spans .cmp-lane:nth-child(4) { top: 18px; }
 .cmp-spans .cmp-lane:nth-child(n+5) { top: 21px; height: 2px; }

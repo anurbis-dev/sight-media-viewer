@@ -4468,7 +4468,7 @@ export function createAnnotator(host){
   // ---- timeline markers -----------------------------------------------------------------------
   function renderMarks(){
     const track = S.bar && S.light?.querySelector(".vbar .vtrack");
-    if (!track) return;
+    if (!track){ host.marksChanged?.(); return; } // (no bar of its own — compare: its shared timeline shows them)
     let box = track.querySelector(".an-marks");
     const v = S.kind === "video" ? video() : null;
     const dur = v && Number.isFinite(v.duration) ? v.duration : (S.asset?.duration || 0);
