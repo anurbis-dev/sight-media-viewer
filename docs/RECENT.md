@@ -14,6 +14,11 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.122.6 — 2026-11-24 — Dragged tile pile disappears on release
+- **What:** the pile of dragged thumbnails no longer hangs at the drop spot while the drop target works; it hides the moment the drag is released.
+- **Where:** `index.html` tile `dragstart` → `dropped` (window capture `drop`) hides `d.g`; `finish` still removes it on `dragend`.
+- **Notes:** backlog item 4 (smart collection saved from Filter ▾ does not filter) did not reproduce: save from All / from Images, reload, click All then the row, name / kind / ext / path / Any-group rules all filter. Waiting for the owner's exact field / value. Review (fresh agent): no bugs found.
+
 ## 0.122.5 — 2026-11-24 — app/version.py restored (app did not start since 0.122.2)
 - **What:** the 0.122.2 commit emptied `app/version.py`, so `from .version import APP_VERSION` failed and the app could not start on 0.122.2–0.122.4. The file is back.
 - **Where:** `app/version.py`.
@@ -92,9 +97,3 @@ Add new entries directly below this line.
 - **Where:** app/static/compare.js (`baseLayer()` replaces `refLayer()`/`C.ref`/`setRef`; `open` reorders the focus first when there is no session; `build` swipe branch draws `vis[0]` as the base; `paintLayers` lost the ★ button; `remove`; `session()` no longer writes `ref`; hint / Difference tooltip / header + CSS comments); MANUAL (compare); ARCHITECTURE (compare); FORMAT (`compare.ref` marked legacy).
 - **Notes:** a hidden layer is never the base any more (before, a hidden ★ still decoded and showed under the swipe regions — part of the frustration). Hiding / reordering the first layer can change the frame size; the view centre / zoom are normalised, so they carry over. Notes keep their stored `ids` order; an old note's `ref` is ignored (not moved to the front) — the order is what the user arranged. New notes still write `ref` = `ids[0]` so an older Sight makes the same layer its ★. Removing the selected layer selects the base (a visible layer), so the annotator keeps a viewer. Grid / Row / Column cells also fit to the first visible layer.
 - **Review:** a fresh reviewer agent found no correctness bugs (no stale identifiers, colours / sel / sound survive the open reorder, swipe regions / labels / clip / layerAt agree, base never clipped). Two minor points fixed: removing the selected layer could select a hidden one (annotator lost its viewer) → now the base; notes stopped writing `ref`, so an older Sight could pick another ★ → `ref: ids[0]` written again. The same reviewer confirmed both fixes, nothing new. Not tested in a browser.
-
-## 0.113.1 — 2026-11-23 — PDF: a screenshot's text looks like any other picture's
-- **What:** in the PDF report the text attached to a screenshot was printed as the tiny grey caption (7.5 pt) under it; it is now in the picture-text style (9.5 pt, `.ptext`) like an ordinary picture's text. The same goes for a frame / view's own text (before, `"<title> — <text>"` was one small caption); its title stays the small grey line above.
-- **Where:** app/review.py (`_cap_parts`, `_pic_rows` now takes `(name, w, h, title, text)`; `build_pdf` passes `frameTitle` / `frameText`, `more[].title` / `.text`, shot texts as text); MANUAL (picture texts).
-- **Notes:** this matches the HTML page's `picCaption` (title, then text in `.text ptext`). A payload from before 0.48 has only `caption`; it is kept whole as the title (small, as before), since the title itself can contain " — ". ZIP and the HTML page were already the same for screenshots and frames. Newlines in a picture text become line breaks in the PDF.
-- **Review:** a fresh reviewer agent found no correctness bugs (built PDFs with new / pre-0.48 / null / numeric payloads, checked span sizes, escaping, tuple shape, row packing, no double `picText`). Nothing to fix, so no re-check round.

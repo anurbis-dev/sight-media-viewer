@@ -2668,7 +2668,9 @@ function ensureCard(a, i, L, pos){
         g.style.left = e.clientX - 100 + "px";
         g.style.top = e.clientY - 70 + "px";
       };
-      const dropped = () => { d.dropped = true; };
+      // (the pile goes the moment it is released: dragend only comes once the target's drop handler has run,
+      // and the pile hanging over the drop spot meanwhile reads as a stall)
+      const dropped = () => { d.dropped = true; g.style.visibility = "hidden"; };
       const end = (e) => finish(e.dataTransfer?.dropEffect ?? "none");
       const late = (e) => { if (e.buttons) return; finish(d.dropped ? "copy" : "none"); };  // (a button still down: an engine that reports moves mid-drag)
       window.addEventListener("dragover", over, true);
