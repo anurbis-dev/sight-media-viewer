@@ -1726,6 +1726,9 @@ export function createAnnotator(host){
       return;
     }
     const srcs = files.length ? files.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) })) : ids.length ? host.pictureSources?.(ids) || [] : [];
+    // (library files dropped while annotating are never compared: their drag's selection is undone, even when none
+    // of them is a picture and nothing is added)
+    if (ids.length) host.refsDropped?.();
     if (!srcs.length) return;  // a review file (.srev) and the like: the page's own drop handler takes it
     e.preventDefault();
     e.stopPropagation();

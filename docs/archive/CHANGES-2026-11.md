@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.3 — 2026-11-24 — Tab: the library beside the lightbox opens on the current file
+- **What:** turning the library split on (Tab, or the ◧ button) scrolls the grid to the file open in the lightbox, centred.
+- **Where:** app/static/index.html — `toggleLightSplit`, new `scrollGridToLight` (uses `scrollGridToIndex`); MANUAL.
+- **Notes:** runs once now and once in the next frame (the grid is re-laid out at its new width). Does nothing if the file is not in `state.items` (not paged in yet / filtered out), and does not run when the split is already persisted as on at lightbox open (not done). Tested in the browser with 300 files. Review (fresh agent): no bugs.
+
 ## 0.122.2 — 2026-11-24 — Thumbnail "N open" chip clears after the last note is deleted
 - **What:** deleting the only open note in the lightbox review panel left "1 open" on the library card until a reload.
 - **Where:** app/static/annotate.js — `noteSig()`; `load()` now primes `notesSig` from the loaded rows.

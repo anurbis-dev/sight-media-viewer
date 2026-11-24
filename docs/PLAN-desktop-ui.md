@@ -9,8 +9,9 @@ Mark done items with `[x]` and the version.
 - [x] 2. (0.122.2) Check that the note-count chip on a thumbnail disappears once all notes and drawings are deleted.
 - [x] 3. (0.122.1) Smart items that belong to annotations move into a "Reviews" sidebar section (hidden when empty).
 - [ ] 4. Bug: a filter saved as a smart collection does not filter, or the current browser filter overrides it.
+      *(2026-11-24, not reproduced twice: save from All / Images, reload, click All then the row — name / kind / ext / path / Any rules filter. One lead: text in the search box stays on and is ANDed with the smart rule (as with every sidebar pick), so `img` typed + a `name contains clip` smart one shows nothing. Need the owner's exact steps / rule.)*
 - [x] 5. (0.122.6) A dropped file hangs too long where it was released while the drop zone under it is checked.
-- [ ] 6. Bug: dropping a file in annotation mode also adds it to the compare stack.
+- [x] 6. (0.125.1) Bug: dropping a file in annotation mode also adds it to the compare stack.
 - [x] 7. (0.122.3) Lightbox open + Tab: scroll the mini-browser to the current file.
 - [x] 8. (0.122.4) Notes panel: resizing the pictures needs a far too long mouse drag (raise the sensitivity).
 - [x] 9. (0.122.4) Notes panel gets an interactive (draggable) edge to resize it, like the other panels.

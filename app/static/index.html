@@ -1814,6 +1814,9 @@ const annot = createAnnotator({
   toggleLibrary: () => toggleLightSplit(),
   pictureSources: (ids) => ids.map((id) => pictureSource(assetById(id) || canvasCtl?.assetOf?.(id))).filter(Boolean),
   selectedPictures: () => selectedAssets().map(pictureSource).filter(Boolean),
+  // A library drag dropped as reference pictures: the drag's own selection of the dragged tiles is undone — beside
+  // the lightbox the selection is the comparison set (lightCompareIds), and these files are not compared.
+  refsDropped: () => { if (cardDrag) cardDrag.restoreSel = true; },
   // Sequence: a frame step past either end of the clip moves into the neighbouring clip (fd = frame length).
   seqEdge: (n, fd) => seqEdge(n, fd),
   seqMarker: (dir) => seqMarker(dir),
@@ -2726,6 +2729,14 @@ function fillThumb(el, a, first, pos){
 // Pointer travel (CSS px) before a library tile may start an HTML5 drag; a click moving less stays a click.
 // Native drag starts at ~4px, too touchy for a hand on a mouse; 12px is still a deliberate move.
 const TILE_DRAG_SLOP = 12;
+// The tile drag under way (ensureCard), so a drop target can ask for the selection to go back to what it was
+// before the drag (restoreSel): a drop that does not act on the dragged files as such (reference pictures).
+let cardDrag = null;
+function restoreDragSel(b){
+  state.selectedIds = b.ids; state.selected = b.sel; state.anchor = b.anchor; state.touchSelect = b.touch;
+  paintSelection();
+  renderInsp();
+}
 function ensureCard(a, i, L, pos){
   let el = cardPool.get(a.id);
   if (!el){
@@ -2756,7 +2767,9 @@ function ensureCard(a, i, L, pos){
       d.off();
       d.g.remove();
       el.draggable = false;
+      if (cardDrag === d) cardDrag = null;
       const id = el.dataset.id;
+      if (d.restoreSel){ restoreDragSel(d.before); return; }   // (dropped as reference pictures: not the subject)
       if (!d.live){
         if (effect === "none"){
           // Never left the click radius and nothing took it: a click (and double click) the drag swallowed.
@@ -2766,10 +2779,7 @@ function ensureCard(a, i, L, pos){
         } else if (!state.selectedIds.includes(id)) selectOnly(id);
       } else if (effect === "none"){
         // No target took the drop (released over nothing, or Esc): the selection goes back to what it was.
-        const b = d.before;
-        state.selectedIds = b.ids; state.selected = b.sel; state.anchor = b.anchor; state.touchSelect = b.touch;
-        paintSelection();
-        renderInsp();
+        restoreDragSel(d.before);
       }
     };
     el.addEventListener("dragstart", (ev) => {
@@ -2818,7 +2828,7 @@ function ensureCard(a, i, L, pos){
         window.removeEventListener("dragend", end, true);
         window.removeEventListener("pointermove", late, true);
       };
-      drag = d;
+      drag = d; cardDrag = d;
     });
     cardPool.set(a.id, el);
     fillThumb(el, a, false, pos);
