@@ -19,7 +19,7 @@ Mark done items with `[x]` and the version.
 - [x] 10. (0.122.7) Lightbox rotation pivots on the file's centre (after panning), not on the window centre.
 - [x] 11. (0.122.8) The stroke marquee works in world coordinates, independent of the file's rotation.
 - [x] 12. (0.122.9) Interactive thumbnail size snaps to values where icons fill the window width (no empty strip on the right).
-- [ ] 13. HTML export: pictures are not enlarged when drawings go outside the file bounds.
+- [x] 13. (0.122.10) HTML export: pictures are not enlarged when drawings go outside the file bounds.
 - [ ] 14. Compare mode: markers for frames with drawings are missing on the shared timeline.
 - [ ] 15. Notes panel screenshot captures the current drawing as well.
 - [ ] 16. Large still images (~6 MB) take up to 5 s to open (macOS Preview: <1 s). Investigate and fix.

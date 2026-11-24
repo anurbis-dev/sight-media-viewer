@@ -886,6 +886,8 @@ body.zoomed { overflow: hidden; }
 .fw.sm { margin: 6px 0 0; }
 .fw.sm > img { border-radius: 8px; border: 1px solid var(--line); }
 .fw.sm > .ov { inset: 1px; width: auto; height: auto; border-radius: 7px; }
+.fw.ext, .zoom .zb.ext { background: rgb(128 128 128 / .16); }
+.fw.ext > img { box-sizing: border-box; }
 .ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
 .field .atts .fw { margin: 0; width: fit-content; }
 .field .atts .fw > img { height: 56px; width: auto; border-radius: 8px; border: 1px solid var(--line); }
@@ -1091,18 +1093,51 @@ body.zoomed { overflow: hidden; }
     E.rows.forEach(function(r){ loc[r.id] = 1; });
     return drawingsOf(f).filter(function(r){ return f.reply || ((loc[r.id] || mineExported(r)) ? show.mine : show.others); });
   }
-  function overlay(f, list){
+  // The area a picture shows (vb units): the frame, grown to every drawing that reaches past its edge plus 3% of the
+  // frame's longer side on that side, capped at three frames each way — Sight's own export rule (annotate.js
+  // exportExtent). Not for 3D views (their drawings live in the view, not on a frame). null: nothing reaches out.
+  function extOf(f, list){
+    var vb = vbOf(f);
+    if (M.kind === "model3d" || !list || !list.length) return null;
+    var x0 = vb[0], y0 = vb[1], x1 = vb[0] + vb[2], y1 = vb[1] + vb[3], grown = false;
+    list.forEach(function(r){
+      var b; try { b = RC.boundsOf(r); } catch (e) { return; }
+      if (!b || !b.every(isFinite) || (b[2] - b[0] <= 0 && b[3] - b[1] <= 0)) return;
+      x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
+    });
+    var pad = 0.03 * Math.max(vb[2], vb[3]), L = vb[0], T = vb[1], R = vb[0] + vb[2], B = vb[1] + vb[3];
+    if (x0 < L){ x0 = Math.max(L - 3 * vb[2], x0 - pad); grown = true; }
+    if (y0 < T){ y0 = Math.max(T - 3 * vb[3], y0 - pad); grown = true; }
+    if (x1 > R){ x1 = Math.min(R + 3 * vb[2], x1 + pad); grown = true; }
+    if (y1 > B){ y1 = Math.min(B + 3 * vb[3], y1 + pad); grown = true; }
+    return grown ? [x0, y0, x1 - x0, y1 - y0] : null;
+  }
+  // A grown area: the box takes its aspect and the picture sits inside it where the frame is (percentages).
+  function placeExt(box, img, f, ext){
+    if (!ext) return;
+    var vb = vbOf(f);
+    box.classList.add("ext");
+    box.style.aspectRatio = ext[2] + " / " + ext[3];
+    var st = img.style;
+    st.position = "absolute"; st.margin = "0";
+    st.left = (vb[0] - ext[0]) / ext[2] * 100 + "%"; st.top = (vb[1] - ext[1]) / ext[3] * 100 + "%";
+    st.width = vb[2] / ext[2] * 100 + "%"; st.height = vb[3] / ext[3] * 100 + "%";
+  }
+  function overlay(f, list, ext){
     var s = document.createElementNS(SVGNS, "svg");
-    s.setAttribute("class", "ov"); s.setAttribute("viewBox", vbOf(f).join(" ")); s.setAttribute("preserveAspectRatio", "none");
+    s.setAttribute("class", "ov"); s.setAttribute("viewBox", (ext || vbOf(f)).join(" ")); s.setAttribute("preserveAspectRatio", "none");
     // (Colour correction areas: shown corrected over the picture f lies on, no outline — review-core gradeSvgMarkup.)
     s.innerHTML = RC.svgMarkup(list, numOf, { media: f.src ? { href: f.src, vb: vbOf(f) } : null });
     return s;
   }
   // The picture with its drawings on top. cls: "cover-w" (the cover), "sm" (thumbnail), else a frame.
-  function pic(f, list, cls){
+  // flat: keep the frame's own size (the small draft chip under the note field).
+  function pic(f, list, cls, flat){
     var w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img", cls === "cover-w" ? "cover" : cls ? "" : "frame");
     i.src = f.src; i.alt = ""; w.appendChild(i);
-    if (list.length) w.appendChild(overlay(f, list));
+    var ext = flat ? null : extOf(f, list);
+    placeExt(w, i, f, ext);
+    if (list.length) w.appendChild(overlay(f, list, ext));
     return w;
   }
   // What a drawing made on frame f gets as data.ctx (the note's own ctx carries more, e.g. v3d).
@@ -1186,12 +1221,17 @@ body.zoomed { overflow: hidden; }
     function flat(){
       var W = img.naturalWidth, H = img.naturalHeight;
       if (!W || !H){ plain(); return; }
-      var c = document.createElement("canvas"); c.width = W; c.height = H;
+      // Drawings past the frame: the picture grows as on the page (extOf), at most 8000 px a side.
+      var vb = e.f ? vbOf(e.f) : [0, 0, W, H], ext = list.length ? extOf(e.f, list) : null, X = ext || vb;
+      var k = ext ? Math.min(1, 8000 / Math.max(W * X[2] / vb[2], H * X[3] / vb[3])) : 1;
+      var sx = W / vb[2] * k, sy = H / vb[3] * k;
+      var c = document.createElement("canvas"); c.width = Math.max(1, Math.round(X[2] * sx)); c.height = Math.max(1, Math.round(X[3] * sy));
       var g = c.getContext("2d");
-      g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.drawImage(img, 0, 0, W, H);
+      g.fillStyle = ext ? "#808080" : "#fff"; g.fillRect(0, 0, c.width, c.height);
+      if (ext){ g.fillStyle = "#fff"; g.fillRect((vb[0] - X[0]) * sx, (vb[1] - X[1]) * sy, W * k, H * k); }
+      g.drawImage(img, (vb[0] - X[0]) * sx, (vb[1] - X[1]) * sy, W * k, H * k);
       if (list.length){
-        var vb = vbOf(e.f), sx = W / vb[2], sy = H / vb[3];
-        g.save(); g.setTransform(sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy);
+        g.save(); g.setTransform(sx, 0, 0, sy, -X[0] * sx, -X[1] * sy);
         try { RC.drawCanvas(g, list, numOf); } catch (_){}
         g.restore();
       }
@@ -1271,13 +1311,16 @@ body.zoomed { overflow: hidden; }
       var e = g.items[k], nb = el("div", "zb"), img = el("img");
       img.alt = ""; img.draggable = false; img.src = e.f ? e.f.src : e.src; nb.appendChild(img);
       var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
-      if (list.length) nb.appendChild(overlay(e.f, list));
+      var ext = e.f ? extOf(e.f, list) : null;
+      placeExt(nb, img, e.f, ext);
+      if (list.length) nb.appendChild(overlay(e.f, list, ext));
       var ready = Promise.race([img.decode ? img.decode().catch(function(){}) : Promise.resolve(), new Promise(function(r){ setTimeout(r, SLIDE_WAIT); })]);
       return ready.then(function(){
         if (gone) return;
         var was = box, wasV = V, wasOff = off;
         var vb = e.f ? vbOf(e.f) : null;
         size = img.naturalWidth && img.naturalHeight ? [img.naturalWidth, img.naturalHeight] : vb ? [vb[2], vb[3]] : [4, 3];
+        if (ext) size = [size[0] * ext[2] / vb[2], size[1] * ext[3] / vb[3]];  // (drawings past the frame: the grown area)
         cur = { g: g, k: k }; box = nb;
         v.insertBefore(box, foot);
         pen.hidden = !drawTarget(e);
@@ -1558,7 +1601,7 @@ body.zoomed { overflow: hidden; }
       atts.textContent = ""; atts.hidden = !dr.shots.length && !dr.draw;
       var fr = dr.draw && frameOf(dr.draw.frame);
       if (fr){
-        var s0 = el("span"), th = pic(fr, dr.draw.items, "");
+        var s0 = el("span"), th = pic(fr, dr.draw.items, "", true);
         th.title = "Edit the drawing"; th.onclick = function(){ editDraw(opts.key, dr.draw.frame); };
         var x0 = el("button", "", "×"); x0.type = "button"; x0.title = "Remove the drawing";
         x0.onclick = function(e){ e.stopPropagation(); dr.draw = null; paintAtts(); paint(); paintPen(); };

@@ -278,7 +278,7 @@
     camera too — the wheel and right-drag — as they do to images, video, text and version compare.
   - **Drawings past the frame** in exports (PDF, ZIP, report pictures): the picture widens to take them
     in, with a small margin. *Export ▾ → Backdrop past the frame*: **Auto** (the colour of the frame's
-    edge, so the margin reads as the frame going on) or **Colour** (pick one; picking also switches to it).
+    edge, so the margin reads as the frame going on) or **Colour** (pick one; picking also switches to it). The HTML review page widens its note pictures and the full-screen view the same way (its margin is a neutral grey; the drawing chip under the note field keeps the frame size).
   - **Note pictures in the panel** are small (360 px) and kept on disk: a video frame or 3D view is made
     once, later openings of the panel only load it; they go when their note (or reply) is deleted.
   - **Export** (panel → Export): *PDF report* (every note with its frame / view and screenshots —
