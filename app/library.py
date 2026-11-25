@@ -1231,7 +1231,7 @@ class Library:
         self._heavy_failed: set[tuple[str, int]] = set()  # (path, mtime) that timed out / crashed
         self.conn = sqlite3.connect(str(root / "library.db"), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        # Unicode lower case for the filter builder (SQLite's own lower() folds ASCII only: "Фон" ≠ "фон")
+        # Unicode lower case for search and the filter builder (SQLite's own lower() folds ASCII only: "Фон" ≠ "фон")
         self.conn.create_function("ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -3848,7 +3848,7 @@ class Library:
             args.extend(built[1])
         for tok in [t for t in q.replace(",", " ").split() if t]:
             needle = tok.lower()
-            where.append("(instr(lower(name), ?) OR instr(lower(note), ?) OR instr(lower(tags), ?))")
+            where.append("(instr(ulower(name), ?) OR instr(ulower(note), ?) OR instr(ulower(tags), ?))")
             args.extend([needle, needle, needle])
         if kind:
             where.append("kind=?")

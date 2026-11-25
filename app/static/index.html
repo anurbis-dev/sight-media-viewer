@@ -161,7 +161,6 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .about-list dt { color: var(--subtle); white-space: nowrap; }
 .about-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; user-select: text; font-variant-numeric: tabular-nums; }
 .brand h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand h1 .ver { margin-left: 6px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--subtle); vertical-align: baseline; }
 .brand .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand .sub:empty { display: none; }
 .brand .user-btn { flex: none; width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--fg); display: grid; place-items: center; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0; }
@@ -229,7 +228,7 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .top-tools .btn.active .chev { transform: rotate(-90deg); }
 .top-tools .btn.icon { width: var(--ctl-h); padding: 0; }
 /* The top bar shrinks in steps when the room runs out (fitTop: the library beside the lightbox, a narrow
-   window): .tl1 — short labels (Sort "DM", "Flt", "Seq"); .tl2 — icons only (no chevrons). */
+   window): .tl1 — short labels (Sort "DM", "Seq"); .tl2 — icons only (no chevrons). Filter is always an icon. */
 .tl-s, .tl-i { display: none; }
 .top.tl1 .tl-l, .top.tl2 .tl-l, .top.tl2 .tl-s, .top.tl2 .chev { display: none; }
 .top.tl1 .tl-s { display: inline; }
@@ -238,6 +237,8 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .top.tl2 .top-tools { gap: 4px; }
 .top.tl2 .top-tools .btn:not(.icon) { padding: 0 7px; }
 .top-tools .btn.on, .top-tools .btn.active { border-color: var(--accent); color: var(--fg); }
+#filterBtn svg { fill: none; }
+#filterBtn.on svg { fill: var(--accent); color: var(--accent); }
 .top-pop { position: absolute; z-index: 100; top: calc(100% + 6px); left: 0; min-width: 200px; max-height: calc(70vh / var(--ui-k, 1)); overflow: auto; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
 #viewOptPop { left: auto; right: 0; min-width: 170px; }
 .top-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; height: 34px; padding: 0 10px; border-radius: 6px; color: var(--fg); }
@@ -763,6 +764,10 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
 .fb-empty { padding: 24px; text-align: center; color: var(--subtle); font-size: 13px; }
 .fb-foot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); flex: none; }
 .fb-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--subtle); }
+/* Folders dragged from the OS file manager: a hint over the window. pointer-events none so the drop still lands on the page. */
+.src-drop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; pointer-events: none; background: color-mix(in oklab, var(--accent) 16%, transparent); }
+.src-drop[hidden] { display: none; }
+.src-drop-card { padding: 18px 28px; border-radius: var(--radius-lg); border: 1px dashed var(--accent); background: color-mix(in oklab, var(--surface) 88%, transparent); color: var(--fg); font-size: 16px; font-weight: 600; box-shadow: 0 16px 48px rgb(0 0 0 / .35); }
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { display: none; width: 0; height: 0; }
 @media (max-width: 1023px) {
@@ -798,7 +803,7 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
   <aside class="side" id="side">
     <div class="brand">
       <button class="mark" id="aboutBtn" type="button" title="About Sight" aria-label="About Sight"><img src="/static/favicon.svg" alt="" draggable="false"></button>
-      <div><h1>Sight<span class="ver" id="verTag"></span></h1><div class="sub" id="buildTag" style="opacity:.7"></div></div>
+      <div><h1>Sight</h1><div class="sub" id="buildTag" style="opacity:.7"></div></div>
       <button class="btn" id="add" title="Add a folder to the library">+ Folder</button>
       <button class="user-btn" id="userBtn" data-userbtn type="button" title="You: reviewer name and tracker logins" aria-label="You: reviewer name and tracker logins"></button>
     </div>
@@ -862,13 +867,14 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
       </div>
     </div>
   </div>
+  <div id="srcDrop" class="src-drop" hidden><div class="src-drop-card">Drop folders to add them as sources</div></div>
   <section class="main">
     <div class="top">
       <button class="menu" id="menu" aria-label="Menu">☰</button>
       <button class="btn ghost icon" id="splitBtn" type="button" title="Show the library beside the board (Tab)" hidden>◧</button>
       <input class="search" id="q" placeholder="Search names &amp; tags  /" />
       <div class="top-tools">
-        <button class="btn ghost" id="filterBtn" type="button" title="Filter by fields: conditions in All / Any groups" aria-label="Filter"><span class="tl-l">Filter</span><span class="tl-s">Flt</span><svg class="tl-i" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/></svg><span class="chev">›</span></button>
+        <button class="btn ghost icon" id="filterBtn" type="button" title="Filter by fields: conditions in All / Any groups" aria-label="Filter"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/></svg></button>
         <div class="top-pop" id="filterPop" hidden></div>
         <button class="btn ghost" id="sortBtn" type="button" title="Sort" aria-label="Sort">Sort<span class="chev">›</span></button>
         <div class="top-pop" id="sortPop" hidden></div>
@@ -922,9 +928,8 @@ const VIEW_MODE_KEY = "sight.viewMode";
 const SORT_KEY = "sight.sort";
 // [key, label] — key "" is the default (insertion/scan order, i.e. no sort). Sent to the server
 // as ?sort=<key>&order=asc|desc; see Library._SORT_EXPR (app/library.py) for what each maps to.
-// The top bar's sort / filter icons, shown when it is too narrow for labels (fitTop, .tl2).
+// The top bar's sort icon, shown when it is too narrow for labels (fitTop, .tl2). Filter is always an icon.
 const SORT_ICON = `<svg class="tl-i" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h5"/></svg>`;
-const FILTER_ICON = `<svg class="tl-i" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/></svg>`;
 const SORT_OPTIONS = [
   ["", "Manual", "Man"],
   ["name", "Name", "Name"],
@@ -2364,7 +2369,6 @@ function fmtDate(ts){
 
 function renderBuildTag(){
   const ver = state.meta.version;
-  if ($("verTag")) $("verTag").textContent = ver ? "v" + ver : "";
   document.title = ver ? "Sight " + ver : "Sight";
   const el = $("buildTag");
   if (!el) return;
@@ -2918,7 +2922,7 @@ function renderGrid(){
     cardPool.clear();
     sliceEl = spaceEl = null;
     grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.loading || trkList.more ? `Loading ${esc(trkMedia().many)}…` : `No ${esc(trkMedia().one)} matches.`}</div>`
-      : `<div class="empty">Empty. Add a folder — files stay where they are.</div>`;
+      : `<div class="empty">Empty. Add a folder or drop one here — files stay where they are.</div>`;
     renderInsp();
     return;
   }
@@ -8448,6 +8452,7 @@ function browserHelpGroups(){
       [["K"], "Compare the selected files (one: its versions) — also Compare in the top bar"],
       [["▶▶ Sequence"], "Play the selected videos one after another (Space over one of them)"],
       [["Ctrl+K"], "Command palette"],
+      [["+ Folder"], "Add a folder (or drop one on the window)"],
       [["?"], "Show / hide this list — the ? button"],
     ] },
     { group: "Selecting", rows: [
@@ -10379,16 +10384,139 @@ function pickReviewFile(){
   inp.onchange = () => { if (inp.files?.[0]) annot.importFile(inp.files[0]); };
   inp.click();
 }
+function osFileDrag(e){
+  const t = [...(e.dataTransfer?.types || [])];
+  return t.includes("Files") && !t.some((x) => x.startsWith("application/x-sight-"));
+}
+function dropUriList(dt){
+  const raw = [dt.getData("text/uri-list"), dt.getData("text/plain"), dt.getData("text/x-moz-url")].filter(Boolean).join("\n");
+  const out = [];
+  for (const line of raw.split(/\r?\n/)){
+    const s = line.trim().split("\t")[0];
+    if (s && !s.startsWith("#")) out.push(s);
+  }
+  return out;
+}
+function dropHasFolders(e){
+  const items = [...(e.dataTransfer?.items || [])];
+  if (!items.length) return osFileDrag(e);
+  let known = false;
+  for (const it of items){
+    if (it.kind !== "file") continue;
+    const ent = it.webkitGetAsEntry?.();
+    if (ent){ known = true; if (ent.isDirectory) return true; continue; }
+  }
+  if (known) return false;
+  const typed = items.filter((it) => it.kind === "file" && it.type);
+  if (typed.length && typed.every((it) => /^(image|video|audio)\//.test(it.type))) return false;
+  return osFileDrag(e);
+}
+function hideSrcDrop(){ showSrcDrop(false); }
+let srcDropBusy = false, srcDropQueued = null, srcDropHideT = 0;
+function showSrcDrop(on){
+  const el = $("srcDrop");
+  if (!el) return;
+  el.hidden = !on;
+  clearTimeout(srcDropHideT);
+  // External drags never fire dragend on the page; if dragover stops, drop the overlay.
+  if (on) srcDropHideT = setTimeout(() => { el.hidden = true; }, 500);
+}
+window.addEventListener("dragleave", (e) => {
+  if (!osFileDrag(e)) return;
+  if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) showSrcDrop(false);
+});
 window.addEventListener("dragover", (e) => {
-  if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) e.preventDefault();
+  if (![...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) return;
+  e.preventDefault();
+  if (osFileDrag(e) && dropHasFolders(e)){
+    try { e.dataTransfer.dropEffect = "copy"; } catch {}
+    showSrcDrop(true);
+  } else {
+    showSrcDrop(false);
+  }
 });
+// Capture: the annotator / lightbox stopPropagation on image drops; folders still have to reach us.
 window.addEventListener("drop", (e) => {
+  const items = [...(e.dataTransfer?.items || [])];
   const files = [...(e.dataTransfer?.files || [])];
-  if (!files.length) return;
-  e.preventDefault(); // never let the browser navigate to a dropped file
-  const f = files.find((x) => /\.(srev|sightreview)$/i.test(x.name));
-  if (f) annot.importFile(f);
-});
+  if (!items.length && !files.length) return;
+  if (items.some((i) => i.kind === "file") || files.length) e.preventDefault(); // never let the browser navigate to a dropped file
+  hideSrcDrop();
+  const review = files.find((x) => /\.(srev|sightreview)$/i.test(x.name));
+  if (review) annot.importFile(review);
+  if (osFileDrag(e)) takeDroppedFolders(e, items);
+}, true);
+async function takeDroppedFolders(e, items){
+  const folderHint = dropHasFolders(e); // DataTransfer types/items die after the first await
+  const uris = dropUriList(e.dataTransfer);
+  const pending = [];
+  for (const it of items){
+    if (it.kind !== "file") continue;
+    pending.push({
+      entry: it.webkitGetAsEntry?.() || null,
+      file: it.getAsFile?.() || null,
+      handleP: typeof it.getAsFileSystemHandle === "function" ? it.getAsFileSystemHandle() : null,
+    });
+  }
+  const names = [], paths = [...uris];
+  let sawEntry = false, anyDir = false;
+  for (const p of pending){
+    let handle = null;
+    try { handle = p.handleP ? await p.handleP : null; } catch {}
+    if (p.entry) sawEntry = true;
+    const isDir = !!(p.entry?.isDirectory || (handle && handle.kind === "directory"));
+    if (!isDir) continue;
+    anyDir = true;
+    const name = (handle && handle.name) || p.entry?.name || p.file?.name || "";
+    if (name) names.push(name);
+    const path = typeof p.file?.path === "string" ? p.file.path : "";
+    if (path) paths.push(path);
+  }
+  if (!anyDir && sawEntry) return; // every entry was a file — do not POST their URIs
+  if (!names.length && !paths.length){
+    if (folderHint) flash("Could not add the folder — use + Folder", 4000);
+    return;
+  }
+  if (!anyDir && !folderHint) return;
+  addDroppedFolders(paths, names);
+}
+async function addDroppedFolders(paths, names){
+  if (srcDropBusy){
+    srcDropQueued = { paths: [...(srcDropQueued?.paths || []), ...paths], names: [...(srcDropQueued?.names || []), ...names] };
+    return;
+  }
+  srcDropBusy = true;
+  try {
+    const data = await api("/api/sources/drop", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paths, names }),
+    });
+    const added = data.added || [], missed = data.missed || [];
+    const fresh = added.filter((s) => s.new);
+    const known = added.filter((s) => !s.new);
+    if (fresh.length || known.length){
+      await refreshMeta();
+      resetList();
+    }
+    const bits = [];
+    if (fresh.length) bits.push(fresh.length === 1 ? `Added ${fresh[0].name}` : `Added ${fresh.length} folders`);
+    else if (known.length) bits.push(known.length === 1 ? `${known[0].name} is already in the library` : "Already in the library");
+    const lost = missed.filter((m) => m.reason === "unknown" || m.reason === "ambiguous" || m.reason === "rejected" || m.reason === "too many");
+    if (lost.some((m) => m.reason === "too many")) bits.push("only the first 32 folders");
+    else if (lost.length && !added.length) bits.push("Could not add the folder — use + Folder");
+    else if (lost.length) bits.push("some folders need + Folder");
+    if (bits.length) flash(bits.join(" · "), 4000);
+  } catch (err) {
+    let why = err.message;
+    try { why = JSON.parse(why).detail || why; } catch {}
+    flash("Could not add that folder: " + why, 4000);
+  } finally {
+    srcDropBusy = false;
+    const q = srcDropQueued;
+    srcDropQueued = null;
+    if (q) addDroppedFolders(q.paths, q.names);
+  }
+}
 function paletteKinds(){
   const items = [{ label: "All files", run: () => applyFilter({}) }];
   for (const k of Object.keys(KIND)) items.push({ label: KIND[k], run: () => applyFilter({ kind: k }) });
@@ -11021,8 +11149,8 @@ function filterCtx(){
 function renderFilterBtn(){
   const c = filterCtx(), n = c.fields ? SightFilter.count(c.tree, c.fields) : (c.tree.c.length ? 1 : 0);
   const b = $("filterBtn");
-  b.innerHTML = `<span class="tl-l">${n ? `Filter · ${n}` : "Filter"}</span><span class="tl-s">${n ? `Flt·${n}` : "Flt"}</span>${FILTER_ICON}${n ? `<span class="tl-i" style="margin-left:2px">${n}</span>` : ""}<span class="chev">›</span>`;
   b.classList.toggle("on", !!n);
+  b.title = n ? `Filter by fields (${n} condition${n === 1 ? "" : "s"})` : "Filter by fields: conditions in All / Any groups";
   fitTop();
 }
 function renderFilterPop(){

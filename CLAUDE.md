@@ -40,7 +40,7 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   (format is in that file): what changed, which files, and what the next agent must know
   (gotchas, invariants, things deliberately not done). Write for someone who will not read the diff.
 - Bump `APP_VERSION` in `app/version.py` (minor = feature, patch = fix) and use that number in the entry.
-  The version is shown in the window title and next to "Sight" in the sidebar.
+  The version is shown in the window title and in About (the sidebar icon).
 - Keep `docs/ARCHITECTURE.md` for facts that stay true; put "what happened" in RECENT.
 - User-facing behaviour (new shortcuts, features) also goes into `MANUAL.md`.
 - Archiving: RECENT.md holds the newest 15 entries. When you add one, run

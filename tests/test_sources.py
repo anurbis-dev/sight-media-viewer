@@ -4,8 +4,10 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -245,6 +247,164 @@ class SourcesTest(unittest.TestCase):
             ("x", "gone", "/nowhere/x.png", "x.png", ".png", "image", 1, 1.0, 1))
         self.lib.resume_watchers()
         self.assertEqual(self.orphans(), 0)
+
+
+from tests.test_annot_tools import NODE, ROOT, free_port, has_playwright  # noqa: E402
+
+
+@unittest.skipUnless(has_playwright(), "node with Playwright not available")
+class DropFoldersE2E(unittest.TestCase):
+    """Overlay + POST /api/sources/drop in the page (tests/drop_folders_e2e.cjs)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import threading
+        import time
+        import uvicorn
+        from app.server import build_app
+
+        cls.NODE, cls.ROOT = NODE, ROOT
+        cls.tmp = Path(tempfile.mkdtemp(prefix="sight-drop-e2e-"))
+        cls.lib = Library(cls.tmp / "home")
+        cls.folder = cls.tmp / "DropMe"
+        cls.folder.mkdir()
+        png(cls.folder / "a.png")
+        cls.port = free_port()
+        cls.server = uvicorn.Server(uvicorn.Config(build_app(cls.lib), host="127.0.0.1", port=cls.port, log_level="warning"))
+        cls.thread = threading.Thread(target=cls.server.run, daemon=True)
+        cls.thread.start()
+        for _ in range(100):
+            if cls.server.started:
+                break
+            time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.should_exit = True
+        cls.thread.join(5)
+        for w in list(cls.lib._watchers.values()):
+            w.stop()
+        cls.lib.close()
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_overlay_and_sidebar(self) -> None:
+        r = subprocess.run(
+            [self.NODE, str(self.ROOT / "tests" / "drop_folders_e2e.cjs"),
+             f"http://127.0.0.1:{self.port}", str(self.folder), self.folder.name],
+            capture_output=True, text=True, timeout=120, cwd=self.ROOT / "tests",
+        )
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["name"], self.folder.name)
+
+
+class DropFoldersTest(unittest.TestCase):
+    """Folders dropped on the window (POST /api/sources/drop, app/server.py drop_folder_paths)."""
+
+    def test_file_uri_to_path(self) -> None:
+        from app.server import file_uri_to_path
+
+        self.assertEqual(file_uri_to_path(""), "")
+        self.assertEqual(file_uri_to_path("https://example.com/x"), "")
+        self.assertEqual(file_uri_to_path("/Users/me/Pics"), "/Users/me/Pics")
+        self.assertEqual(file_uri_to_path("file:///Users/me/Pics"), "/Users/me/Pics")
+        self.assertEqual(file_uri_to_path("file:///C:/Users/me/Pics"), r"C:\Users\me\Pics")
+        self.assertEqual(file_uri_to_path("file://localhost/C:/Users/me/Pics"), r"C:\Users\me\Pics")
+        self.assertEqual(file_uri_to_path("file://server/share/folder"), r"\\server\share\folder")
+        self.assertEqual(file_uri_to_path(r"C:\Users\me\Pics"), r"C:\Users\me\Pics")
+        self.assertEqual(file_uri_to_path("file:///C:/foo%20bar"), r"C:\foo bar")
+        self.assertEqual(file_uri_to_path("file:///tmp/x\ttitle"), "/tmp/x")
+
+    def test_name_match_and_ambiguous(self) -> None:
+        from app.server import drop_folder_paths
+
+        tmp = Path(tempfile.mkdtemp(prefix="sight-drop-"))
+        try:
+            a = tmp / "Photos"
+            b = tmp / "other" / "Photos"
+            c = tmp / "Renders"
+            a.mkdir()
+            b.mkdir(parents=True)
+            c.mkdir()
+            (tmp / "file.png").write_bytes(b"x")
+            paths, missed = drop_folder_paths([str(c)], ["Photos"], selected=[str(a)])
+            self.assertEqual({Path(p).resolve() for p in paths}, {c.resolve(), a.resolve()})
+            self.assertEqual(missed, [])
+            paths, missed = drop_folder_paths([], ["Photos"], selected=[str(a), str(b)])
+            self.assertEqual(paths, [])
+            self.assertEqual(missed, [{"name": "Photos", "reason": "ambiguous"}])
+            paths, missed = drop_folder_paths([], ["Missing"], selected=[str(a)])
+            self.assertEqual(paths, [])
+            self.assertEqual(missed, [{"name": "Missing", "reason": "unknown"}])
+            paths, missed = drop_folder_paths([str(tmp / "file.png")], [], selected=[])
+            self.assertEqual(paths, [])
+            cafe = tmp / unicodedata.normalize("NFC", "Café")
+            cafe.mkdir()
+            paths, missed = drop_folder_paths(
+                [], [unicodedata.normalize("NFD", "Café")], selected=[str(cafe)])
+            self.assertEqual({Path(p).resolve() for p in paths}, {cafe.resolve()})
+            self.assertEqual(missed, [])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _drop(self, lib: Library, paths: list[str], names: list[str]) -> dict:
+        import asyncio
+        from starlette.requests import Request
+        from app.server import build_app
+
+        app = build_app(lib)
+        body = json.dumps({"paths": paths, "names": names}).encode()
+        for r in app.routes:
+            if getattr(r, "path", "") == "/api/sources/drop" and "POST" in (getattr(r, "methods", None) or ()):
+                async def receive():
+                    return {"type": "http.request", "body": body, "more_body": False}
+                scope = {"type": "http", "method": "POST", "path": "/api/sources/drop", "path_params": {},
+                         "query_string": b"", "headers": [(b"content-type", b"application/json")]}
+                res = asyncio.run(r.endpoint(Request(scope, receive)))
+                return res if isinstance(res, dict) else json.loads(res.body)
+        self.fail("POST /api/sources/drop not found")
+
+    def test_drop_http_adds(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="sight-drop-http-"))
+        lib = Library(tmp / "home")
+        watch = mock.patch.object(Library, "_watch", lambda *a, **k: None)
+        scan = mock.patch.object(Library, "scan_source", lambda *a, **k: None)
+        sel = mock.patch("app.server.os_manager_selected_dirs", lambda: [])
+        watch.start()
+        scan.start()
+        sel.start()
+        try:
+            folder = tmp / "shots"
+            folder.mkdir()
+            png(folder / "a.png")
+            body = self._drop(lib, [str(folder)], ["shots"])
+            self.assertEqual(len(body["added"]), 1)
+            self.assertTrue(body["added"][0]["new"])
+            self.assertEqual(body["added"][0]["name"], "shots")
+            again = self._drop(lib, [str(folder)], [])
+            self.assertEqual(len(again["added"]), 1)
+            self.assertFalse(again["added"][0]["new"])
+            nope = self._drop(lib, [str(tmp / "gone")], ["gone"])
+            self.assertEqual(nope["added"], [])
+            self.assertEqual(nope["missed"][0]["reason"], "unknown")
+            file_only = self._drop(lib, [str(folder / "a.png")], [])
+            self.assertEqual(file_only["added"], [])
+            self.assertEqual(file_only["missed"], [])
+            extra = []
+            for i in range(33):
+                d = tmp / f"cap{i:02d}"
+                d.mkdir()
+                extra.append(str(d))
+            capped = self._drop(lib, extra, [])
+            self.assertEqual(len(capped["added"]), 32)
+            self.assertTrue(any(m["reason"] == "too many" for m in capped["missed"]))
+        finally:
+            sel.stop()
+            scan.stop()
+            watch.stop()
+            lib.close()
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class _InlineThread:

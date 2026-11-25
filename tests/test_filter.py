@@ -77,6 +77,16 @@ class WhereSqlTest(unittest.TestCase):
         finally:
             self.lib.execute("UPDATE assets SET status='excluded' WHERE id='a6'")
 
+    def test_search_q_unicode_case(self):
+        # SQLite lower() is ASCII-only; the search box uses ulower so Cyrillic in name / note / tags matches.
+        self.lib.execute("UPDATE assets SET status='ready', note=? WHERE id='a6'", ("Коммент ПРОБНЫЙ",))
+        try:
+            self.assertEqual({a["id"] for a in self.lib.list_assets(q="пробный", limit=100)}, {"a6"})
+            self.assertEqual({a["id"] for a in self.lib.list_assets(q="ФОН", limit=100)}, {"a6"})
+            self.assertEqual({a["id"] for a in self.lib.list_assets(q="ПРОБНЫЙ", limit=100)}, {"a6"})
+        finally:
+            self.lib.execute("UPDATE assets SET status='excluded', note='' WHERE id='a6'")
+
     def test_enum_tags_rating_dates(self):
         self.assertEqual(self.one("kind", "is", "image"), {"a2", "a3", "a5"})
         self.assertEqual(self.one("kind", "is_not", "image"), {"a1", "a4"})

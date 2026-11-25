@@ -53,7 +53,7 @@ const [base, site] = process.argv.slice(2);
   await p.selectOption("#filterPop .flt-row .flt-v", "apr");
   await cards(1);
   assert.deepStrictEqual(await ids(), ["trk:79"]);
-  assert.strictEqual((await p.textContent("#filterBtn .tl-l")).trim(), "Filter · 1");
+  assert.ok(await p.$eval("#filterBtn", (e) => e.classList.contains("on")));
   await p.selectOption("#filterPop .flt-join", "or");
   await p.click("#filterPop .flt-group.root > .flt-gacts [data-act=add]");
   const row2 = p.locator("#filterPop .flt-row").nth(1);
@@ -72,7 +72,7 @@ const [base, site] = process.argv.slice(2);
   await p.keyboard.press("Escape");
   assert.ok(await p.isHidden("#filterPop"));
   // a ShotGrid smart collection: Status is Approved saved under the project
-  const btnText = async () => (await p.textContent("#filterBtn .tl-l")).trim();
+  const filterOn = async () => p.$eval("#filterBtn", (e) => e.classList.contains("on"));
   const smartOf = async (name) => (await (await fetch(base + "/api/collections")).json()).find((c) => c.name === name);
   await p.click("#filterBtn"); await p.waitForSelector("#filterPop [data-act=add]");
   assert.ok(await p.isDisabled("#filterPop [data-act=smart]"), "nothing to save yet");
@@ -93,10 +93,10 @@ const [base, site] = process.argv.slice(2);
   assert.deepStrictEqual([sgs.tracker, sgs.trackerProject], ["shotgrid:" + new URL(site).host, "70"]);
   assert.ok(await p.$(`.trk-smart[data-tracker='shotgrid:${new URL(site).host}']`), "the row carries its tracker key");
   assert.ok(!(await p.$(`.col-row[data-cid='${sgs.id}']`)), "not under Collections");
-  assert.strictEqual(await btnText(), "Filter · 1");
+  assert.ok(await filterOn());
   // the project itself: its own conditions (cleared by the save) → all three; the smart row again → one
   await p.click(".trk-proj[data-proj='70']"); await cards(3);
-  assert.strictEqual(await btnText(), "Filter");
+  assert.ok(!(await filterOn()));
   await p.click(".trk-smart"); await cards(1);
   assert.deepStrictEqual(await ids(), ["trk:79"]);
   // Filter ▾ edits the smart collection while it is open
@@ -115,7 +115,7 @@ const [base, site] = process.argv.slice(2);
   await p.click(".trk-smart [data-act=del]");
   await p.waitForFunction(() => !document.querySelector(".trk-smart"), null, { timeout: 5000 });
   await cards(3);
-  assert.strictEqual(await btnText(), "Filter");
+  assert.ok(!(await filterOn()));
   // open the middle one, then → steps to the next Version
   const names = async () => (await (await fetch(base + "/api/assets?limit=50")).json()).items.map((x) => x.name);
   await p.dblclick(".card[data-id='trk:79']");
@@ -172,7 +172,7 @@ const [base, site] = process.argv.slice(2);
   await cards(1);
   await p.click("#filterPop [data-act=clear]");
   await cards(1);
-  assert.strictEqual((await p.textContent("#filterBtn .tl-l")).trim(), "Filter");
+  assert.ok(!(await p.$eval("#filterBtn", (e) => e.classList.contains("on"))));
   // a library smart collection: Name contains "no such name" saved under Collections (the downloaded Versions are
   // library files too: "All" shows more than one)
   const some = () => p.waitForFunction(() => document.querySelectorAll(".card").length > 0, null, { timeout: 8000 });
@@ -187,17 +187,17 @@ const [base, site] = process.argv.slice(2);
   assert.strictEqual(await p.$$eval(".col-row.smart-row [data-act=add], .col-row.smart-row .badge", (x) => x.length), 0, "no members, nothing nests");
   await cards(0);
   await p.click("#nav .row:has-text('All')"); await some();
-  assert.strictEqual((await p.textContent("#filterBtn .tl-l")).trim(), "Filter", "leaving it: the free conditions (none)");
+  assert.ok(!(await p.$eval("#filterBtn", (e) => e.classList.contains("on"))), "leaving it: the free conditions (none)");
   await p.click("#filterBtn"); await p.waitForSelector("#filterPop [data-act=add]");
   assert.strictEqual(await p.$$eval("#filterPop .flt-row", (x) => x.length), 0, "the free conditions went into the smart collection");
   await p.keyboard.press("Escape");
   await p.click(".col-row.smart-row"); await cards(0);
-  assert.strictEqual((await p.textContent("#filterBtn .tl-l")).trim(), "Filter · 1");
+  assert.ok(await p.$eval("#filterBtn", (e) => e.classList.contains("on")));
   await p.click(".col-row.smart-row [data-act=del]");
   await p.waitForFunction(() => !document.querySelector(".col-row.smart-row"), null, { timeout: 5000 });
   await some();   // (back to All)
   assert.ok(await p.$("#nav .row.on:has-text('All')"));
-  assert.strictEqual((await p.textContent("#filterBtn .tl-l")).trim(), "Filter");
+  assert.ok(!(await p.$eval("#filterBtn", (e) => e.classList.contains("on"))));
   assert.deepStrictEqual(errs, []);
   console.log("sg_view: ok");
   await b.close();

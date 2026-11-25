@@ -1,9 +1,9 @@
 # Sight — user manual
 
-- **Sources** — add the folders you want browsed (sidebar → add source, or drag one in).
+- **Sources** — add the folders you want browsed (sidebar → **+ Folder**, or drop a folder on the window).
   Sight watches them live; nothing is imported or duplicated.
-- **Search** — press `/` to jump to the search box (matches file names and tags). Moving the
-  cursor onto a result takes focus off the search box, so Space previews it right away.
+- **Search** — press `/` to jump to the search box (matches file names, tags and notes, ignoring
+  letter case including Cyrillic). Moving the cursor onto a result takes focus off the search box, so Space previews it right away.
 - **About Sight** — click (or tap) the Sight icon at the top of the sidebar: version, Python / OS, library and ffmpeg paths, counts, uptime and log file. *Copy* puts the whole list on the clipboard (handy for bug reports); Esc, the x or a click outside closes it.
 - **Command palette** — `Ctrl/Cmd+K`: run actions, jump to a kind/collection/file.
 - **Controls list (`?`)** — `?` (or the **?** button in the top bar, for touch) lists every control and shortcut of what is
@@ -63,9 +63,9 @@
   as reference images while annotating. `Tab` again (or ◧) gives the lightbox the whole window; it opens the
   way you left it. On a board `Tab` shows / hides the library beside it in the same way (◧ now sits at the
   left of the top bar). It opens with the grid scrolled to the file being viewed. It is the library itself, top bar
-  included (search, Filter, Sort), cut at the divider: as it gets narrower the search box shrinks, then Filter /
-  Sort and the other buttons shorten to a few letters (Sort by Date modified = *DM*), then to icons only (the
-  full name is in the tooltip). The same happens in a narrow window.
+  included (search, Filter, Sort), cut at the divider: as it gets narrower the search box shrinks, then Sort
+  and the other labelled buttons shorten to a few letters (Sort by Date modified = *DM*), then to icons only (the
+  full name is in the tooltip). Filter is always the funnel icon. The same happens in a narrow window.
 - **Reading notes** — the speech-bubble button in the lightbox's top bar (its badge counts the notes) or `C`
   opens the notes panel without the drawing tools: read the notes and replies, click a note or its picture to go
   to its frame / view (only its drawings show; Esc shows all again). The same button sits in the top bar for a
@@ -399,12 +399,12 @@
   (downloading it). Settings → Trackers → ShotGrid → *Media cache limit* caps that cache (per site) (empty = Auto: as much as the disk
   holds, 2 GB kept free; the oldest opened go first) and *Clear cache* empties it. Any library row in the sidebar
   returns to the library.
-- **Filter ▾** — the button next to the search box narrows what the grid shows by fields: *+ Condition* adds a row
+- **Filter** — the funnel next to the search box narrows what the grid shows by fields: *+ Condition* adds a row
   field · operator · value (Name contains…, Type is…, Tags has…, Rating greater than…, Modified in the last … days /
   on / before / after a day, Path, Note, Review state, Extension), *All* / *Any* at the top decides whether every row
   or one of them must hold, and *+ Group* adds a box of rows with its own All / Any (e.g. *Name contains sh010* AND
   *(Type is Video OR Rating greater than 3)*). A row still missing its value is outlined and filters nothing; *✕*
-  removes a row or group, *Clear* removes them all. The button shows how many conditions apply. The conditions stay
+  removes a row or group, *Clear* removes them all. While any condition is on, the funnel is filled. The conditions stay
   while you move between sources, collections and tags (like the search text) and are remembered. While a ShotGrid
   project is open the same button filters its Versions by the site's Version fields (Status is…, Link contains…,
   Date Created in the last … days, any text / number / date / checkbox field) — kept apart from the library's.

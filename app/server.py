@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 # Starlette with FastAPI's decorator shape (app/web.py): FastAPI + pydantic cost ~0.5 s per start.
@@ -273,6 +274,181 @@ def open_path(path: str) -> None:
             )
         return
     subprocess.Popen(["xdg-open", path])
+
+
+def file_uri_to_path(raw: str) -> str:
+    """A dropped ``file://`` URL or an OS path. Empty if it is not a local path."""
+    from urllib.parse import unquote, urlparse
+
+    s = (raw or "").strip()
+    if not s or s.startswith("#"):
+        return ""
+    s = s.split("\t", 1)[0].strip()  # text/x-moz-url: URL then title
+    if not s.lower().startswith("file:"):
+        if s.startswith("\\\\") or (len(s) >= 3 and s[1] == ":" and s[2] in "\\/"):
+            return s
+        if s.startswith("/") and "://" not in s:
+            return s
+        return ""
+    u = urlparse(s)
+    path = unquote(u.path or "")
+    host = unquote(u.netloc or "")
+    if host and host.lower() not in ("localhost", "127.0.0.1"):
+        return "\\\\" + host + path.replace("/", "\\")
+    if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        path = path[1:].replace("/", "\\")
+    return path
+
+
+def path_basename(path: str) -> str:
+    """Folder name used to match a drop to an Explorer / Finder selection."""
+    s = (path or "").replace("/", os.sep).replace("\\", os.sep)
+    if len(s) == 3 and s[1] == ":" and s[2] == os.sep:
+        return s  # C:\
+    s = s.rstrip(os.sep)
+    return os.path.basename(s) or s
+
+
+def drop_name_key(name: str) -> str:
+    """Case-folded NFC name so Finder NFD paths match the page's File.name."""
+    return os.path.normcase(unicodedata.normalize("NFC", name or ""))
+
+
+def path_is_dir(path: str) -> bool:
+    try:
+        return bool(path) and Path(path).expanduser().resolve().is_dir()
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def os_manager_selected_dirs() -> list[str]:
+    """Directories currently selected in Explorer (Windows) or Finder (macOS). Empty elsewhere."""
+    import subprocess
+
+    try:
+        if sys.platform == "win32":
+            ps = (
+                "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+                "$sh = New-Object -ComObject Shell.Application; $paths = @(); "
+                "foreach ($w in @($sh.Windows())) { "
+                "  try { $doc = $w.Document; if ($null -eq $doc) { continue }; "
+                "    foreach ($i in @($doc.SelectedItems())) { "
+                "      $p = [string]$i.Path; if ($p) { $paths += $p } "
+                "    } } catch {} "
+                "}; $paths | ForEach-Object { $_ }"
+            )
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-STA", "-Command", ps],
+                capture_output=True, timeout=3, creationflags=NO_WINDOW,
+            )
+            text = r.stdout.decode("utf-8", "replace")
+        elif sys.platform == "darwin":
+            script = (
+                'tell application "Finder"\n'
+                "  set out to \"\"\n"
+                "  try\n"
+                "    set sel to selection as alias list\n"
+                "  on error\n"
+                "    return \"\"\n"
+                "  end try\n"
+                "  repeat with i in sel\n"
+                "    set out to out & POSIX path of i & linefeed\n"
+                "  end repeat\n"
+                "  return out\n"
+                "end tell"
+            )
+            r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=3)
+            text = r.stdout or ""
+        else:
+            return []
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for line in text.splitlines():
+        p = line.strip()
+        if p and path_is_dir(p) and p not in out:
+            out.append(p)
+    return out
+
+
+def drop_folder_paths(
+    paths: list[str],
+    names: list[str],
+    selected: list[str] | None = None,
+) -> tuple[list[str], list[dict]]:
+    """Resolve dropped folders to directory paths.
+
+    `paths` come from the page (``File.path``, ``file://`` URLs). `names` are the
+    dropped folder names (for Explorer / Finder selection when the browser hides
+    the path). `selected` is that selection; ``None`` reads it from the OS.
+
+    Returns (resolved paths, missed [{name, reason}]).
+    """
+    resolved: list[str] = []
+    seen: set[str] = set()
+    have: set[str] = set()
+
+    def take(path: str) -> bool:
+        try:
+            real = str(Path(path).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError):
+            return False
+        if not path_is_dir(real):
+            return False
+        key = os.path.normcase(real)
+        if key in seen:
+            return True
+        seen.add(key)
+        resolved.append(real)
+        have.add(drop_name_key(path_basename(real)))
+        return True
+
+    for raw in paths:
+        p = file_uri_to_path(raw if isinstance(raw, str) else "")
+        if p:
+            take(p)
+
+    need = []
+    for n in names:
+        if not isinstance(n, str):
+            continue
+        name = n.strip()
+        if not name:
+            continue
+        if drop_name_key(name) in have:
+            continue
+        need.append(name)
+
+    missed: list[dict] = []
+    if need:
+        sel = selected if selected is not None else os_manager_selected_dirs()
+        by: dict[str, list[str]] = {}
+        for p in sel:
+            if not path_is_dir(p):
+                continue
+            by.setdefault(drop_name_key(path_basename(p)), []).append(p)
+        still = []
+        for name in need:
+            hits = by.get(drop_name_key(name), [])
+            uniq: list[str] = []
+            keys: set[str] = set()
+            for p in hits:
+                try:
+                    k = os.path.normcase(str(Path(p).expanduser().resolve()))
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                if k not in keys:
+                    keys.add(k)
+                    uniq.append(p)
+            if len(uniq) == 1:
+                take(uniq[0])
+            elif len(uniq) > 1:
+                missed.append({"name": name, "reason": "ambiguous"})
+            else:
+                still.append(name)
+        for name in still:
+            missed.append({"name": name, "reason": "unknown"})
+    return resolved, missed
 
 
 def usdz_problem(a: dict | None) -> str:
@@ -1376,7 +1552,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    def add_source_or_400(path: str) -> dict:
+    def try_add_source(path: str) -> tuple[dict | None, str | None]:
         # A folder deleted / a drive unplugged while the picker was open: a 400 with the reason, not a 500.
         # Checked here, not by catching OSError around add_source: that also raises from the watcher
         # (inotify limit, network share) after the row is saved, which is not a rejected folder.
@@ -1388,20 +1564,26 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         except (OSError, ValueError, RuntimeError):
             ok = False
         if not ok:
-            raise HTTPException(400, "Not a folder")
+            return None, "Not a folder"
         try:
             with os.scandir(real) as it:
                 next(it, None)
         except PermissionError:
             # A source the scanner cannot read would sit in the library with 0 files (macOS privacy).
-            raise HTTPException(400, "No permission to read this folder"
-                                + (" - allow Sight in System Settings > Privacy & Security > Files and Folders" if sys.platform == "darwin" else ""))
+            return None, ("No permission to read this folder"
+                          + (" - allow Sight in System Settings > Privacy & Security > Files and Folders" if sys.platform == "darwin" else ""))
         except OSError:
             pass
         try:
-            return lib.add_source(path)
+            return lib.add_source(path), None
         except ValueError as e:  # gone between the check and add_source
-            raise HTTPException(400, str(e) or "Not a folder")
+            return None, str(e) or "Not a folder"
+
+    def add_source_or_400(path: str) -> dict:
+        got, err = try_add_source(path)
+        if err:
+            raise HTTPException(400, err)
+        return got
 
     @app.post("/api/sources/pick")
     def pick() -> dict:
@@ -1440,6 +1622,31 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if not path:
             raise HTTPException(400, "path required")
         return add_source_or_400(path)
+
+    @app.post("/api/sources/drop")
+    async def drop_sources(request: Request) -> dict:
+        # Folders dropped on the window: paths the page could read (File.path / file://) plus
+        # folder names matched to the Explorer / Finder selection (Chromium hides the OS path).
+        body = await json_body(request)
+        raw_paths = body.get("paths") if isinstance(body.get("paths"), list) else []
+        raw_names = body.get("names") if isinstance(body.get("names"), list) else []
+        paths = [p for p in raw_paths if isinstance(p, str)]
+        names = [n for n in raw_names if isinstance(n, str)]
+        found, missed = await asyncio.to_thread(drop_folder_paths, paths, names)
+        if len(found) > 32:
+            for p in found[32:]:
+                missed.append({"name": path_basename(p), "reason": "too many"})
+            found = found[:32]
+        have = {r["id"] for r in lib.sources()}
+        added = []
+        for p in found:
+            got, err = try_add_source(p)
+            if err:
+                missed.append({"name": path_basename(p), "reason": "rejected", "detail": err})
+                continue
+            added.append({**got, "new": got["id"] not in have})
+            have.add(got["id"])
+        return {"added": added, "missed": missed}
 
     @app.put("/api/scan/ignore")
     async def scan_ignore(request: Request) -> dict:

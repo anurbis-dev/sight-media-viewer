@@ -1731,9 +1731,15 @@ export function createAnnotator(host){
       try { ids = JSON.parse(e.dataTransfer.getData("application/x-sight-ids") || "[]"); } catch {}
       if (!Array.isArray(ids)) ids = [];
     }
+    // Folders in the same drop are sources (index.html capture-phase window handler). Do not
+    // stopPropagation when a directory is present, so a mixed folder+pictures drop still adds them.
+    let hasDir = false;
+    for (const it of [...(e.dataTransfer.items || [])]){
+      if (it.kind === "file" && it.webkitGetAsEntry?.()?.isDirectory){ hasDir = true; break; }
+    }
     if (!S.on){
-      if (ids.length && host.dropForCompare){ e.preventDefault(); e.stopPropagation(); host.dropForCompare(ids); return; }
-      if (files.length){ e.preventDefault(); e.stopPropagation(); toast("Turn annotating on (A) to drop reference pictures"); }
+      if (ids.length && host.dropForCompare){ e.preventDefault(); if (!hasDir) e.stopPropagation(); host.dropForCompare(ids); return; }
+      if (files.length){ e.preventDefault(); if (!hasDir) e.stopPropagation(); toast("Turn annotating on (A) to drop reference pictures"); }
       return;
     }
     const srcs = files.length ? files.map((f) => ({ src: f, alpha: refAlpha(f.type || f.name) })) : ids.length ? host.pictureSources?.(ids) || [] : [];
@@ -1742,7 +1748,7 @@ export function createAnnotator(host){
     if (ids.length) host.refsDropped?.();
     if (!srcs.length) return;  // a review file (.srev) and the like: the page's own drop handler takes it
     e.preventDefault();
-    e.stopPropagation();
+    if (!hasDir) e.stopPropagation();
     addRefs(srcs, toDoc(e));
   }
 

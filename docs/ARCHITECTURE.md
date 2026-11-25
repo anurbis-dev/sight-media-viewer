@@ -149,6 +149,13 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   exists yet). Additive migrations live in `Library._migrate()` (`CREATE TABLE IF NOT EXISTS`,
   `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`).
 - `/api/state` returns sources, counts, tags, collections, **boards**, scanIgnore, buildMs, **version**.
+- Dropping folders on the window adds them as sources (`POST /api/sources/drop`): paths the page
+  could read (`File.path`, `file://` URLs) plus folder names matched to the Explorer / Finder
+  selection (Chromium hides the OS path; NFC-folded so Finder NFD matches `File.name`). Lookup runs
+  off the event loop (`asyncio.to_thread`). Same as **+ Folder**; files stay on disk; at most 32
+  folders per drop. A `.srev` in the same drop still imports. Overlay `#srcDrop` (index.html) is the
+  hint while a folder drag is over the window (window `drop` is capture-phase so a mixed drop on the
+  lightbox still adds folders).
 - `GET /api/app-info` feeds the About dialog (brand mark button `#aboutBtn`, overlay `#aboutOverlay` reusing `.fb-modal`): version, frozen, python, platform, starlette, three (parsed from `vendor/three.core.js` `REVISION`), usd, ffmpegPath/ffmpegVersion (tool facts probed once, cached in `static_info()`), home, dbPath/dbBytes, assets, sources, thumbnails (top-level files in `thumbs/`), port, dev, uptimeSec, logPath. `/api/health` is only `{ok,name}`, so nothing is duplicated.
 - Asset `status`: `ready` | `missing` (file gone) | `excluded` (hidden: inside an excluded folder,
   matched by the scan ignore list, or a compiled `.obj`). Excluded rows are kept so metadata survives;
@@ -859,7 +866,7 @@ Phone (stage 3d): build_pwa ships filter-core.js as `core/filter-core.js`; the S
 `mountBuilder` in a bottom sheet (`.flt-sheet`, mobile/js/trackers.js `openWhere`), the tree per project in
 localStorage `sight-review:sgwhere` (`{"<host> <project id>": tree}`, newest 100), sent through the same
 adapter `toConditions` → `browse(…, cond)`. Since 0.108 filter-core.js holds no tracker code: a tracker's fields and its filter form are its adapter's (`filterFields` / `toConditions`), built on filter-core's generic `clean` / `fieldOf` / `opsOf` / `isGroup` / `dayStart` / `namedIn`. Smart collections are Sight-only (they live in the library DB; the
-phone talks to ShotGrid directly). Text comparisons in SQL use SQLite's `lower()` (ASCII only, like the search box).
+phone talks to ShotGrid directly). Text comparisons in SQL (the search box `q` and the filter builder) use `ulower` (Python `str.lower`) so non-ASCII, including Cyrillic, folds; SQLite's own `lower()` is ASCII-only and is not used on these paths.
 **Smart collections** (stage 3c): rows of `collections` with `rule` (JSON — the client's raw tree, not the wire form;
 ≤ 64 000 chars, `_rule_json`) and no members (`add_to_collection` ignores them; nothing nests in one; `parent_id`
 forced NULL for tracker ones). A tracker project's one also has `tracker` (the tracker key "<kind>:<host>") +

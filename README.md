@@ -83,8 +83,8 @@ See [MANUAL.md](MANUAL.md).
 
 ## Versions and project notes
 
-The current version (`app/version.py`) is shown in the window title and after the name in the
-sidebar header. What changed lately is in [docs/RECENT.md](docs/RECENT.md) (older entries move to
+The current version (`app/version.py`) is shown in the window title and in About (click the
+sidebar icon). What changed lately is in [docs/RECENT.md](docs/RECENT.md) (older entries move to
 `docs/archive/` via `python tools/archive_changes.py`); how things fit together is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Contributors and AI agents: start with
 [CLAUDE.md](CLAUDE.md).
