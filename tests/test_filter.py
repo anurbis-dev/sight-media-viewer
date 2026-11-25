@@ -92,6 +92,25 @@ class WhereSqlTest(unittest.TestCase):
         self.assertEqual(self.one("review", "is", "approved"), {"a2"})
         self.assertEqual(self.one("review", "is", "none"), {"a1", "a3", "a4", "a5"})
 
+    def test_loose_drawings_review(self):
+        ids = ("d" * 16, "e" * 16, "f" * 16, "1" * 16)
+        self.lib.add_annotation({"id": ids[0], "kind": "stroke", "scope": "asset", "target_asset_id": "a1", "data": {}})
+        self.lib.add_annotation({"id": ids[1], "kind": "stroke", "scope": "asset", "target_asset_id": "a3",
+                                 "data": {"note": "n" * 16}})
+        self.lib.add_annotation({"id": ids[2], "kind": "note", "scope": "asset", "target_asset_id": "a1",
+                                 "data": {"status": "open"}})
+        self.lib.add_annotation({"id": ids[3], "kind": "status", "scope": "asset", "target_asset_id": "a5",
+                                 "data": {"state": "review"}})
+        try:
+            listed = self.lib.list_assets(limit=100)
+            self.assertEqual({a["id"] for a in self.lib.list_assets(review="drawings", limit=100)}, {"a1"})
+            self.assertEqual(self.lib.counts()["review_drawings"], 1)
+            self.assertEqual(next(a["loose_draw"] for a in listed if a["id"] == "a1"), 1)
+            self.assertEqual(next(a["loose_draw"] for a in listed if a["id"] == "a3"), 0)
+        finally:
+            for i in ids:
+                self.lib.execute("DELETE FROM annotations WHERE id=?", (i,))
+
     def test_groups_and_other_filters(self):
         tree = {"op": "or", "c": [
             {"f": "kind", "o": "is", "v": "video"},

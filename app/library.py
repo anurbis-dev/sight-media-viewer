@@ -1674,8 +1674,8 @@ class Library:
         return out
 
     def review_counts(self) -> dict:
-        """Assets per review state and with open notes — the sidebar's Review rows."""
-        out = {f"review_{k}": 0 for k in (*REVIEW_STATES, "open")}
+        """Assets per review state, with open notes, and with drawings not in a note — the sidebar's Review rows."""
+        out = {f"review_{k}": 0 for k in (*REVIEW_STATES, "open", "drawings")}
         rows = self.query(
             f"SELECT {_REVIEW_SQL} st, {_OPEN_NOTES_SQL} n FROM assets WHERE status != 'excluded' "
             "AND id IN (SELECT target_asset_id FROM annotations WHERE scope='asset' AND deleted_at IS NULL "
@@ -1686,6 +1686,9 @@ class Library:
                 out[f"review_{r['st']}"] += 1
             if r["n"]:
                 out["review_open"] += 1
+        out["review_drawings"] = self.query(
+            f"SELECT COUNT(*) c FROM assets WHERE status != 'excluded' AND {_LOOSE_DRAW_SQL} > 0"
+        )[0]["c"]
         return out
 
     def sources(self) -> list[dict]:
@@ -3871,6 +3874,8 @@ class Library:
             args.append(review)
         elif review == "open":
             where.append(f"{_OPEN_NOTES_SQL} > 0")
+        elif review == "drawings":
+            where.append(f"{_LOOSE_DRAW_SQL} > 0")
         return " AND ".join(where), args
 
     # Sort keys the UI can request, mapped to their SQL expression. "tag" sorts by each asset's

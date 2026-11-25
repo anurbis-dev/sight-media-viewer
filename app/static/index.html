@@ -302,7 +302,7 @@ body.touch-sel-on .insp.open { bottom: 84px; }
 html.ctrl-down .card { cursor: default; }
 .card .badges { position: absolute; left: 8px; top: 8px; z-index: 3; display: flex; align-items: center; gap: 4px; max-width: calc(100% - 16px); pointer-events: none; }
 .card .badges[hidden] { display: none; }
-.card .loose { flex: none; width: 12px; height: 12px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 2px rgb(0 0 0 / .35), 0 1px 3px rgb(0 0 0 / .45); }
+.card .loose { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; box-shadow: 0 1px 4px rgb(0 0 0 / .4); }
 .card .loose[hidden] { display: none; }
 .card .rv { min-width: 0; max-width: 100%; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 15px; color: #fff; background: rgb(208 52 44 / .92); box-shadow: 0 1px 4px rgb(0 0 0 / .4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .rv[hidden] { display: none; }
@@ -1874,6 +1874,7 @@ const annot = createAnnotator({
   // A note added / resolved or the review state changed: the grid pill and the sidebar counts.
   // (a bundle import also lands on sequence clips that are not on screen: their timeline marks are re-read)
   onReviewChanged: (aid) => { scheduleRefreshItems(); scheduleMeta(); seqReviewChanged(aid); },
+  onLooseDrawings: (aid, n) => paintLooseDraw(aid, n),
 });
 // The same tools on a Canvas board (annotate.js board mode): a second annotator, mounted in the board view by
 // canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
@@ -1933,6 +1934,7 @@ const cmpAnnot = createAnnotator({
     cmp.relayout(); // the notes panel takes the right edge
   },
   onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
+  onLooseDrawings: (aid, n) => paintLooseDraw(aid, n),
   // The selected layer's timeline marks, live, for compare's shared timeline (not while its rows still load).
   marksChanged: () => { if (cmpAnnotAsset && !cmpAnnot.loading()) cmp.setMarks(cmpAnnotAsset, cmpAnnot.marks()); },
   // The panel's versions row: open a version in the viewer / compare those versions.
@@ -2906,18 +2908,7 @@ function ensureCard(a, i, L, pos){
     el.querySelector(".meta").hidden = !!L.compact;
     el.classList.toggle("trk-video", !!a.trkVideo);
   }
-  // Review state / open notes from the lightbox review panel, and a red dot when the file
-  // still has drawings that were never added to a note (same corner).
-  const loose = el.querySelector(".loose");
-  loose.hidden = !(a.loose_draw > 0);
-  loose.title = a.loose_draw > 0 ? `${a.loose_draw} drawing${a.loose_draw > 1 ? "s" : ""} not in a note` : "";
-  const rv = el.querySelector(".rv");
-  const rvText = [a.review ? REVIEW_LABEL[a.review] || "" : "", a.open_notes ? `${a.open_notes} open` : ""].filter(Boolean).join(" · ");
-  rv.hidden = !rvText;
-  rv.textContent = rvText;
-  rv.className = "rv" + (a.review ? " " + a.review : "");
-  rv.title = a.open_notes ? `${a.open_notes} open review note${a.open_notes > 1 ? "s" : ""}` : "";
-  el.querySelector(".badges").hidden = loose.hidden && rv.hidden;
+  paintCardBadges(el, a);
   fillThumb(el, a, false, pos);
   return el;
 }
@@ -3473,6 +3464,33 @@ new ResizeObserver(() => {
 }).observe(mainBody);
 new ResizeObserver(() => scheduleRender()).observe(grid);
 
+// Review state / open notes, and a red dot when the file still has drawings that were never added to a note.
+function paintCardBadges(el, a){
+  const loose = el.querySelector(".loose");
+  if (!loose) return;
+  loose.hidden = !(a.loose_draw > 0);
+  loose.title = a.loose_draw > 0 ? `${a.loose_draw} drawing${a.loose_draw > 1 ? "s" : ""} not in a note` : "";
+  const rv = el.querySelector(".rv");
+  const rvText = [a.review ? REVIEW_LABEL[a.review] || "" : "", a.open_notes ? `${a.open_notes} open` : ""].filter(Boolean).join(" · ");
+  rv.hidden = !rvText;
+  rv.textContent = rvText;
+  rv.className = "rv" + (a.review ? " " + a.review : "");
+  rv.title = a.open_notes ? `${a.open_notes} open review note${a.open_notes > 1 ? "s" : ""}` : "";
+  el.querySelector(".badges").hidden = loose.hidden && rv.hidden;
+}
+// The open file's loose-drawing count, ahead of the save. refreshItems keeps this until the server agrees,
+// so a card painted from a response that left before the stroke landed does not wipe the dot.
+const looseLive = new Map();
+function paintLooseDraw(aid, n){
+  looseLive.set(aid, n);
+  const a = assetById(aid);
+  if (a) a.loose_draw = n;
+  const el = cardPool.get(aid);
+  if (el && a) paintCardBadges(el, a);
+  const typing = document.activeElement && insp.contains(document.activeElement) && document.activeElement.id !== "note";
+  if (!typing && state.selectedIds.length === 1 && state.selectedIds[0] === aid) renderInsp();
+}
+
 function row(label, count, on, click, iconId = ""){
   const b = document.createElement("button");
   b.className = "row" + (on ? " on" : "");
@@ -3677,44 +3695,69 @@ function renderFolderChildren(sid, path, depth, container){
   });
 }
 
+// One rule for every sidebar section. A row that carries a count is hidden at 0 unless it is the
+// current filter (`on`) or `keep` (something the user created — an empty source, collection or
+// board is still there). The section itself is hidden when nothing is left to show, unless `keep`
+// (its header is how you add one, or it is the way back to the whole library).
+function navRowShown(it){
+  if (it.keep || it.on) return true;
+  if (it.count == null) return true;
+  return Number(it.count) > 0;
+}
+function addNavSection(key, title, iconId, extraHtml, opts){
+  const items = opts.items || [];
+  const shown = items.filter(navRowShown);
+  if (!shown.length && !opts.keep) return null;
+  const wrap = document.createElement("div");
+  if (opts.className) wrap.className = opts.className;
+  const head = sectionHeader(title, key, extraHtml, iconId);
+  wrap.append(head);
+  bindSectionDrag(wrap, key);
+  nav.append(wrap);
+  if (opts.onHead) opts.onHead(head, wrap);
+  if (!state.navCollapse[key] && opts.fill) opts.fill(wrap, head, shown);
+  return wrap;
+}
+
 // "All" + the per-kind filters (Photos/Video/.../Missing) grouped into their own collapsible,
 // drag-sortable section like Sources/Collections/Tags, instead of sitting loose above them.
 function renderTypes(set){
   const c = state.meta.counts || {};
   const f = state.filter;
-  const wrap = document.createElement("div");
-  wrap.append(sectionHeader("Types", "types", "", "image"));
-  bindSectionDrag(wrap, "types");
-  nav.append(wrap);
-  if (state.navCollapse.types) return;
-  wrap.append(row("All", c.all || 0, !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.smart && !f.folder && !f.review, () => set({}), "layers"));
-  for (const k of Object.keys(KIND)){
-    wrap.append(row(KIND[k], c[k] || 0, f.kind === k, () => set({ kind: k }), KIND_ICON[k]));
-  }
-  // A div (not row()'s button): it holds its own clean-up button, and buttons can't nest.
-  const missRow = document.createElement("div");
-  missRow.className = "row" + (f.missing ? " on" : "");
-  missRow.innerHTML = `${state.showIcons ? iconSpan("alertcircle", "var(--subtle)", 15) : ""}<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
-  missRow.onclick = (e) => { if (e.target.closest("button")) purgeMissing(false); else set({ missing: true }); };
-  // Hidden while nothing is missing; the active row stays so the user can see the (now empty) view.
-  if (c.missing || f.missing) wrap.append(missRow);
+  const allOn = !f.kind && !f.source && !f.tag && !f.missing && !f.collection && !f.smart && !f.folder && !f.review;
+  const items = [
+    { id: "all", count: c.all || 0, on: allOn, keep: true },
+    ...Object.keys(KIND).map((k) => ({ id: k, count: c[k] || 0, on: f.kind === k })),
+    { id: "missing", count: c.missing || 0, on: !!f.missing },
+  ];
+  addNavSection("types", "Types", "image", "", { items, fill(wrap, _head, shown){
+    for (const it of shown){
+      if (it.id === "all"){
+        wrap.append(row("All", c.all || 0, it.on, () => set({}), "layers"));
+      } else if (it.id === "missing"){
+        // A div (not row()'s button): it holds its own clean-up button, and buttons can't nest.
+        const missRow = document.createElement("div");
+        missRow.className = "row" + (f.missing ? " on" : "");
+        missRow.innerHTML = `${state.showIcons ? iconSpan("alertcircle", "var(--subtle)", 15) : ""}<span>Missing</span><em class="badge">${c.missing || 0}</em>${c.missing ? `<button class="tiny" type="button" title="Remove missing files from the library" aria-label="Remove missing files from the library">🧹</button>` : ""}`;
+        missRow.onclick = (e) => { if (e.target.closest("button")) purgeMissing(false); else set({ missing: true }); };
+        wrap.append(missRow);
+      } else {
+        wrap.append(row(KIND[it.id], it.count, it.on, () => set({ kind: it.id }), KIND_ICON[it.id]));
+      }
+    }
+  } });
 }
-// Review rows (lightbox review panel / annotate.js) in their own "Reviews" section: only the rows with
-// something in them, and the whole section is hidden when none has (a library nobody reviews). The active
-// row stays even when it empties.
+// Review rows (lightbox review panel / annotate.js). Empty rows and, when none remain, the whole
+// section stay hidden — the same rule as Types. The active row stays so the emptied view can be left.
 function renderReviews(set){
   const c = state.meta.counts || {};
   const f = state.filter;
-  const rows = REVIEW_ROWS.filter(([k]) => (c["review_" + k] || 0) || f.review === k);
-  if (!rows.length) return;
-  const wrap = document.createElement("div");
-  wrap.append(sectionHeader("Reviews", "reviews", "", "flag"));
-  bindSectionDrag(wrap, "reviews");
-  nav.append(wrap);
-  if (state.navCollapse.reviews) return;
-  for (const [k, label] of rows) wrap.append(row(label, c["review_" + k] || 0, f.review === k, () => set({ review: k }), "flag"));
+  const items = REVIEW_ROWS.map(([k, label, icon]) => ({ id: k, label, icon, count: c["review_" + k] || 0, on: f.review === k }));
+  addNavSection("reviews", "Reviews", "flag", "", { items, fill(wrap, _head, shown){
+    for (const it of shown) wrap.append(row(it.label, it.count, it.on, () => set({ review: it.id }), it.icon));
+  } });
 }
-const REVIEW_ROWS = [["open", "Open notes"], ["review", "Needs review"], ["changes", "Changes requested"], ["approved", "Approved"]];
+const REVIEW_ROWS = [["open", "Open notes", "flag"], ["drawings", "Has drawings", "pencil"], ["review", "Needs review", "flag"], ["changes", "Changes requested", "flag"], ["approved", "Approved", "flag"]];
 const REVIEW_LABEL = { review: "Needs review", changes: "Changes", approved: "Approved" };
 
 // Swaps the main content area between the library grid and a canvas board — the first alternate
@@ -3938,20 +3981,21 @@ async function openBoard(id){
 }
 
 function renderCanvasBoards(){
-  const wrap = document.createElement("div");
-  wrap.className = "nav-canvas";  // hidden beside the lightbox (Tab): boards are not a source of pictures there
-  const head = sectionHeader("Canvas", "canvas", `<button type="button" aria-label="New board">+</button>`, "pin");
-  head.querySelector("button").onclick = async (e) => {
-    e.stopPropagation();
-    const b = await api("/api/boards", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Untitled board" }) });
-    await refreshMeta();
-    openBoard(b.id);
-  };
-  wrap.append(head);
-  bindSectionDrag(wrap, "canvas");
-  nav.append(wrap);
-  if (state.navCollapse.canvas) return;
   const boards = state.meta.boards || [];
+  // A board the user made stays even with nothing on it; the header's + is why an empty section stays.
+  addNavSection("canvas", "Canvas", "pin", `<button type="button" aria-label="New board">+</button>`, {
+    className: "nav-canvas",  // hidden beside the lightbox (Tab): boards are not a source of pictures there
+    keep: true,
+    items: boards.map(() => ({ keep: true })),
+    onHead(head){
+      head.querySelector("button").onclick = async (e) => {
+        e.stopPropagation();
+        const b = await api("/api/boards", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Untitled board" }) });
+        await refreshMeta();
+        openBoard(b.id);
+      };
+    },
+    fill(wrap){
   if (!boards.length){
     const p = document.createElement("p");
     p.className = "sub";
@@ -4007,18 +4051,21 @@ function renderCanvasBoards(){
     bindRowDrag(b, { mime: "application/x-sight-board", rowSelector: ".board-row", idKey: "bid", reorderUrl: "/api/boards/reorder" });
     wrap.append(b);
   });
+    },
+  });
 }
 
 function renderSources(set){
-  const wrap = document.createElement("div");
-  wrap.append(sectionHeader("Sources", "sources", `<span class="sec-count" id="srcCount">${statusHtml()}</span>`, "folder"));
-  bindSectionDrag(wrap, "sources");
-  nav.append(wrap);
-  if (state.navCollapse.sources) return;
   // Each tracker's media cache is a source of its own (opened media's files) that the list does not show — connected
   // or not (by id from /api/trackers, or by its folder from the kind's status).
   const cacheDirs = new Set(Object.values(trkStat).map((st) => st?.cacheDir ? normFsPath(st.cacheDir) : "").filter(Boolean));
-  (state.meta.sources || []).filter((s) => !trkCacheIds.includes(s.id) && !cacheDirs.has(normFsPath(s.path))).forEach((s) => {
+  const sources = (state.meta.sources || []).filter((s) => !trkCacheIds.includes(s.id) && !cacheDirs.has(normFsPath(s.path)));
+  // An empty folder is still a source (it can be scanning, and its × is how it leaves). No folders and no
+  // tracker: the section itself goes.
+  addNavSection("sources", "Sources", "folder", `<span class="sec-count" id="srcCount">${statusHtml()}</span>`, {
+    items: [...sources.map(() => ({ keep: true })), ...trackers.map(() => ({ keep: true }))],
+    fill(wrap){
+  sources.forEach((s) => {
     const open = state.sourceTree.expandedSources.has(s.id);
     const b = document.createElement("div");
     b.className = "row src-row" + (state.filter.source === s.id ? " on" : "");
@@ -4073,6 +4120,8 @@ function renderSources(set){
     if (open) renderFolderChildren(s.id, s.path, 1, wrap);
   });
   renderTrackerSources(wrap);
+    },
+  });
 }
 
 // True if `id` is `ancestorId` itself or nested (at any depth) under it — used to keep a
@@ -4184,37 +4233,39 @@ function renameCollectionRow(b, col){
 }
 
 function renderCollections(set){
-  const wrap = document.createElement("div");
-  const head = sectionHeader("Collections", "collections", `<button type="button" aria-label="New collection">+</button>`, "layers");
-  head.querySelector("button").onclick = async (e) => {
-    e.stopPropagation();
-    await api("/api/collections", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ name: "Untitled" }) });
-    await refreshMeta();
-  };
-  wrap.append(head);
-  bindSectionDrag(wrap, "collections");
   const cols = (state.meta.collections || []).filter((c) => !c.tracker && !c.sgSite);   // (a tracker smart collection sits under its project; one an older Sight added without a key yet too)
-  // Dropping a dragged collection on the section header (rather than on a row) moves it back
-  // to the root level, out of whatever collection it was nested under.
-  head.addEventListener("dragover", (e) => {
-    if (!e.dataTransfer.types.includes("application/x-sight-collection")) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    head.classList.add("drop-into");
-  });
-  head.addEventListener("dragleave", () => head.classList.remove("drop-into"));
-  head.addEventListener("drop", async (e) => {
-    if (!e.dataTransfer.types.includes("application/x-sight-collection")) return;
-    e.preventDefault();
-    head.classList.remove("drop-into");
-    const draggingId = e.dataTransfer.getData("application/x-sight-collection");
-    const dragging = cols.find(c => c.id === draggingId);
-    if (dragging && dragging.parentId){
-      await api("/api/collections/" + draggingId, { method:"PATCH", headers:{ "content-type":"application/json" }, body: JSON.stringify({ parentId: null }) });
-      await refreshMeta();
-    }
-  });
-  if (state.navCollapse.collections){ nav.append(wrap); return; }
+  // Empty collections stay: the user just made them, and the header's + is how the first one appears.
+  addNavSection("collections", "Collections", "layers", `<button type="button" aria-label="New collection">+</button>`, {
+    keep: true,
+    items: cols.map((c) => ({ keep: true, count: c.count || 0 })),
+    onHead(head){
+      head.querySelector("button").onclick = async (e) => {
+        e.stopPropagation();
+        await api("/api/collections", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ name: "Untitled" }) });
+        await refreshMeta();
+      };
+      // Dropping a dragged collection on the section header (rather than on a row) moves it back
+      // to the root level, out of whatever collection it was nested under.
+      head.addEventListener("dragover", (e) => {
+        if (!e.dataTransfer.types.includes("application/x-sight-collection")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        head.classList.add("drop-into");
+      });
+      head.addEventListener("dragleave", () => head.classList.remove("drop-into"));
+      head.addEventListener("drop", async (e) => {
+        if (!e.dataTransfer.types.includes("application/x-sight-collection")) return;
+        e.preventDefault();
+        head.classList.remove("drop-into");
+        const draggingId = e.dataTransfer.getData("application/x-sight-collection");
+        const dragging = cols.find(c => c.id === draggingId);
+        if (dragging && dragging.parentId){
+          await api("/api/collections/" + draggingId, { method:"PATCH", headers:{ "content-type":"application/json" }, body: JSON.stringify({ parentId: null }) });
+          await refreshMeta();
+        }
+      });
+    },
+    fill(wrap){
   const roots = cols.filter(c => !c.parentId);
   if (!roots.length){
     const p = document.createElement("p");
@@ -4309,26 +4360,18 @@ function renderCollections(set){
     cols.filter(c => c.parentId === col.id).forEach(ch => addRow(ch, depth + 1));
   };
   roots.forEach(c => addRow(c, 0));
-  nav.append(wrap);
+    },
+  });
 }
 
 function renderTags(set){
   const tags = state.meta.tags || [];
   const f = state.filter;
-  const wrap = document.createElement("div");
-  wrap.append(sectionHeader("Tags", "tags", "", "tag"));
-  bindSectionDrag(wrap, "tags");
-  nav.append(wrap);
-  if (state.navCollapse.tags) return;
-  if (!tags.length){
-    const p = document.createElement("p");
-    p.className = "sub";
-    p.style.padding = "0 8px";
-    p.textContent = "No tags yet.";
-    wrap.append(p);
-    return;
-  }
-  tags.forEach((t) => {
+  addNavSection("tags", "Tags", "tag", "", {
+    items: tags.map((t) => ({ tag: t, count: t.count || 0, on: f.tag === t.name })),
+    fill(wrap, _head, shown){
+  shown.forEach((it) => {
+    const t = it.tag;
     const b = row(t.name, t.count, f.tag === t.name, null);
     b.classList.add("tag-row");
     b.dataset.name = t.name;
@@ -4345,6 +4388,8 @@ function renderTags(set){
     });
     bindRowDrag(b, { mime: "application/x-sight-tag", rowSelector: ".tag-row", idKey: "name", reorderUrl: "/api/tags/reorder", bodyKey: "names" });
     wrap.append(b);
+  });
+    },
   });
 }
 
@@ -10202,6 +10247,10 @@ async function refreshIds(ids){
       delete x.thumb_v;
     }
     if (fresh.width !== x.width || fresh.height !== x.height) resized = true;
+    if (looseLive.has(x.id)){
+      if (Number(fresh.loose_draw) === looseLive.get(x.id)) looseLive.delete(x.id);
+      else fresh.loose_draw = looseLive.get(x.id);
+    }
     Object.assign(x, fresh);
   }
   if (resized) masonryCache = null; // the masonry signature alone won't catch a size change

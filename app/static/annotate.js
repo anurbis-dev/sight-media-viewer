@@ -709,6 +709,7 @@ export function createAnnotator(host){
       S.saved.add(it.id);
     }
     notesSig = noteSig();  // the baseline: deleting the last note must differ from it and refresh the card's chip
+    looseSig = isBoard() ? null : pendingDrawings().length;  // same for the red dot: a drawing added or cleared after this
     rebuildViews();
     renderAll();
     renderPanel();
@@ -898,16 +899,24 @@ export function createAnnotator(host){
     }
     renderPending();
   }
-  let notesSig = "", notesTimer = 0;
+  let notesSig = "", notesTimer = 0, looseSig = null;
   const noteSig = () => [...S.items.values()].filter((it) => it.kind === "note").map((n) => n.id + (n.data.status || "")).join();
   function afterChange(){
     modeCache = null;
     const sig = noteSig();
-    if (sig !== notesSig){
-      notesSig = sig;
+    const notesChanged = sig !== notesSig;
+    if (notesChanged) notesSig = sig;
+    // A loose drawing is not a note, so the card's red dot (and the Reviews "Has drawings" row) used to
+    // wait for a full reload. Tell the library as soon as the count changes; the save follows.
+    let looseChanged = false;
+    if (!S.loading && !isBoard() && S.asset && looseSig !== null){
+      const n = pendingDrawings().length;
+      if (n !== looseSig){ looseSig = n; looseChanged = true; host.onLooseDrawings?.(S.asset.id, n); }
+    }
+    if (notesChanged || looseChanged){
       const id = S.asset?.id;
       clearTimeout(notesTimer);
-      notesTimer = setTimeout(() => { flush().then(() => host.onReviewChanged?.(id)); }, 600);
+      notesTimer = setTimeout(() => { flush().then(() => host.onReviewChanged?.(id)); }, notesChanged ? 600 : 80);
     }
     rebuildViews();
     renderAll();
@@ -5697,6 +5706,7 @@ export function createAnnotator(host){
     resetPF();
     S.status = ""; S.statusHist = []; S.versions = []; S.prevOpen = null;
     notesSig = "";
+    looseSig = null;
     S.fps = 25; S.fpsKnown = false;
     S.lastSig = "";
     if (!supported() && S.on) toggle(false);
