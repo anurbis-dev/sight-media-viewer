@@ -635,13 +635,13 @@ body.light-split .cmp { left: var(--light-l, 0px); border-left: 1px solid var(--
 .seq-hold > canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .seq-buf { position: absolute; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
 .view { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; }
-/* Cursor = what the held modifier does (body classes k-alt / k-ctrl / k-shift, kept by the key tracker near the
-   keyup handler): Alt-drag turns a picture (on a video: scrubs it; Ctrl+Alt turns the video), Shift on a video =
+/* Cursor = what the held key does (body classes k-alt / k-ctrl / k-shift / k-rot, kept by the key tracker near the
+   keyup handler): a drag with R held (k-rot) turns a picture or a video, Alt on a video scrubs it, Shift on a video =
    fine scrub. An annotation tool's own cursor (cursors.js "tool" layer, inline) wins; with Alt held the annotator
    clears it. This hint beats the idle "grab" of a picture (the "base" layer); a running gesture beats both.
    --cur-rot (the rotate cursor) is defined by cursors.js. */
-body.k-alt .view, body.k-alt .view .view-media { cursor: var(--cur-rot); }
-body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media, body.k-shift:not(.k-alt) .view.vid .view-media { cursor: ew-resize; }
+body.k-rot:not(.k-ctrl) .view, body.k-rot:not(.k-ctrl) .view .view-media { cursor: var(--cur-rot); }
+body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, body.k-shift:not(.k-alt):not(.k-rot) .view.vid .view-media { cursor: ew-resize; }
 .view-media { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; }
 /* Lightbox placeholder: the card thumbnail, stretched to the full image's box, shown while the full
    file loads. The full image stays transparent until it is decoded, then fades in over it. */
@@ -894,7 +894,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
-import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
+import { FINE, FINE_SCRUB, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { showKeyHelp, keyHelpOpen, onKeyHelpKey, isHelpKey, HELP_HINT } from "/static/key-help.js";
 import { setCursor, during as cursorDuring, zoomCursor } from "/static/cursors.js";
@@ -6838,14 +6838,16 @@ function attachViewer(stage, a, src, opts = {}){
   // Pointer input (viewer-input.js, the same module as Compare): a click on a video plays / pauses (held 250 ms,
   // so a double-click — frame / 100 % — does not toggle), a left drag scrubs a video (the window's width is the
   // clip, Shift a tenth; a sequence hands the drag to seqScrubBegin) and pans a picture, middle drag pans,
-  // right drag / wheel zoom, two fingers pinch-zoom and pan. Alt-drag turns a picture about its centre, to any
-  // angle; on a video plain Alt-drag scrubs it instead, and Ctrl+Alt-drag turns the video. Shift snaps the angle
-  // to absolute 15° steps. Alt over a drawing tool hands the press to the viewer (annotate.js altCam).
+  // right drag / wheel zoom, two fingers pinch-zoom and pan. A drag with R held turns a picture or a video about
+  // its centre, to any angle (rotHeld, the key tracker near the keyup handler); Shift snaps the angle to absolute
+  // 15° steps. On a video Alt-drag scrubs too (Ctrl held: snapped to the annotated frames, scrubSnap). Alt over a
+  // drawing tool hands the press to the viewer (annotate.js altCam), so while annotating R + Alt-drag turns.
   let scrubT0 = 0, handed = false;
   stage._vinput?.destroy(); // (the viewer this stage held before: its window listeners, a held click)
   const input = attachViewerInput(wrap, {
     claim: (e) => {
-      if (!(e.button === 0 && e.altKey && (!isVid || e.ctrlKey || e.metaKey))) return null;
+      if (!(e.button === 0 && rotHeld() && !(e.ctrlKey || e.metaKey))) return null;
+      if (rotTool && !opts.embedded){ annot.restoreTool(rotTool); rotTool = null; } // (R picked the rectangle tool)
       const r = wrap.getBoundingClientRect(), [px, py] = pivot(), cx = r.left + px, cy = r.top + py; // the picture's centre
       const d = { a0: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI, rot0: turn.rot };
       return {
@@ -6876,7 +6878,11 @@ function attachViewer(stage, a, src, opts = {}){
         beginScrub();
         return true;
       },
-      to: (frac) => { if (!handed) seekVideo(scrubT0 + frac * (el.duration || 0)); },
+      to: (frac, ev) => {
+        if (handed) return;
+        const dur = el.duration || 0, t = scrubT0 + frac * dur;
+        seekVideo(scrubSnapped(ev) ? scrubSnap(t, SNAP_PX / Math.max(1, wrap.clientWidth) * dur * (ev.shiftKey ? FINE_SCRUB : 1)) : t);
+      },
       end: () => { if (!handed) endScrub(); handed = false; },
     } : null,
     pan: (dx, dy) => {
@@ -7416,8 +7422,9 @@ function bindVBar(el, seekVideo, beginScrub, endScrub){
   const track = bar.querySelector(".vtrack");
   const tAt = (e) => {
     const r = track.getBoundingClientRect();
-    const dur = el.duration || 0;
-    return Math.min(dur, Math.max(0, ((e.clientX - r.left) / Math.max(r.width, 1)) * dur));
+    const dur = el.duration || 0, w = Math.max(r.width, 1);
+    const t = Math.min(dur, Math.max(0, ((e.clientX - r.left) / w) * dur));
+    return scrubSnapped(e) ? scrubSnap(t, SNAP_PX / w * dur) : t; // Ctrl: the nearest annotated frame
   };
   const onMove = (e) => seekVideo(tAt(e));
   const onUp = (e) => {
@@ -7811,7 +7818,32 @@ function seqDragTo(drag, T){
   if (!drag.began){ light.vctl.begin(); drag.began = true; }
   if (light.vctl.seek(t) == null) s.pendT = t; // metadata not in yet: land there once it is
 }
+let rotDown = false, rotTool = null; // R held; the annotator's tool before that R (the key tracker near the keyup handler)
+const rotHeld = () => rotDown;
 function seqTotal(){ return seqDurs().reduce((a, x) => a + x, 0); }
+// Ctrl held while scrubbing (the picture, the video bar, the sequence bar): the playhead snaps to the nearest
+// annotated frame — a timeline mark, annotate.js marks() — within SNAP_PX of the pointer (tolS: those px in seconds
+// on that control). Nothing that near: the pointer's own time. Touch has no Ctrl: a tap on a mark goes there.
+const SNAP_PX = 10;
+const scrubSnapped = (e) => !!(e && (e.ctrlKey || e.metaKey));
+function scrubSnap(t, tolS){ const x = annot.snapTime(t, tolS); return x == null ? t : x; }
+// The same over the whole sequence (T: sequence time): every clip's marks (s.marks), the clip on screen's
+// landing through annotate.js (a quarter into the frame), another clip's a hair after its stored time (seqMarker).
+function seqSnap(T, tolS){
+  const s = light?.seq;
+  if (!s) return T;
+  const d = seqDurs();
+  let acc = 0, best = null, bd = tolS;
+  for (let k = 0; k < d.length; acc += d[k], k++)
+    for (const m of s.marks[k] || []){
+      if (!(m.t <= d[k])) continue;
+      const dist = Math.abs(acc + m.t - T);
+      if (dist <= bd){ bd = dist; best = { k, acc, t: m.t }; }
+    }
+  if (!best) return T;
+  const t = best.k === s.i ? (annot.snapTime(best.t, 1e-6) ?? best.t + 0.001) : best.t + 0.001;
+  return Math.min(best.acc + t, best.acc + d[best.k] - 0.001);
+}
 function seqNow(){
   const s = light.seq, d = seqDurs(), el = light.video;
   // A jump still landing (metadata not in): where it will land, not the element's 0.
@@ -7837,7 +7869,9 @@ function seqScrubBegin(e, fine){
     if (!(ev.buttons & 1)){ up(ev); return; } // released outside the window (no pointerup reached us)
     if (ev.shiftKey !== drag.fine){ drag.fine = ev.shiftKey; drag.x = ev.clientX; drag.T0 = drag.T; }
     drag.T = Math.max(0, Math.min(seqTotal() - 0.001, drag.T0 + (ev.clientX - drag.x) / drag.w * drag.scale * (drag.fine ? 0.1 : 1)));
-    seqDragTo(drag, drag.T);
+    // Ctrl: the nearest annotated frame of any clip (drag.T itself stays unsnapped, so letting go of Ctrl
+    // goes on from the pointer)
+    seqDragTo(drag, scrubSnapped(ev) ? seqSnap(drag.T, SNAP_PX / drag.w * drag.scale * (drag.fine ? 0.1 : 1)) : drag.T);
   };
   const up = (ev) => {
     if (ev.pointerId !== drag.pid) return;
@@ -7986,8 +8020,8 @@ function bindSeqBar(bar){
   let drag = null;
   const move = (e) => {
     if (!drag || !light?.seq) return;
-    const r = track.getBoundingClientRect();
-    seqDragTo(drag, Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(r.width, 1))) * seqTotal());
+    const r = track.getBoundingClientRect(), w = Math.max(r.width, 1), T = Math.max(0, Math.min(1, (e.clientX - r.left) / w)) * seqTotal();
+    seqDragTo(drag, scrubSnapped(e) ? seqSnap(T, SNAP_PX / w * seqTotal()) : T);
   };
   track.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !light?.seq) return;
@@ -8215,7 +8249,7 @@ function lightHelpGroups(){
       [["Double-click"], "Fit to the frame / 100 %"],
       [["F"], "Fit to the frame"],
       [["1–9"], "Zoom to that multiple of the native size (1 = 100 %)"],
-      ...(light.turn ? [[["Shift+R"], "Turn 90°"], [[vid ? "Ctrl+Alt+drag" : "Alt+drag"], "Turn to any angle (Shift: 15° steps)"]] : []),
+      ...(light.turn ? [[["Shift+R"], "Turn 90°"], [["R (held) + drag"], "Turn to any angle (Shift during the drag: 15° steps; while drawing: R + Alt+drag)"]] : []),
       ...(light.mirror ? [[["Shift+M"], "Mirror — the mirror button"], [["Shift+V"], "Flip upside down — the flip button"]] : []),
       [["Shift (held)"], "Slower pan / zoom" + (vid ? " / scrub" : "")],
     ] });
@@ -8226,7 +8260,8 @@ function lightHelpGroups(){
     [["Drag", "Alt+drag"], "Scrub: the window's width is the clip (Shift fine; touch: one finger; Alt+drag also while drawing)"],
     [[",", "."], "Previous / next frame"],
     [["Shift+←", "Shift+→"], seq ? "First / last frame of the whole sequence" : "First / last frame"],
-    [["Shift+,", "Shift+."], "Previous / next drawing or note on the timeline"],
+    [["Ctrl (held)"], "While scrubbing (the picture or the timeline): snap to the nearest drawing or note frame"],
+    [["Ctrl+←", "Ctrl+→", "Shift+,", "Shift+."], "Previous / next drawing or note on the timeline (touch: tap its mark)"],
     [["Shift+F"], "Frame stamp on the video (drag it to a corner; the ▾ next to its icon: settings)"],
     [["Click / drag the timeline"], "Seek / scrub"],
   ] });
@@ -11474,7 +11509,7 @@ document.addEventListener("keydown", (e) => {
     }
   }
   if (light && hotkey(e, "KeyI") && !typing3d){ e.preventDefault(); toggleLightInfo(); return; }
-  if (light && light.turn && !typing && hotkey(e, "Shift+KeyR")){ e.preventDefault(); light.turn(); return; }
+  if (light && light.turn && !typing && hotkey(e, "Shift+KeyR")){ e.preventDefault(); if (!e.repeat) light.turn(); return; }
   if (light && light.mirror && !typing && hotkey(e, "Shift+KeyM")){ e.preventDefault(); light.mirror(); return; }
   if (light && light.mirrorV && !typing && hotkey(e, "Shift+KeyV")){ e.preventDefault(); light.mirrorV(); return; }
   // D in the lightbox of a PSD opens its layers panel; everywhere else it toggles Details.
@@ -11508,7 +11543,21 @@ window.addEventListener("keydown", (e) => {
   };
   for (const t of ["keydown", "keyup"]) window.addEventListener(t, setMods, true);
   window.addEventListener("pointermove", setMods, { capture: true, passive: true });
-  window.addEventListener("blur", () => document.body.classList.remove("k-alt", "k-ctrl", "k-shift"));
+  window.addEventListener("blur", () => { rotDown = false; rotTool = null; document.body.classList.remove("k-alt", "k-ctrl", "k-shift", "k-rot"); });
+  // R held: a drag on the viewer turns the picture / video (attachViewer's claim). Pressed bare (or with Alt, the
+  // annotator's hand-over to the viewer) outside a text field; any release of the key ends it. (keyup goes by
+  // e.code: it ends a hold, it is no shortcut — keys.js's rule is about what fires.)
+  // While annotating a bare R also picks the rectangle tool (annotate.js, after this capture listener): the tool
+  // before it is kept (rotTool) and put back if the hold turns the view (attachViewer's claim).
+  const setRot = (on) => { rotDown = on; if (!on) rotTool = null; document.body.classList.toggle("k-rot", on); };
+  window.addEventListener("keydown", (e) => {
+    if (!(hotkey(e, "KeyR") || hotkey(e, "Alt+KeyR")) || rotDown) return;
+    const tag = e.target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) return;
+    setRot(true);
+    rotTool = light && annot.isOn() && !e.altKey ? annot.toolNow() : null;
+  }, true);
+  window.addEventListener("keyup", (e) => { if (e.code === "KeyR" && rotDown) setRot(false); }, true);
 }
 window.addEventListener("blur", () => camKeys.clear());
 

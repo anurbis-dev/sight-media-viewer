@@ -11,7 +11,7 @@
 //   "hover"    what a press here would grab (a Compare split under the mouse). Inline style on el.
 //   "tool"     an annotation tool's cursor. Inline style on el (as before: it beats el's CSS hints).
 //   "base"     the idle hint where a drag's primary meaning is a pan (a picture: grab). Zero specificity, so a
-//              CSS modifier hint (body.k-alt .view: the rotate cursor) and the layers above beat it.
+//              CSS modifier hint (body.k-rot .view: the rotate cursor, R held) and the layers above beat it.
 // Touch has no cursor: setting one during a touch gesture is harmless.
 // (The exported HTML review page and the phone app inline review-draw.js, which keeps its own one-line rule.)
 

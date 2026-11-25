@@ -1833,7 +1833,7 @@ export function createAnnotator(host){
         if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); }
         return;
       }
-      // Alt on empty space: the viewer's Alt-drag (scrub a video, turn a picture), as with the drawing
+      // Alt on empty space: the viewer's Alt-drag (scrub a video, pan a picture; with R held, turn it), as with the drawing
       // tools (altCam). Alt on a drawing keeps its duplicate-drag above; a marquee has no Alt meaning.
       if (e.altKey) return;
       grab(e);
@@ -5438,14 +5438,15 @@ export function createAnnotator(host){
       ["Shift+ArrowLeft", () => nudge(-10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowRight", () => nudge(10, 0), "Nudge the selection 10 px", G.nav], ["Shift+ArrowUp", () => nudge(0, -10), "Nudge the selection 10 px", G.nav], ["Shift+ArrowDown", () => nudge(0, 10), "Nudge the selection 10 px", G.nav],
       ["Comma", () => stepFrame(-1), "Previous frame (also outside annotation mode)", G.video], ["Period", () => stepFrame(1), "Next frame (also outside annotation mode)", G.video],
       ["Shift+KeyF", () => toggleStamp(), "Frame stamp on the video (drag it to a corner / side; settings: the ▾ next to its icon)", G.video],
-      ["Shift+Comma", () => jumpMarker(-1), "Previous note marker on the timeline", G.video], ["Shift+Period", () => jumpMarker(1), "Next note marker on the timeline", G.video],
+      ["Shift+Comma", () => jumpMarker(-1), "Previous annotated frame (a mark on the timeline; also outside annotation mode)", G.video], ["Shift+Period", () => jumpMarker(1), "Next annotated frame (a mark on the timeline; also outside annotation mode)", G.video],
+      ["Ctrl+ArrowLeft", () => jumpMarker(-1), "Previous annotated frame (a mark on the timeline; also outside annotation mode)", G.video], ["Ctrl+ArrowRight", () => jumpMarker(1), "Next annotated frame (a mark on the timeline; also outside annotation mode)", G.video],
       // 3D: D would still fly the camera (W/A/S are taken above) and move it off the drawings.
       ["KeyD", () => S.kind === "model3d", S.kind === "model3d" ? "Reserved: does not fly the camera while annotating (W / A / S are tools)" : null, G.d3],
     ];
     // A board: A / S / video and 3D keys are not annotation keys there — A frames the whole board (canvas.js),
     // Shift+A leaves the mode (and enters it, from the canvas).
     if (!isBoard()) return rows;
-    const off = new Set(["KeyA", "KeyS", "Shift+KeyS", "Comma", "Period", "Shift+Comma", "Shift+Period", "Shift+KeyF", "KeyD"]);
+    const off = new Set(["KeyA", "KeyS", "Shift+KeyS", "Comma", "Period", "Shift+Comma", "Shift+Period", "Ctrl+ArrowLeft", "Ctrl+ArrowRight", "Shift+KeyF", "KeyD"]);
     return rows.filter((r) => !off.has(r[0])).map((r) => (r[0] === "Shift+KeyA" ? [r[0], r[1], "Enter / leave annotation mode", r[3]] : r));
   }
   // What a combo looks like to a person: KeyV -> V, Ctrl+Shift+KeyZ -> Ctrl+Shift+Z, BracketLeft -> [.
@@ -5749,6 +5750,22 @@ export function createAnnotator(host){
     supports: () => supported(),
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
     marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),
+    // Held R + Alt-drag turns the view while annotating (index.html rotHeld); a bare R also picked the rectangle
+    // tool, so the viewer takes the tool before it (toolNow) and puts it back once the turn starts (restoreTool).
+    toolNow: () => ({ tool: S.tool, shape: S.styles.rect.shape }),
+    restoreTool: (st) => {
+      if (!st || (S.tool === st.tool && S.styles.rect.shape === st.shape)) return;
+      if (S.styles.rect.shape !== st.shape){ S.styles.rect.shape = st.shape; saveStyles(); }
+      setTool(st.tool);
+    },
+    // A scrub with Ctrl held (index.html scrubSnap): where the player goes for the mark nearest t within tol s
+    // (landAt: a quarter into its frame), or null — no mark that near, or not a video.
+    snapTime: (t, tol) => {
+      if (S.kind !== "video") return null;
+      let best = null, bd = tol;
+      for (const m of marks()){ const d = Math.abs(m.t - t); if (d <= bd){ bd = d; best = m.t; } }
+      return best == null ? null : landAt(best);
+    },
     loading: () => !!S.loading, // the open asset's rows are still being fetched (its marks are not known yet)
     // For the sequence export (index.html seqExportAll): which file is bound, is it ready to be pictured, its report.
     assetId: () => S.asset?.id || null,

@@ -84,9 +84,9 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   `--cur-rot` on :root for CSS), `scrub` = ew-resize, `resize-x` / `resize-y`), a raw CSS value, or null. Layers,
   highest first: `gesture` (class `cur-g` + `--cur-g`, `!important` on el and every descendant: beats a tool cursor,
   a child's CSS, the Alt hint), `hover` and `tool` (resolved into el's inline `style.cursor`, hover first), `base`
-  (class `cur-b` under `:where()`, zero specificity: the `body.k-alt .view` rotate hint and everything else beat it).
+  (class `cur-b` under `:where()`, zero specificity: the `body.k-rot .view` rotate hint (R held) and everything else beat it).
   `attachViewerInput` sets the gesture cursor itself (kind from the gesture; zoom by drag direction; a claim object's
-  `cursor` field for claimed drags — the lightbox Alt turn, Compare's split); `cursor: false` opts out. Call sites:
+  `cursor` field for claimed drags — the lightbox R-held turn, Compare's split); `cursor: false` opts out. Call sites:
   lightbox picture `base` grab (a left drag pans; video: none), Compare `base` grab with pictures only and `hover`
   resize near a split, `bind3dZoom` (both 3D viewers: OrbitControls `start`/`end` + `controls.state` → rotate / pan,
   its own right-drag → zoom), the light-turn drag, canvas.js `syncDragCursor()` on the viewport (pan / item move =

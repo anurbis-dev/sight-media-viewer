@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.7 — 2026-11-24 — Lightbox: a panned picture turns about its own centre
+- **What:** Shift+R, the turn button and Alt+drag turn the picture about its own centre, wherever it was panned to, instead of about the window centre (which swung a panned picture off screen). Mirror flips do the same.
+- **Where:** app/static/index.html `attachViewer` — `pivot()` (window centre + `vs.pan`), `turnCss`, `unturn`, `zoomAt`, the Alt-drag claim, `pan` (`unturnVec` removed); MANUAL; ARCHITECTURE.
+- **Notes:** `vs.pan` is now a screen-space move of the picture's centre (before: a move in the unturned frame). So a pan adds the raw pointer delta, and `zoomAt` keeps the pixel under the pointer by `C' = m − k·(m − C)` (no unturn needed, valid for any turn). `turnCss` and `unturn` share `pivot()`, so the drawings' layer (annotate.js takes `geom().turn` and `unturn`) stays aligned. Browser: pan, Shift+R → centre unchanged; pan while turned → moves with the pointer; wheel zoom while turned keeps the pixel under the pointer.
+- **Review:** a fresh reviewer agent found no bugs; its nit (ARCHITECTURE still said "about the window centre") is fixed.
+
 ## 0.122.6 — 2026-11-24 — Dragged tile pile disappears on release
 - **What:** the pile of dragged thumbnails no longer hangs at the drop spot while the drop target works; it hides the moment the drag is released.
 - **Where:** `index.html` tile `dragstart` → `dropped` (window capture `drop`) hides `d.g`; `finish` still removes it on `dragend`.
