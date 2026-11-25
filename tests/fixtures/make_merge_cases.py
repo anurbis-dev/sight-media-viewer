@@ -148,5 +148,21 @@ case("duplicate ids in one package",
      [],
      [note(N1, "first", T0, replies=[rep(R1, "a", T0 + 1)]), note(N1, "second", T0, edited=T0 + 9, replies=[rep(R2, "b", T0 + 2)])])
 
+# 16. ShotGrid ids (data.sg on a note, sg on a reply) survive whichever copy wins.
+SG = {"site": "studio.shotgrid.autodesk.com", "id": 501, "v": 77}
+case("shotgrid ids kept from either side",
+     [note(N1, "newer here", T0, edited=T0 + 20, replies=[rep(R1, "a", T0 + 1), rep(R2, "b", T0 + 2, edited=T0 + 30)]),
+      note(N2, "older here", T0, sg=SG, replies=[rep(R3, "c", T0 + 3, sg=903)])],
+     [note(N1, "older there", T0, edited=T0 + 10, sg=SG, replies=[rep(R1, "a", T0 + 1, sg=901), rep(R2, "b0", T0 + 2, sg=902)]),
+      note(N2, "newer there", T0, edited=T0 + 40, replies=[rep(R3, "c2", T0 + 3, edited=T0 + 41)])])
+
+# 17. Lasso hatch width (0.109, data.hatchWidth): a newer copy brings it (or its removal: Auto) whole, with the row.
+LOOP = [10, 10, .5, 60, 10, .5, 60, 50, .5, 10, 50, .5]
+LASSO = {"close": True, "pattern": "grid", "fill": "#ff3b30", "fillOpacity": 0.5, "gap": 8}
+case("lasso hatch width rides with the row",
+     [stroke(D1, N1, LOOP, T0 + 10, **LASSO), stroke(D2, N1, LOOP, T0 + 10, hatchWidth=2.5, **LASSO)],
+     [stroke(D1, N1, LOOP, T0 + 20, hatchWidth=1.5, **LASSO), stroke(D2, N1, LOOP, T0 + 30, **LASSO),
+      stroke(D3, N1, LOOP, T0 + 5, hatchWidth=4, **{**LASSO, "pattern": "dots"})])
+
 json.dump(cases, open(sys.argv[1], "w"), indent=1)
 print(len(cases), "cases")

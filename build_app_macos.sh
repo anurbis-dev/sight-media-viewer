@@ -34,8 +34,16 @@ uv pip install --python "$PY" \
   --only-binary pymupdf
 # --only-binary: never compile PyMuPDF from source (slow, and it fails). Newer PyMuPDF releases ship
 # no Intel-Mac wheel, so there uv falls back to the newest version that still has one.
+if [ "$(uname)" = "Darwin" ]; then
+  # The Cocoa event loop of app/macapp.py (Dock reopen / Quit). Without it Sight.app still runs, but its Dock
+  # icon shows "not responding".
+  uv pip install --python "$PY" "pyobjc-framework-Cocoa>=10.0"
+fi
 
 echo "Sight - build: compiling Sight.app (this can take a minute)"
+# The bundle icon (app/sight.icns, made by tools/make_app_icons.py). Only on a Mac: the Linux build has no bundle.
+ICON_ARGS=()
+if [ "$(uname)" = "Darwin" ]; then ICON_ARGS=(--icon "$DIR/app/sight.icns"); fi
 # --exclude-module: tkinter is unused; of the USD runtime, app/usdz_convert.py loads only Ar Gf Kind Pcp Plug
 # Sdf Sdr Tf Trace Ts Usd UsdGeom UsdShade UsdUI Vt Work (UsdShade pulls UsdUI) - the rest are left out (fewer
 # DLLs for the virus scanner on a fresh build's first start). Keep the lists in both build scripts equal.
@@ -46,6 +54,8 @@ echo "Sight - build: compiling Sight.app (this can take a minute)"
   --noconfirm \
   --clean \
   --add-data "$DIR/app/static:app/static" \
+  --add-data "$DIR/app/initial_filtering.ini:app" \
+  "${ICON_ARGS[@]}" \
   --collect-all pxr \
   --exclude-module tkinter \
   --exclude-module pxr.UsdPhysics \
@@ -64,6 +74,26 @@ echo "Sight - build: compiling Sight.app (this can take a minute)"
   --distpath dist \
   --workpath .buildenv/work \
   --specpath .buildenv
+
+if [ "$(uname)" = "Darwin" ]; then
+  # Sight.app keeps its Dock icon and answers the Dock through a Cocoa event loop (app/macapp.py, needs pyobjc).
+  # NSAppSleepDisabled keeps App Nap from slowing the server while Sight.app (no window of its own) sits in the
+  # background. Editing Info.plist breaks PyInstaller's ad-hoc signature seal, so the bundle is signed ad hoc
+  # again (--deep, as PyInstaller itself signs it).
+  PLIST="dist/Sight.app/Contents/Info.plist"
+  # The name under the Dock icon and in Finder: the bundle stays Sight.app, the display name is the full title.
+  /usr/libexec/PlistBuddy -c "Set :NSAppSleepDisabled true" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :NSAppSleepDisabled bool true" "$PLIST"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName "Sight Media Viewer"' "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c 'Add :CFBundleDisplayName string "Sight Media Viewer"' "$PLIST"
+  # In case macOS asks before Sight sends its browser the "reopen" event (Dock click on a minimized window).
+  AE_TEXT="Sight brings its own browser window back when you click Sight in the Dock."
+  /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription \"$AE_TEXT\"" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string \"$AE_TEXT\"" "$PLIST"
+  codesign --force --deep --sign - dist/Sight.app
+  # A build without pyobjc runs, but brings the "not responding" Dock icon back: say so loudly.
+  find dist/Sight.app -name "_objc*.so" | grep -q .     || echo "Sight - build: WARNING - pyobjc is missing from Sight.app; its Dock icon will show 'not responding'"
+fi
 
 echo
 if [ "$(uname)" = "Darwin" ]; then

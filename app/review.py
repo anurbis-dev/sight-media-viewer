@@ -6,7 +6,8 @@
   notes are written in (Cyrillic, CJK ...) renders with MuPDF's bundled fallback fonts.
 - .srev package (legacy extension .sightreview): one JSON file holding the media's identity,
   every annotation row and the screenshots (base64), so a review can be mailed / sent by messenger
-  and opened on another machine that has the same media file in its library.
+  and opened on another machine that has the same media file in its library. A bundle (same
+  extension, format "sight-review-bundle") holds several packages, one per clip of a sequence.
   The format of everything in it is specified in docs/FORMAT.md.
 - HTML page: a self-contained reviewer page; it inlines app/static/review-core.js (the drawing
   primitives and merge rules shared with Sight and the mobile app) and app/static/review-draw.js
@@ -21,6 +22,8 @@ import io
 import json
 import os
 import re
+import shutil
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -145,43 +148,55 @@ def _img_tag(name: str, w: int, h: int, max_h: float) -> str:
     return f'<img src="{name}" style="width:{width:.0f}pt"/>'
 
 
+def _cap_parts(title, text, caption) -> tuple[str, str]:
+    """(title, text) of a note picture; a payload without frameTitle / title (before 0.48) has only
+    `caption`, "<title> — <text>" — kept whole as the title, since the title itself may hold " — "."""
+    if title is not None:
+        return str(title or ""), str(text or "")
+    return str(caption or ""), ""
+
+
 def _pic_rows(pics: list, max_h: float, min_h: float, indent: float = 0.0) -> str:
     """A note's / reply's pictures in rows, each row filled across the text column: the pictures of a
     row share one height, chosen so that they span the row. A row takes pictures while that height
     stays at least min_h, and never goes taller than max_h (a lone picture then stops short of the
-    right edge). A caption under each picture. pics: [(name, w, h, caption)].
+    right edge). Under each picture its title (small, grey) and then its own text in the note's picture-text
+    style (`.ptext`, as the HTML page does), so a screenshot's text looks like any other picture's.
+    pics: [(name, w, h, title, text)].
     PyMuPDF's Story does not wrap a table row, so the rows are packed here."""
     gap = 6.0  # each cell's right padding, the last one's included (it shows nothing)
     room_w = CONTENT_W - indent - 1.0  # 1 pt of slack against rounding
     out: list[str] = []
-    row: list[tuple[str, float, str]] = []  # (name, aspect w/h, caption)
+    row: list[tuple[str, float, str, str]] = []  # (name, aspect w/h, title, text)
+    esc = lambda s: html.escape(str(s)).replace("\n", "<br/>")
 
     def flush() -> None:
         if not row:
             return
-        h = min(max_h, (room_w - gap * len(row)) / sum(a for _, a, _ in row))
+        h = min(max_h, (room_w - gap * len(row)) / sum(r[1] for r in row))
         cells = ""
-        for n, a, c in row:
+        for n, a, title, text in row:
             w = h * a
             cells += (
                 f'<td style="width:{w:.1f}pt;padding:0 {gap:.0f}pt 0 0;vertical-align:top"><img src="{n}" style="width:{w:.1f}pt;margin:0"/>'
-                + (f'<p class="cap" style="width:{w:.1f}pt;margin:1pt 0 0 0">{html.escape(str(c))}</p>' if c else "")
+                + (f'<p class="cap" style="width:{w:.1f}pt;margin:1pt 0 0 0">{esc(title)}</p>' if title else "")
+                + (f'<p class="ptext" style="width:{w:.1f}pt;margin:{1 if title else 2}pt 0 0 0">{esc(text)}</p>' if text else "")
                 + "</td>")
         out.append(f'<table style="border-collapse:collapse;margin:4pt 0 2pt {indent:.0f}pt"><tr>{cells}</tr></table>')
         row.clear()
 
-    for name, w, h, cap in pics:
+    for name, w, h, title, text in pics:
         a = w / h
-        used = sum(x for _, x, _ in row)
+        used = sum(r[1] for r in row)
         # The picture starts a new row when, with it, the shared height would drop below min_h.
         if row and (room_w - gap * (len(row) + 1)) / (used + a) < min_h:
             flush()
-        row.append((name, a, cap or ""))
+        row.append((name, a, str(title or "").strip(), str(text or "").strip()))
     flush()
     return "".join(out)
 
 
-def build_pdf(payload: dict, root: Path, out: Path) -> int:
+def build_pdf(payload: dict, root: Path, out: Path, number: bool = True) -> int:
     """payload: {title, subtitle, meta: [[label, value]], cover, notes: [{num, ctx, author, date,
     text, status (open|progress|done), frame, shots: [id], frameCaption, more: [{frame, caption}] (more
     frames / views the note was drawn on), replies: [{author, date, text, event, shots: [id]}]}]} — images
@@ -247,16 +262,16 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
         pics = []
         frame = put_image(decode_data_url(n.get("frame") or ""))
         if frame:
-            pics.append((*frame, n.get("frameCaption") or ""))
+            pics.append((*frame, *_cap_parts(n.get("frameTitle"), n.get("frameText"), n.get("frameCaption"))))
         for m in n.get("more") or []:
             pic = put_image(decode_data_url((m or {}).get("frame") or "")) if isinstance(m, dict) else None
             if pic:
-                pics.append((*pic, m.get("caption") or ""))
+                pics.append((*pic, *_cap_parts(m.get("title"), m.get("text"), m.get("caption"))))
         shot_caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
         for sid in n.get("shots") or []:
             shot = put_image(shot_bytes(str(sid)))
             if shot:
-                pics.append((*shot, str(shot_caps.get(str(sid)) or "")))
+                pics.append((*shot, "", str(shot_caps.get(str(sid)) or "")))
         parts.append(_pic_rows(pics, 240, 120))
         for r in n.get("replies") or []:
             if r.get("event"):  # resolve / in progress / reopen entry in the thread
@@ -268,7 +283,7 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
             text = f"<br/>{esc(r.get('text'))}" if r.get("text") else ""
             parts.append(f'<p class="reply"><span class="who">{who}</span>{text}</p>')
             rshots = [s for s in (put_image(shot_bytes(str(sid))) for sid in r.get("shots") or []) if s]
-            parts.append(_pic_rows([(*s, "") for s in rshots], 240, 100, indent=16))
+            parts.append(_pic_rows([(*s, "", "") for s in rshots], 240, 100, indent=16))
         parts.append("</div>")
     story = pymupdf.Story(html="".join(parts), user_css=_PDF_CSS, archive=pymupdf.Archive(tmp))
     mediabox = pymupdf.Rect(0, 0, *PAGE)
@@ -284,12 +299,8 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
     writer.close()
     doc = pymupdf.open("pdf", buf.getvalue())
     total = doc.page_count
-    footer = str(payload.get("footer") or "")
-    for i, page in enumerate(doc):
-        label = f"{i + 1} / {total}"
-        page.insert_text((PAGE[0] - MARGIN - 30, PAGE[1] - 22), label, fontsize=7.5, color=(0.55, 0.55, 0.58))
-        if footer and footer.isascii():
-            page.insert_text((MARGIN, PAGE[1] - 22), footer, fontsize=7.5, color=(0.55, 0.55, 0.58))
+    if number:
+        _number_pages(doc, str(payload.get("footer") or ""))
     doc.set_metadata({"title": str(payload.get("title") or "Review"), "creator": "Sight"})
     doc.save(str(out), garbage=3, deflate=True)
     doc.close()
@@ -302,6 +313,39 @@ def build_pdf(payload: dict, root: Path, out: Path) -> int:
         os.rmdir(tmp)
     except OSError:
         pass
+    return total
+
+
+def _number_pages(doc, footer: str) -> None:
+    total = doc.page_count
+    for i, page in enumerate(doc):
+        page.insert_text((PAGE[0] - MARGIN - 30, PAGE[1] - 22), f"{i + 1} / {total}", fontsize=7.5, color=(0.55, 0.55, 0.58))
+        if footer and footer.isascii():
+            page.insert_text((MARGIN, PAGE[1] - 22), footer, fontsize=7.5, color=(0.55, 0.55, 0.58))
+
+
+def build_pdf_all(reports: list, root: Path, out: Path, title: str) -> int:
+    """Several clips' reports (each a build_pdf payload) as one PDF: each clip starts on a new page, the pages
+    are numbered through. Returns the page count."""
+    import pymupdf
+
+    tmp = Path(tempfile.mkdtemp(prefix="sight-pdfall-"))
+    doc = pymupdf.open()
+    footer = ""
+    try:
+        for i, rep in enumerate(reports):
+            part = tmp / f"p{i}.pdf"
+            build_pdf(rep, root, part, number=False)
+            with pymupdf.open(str(part)) as d:
+                doc.insert_pdf(d)
+            footer = footer or str(rep.get("footer") or "")
+        total = doc.page_count
+        _number_pages(doc, footer)
+        doc.set_metadata({"title": title, "creator": "Sight"})
+        doc.save(str(out), garbage=3, deflate=True)
+    finally:
+        doc.close()
+        shutil.rmtree(tmp, ignore_errors=True)
     return total
 
 
@@ -340,63 +384,86 @@ def build_zip(payload: dict, root: Path, out: Path, media_name: str) -> tuple[in
     payload is the PDF report's (gatherReport) with those names. Returns (notes, pictures)."""
     import zipfile
 
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        return _zip_report(z, payload, root, media_name, "")
+
+
+def build_zip_all(reports: list, root: Path, out: Path, names: list) -> tuple[int, int]:
+    """Several clips' notes in one ZIP: a folder per clip ("01 clip_name"), inside it what build_zip makes for
+    that clip. names: each report's media file name. Returns (notes, pictures) over all clips."""
+    import zipfile
+
+    width = max(2, len(str(len(reports))))
+    notes = pictures = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for i, (rep, name) in enumerate(zip(reports, names)):
+            folder = _zip_part(f"{str(i + 1).zfill(width)} {os.path.splitext(name)[0]}", f"Clip {i + 1}")
+            n, p = _zip_report(z, rep, root, name, folder + "/")
+            notes += n
+            pictures += p
+    return notes, pictures
+
+
+def _zip_report(z, payload: dict, root: Path, media_name: str, prefix: str) -> tuple[int, int]:
+    """build_zip's content for one report into the open ZipFile z, every path under prefix ("" or "folder/")."""
+    import zipfile
+
     notes = [n for n in payload.get("notes") or [] if isinstance(n, dict)]
     width = max(2, len(str(len(notes))))
     pictures = 0
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        used: set[str] = set()
+    used: set[str] = set()
 
-        def put(folder: str, file: str, data: bytes) -> str:
-            stem, ext = os.path.splitext(file)
-            ext = _image_ext(data) if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif", "") else ext
-            name, k = f"{stem}{ext}", 2
-            while (folder + "/" + name).lower() in used:
-                name, k = f"{stem} ({k}){ext}", k + 1
-            used.add((folder + "/" + name).lower())
-            # JPEG / PNG are packed already: store them.
-            z.writestr(zipfile.ZipInfo((folder + "/" if folder else "") + name, time.localtime()[:6]), data,
-                       compress_type=zipfile.ZIP_STORED)
-            return name
+    def put(folder: str, file: str, data: bytes) -> str:
+        stem, ext = os.path.splitext(file)
+        ext = _image_ext(data) if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif", "") else ext
+        name, k = f"{stem}{ext}", 2
+        while (folder + "/" + name).lower() in used:
+            name, k = f"{stem} ({k}){ext}", k + 1
+        used.add((folder + "/" + name).lower())
+        # JPEG / PNG are packed already: store them.
+        z.writestr(zipfile.ZipInfo(prefix + (folder + "/" if folder else "") + name, time.localtime()[:6]), data,
+                   compress_type=zipfile.ZIP_STORED)
+        return name
 
-        cover = decode_data_url(payload.get("cover") or "")
-        if cover:
-            put("", _zip_part(media_name, "cover") + ".jpg", cover)
+    cover = decode_data_url(payload.get("cover") or "")
+    if cover:
+        put("", _zip_part(media_name, "cover") + ".jpg", cover)
+        pictures += 1
+    for i, n in enumerate(notes):
+        num = str(n.get("num") or i + 1)
+        folder = f"Note {num.zfill(width)}"
+        lines = [f"Note {num} · {STATE_LABEL.get(str(n.get('status') or 'open'), 'Open')}"]
+        by = " · ".join(str(x) for x in (n.get("ctx"), n.get("author"), n.get("date")) if x)
+        if by:
+            lines.append(by)
+        lines += ["", str(n.get("text") or "").strip() or "(no text)"]
+        texts: list[tuple[str, str]] = []
+        frame = decode_data_url(n.get("frame") or "")
+        if frame:
+            name = put(folder, _zip_part(n.get("frameFile"), f"Note {num}"), frame)
             pictures += 1
-        for i, n in enumerate(notes):
-            num = str(n.get("num") or i + 1)
-            folder = f"Note {num.zfill(width)}"
-            lines = [f"Note {num} · {STATE_LABEL.get(str(n.get('status') or 'open'), 'Open')}"]
-            by = " · ".join(str(x) for x in (n.get("ctx"), n.get("author"), n.get("date")) if x)
-            if by:
-                lines.append(by)
-            lines += ["", str(n.get("text") or "").strip() or "(no text)"]
-            texts: list[tuple[str, str]] = []
-            frame = decode_data_url(n.get("frame") or "")
-            if frame:
-                name = put(folder, _zip_part(n.get("frameFile"), f"Note {num}"), frame)
+            texts.append((name, str(n.get("frameText") or "")))
+        for m in n.get("more") or []:
+            data = decode_data_url((m or {}).get("frame") or "") if isinstance(m, dict) else None
+            if data:
+                name = put(folder, _zip_part(m.get("file"), f"Note {num}"), data)
                 pictures += 1
-                texts.append((name, str(n.get("frameText") or "")))
-            for m in n.get("more") or []:
-                data = decode_data_url((m or {}).get("frame") or "") if isinstance(m, dict) else None
-                if data:
-                    name = put(folder, _zip_part(m.get("file"), f"Note {num}"), data)
-                    pictures += 1
-                    texts.append((name, str(m.get("text") or "")))
-            caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
-            files = n.get("shotFiles") if isinstance(n.get("shotFiles"), dict) else {}
-            for k, sid in enumerate(n.get("shots") or []):
-                p = shot_path(root, str(sid))
-                if not p:
-                    continue
-                name = put(folder, _zip_part(files.get(str(sid)), f"Note {num} picture {k + 1}"), p.read_bytes())
-                pictures += 1
-                texts.append((name, str(caps.get(str(sid)) or "")))
-            if n.get("picText") and not frame:
-                texts.insert(0, ("Picture", str(n["picText"])))
-            for name, text in texts:
-                if text.strip():
-                    lines += ["", f"== {name} ==", text.strip()]
-            z.writestr(f"{folder}/{folder}.txt", "\n".join(lines) + "\n")
+                texts.append((name, str(m.get("text") or "")))
+        caps = n.get("shotCaptions") if isinstance(n.get("shotCaptions"), dict) else {}
+        files = n.get("shotFiles") if isinstance(n.get("shotFiles"), dict) else {}
+        for k, sid in enumerate(n.get("shots") or []):
+            p = shot_path(root, str(sid))
+            if not p:
+                continue
+            name = put(folder, _zip_part(files.get(str(sid)), f"Note {num} picture {k + 1}"), p.read_bytes())
+            pictures += 1
+            texts.append((name, str(caps.get(str(sid)) or "")))
+        if n.get("picText") and not frame:
+            texts.insert(0, ("Picture", str(n["picText"])))
+        for name, text in texts:
+            if text.strip():
+                lines += ["", f"== {name} ==", text.strip()]
+        z.writestr(f"{prefix}{folder}/{folder}.txt", "\n".join(lines) + "\n")
     return len(notes), pictures
 
 
@@ -411,6 +478,8 @@ def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_ve
     shots: dict[str, str] = {}
     def row_shots(d: dict) -> list:
         out = list(d.get("shots") or [])
+        if isinstance(d.get("shot"), str):  # a reference image's picture (kind "image", FORMAT.md)
+            out.append(d["shot"])
         for x in d.get("replies") or []:  # pictures attached to replies
             if isinstance(x, dict) and not x.get("deleted"):
                 out += list(x.get("shots") or [])
@@ -437,18 +506,157 @@ def build_package(asset: dict, rows: list[dict], root: Path, author: str, app_ve
     }
 
 
-def parse_package(raw: bytes) -> dict:
+def _load_json(raw: bytes):
     try:
-        pkg = json.loads(raw.decode("utf-8-sig"))
+        return json.loads(raw.decode("utf-8-sig"))
     except Exception as e:
         raise ValueError("Not a Sight review file") from e
+
+
+def _check_package(pkg) -> dict:
     if not isinstance(pkg, dict) or pkg.get("format") != PACKAGE_FORMAT:
         raise ValueError("Not a Sight review file")
-    if int(pkg.get("version") or 0) > PACKAGE_VERSION:
+    try:
+        version = int(pkg.get("version") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Review file is incomplete") from None
+    if version > PACKAGE_VERSION:
         raise ValueError("This review file was made by a newer Sight")
     if not isinstance(pkg.get("annotations"), list) or not isinstance(pkg.get("asset"), dict):
         raise ValueError("Review file is incomplete")
     return pkg
+
+
+def parse_package(raw: bytes) -> dict:
+    return _check_package(_load_json(raw))
+
+
+# ---- .srev bundle: several packages (one per clip) in one file; docs/FORMAT.md "Bundle" ---------
+
+BUNDLE_FORMAT = "sight-review-bundle"
+BUNDLE_VERSION = 1
+
+
+def build_bundle(packages: list[dict], author: str, app_version: str, title: str = "",
+                 bid: str | None = None) -> dict:
+    out = {
+        "format": BUNDLE_FORMAT,
+        "version": BUNDLE_VERSION,
+        "id": bid or _new_id(),
+        "app": f"Sight {app_version}",
+        "exported_at": int(time.time() * 1000),
+        "author": author,
+        "packages": list(packages),
+    }
+    if title:
+        out["title"] = title
+    return out
+
+
+def parse_review_file(raw: bytes) -> tuple[dict | None, list]:
+    """A .srev file -> (bundle header or None, entries). A plain package gives (None, [pkg]) and
+    raises ValueError like parse_package. A bundle gives its header (every key but `packages`) and
+    one entry per inner package: the checked package, or the ValueError it failed with — a damaged
+    clip is reported for that clip, not for the whole file."""
+    obj = _load_json(raw)
+    if not isinstance(obj, dict) or obj.get("format") != BUNDLE_FORMAT:
+        return None, [_check_package(obj)]
+    try:
+        version = int(obj.get("version") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Review file is incomplete") from None
+    if version > BUNDLE_VERSION:
+        raise ValueError("This review file was made by a newer Sight")
+    pkgs = obj.get("packages")
+    if not isinstance(pkgs, list):
+        raise ValueError("Review file is incomplete")
+    if not pkgs:
+        raise ValueError("This review file holds no clips")
+    entries: list = []
+    for p in pkgs:
+        try:
+            entries.append(_check_package(p))
+        except ValueError as e:
+            meta = p.get("asset") if isinstance(p, dict) else None
+            e.clip_name = str(meta.get("name") or "") if isinstance(meta, dict) else ""  # for the report
+            entries.append(e)
+    return {k: v for k, v in obj.items() if k != "packages"}, entries
+
+
+def find_review_asset(lib, pkg: dict) -> dict | None:
+    """The library asset a package belongs to: the same id (same path on this machine), then
+    wherever this review's rows already live (an earlier import), then name + size / kind."""
+    meta = pkg["asset"]
+    a = None
+    if meta.get("id"):
+        a = lib.get_asset(str(meta["id"]))
+        a = a if a and a.get("status") == "ready" else None
+    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+    return a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
+
+
+def import_package(lib, pkg: dict, asset: dict | None = None, restore: bool = False,
+                   restore_before: int | None = None) -> dict:
+    """Merges one checked package into the library (synchronous; the server runs it in a thread).
+    -> {ok: True, asset_id, added, updated, deleted, author, deleted_here} | {ok: False, missing, asset}.
+    `deleted_here` = rows of the package that stayed deleted because they were deleted here after
+    their last edit; `restore=True` brings those back (Library.import_annotations).
+    Raises ValueError("Review file is damaged (…)") when the rows do not merge (rolled back)."""
+    meta = pkg["asset"]
+    a = asset or find_review_asset(lib, pkg)
+    if not a:
+        return {"ok": False, "missing": meta.get("name") or "", "asset": meta}
+    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
+    shot_map: dict[str, str] = {}
+    shots = pkg.get("shots") if isinstance(pkg.get("shots"), dict) else {}
+    for sid, url in shots.items():
+        data = decode_data_url(url) if isinstance(url, str) else None
+        if data:
+            shot_map[str(sid)] = put_shot(lib.root, str(sid), data)
+    deleted = pkg.get("deleted") if isinstance(pkg.get("deleted"), list) else []
+    kept: list[str] = []
+    try:
+        stats = lib.import_annotations(a["id"], rows, deleted, shot_map, restore, kept, restore_before)
+    # (a value sqlite cannot bind, such as an object for shape_kind, is the file's fault too)
+    except (TypeError, ValueError, AttributeError, sqlite3.InterfaceError, sqlite3.ProgrammingError) as e:
+        raise ValueError(f"Review file is damaged ({e})") from e
+    return {"ok": True, "asset_id": a["id"], **stats, "author": pkg.get("author") or "", "deleted_here": len(kept)}
+
+
+def import_review_file(lib, raw: bytes, restore: bool = False, restore_before: int | None = None) -> dict:
+    """POST /api/review/import: a plain package -> import_package's result (raises ValueError for an
+    unreadable / damaged file). A bundle -> {ok: True, bundle: True, id, author, results: [one per
+    package, in order]}, each result import_package's or {ok: False, error} (damaged) or
+    {ok: False, duplicate: n} (matched the same local file as entry n, 0-based); every entry carries
+    `name`. Packages are committed one by one: one failing never undoes or blocks the others.
+    `restore` / `restore_before` are passed to import_package (bring back rows deleted here, up to that
+    time). Every answer carries `at`: the server time (ms) before this merge — a later restore pass sends it
+    back as `restore_before`, so rows deleted after the first pass are not revived."""
+    at = int(time.time() * 1000)
+    head, entries = parse_review_file(raw)
+    if head is None:
+        res = import_package(lib, entries[0], restore=restore, restore_before=restore_before)
+        return {**res, "at": at} if res.get("ok") else res
+    results: list[dict] = []
+    seen: dict[str, int] = {}
+    for i, e in enumerate(entries):
+        if isinstance(e, ValueError):
+            results.append({"ok": False, "error": str(e), "name": getattr(e, "clip_name", "")})
+            continue
+        name = str(e["asset"].get("name") or "")
+        try:
+            a = find_review_asset(lib, e)
+            if a and a["id"] in seen:
+                results.append({"ok": False, "duplicate": seen[a["id"]], "name": name})
+                continue
+            if a:  # (taken even if this one turns out damaged: a second copy of the clip is still not merged)
+                seen[a["id"]] = i
+            res = import_package(lib, e, a, restore, restore_before)
+        except Exception as x:  # this clip only: a damaged row, a picture that would not save
+            res = {"ok": False, "error": str(x) or x.__class__.__name__}
+        results.append({**res, "name": name})
+    return {"ok": True, "bundle": True, "id": str(head.get("id") or ""), "author": str(head.get("author") or ""),
+            "results": results, "at": at}
 
 
 # ---- HTML page for reviewers without Sight ------------------------------------------------------
@@ -485,7 +693,7 @@ def draw_js() -> str:
 def plate_js() -> str:
     """caption-plate.js (the text plate over a full-screen picture) as a plain script for the page:
     the module and the keys.js it imports, their import / export keywords dropped, in one function
-    scope that defines the global `SightCaptionPlate` ({createPlate})."""
+    scope that defines the global `SightCaptionPlate` ({createPlate, hotkey, runHotkeys})."""
     key = "plate"
     if key not in _inline_src:
         keys = _inline_js(KEYS_JS)
@@ -494,7 +702,7 @@ def plate_js() -> str:
         body = re.sub(r"^export\s+", "", keys, flags=re.M) + "\n" + re.sub(r"^export\s+", "", plate, flags=re.M)
         if re.search(r"^\s*(import|export)\b", body, re.M):
             raise ValueError("caption-plate.js / keys.js: an import / export the page cannot inline")
-        _inline_src[key] = 'var SightCaptionPlate = (function(){\n"use strict";\n' + body + "\nreturn { createPlate: createPlate };\n})();\n"
+        _inline_src[key] = 'var SightCaptionPlate = (function(){\n"use strict";\n' + body + "\nreturn { createPlate: createPlate, hotkey: hotkey, runHotkeys: runHotkeys };\n})();\n"
     return _inline_src[key]
 
 
@@ -504,12 +712,26 @@ def build_html(report: dict, pkg: dict) -> str:
     pictures), mark notes in progress / resolved / reopened and add notes in the browser (kept in
     localStorage), then download an updated .srev that merges back in Sight
     (see Library.import_annotations). Everything is inline — no network access needed."""
+    return _page({"clips": [{"report": report, "package": pkg}]}, str(report.get("title") or "Review"))
+
+
+def build_html_all(clips: list[tuple[dict, dict]], app_version: str, title: str = "") -> str:
+    """Several clips' reviews on one page (a sequence; docs/PLAN-multiclip.md stage 2): a clip strip
+    on top, each clip as build_html shows one. Its reply is a bundle (FORMAT.md "Bundle") with this
+    page's bundle id; a single clip makes a plain one-clip page (its reply must stay a package)."""
+    if len(clips) == 1:
+        return build_html(*clips[0])
+    bundle = build_bundle([], "", app_version, title)
+    head = {"id": bundle["id"], "exported_at": bundle["exported_at"], "app": bundle["app"], "title": title}
+    return _page({"clips": [{"report": r, "package": p} for r, p in clips], "bundle": head}, title or "Review")
+
+
+def _page(data: dict, title: str) -> str:
     # "<" only occurs inside JSON strings, so \u003c is the same data and nothing in it can close
     # the <script> block or open a comment there.
-    data = json.dumps({"report": report, "package": pkg}, ensure_ascii=False).replace("<", "\\u003c")
-    title = html.escape(str(report.get("title") or "Review"))
+    data_s = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
     # One pass, so a note text or title that happens to contain a placeholder stays as it is.
-    parts = {"TITLE": title, "DATA": data, "CORE": core_js(), "DRAW": draw_js(), "PLATE": plate_js()}
+    parts = {"TITLE": html.escape(title), "DATA": data_s, "CORE": core_js(), "DRAW": draw_js(), "PLATE": plate_js()}
     return re.sub(r"%%(TITLE|DATA|CORE|DRAW|PLATE)%%", lambda m: parts[m.group(1)], _HTML_TEMPLATE)
 
 
@@ -551,6 +773,15 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system
 .ib { flex: none; width: 34px; height: 34px; border-radius: 9px; border: 0; background: var(--chip); color: var(--fg); display: grid; place-items: center; cursor: pointer; }
 .ib.on { background: var(--accent); color: #fff; }
 .q { width: 100%; margin: 0 0 8px; }
+/* The clip strip (a page with several clips): scrolls sideways, prev / next on its ends. */
+.clips { display: flex; align-items: center; gap: 6px; padding: 8px 0 2px; }
+.clips .ib[disabled] { opacity: .35; cursor: default; }
+.strip { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; padding: 2px 0; }
+.clipb { flex: none; max-width: 220px; display: flex; flex-direction: column; align-items: flex-start; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 9px; padding: 4px 10px; font: inherit; cursor: pointer; text-align: left; position: relative; }
+.clipb .cn { max-width: 100%; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clipb .cc { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.clipb.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.clipb.ch::after { content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 4px; background: var(--accent); }
 main { max-width: 980px; margin: 0 auto; padding: 14px 16px 90px; }
 .sub { color: var(--muted); font-size: 12px; word-break: break-all; margin: 0 0 8px; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
@@ -654,6 +885,9 @@ body.zoomed { overflow: hidden; }
 .fw.cover-w { width: 100%; margin: 0 0 4px; }
 .fw.sm { margin: 6px 0 0; }
 .fw.sm > img { border-radius: 8px; border: 1px solid var(--line); }
+.fw.sm > .ov { inset: 1px; width: auto; height: auto; border-radius: 7px; }
+.fw.ext, .zoom .zb.ext { background: rgb(128 128 128 / .16); }
+.fw.ext > img { box-sizing: border-box; }
 .ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
 .field .atts .fw { margin: 0; width: fit-content; }
 .field .atts .fw > img { height: 56px; width: auto; border-radius: 8px; border: 1px solid var(--line); }
@@ -674,6 +908,7 @@ body.zoomed { overflow: hidden; }
 </head>
 <body>
 <header class="top"><div class="in">
+<div class="clips" id="clips" hidden><button class="ib" id="cprev" type="button" title="Previous clip (←)" aria-label="Previous clip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="strip" id="strip"></div><button class="ib" id="cnext" type="button" title="Next clip (→)" aria-label="Next clip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></button></div>
 <button class="hd" id="hd" type="button" aria-expanded="false" aria-controls="details" title="File and review details"><h1 id="ttl"></h1><span class="chev" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
 <div class="details" id="details" hidden></div>
 <div class="people"><span class="from" id="from"></span><button class="me" id="me" type="button" title="Change your name">You: <b id="myname"></b> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/></svg></button></div>
@@ -702,11 +937,22 @@ body.zoomed { overflow: hidden; }
   var ORIG = "<!doctype html>\n" + document.documentElement.outerHTML;
   var DATA_TEXT = document.getElementById("data").textContent;
   var D = JSON.parse(DATA_TEXT);
-  var R = D.report, PKG = D.package;
-  // A downloaded page (D.copy) keeps its own local state, apart from the page it was made from.
-  var KEY = "sight-review:" + (PKG.asset && PKG.asset.id) + ":" + PKG.exported_at + (D.copy ? ":" + D.copy : "");
-  var rows = {};
-  PKG.annotations.forEach(function(r){ rows[r.id] = r; });
+  if (!D.clips) D = { clips: [{ report: D.report, package: D.package, edits: D.edits }], copy: D.copy };  // (the data shape before 0.76)
+  // Several clips (a sequence's page, PLAN-multiclip stage 2): a clip strip on top, one clip shown at a
+  // time. Everything below works on the shown clip through these variables, which useClip() swaps;
+  // each clip's own state (its edits E, open fields, drafts) is kept in its CL entry meanwhile.
+  var MULTI = D.clips.length > 1, BUNDLE = D.bundle || {};
+  var R, PKG, KEY, rows, E, M, VEC, noteById, numById, exported, MEDIA_NAME, VIEW_KEY;
+  var cur = -1, C = null;
+  // Reference images (kind "image") show their picture from the shown clip's package shots.
+  RC.setImageSource(function(sid){ return ((PKG && PKG.shots) || {})[sid] || ""; });
+  function emptyEdits(){ return { replies: {}, notes: [], att: {}, rows: [] }; }
+  // A downloaded page (D.copy) keeps its own local state, apart from the page it was made from. A one-clip
+  // page keeps the key it always had; a multi-clip page keys each clip by the page's bundle id.
+  function slotKey(pkg){
+    var aid = pkg.asset && pkg.asset.id;
+    return "sight-review:" + (MULTI ? BUNDLE.id + ":" + aid : aid + ":" + pkg.exported_at) + (D.copy ? ":" + D.copy : "");
+  }
   // Local edits, kept in localStorage until downloaded: {replies: {noteId: [entry]}, notes: [note],
   // att: {shotId: dataURL}, rows: [drawing row]}. An entry is a reply ({id, text, author, created,
   // shots?}) or a state change ({id, event: "progress"|"done"|"open", author, created}) — the shapes
@@ -716,10 +962,15 @@ body.zoomed { overflow: hidden; }
   // are the drawings made on this page, as FORMAT.md rows (data.note, data.reply on a reply, ctx).
   // A page made by "Download page" starts with the edits it was made with (D.edits); its own local
   // state, once there is one, is newer and wins.
-  var E = { replies: {}, notes: [], att: {}, rows: [] };
-  if (D.edits && D.edits.replies) E = D.edits;
-  try { var saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.replies) E = saved; } catch (e) {}
-  E.att = E.att || {}; E.rows = E.rows || [];
+  var CL = D.clips.map(function(c, i){
+    var key = slotKey(c.package), e = emptyEdits(), rs = {};
+    if (c.edits && c.edits.replies) e = c.edits;
+    try { var saved = JSON.parse(localStorage.getItem(key)); if (saved && saved.replies) e = saved; } catch (x) {}
+    e.att = e.att || {}; e.rows = e.rows || []; e.notes = e.notes || [];
+    c.package.annotations.forEach(function(r){ rs[r.id] = r; });
+    return { i: i, report: c.report, pkg: c.package, key: key, rows: rs, E: e, drafts: {}, openReply: {}, newOpen: false,
+      name: (c.package.asset && c.package.asset.name) || c.report.title || "Clip " + (i + 1) };
+  });
   var filter = "all", query = "", searchOn = false;
   var drafts = {}, openReply = {};  // unsent text / pictures / state / drawing per field (survive re-render)
   var newOpen = false, opening = null;  // the new-note form (one at a time); a field opened by this click
@@ -728,10 +979,13 @@ body.zoomed { overflow: hidden; }
   var STATES = { open: "Open", progress: "In progress", done: "Resolved" };
   var EV = { done: ["✓", "Resolved"], progress: ["▸", "In progress"], open: ["↺", "Reopened"] };
   var warned = false;
+  function writeSlot(c){
+    try { localStorage.setItem(c.key, JSON.stringify(c.E)); }
+    catch (e) { if (!warned){ warned = true; alert("This browser cannot keep that many pictures on the page" + (MULTI ? " (clip " + (c.i + 1) + ": " + c.name + ")" : "") + ". Download the reply now so nothing is lost."); } }
+  }
   function save(){
-    try { localStorage.setItem(KEY, JSON.stringify(E)); }
-    catch (e) { if (!warned){ warned = true; alert("This browser cannot keep that many pictures on the page. Download the reply now so nothing is lost."); } }
-    paintFoot(); paintSeg();
+    C.E = E; writeSlot(C);
+    paintFoot(); paintSeg(); paintStrip();
   }
   var uid = RC.uid;
   var SVGNS = "http://www.w3.org/2000/svg";
@@ -739,11 +993,14 @@ body.zoomed { overflow: hidden; }
   function svg(path, w){ var s = document.createElementNS(SVGNS, "svg"); s.setAttribute("width", w || 18); s.setAttribute("height", w || 18); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = path; return s; }
   function fmt(ms){ try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } }
   function clone(v){ return JSON.parse(JSON.stringify(v)); }
-  function changes(){
-    var n = E.notes.length;
-    Object.keys(E.replies).forEach(function(k){ n += E.replies[k].length; });
+  // Changes = new notes + reply entries (drawings always come with one of those).
+  function changesOf(e){
+    var n = e.notes.length;
+    Object.keys(e.replies).forEach(function(k){ n += e.replies[k].length; });
     return n;
   }
+  function editsOf(c){ return c === C ? E : c.E; }
+  function changes(){ return CL.reduce(function(n, c){ return n + changesOf(editsOf(c)); }, 0); }
   function origStatus(id){ return (rows[id] && rows[id].data.status) || "open"; }
   function statusOf(id){
     var L = E.replies[id] || [];
@@ -756,10 +1013,6 @@ body.zoomed { overflow: hidden; }
   // drawn here with review-core as an SVG overlay in doc units (FORMAT.md): pictures and video
   // frames are the whole media scaled, so doc = picture px × media width / picture width; a 3D view
   // is the viewer's screen, 1000 units high, centred.
-  var M = R.media || {};
-  var VEC = M.kind === "model3d" || ((M.kind === "image" || M.kind === "video") && M.w > 0 && M.h > 0);
-  var noteById = {}, numById = {};
-  (R.notes || []).forEach(function(n){ noteById[n.id] = n; numById[n.id] = n.num; });
   function numOf(it){ return numById[it.data && it.data.note] || ""; }
   var show = { mine: true, others: true };
   try { var sv0 = JSON.parse(localStorage.getItem("sight-review:show")); if (sv0) show = { mine: sv0.mine !== false, others: sv0.others !== false }; } catch (e) {}
@@ -767,12 +1020,29 @@ body.zoomed { overflow: hidden; }
     var nd = rows[r.data.note] && rows[r.data.note].data;
     return nd && r.data.reply ? (nd.replies || []).find(function(x){ return x && x.id === r.data.reply; }) || null : null;
   }
-  // Exported drawings; those of a deleted reply are gone with it (as in Sight).
-  var exported = PKG.annotations.filter(function(r){
-    if (r.kind === "note" || r.kind === "status" || !r.data || !RC.validItem(r)) return false;
-    var rp = replyOf(r);
-    return !(rp && rp.deleted);
-  });
+  // Shows clip i: points the page-wide variables at it (the shown clip's state is put back first).
+  function useClip(i){
+    if (C){ C.E = E; C.drafts = drafts; C.openReply = openReply; C.newOpen = !!newOpen; }
+    cur = i; C = CL[i];
+    R = C.report; PKG = C.pkg; KEY = C.key; rows = C.rows; E = C.E;
+    drafts = C.drafts; openReply = {};
+    Object.keys(C.openReply).forEach(function(k){ openReply[k] = true; });  // (no "focus" left over)
+    newOpen = C.newOpen; opening = null;
+    M = R.media || {};
+    VEC = M.kind === "model3d" || ((M.kind === "image" || M.kind === "video") && M.w > 0 && M.h > 0);
+    noteById = {}; numById = {};
+    (R.notes || []).forEach(function(n){ noteById[n.id] = n; numById[n.id] = n.num; });
+    // Exported drawings; those of a deleted reply are gone with it (as in Sight).
+    exported = PKG.annotations.filter(function(r){
+      if (r.kind === "note" || r.kind === "status" || !r.data || !RC.validItem(r)) return false;
+      var rp = replyOf(r);
+      return !(rp && rp.deleted);
+    });
+    MEDIA_NAME = (PKG.asset && PKG.asset.name) || "picture";
+    // The canvas opens turned / mirrored as it was last left for this media (remembered here).
+    VIEW_KEY = "sight-review:view:" + (PKG.asset && PKG.asset.id);
+    GAL = []; curG = null; coverG = null;
+  }
   function sameName(a, b){ return !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase(); }
   // "Mine": drawn on this page, or made with a reply / note written under this reviewer's name.
   function mineExported(r){
@@ -823,17 +1093,51 @@ body.zoomed { overflow: hidden; }
     E.rows.forEach(function(r){ loc[r.id] = 1; });
     return drawingsOf(f).filter(function(r){ return f.reply || ((loc[r.id] || mineExported(r)) ? show.mine : show.others); });
   }
-  function overlay(f, list){
+  // The area a picture shows (vb units): the frame, grown to every drawing that reaches past its edge plus 3% of the
+  // frame's longer side on that side, capped at three frames each way — Sight's own export rule (annotate.js
+  // exportExtent). Not for 3D views (their drawings live in the view, not on a frame). null: nothing reaches out.
+  function extOf(f, list){
+    var vb = vbOf(f);
+    if (M.kind === "model3d" || !list || !list.length) return null;
+    var x0 = vb[0], y0 = vb[1], x1 = vb[0] + vb[2], y1 = vb[1] + vb[3], grown = false;
+    list.forEach(function(r){
+      var b; try { b = RC.boundsOf(r); } catch (e) { return; }
+      if (!b || !b.every(isFinite) || (b[2] - b[0] <= 0 && b[3] - b[1] <= 0)) return;
+      x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
+    });
+    var pad = 0.03 * Math.max(vb[2], vb[3]), L = vb[0], T = vb[1], R = vb[0] + vb[2], B = vb[1] + vb[3];
+    if (x0 < L){ x0 = Math.max(L - 3 * vb[2], x0 - pad); grown = true; }
+    if (y0 < T){ y0 = Math.max(T - 3 * vb[3], y0 - pad); grown = true; }
+    if (x1 > R){ x1 = Math.min(R + 3 * vb[2], x1 + pad); grown = true; }
+    if (y1 > B){ y1 = Math.min(B + 3 * vb[3], y1 + pad); grown = true; }
+    return grown ? [x0, y0, x1 - x0, y1 - y0] : null;
+  }
+  // A grown area: the box takes its aspect and the picture sits inside it where the frame is (percentages).
+  function placeExt(box, img, f, ext){
+    if (!ext) return;
+    var vb = vbOf(f);
+    box.classList.add("ext");
+    box.style.aspectRatio = ext[2] + " / " + ext[3];
+    var st = img.style;
+    st.position = "absolute"; st.margin = "0";
+    st.left = (vb[0] - ext[0]) / ext[2] * 100 + "%"; st.top = (vb[1] - ext[1]) / ext[3] * 100 + "%";
+    st.width = vb[2] / ext[2] * 100 + "%"; st.height = vb[3] / ext[3] * 100 + "%";
+  }
+  function overlay(f, list, ext){
     var s = document.createElementNS(SVGNS, "svg");
-    s.setAttribute("class", "ov"); s.setAttribute("viewBox", vbOf(f).join(" ")); s.setAttribute("preserveAspectRatio", "none");
-    s.innerHTML = RC.svgMarkup(list, numOf);
+    s.setAttribute("class", "ov"); s.setAttribute("viewBox", (ext || vbOf(f)).join(" ")); s.setAttribute("preserveAspectRatio", "none");
+    // (Colour correction areas: shown corrected over the picture f lies on, no outline — review-core gradeSvgMarkup.)
+    s.innerHTML = RC.svgMarkup(list, numOf, { media: f.src ? { href: f.src, vb: vbOf(f) } : null });
     return s;
   }
   // The picture with its drawings on top. cls: "cover-w" (the cover), "sm" (thumbnail), else a frame.
-  function pic(f, list, cls){
+  // flat: keep the frame's own size (the small draft chip under the note field).
+  function pic(f, list, cls, flat){
     var w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img", cls === "cover-w" ? "cover" : cls ? "" : "frame");
     i.src = f.src; i.alt = ""; w.appendChild(i);
-    if (list.length) w.appendChild(overlay(f, list));
+    var ext = flat ? null : extOf(f, list);
+    placeExt(w, i, f, ext);
+    if (list.length) w.appendChild(overlay(f, list, ext));
     return w;
   }
   // What a drawing made on frame f gets as data.ctx (the note's own ctx carries more, e.g. v3d).
@@ -890,7 +1194,6 @@ body.zoomed { overflow: hidden; }
   // Which picture an entry is, as the line under it says and as its download is named (review-core
   // picFileName): the media file's name and the frame / view ("clip.mp4 · f128 / 0:05+3"); an attached
   // picture is "<file> · Note 3 · Picture 2" (e.title, set where it is listed).
-  var MEDIA_NAME = (PKG.asset && PKG.asset.name) || "picture";
   function noteNumOf(nid){ var n = noteById[nid]; return n ? n.num : nid && E.notes.some(function(x){ return x.id === nid; }) ? "new" : ""; }
   function picTitle(e){
     if (e.title) return e.title;
@@ -914,20 +1217,26 @@ body.zoomed { overflow: hidden; }
     var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
     function plain(){ fetch(src).then(function(r){ return r.blob(); }).then(function(b){ saveBlob(b, name); }).catch(function(){}); }
     var img = new Image();
-    img.onload = function(){
+    img.onload = function(){ RC.imagesReady(list).then(flat, flat); };  // reference images decoded first
+    function flat(){
       var W = img.naturalWidth, H = img.naturalHeight;
       if (!W || !H){ plain(); return; }
-      var c = document.createElement("canvas"); c.width = W; c.height = H;
+      // Drawings past the frame: the picture grows as on the page (extOf), at most 8000 px a side.
+      var vb = e.f ? vbOf(e.f) : [0, 0, W, H], ext = list.length ? extOf(e.f, list) : null, X = ext || vb;
+      var k = ext ? Math.min(1, 8000 / Math.max(W * X[2] / vb[2], H * X[3] / vb[3])) : 1;
+      var sx = W / vb[2] * k, sy = H / vb[3] * k;
+      var c = document.createElement("canvas"); c.width = Math.max(1, Math.round(X[2] * sx)); c.height = Math.max(1, Math.round(X[3] * sy));
       var g = c.getContext("2d");
-      g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.drawImage(img, 0, 0, W, H);
+      g.fillStyle = ext ? "#808080" : "#fff"; g.fillRect(0, 0, c.width, c.height);
+      if (ext){ g.fillStyle = "#fff"; g.fillRect((vb[0] - X[0]) * sx, (vb[1] - X[1]) * sy, W * k, H * k); }
+      g.drawImage(img, (vb[0] - X[0]) * sx, (vb[1] - X[1]) * sy, W * k, H * k);
       if (list.length){
-        var vb = vbOf(e.f), sx = W / vb[2], sy = H / vb[3];
-        g.save(); g.setTransform(sx, 0, 0, sy, -vb[0] * sx, -vb[1] * sy);
+        g.save(); g.setTransform(sx, 0, 0, sy, -X[0] * sx, -X[1] * sy);
         try { RC.drawCanvas(g, list, numOf); } catch (_){}
         g.restore();
       }
       try { c.toBlob(function(b){ if (b) saveBlob(b, name); else plain(); }, "image/jpeg", 0.92); } catch (_){ plain(); }
-    };
+    }
     img.onerror = plain;
     img.src = src;
   }
@@ -1002,13 +1311,16 @@ body.zoomed { overflow: hidden; }
       var e = g.items[k], nb = el("div", "zb"), img = el("img");
       img.alt = ""; img.draggable = false; img.src = e.f ? e.f.src : e.src; nb.appendChild(img);
       var list = !e.f || e.clean ? [] : e.f.reply ? drawingsOf(e.f) : shownOn(e.f);
-      if (list.length) nb.appendChild(overlay(e.f, list));
+      var ext = e.f ? extOf(e.f, list) : null;
+      placeExt(nb, img, e.f, ext);
+      if (list.length) nb.appendChild(overlay(e.f, list, ext));
       var ready = Promise.race([img.decode ? img.decode().catch(function(){}) : Promise.resolve(), new Promise(function(r){ setTimeout(r, SLIDE_WAIT); })]);
       return ready.then(function(){
         if (gone) return;
         var was = box, wasV = V, wasOff = off;
         var vb = e.f ? vbOf(e.f) : null;
         size = img.naturalWidth && img.naturalHeight ? [img.naturalWidth, img.naturalHeight] : vb ? [vb[2], vb[3]] : [4, 3];
+        if (ext) size = [size[0] * ext[2] / vb[2], size[1] * ext[3] / vb[3]];  // (drawings past the frame: the grown area)
         cur = { g: g, k: k }; box = nb;
         v.insertBefore(box, foot);
         pen.hidden = !drawTarget(e);
@@ -1224,8 +1536,6 @@ body.zoomed { overflow: hidden; }
   // review-draw.js (inlined above, shared with the mobile app): brush with pen pressure,
   // highlighter, arrow, rectangle, ellipse, eraser, five colours, undo / redo, pinch / pan.
   // o: {src, vb, base, items, onDone(items)}.
-  // The canvas opens turned / mirrored as it was last left for this media (remembered here).
-  var VIEW_KEY = "sight-review:view:" + (PKG.asset && PKG.asset.id);
   function drawSheet(o){
     var v = null;
     try { v = JSON.parse(localStorage.getItem(VIEW_KEY)); } catch (e) {}
@@ -1273,7 +1583,7 @@ body.zoomed { overflow: hidden; }
     var box = el("div", "cmp"); box.dataset.key = opts.key;
     var send = el("button", "send"); send.type = "button"; send.title = "Send"; send.setAttribute("aria-label", "Send");
     send.appendChild(svg('<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z" fill="currentColor"/>', 17));
-    function can(){ return !!(dr.text.trim() || dr.shots.length || dr.state || dr.draw); }
+    function can(){ return !dr.pending && !!(dr.text.trim() || dr.shots.length || dr.state || dr.draw); }
     function paint(){ send.disabled = !can(); }
     if (opts.status){
       var o = el("div", "opts"); o.appendChild(el("span", "", "Mark as"));
@@ -1291,7 +1601,7 @@ body.zoomed { overflow: hidden; }
       atts.textContent = ""; atts.hidden = !dr.shots.length && !dr.draw;
       var fr = dr.draw && frameOf(dr.draw.frame);
       if (fr){
-        var s0 = el("span"), th = pic(fr, dr.draw.items, "");
+        var s0 = el("span"), th = pic(fr, dr.draw.items, "", true);
         th.title = "Edit the drawing"; th.onclick = function(){ editDraw(opts.key, dr.draw.frame); };
         var x0 = el("button", "", "×"); x0.type = "button"; x0.title = "Remove the drawing";
         x0.onclick = function(e){ e.stopPropagation(); dr.draw = null; paintAtts(); paint(); paintPen(); };
@@ -1315,8 +1625,14 @@ body.zoomed { overflow: hidden; }
     var file = el("input"); file.type = "file"; file.accept = "image/*"; file.multiple = true; file.hidden = true;
     file.onchange = function(){
       var fs = Array.prototype.slice.call(file.files || []); file.value = "";
+      if (!fs.length) return;
+      dr.pending = (dr.pending || 0) + 1;  // a picture still loading: the field is not empty (closeEmpty)
+      paint();  // (no sending until it is in)
       Promise.all(fs.map(readImage)).then(function(list){
+        dr.pending--;
         list.forEach(function(src){ if (src) dr.shots.push({ id: uid(), src: src }); });
+        if (drafts[opts.key] !== dr) return;  // (the field was closed meanwhile)
+        if (!box.isConnected){ render(); return; }  // (re-rendered meanwhile: the field on screen is another one)
         paintAtts(); paint();
       });
     };
@@ -1481,9 +1797,11 @@ body.zoomed { overflow: hidden; }
       if (newOpen === "focus") focusLater("+new", function(){ newOpen = true; });
     }
     document.getElementById("add").classList.toggle("on", !!newOpen);
-    app.appendChild(el("p", "gen", "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight. Download the page to keep it with your changes (it opens in any browser)."));
+    app.appendChild(el("p", "gen", MULTI
+      ? "Made with " + (BUNDLE.app || PKG.app || "Sight") + ". Download the reply and send the .srev file back — one file for all the clips you answered; it opens on the same clips in Sight 0.75 or newer (an older Sight takes each clip's own reply: tap the clip's title). Download the page to keep it with your changes (it opens in any browser)."
+      : "Made with " + (PKG.app || "Sight") + ". Download the reply and send the .srev file back — it opens on the same media in Sight. Download the page to keep it with your changes (it opens in any browser)."));
     renderList();
-    paintFoot(); paintSeg(); paintShow();
+    paintFoot(); paintSeg(); paintShow(); paintStrip();
     window.scrollTo(0, keepY);
   }
   // Focus a field once the current click is over: closing an empty field re-renders the page
@@ -1537,19 +1855,63 @@ body.zoomed { overflow: hidden; }
   document.getElementById("vbtn").onclick = function(){ vmenu.hidden = !vmenu.hidden; };
   document.getElementById("vmine").onchange = function(){ setShow("mine", this.checked); };
   document.getElementById("voth").onchange = function(){ setShow("others", this.checked); };
+  // The bottom bar is for the whole page: every clip's changes.
   function paintFoot(){
-    var n = changes();
-    document.getElementById("status").textContent = n ? n + " change" + (n > 1 ? "s" : "") : "No changes yet";
+    var n = changes(), nc = CL.filter(function(c){ return changesOf(editsOf(c)); }).length;
+    document.getElementById("status").textContent = n ? n + " change" + (n > 1 ? "s" : "") + (MULTI ? " · " + nc + " clip" + (nc > 1 ? "s" : "") : "") : "No changes yet";
     document.getElementById("dl").disabled = !n;
     document.getElementById("dlpage").disabled = !n;
     document.getElementById("reset").hidden = !n;
+    var dc = document.getElementById("dlclip"); if (dc) dc.disabled = !changesOf(E);
+  }
+  // ---- clips (a multi-clip page) -------------------------------------------------------------
+  // Per clip: notes (sent + new on this page), how many of them are open, and whether it has changes.
+  function clipCounts(c){
+    var e = editsOf(c), n = 0, open = 0;
+    (c.report.notes || []).forEach(function(nt){
+      var L = e.replies[nt.id] || [], st = "";
+      for (var i = L.length - 1; i >= 0 && !st; i--) if (L[i].event) st = L[i].event;
+      st = st || (c.rows[nt.id] && c.rows[nt.id].data && c.rows[nt.id].data.status) || "open";
+      n++; if (st === "open") open++;
+    });
+    return { n: n + e.notes.length, open: open + e.notes.length, ch: changesOf(e) };
+  }
+  var stripEl = document.getElementById("strip"), stripScroll = true;
+  function paintStrip(){
+    if (!MULTI) return;
+    stripEl.textContent = "";
+    var onB = null;
+    CL.forEach(function(c){
+      var k = clipCounts(c), b = el("button", "clipb" + (c === C ? " on" : "") + (k.ch ? " ch" : ""));
+      b.type = "button"; b.title = c.name + (k.ch ? " · changed on this page" : "");
+      b.appendChild(el("span", "cn", (c.i + 1) + ". " + c.name));
+      b.appendChild(el("span", "cc", k.n + " note" + (k.n === 1 ? "" : "s") + (k.open ? " · " + k.open + " open" : "")));
+      b.onclick = function(){ switchClip(c.i); };
+      stripEl.appendChild(b);
+      if (c === C) onB = b;
+    });
+    document.getElementById("cprev").disabled = cur <= 0;
+    document.getElementById("cnext").disabled = cur >= CL.length - 1;
+    // Only after a switch (a save repaints too, and must not move the page).
+    if (stripScroll && onB && onB.scrollIntoView){ stripScroll = false; onB.scrollIntoView({ block: "nearest", inline: "nearest" }); }
+  }
+  function switchClip(i){
+    if (i === cur || i < 0 || i >= CL.length) return false;
+    closeEmpty(null, true);  // an empty field is a cancel: not kept open on the clip left behind
+    useClip(i);
+    // Another clip starts unfiltered: a search or state filter left on would make its list look empty.
+    filter = "all"; query = ""; searchOn = false; q.value = ""; q.hidden = true; sb.classList.remove("on");
+    stripScroll = true;
+    header(); render();
+    window.scrollTo(0, 0);
   }
   // The reply file is the exported package with this page's edits merged in by the shared rules
   // (review-core.js mergeRows = Library.import_annotations): local replies / state changes are
   // unioned into their notes, the state goes by status_at, new notes and drawings are added. The
   // note's own content stamp (edited_at / created) is untouched, so answering never makes this
   // copy of the note's text win over edits made in Sight since.
-  function replyPackage(){
+  function replyPackage(c){
+    var PKG = c.pkg, E = editsOf(c);  // (this clip's, shown or not)
     var now = Date.now(), used = {};
     var out = JSON.parse(JSON.stringify(PKG));
     out.author = who; out.exported_at = now; out.app = (PKG.app || "Sight") + " (web reply)";
@@ -1584,8 +1946,9 @@ body.zoomed { overflow: hidden; }
     });
     return out;
   }
-  function baseName(){
-    return ((PKG.asset && PKG.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "");
+  function baseName(c){
+    if (!c) return (BUNDLE.title || "Sequence review") + (who ? " - " + who : "");
+    return ((c.pkg.asset && c.pkg.asset.name) || "review").replace(/\.[^.]+$/, "") + " review" + (who ? " - " + who : "");
   }
   function saveBlob(blob, name){
     var a = document.createElement("a");
@@ -1593,20 +1956,33 @@ body.zoomed { overflow: hidden; }
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
   }
+  function saveJson(v, name){ saveBlob(new Blob([JSON.stringify(v)], { type: "application/json" }), name); }
+  // One clip: the reply is a plain package (older Sight / phones read nothing else). Several: a bundle
+  // (FORMAT.md "Bundle") with this page's bundle id, of the clips changed here — an unchanged clip would
+  // only re-send what the receiver already has.
   function download(){
-    saveBlob(new Blob([JSON.stringify(replyPackage())], { type: "application/json" }), baseName() + ".srev");
+    if (!MULTI){ saveJson(replyPackage(C), baseName(C) + ".srev"); return; }
+    var pk = CL.filter(function(c){ return changesOf(editsOf(c)); }).map(replyPackage);
+    if (!pk.length) return;
+    var b = { format: "sight-review-bundle", version: 1, id: BUNDLE.id, app: (BUNDLE.app || "Sight") + " (web reply)",
+      exported_at: Date.now(), author: who, packages: pk };
+    if (BUNDLE.title) b.title = BUNDLE.title;
+    saveJson(b, baseName(null) + ".srev");
   }
+  // The shown clip's reply alone, as a plain package: for a receiver on a Sight older than 0.75.
+  function downloadClip(){ saveJson(replyPackage(C), baseName(C) + ".srev"); }
   // The same page, with this reviewer's edits in it: the data block gets the report, the original
   // package and the edits (E). The copy opens with them as its starting state and keeps its own
   // local state after that (KEY, D.copy), so it can be answered and downloaded again. Sight does not
   // read this file: the reply to send back is still the .srev (Download reply).
   function downloadPage(){
-    var json = JSON.stringify({ report: R, package: PKG, edits: E, copy: uid() }).replace(/</g, "\\u003c");
-    saveBlob(new Blob([ORIG.replace(DATA_TEXT, function(){ return json; })], { type: "text/html" }), baseName() + ".html");
+    var json = JSON.stringify({ clips: CL.map(function(c){ return { report: c.report, package: c.pkg, edits: editsOf(c) }; }), bundle: D.bundle, copy: uid() }).replace(/</g, "\\u003c");
+    saveBlob(new Blob([ORIG.replace(DATA_TEXT, function(){ return json; })], { type: "text/html" }), baseName(MULTI ? null : C) + ".html");
   }
   function header(){
     document.getElementById("ttl").textContent = R.title || "Review";
     var det = document.getElementById("details"), hd = document.getElementById("hd");
+    det.textContent = ""; document.getElementById("from").textContent = "";
     if (R.subtitle) det.appendChild(el("p", "sub", R.subtitle));
     var meta = el("div", "meta"), sender = PKG.author || "";
     (R.meta || []).forEach(function(m){
@@ -1629,6 +2005,12 @@ body.zoomed { overflow: hidden; }
       var names = { review: "Needs review", changes: "Changes requested", approved: "Approved" };
       hist.forEach(function(h){ hb.appendChild(el("div", "", (names[h.state] || "Cleared") + (h.author ? " by " + h.author : "") + " · " + fmt(h.at))); });
       det.appendChild(hb);
+    }
+    if (MULTI){
+      var cb = el("div", "acts"), b = el("button", "btn", "Download this clip's reply"); b.type = "button"; b.id = "dlclip";
+      b.title = "Only this clip's changes, as a review file of its own — for Sight older than 0.75, which cannot open a reply for several clips";
+      b.onclick = downloadClip; b.disabled = !changesOf(E);
+      cb.appendChild(b); det.appendChild(cb);
     }
     hd.onclick = function(){ var open = det.hidden; det.hidden = !open; hd.setAttribute("aria-expanded", String(open)); };
   }
@@ -1656,16 +2038,14 @@ body.zoomed { overflow: hidden; }
     if (searchOn) q.focus(); else if (query){ query = ""; q.value = ""; renderList(); }
   };
   q.oninput = function(){ query = q.value; renderList(); };
-  header();
-  paintMe();
   document.getElementById("dl").onclick = download;
   document.getElementById("dlpage").onclick = downloadPage;
   // The new-note form shows only after the + in the bottom bar (one at a time; + again jumps to it).
   document.getElementById("add").onclick = function(){ opening = "+new"; newOpen = "focus"; render(); };
   // An empty field (no text, picture, drawing or state) is a cancel: a tap anywhere else closes
   // it. Runs after the tap's own handler, so a field that tap just opened (`opening`) stays.
-  function isEmpty(k){ var d = drafts[k]; return !d || !(d.text.trim() || d.shots.length || d.state || d.draw); }
-  function closeEmpty(target){
+  function isEmpty(k){ var d = drafts[k]; return !d || !(d.text.trim() || d.shots.length || d.state || d.draw || d.pending); }
+  function closeEmpty(target, noRender){
     var changed = false;
     function inside(k){ var b = document.querySelector('.cmp[data-key="' + k + '"]'); var w = b && (b.closest(".compose") || b); return !!(target && w && w.contains(target)); }
     Object.keys(openReply).forEach(function(k){
@@ -1674,14 +2054,57 @@ body.zoomed { overflow: hidden; }
     });
     if (newOpen && opening !== "+new" && !inside("+new") && isEmpty("+new")){ newOpen = false; delete drafts["+new"]; changed = true; }
     opening = null;
-    if (changed) render();
+    if (changed && !noRender) render();
   }
   document.addEventListener("click", function(e){
     if (!e.target.closest("#vwrap")) vmenu.hidden = true;
-    if (!document.getElementById("gate").hidden || e.target.closest(".zoom, .draw, .pick")){ opening = null; return; }
+    if (!document.getElementById("gate").hidden || e.target.closest(".zoom, .draw, .pick, .gate")){ opening = null; return; }
     closeEmpty(e.target);
   });
-  document.getElementById("reset").onclick = function(){ if (confirm("Discard your replies, pictures, drawings, status changes and new notes on this page?")){ E = { replies: {}, notes: [], att: {}, rows: [] }; drafts = {}; openReply = {}; newOpen = false; save(); render(); } };
+  // Discard: this clip's changes or every clip's (a multi-clip page asks which).
+  function discard(all){
+    (all ? CL : [C]).forEach(function(c){
+      c.E = emptyEdits(); c.drafts = {}; c.openReply = {}; c.newOpen = false;
+      if (c !== C) writeSlot(c);
+    });
+    E = C.E; drafts = C.drafts; openReply = {}; newOpen = false;
+    save(); render();
+  }
+  var DISCARD_Q = "Discard your replies, pictures, drawings, status changes and new notes";
+  document.getElementById("reset").onclick = function(){
+    if (!MULTI){ if (confirm(DISCARD_Q + " on this page?")) discard(true); return; }
+    var g = el("div", "gate"), sh = el("div", "sheet"), a = el("div", "acts");
+    sh.appendChild(el("h2", "", "Discard changes?"));
+    sh.appendChild(el("p", "", DISCARD_Q + " — on this clip (" + C.name + ") or on every clip of the page?"));
+    function btn(t, cls, fn){ var b = el("button", "btn" + (cls ? " " + cls : ""), t); b.type = "button"; b.onclick = function(){ g.remove(); if (fn) fn(); }; a.appendChild(b); return b; }
+    btn("Cancel", "", null);
+    btn("This clip", "", function(){ discard(false); }).disabled = !changesOf(E);
+    btn("All clips", "primary", function(){ discard(true); });
+    a.style.flexWrap = "wrap"; sh.appendChild(a); g.appendChild(sh);
+    g.onclick = function(e){ if (e.target === g) g.remove(); };
+    g.addEventListener("keydown", function(e){ if (SightCaptionPlate.hotkey(e, "Escape")){ e.preventDefault(); g.remove(); } });
+    document.body.appendChild(g);
+    a.firstChild.focus();
+  };
+  if (MULTI){
+    document.getElementById("clips").hidden = false;
+    document.getElementById("cprev").onclick = function(){ switchClip(cur - 1); };
+    document.getElementById("cnext").onclick = function(){ switchClip(cur + 1); };
+    // ← / → between clips — not while typing, in the full-screen picture (its own arrows), on the
+    // drawing canvas or over a sheet.
+    document.addEventListener("keydown", function(e){
+      if (document.querySelector(".zoom, .draw, .pick, .gate:not([hidden])")) return;
+      var t = e.target;
+      if (t && (t.isContentEditable || (t.closest && t.closest("input, textarea, select")))) return;
+      SightCaptionPlate.runHotkeys(e, [
+        ["ArrowLeft", function(){ return switchClip(cur - 1); }],
+        ["ArrowRight", function(){ return switchClip(cur + 1); }],
+      ]);
+    });
+  }
+  useClip(0);
+  header();
+  paintMe();
   render();
   if (!who) askName();
 })();

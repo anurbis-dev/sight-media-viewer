@@ -76,6 +76,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .item { touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; position: relative; z-index: 1; margin: 0; }
 /* A review's row: the card over its two swipe actions (eye on the left, bin on the right). */
 .list .row { position: relative; margin-bottom: 8px; border-radius: 14px; overflow: hidden; }
+.list .row.nomedia .th { opacity: .45; filter: grayscale(1); }
+.list .row.nomedia .tx > span:last-child { font-style: italic; }
 .list .row .sw { position: absolute; top: 0; bottom: 0; width: 84px; border: 0; border-radius: 14px; display: grid; place-items: center; cursor: pointer; color: #fff; visibility: hidden; }
 .list .row .sw.hide { left: 0; background: var(--muted); }
 .list .row .sw.del { right: 0; background: var(--red); }
@@ -125,6 +127,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .stage { position: absolute; inset: 0; overflow: hidden; touch-action: manipulation; }
 .stage img, .stage video, .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: 50% 50%; }
 .stage svg { pointer-events: none; }
+/* A video's colour correction areas (app.js gradeMirrors): the frame again, filtered and masked, fitted as the player. */
+.stage canvas.grm { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: 50% 50%; pointer-events: none; mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; }
 .stage .sv { position: absolute; inset: 0; transform-origin: 50% 50%; }
 .stage .scrubimg[hidden] { display: none; }
 /* Taps go to the player under it: the cached frame is hidden as its seek lands, often mid-tap, and
@@ -162,6 +166,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
    review-draw.js: one look for both screens), half see-through. */
 .hdr { position: absolute; left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); top: calc(8px + var(--st)); z-index: 3; padding: 2px 4px; }
 .hdr .row { display: flex; align-items: center; gap: 2px; }
+.hdr .seqb:disabled { opacity: .3; }
 .hdr .row + .row { justify-content: center; position: relative; }  /* the view's icons, in the middle of the bar */
 .hdr .row + .row .fitb { position: absolute; right: 0; top: 0; }  /* Fit comes and goes: the others stay put */
 .hdr .row + .row .uib { position: absolute; left: 0; top: 0; }
@@ -203,12 +208,30 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* Timeline: markers, cache and playhead all in the track's own percent, so they line up. */
 .tl { position: relative; height: 30px; margin: 0 10px; touch-action: none; cursor: pointer; }
 .tl .trk { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; background: var(--trk); }
-.tl .cache { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: #30d158; opacity: .5; }
+.tl .cache { position: absolute; inset: 0; pointer-events: none; }
+.tl .cache i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: #30d158; opacity: .5; }
 .tl .mk { position: absolute; top: -5px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: #ff453a; pointer-events: none; }
 .tl .mk.done { background: #30d158; } .tl .mk.progress { background: #ffd60a; }
 .tl .mk.dr { width: 6px; height: 6px; top: -1px; margin-left: -3px; border-radius: 3px; background: var(--ov-mut); }
 .tl .mk.mine { width: 8px; height: 8px; top: -2px; margin-left: -4px; border-radius: 4px; background: var(--accent); box-shadow: 0 0 0 2px var(--ov); }
 .tl .ph { position: absolute; top: -6px; width: 16px; height: 16px; margin-left: -8px; border-radius: 8px; background: var(--ov-fg); box-shadow: 0 1px 4px rgb(0 0 0 / .35); pointer-events: none; }
+/* The sequence bar (a group's videos end to end, under the clip's timeline): a segment per clip, the playhead across all. */
+.sqb { position: relative; height: 22px; margin: 0 10px 4px; touch-action: none; cursor: pointer; }
+.sqb[hidden] { display: none; }
+.sqb .sqt { position: absolute; inset: 0; }
+.sqb .sqs { position: absolute; top: 2px; bottom: 4px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--rd-fg) 16%, transparent); box-shadow: inset -1px 0 0 var(--rd-line); }
+.sqb .sqs.alt { background: color-mix(in srgb, var(--rd-fg) 26%, transparent); }
+.sqb .sqs.cur { background: color-mix(in srgb, var(--accent) 42%, transparent); }
+.sqb .sqs.nomedia { opacity: .45; }
+.sqb .sqs span { display: block; padding: 0 4px; font-size: 10px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; pointer-events: none; }
+.sqb .mk { position: absolute; bottom: 0; width: 2px; height: 7px; margin-left: -1px; border-radius: 1px; background: #ff453a; pointer-events: none; }
+.sqb .mk.done { background: #30d158; } .sqb .mk.progress { background: #ffd60a; }
+.sqb .mk.dr { width: 4px; height: 4px; margin-left: -2px; border-radius: 2px; background: var(--ov-mut); }
+.sqb .ph { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--rd-fg); box-shadow: 0 0 0 1px rgb(0 0 0 / .25); pointer-events: none; }
+.seqkeep { position: fixed; left: -10px; top: -10px; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.stage .seqhold { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.stage img.seqhold { object-fit: contain; }
+.hdr .ttl.swipe { cursor: grab; -webkit-user-select: none; user-select: none; }
 /* The Notes Panel bar: a thin handle under the player; open, it holds the status filters. */
 .pbar { position: relative; height: var(--pbh); display: flex; align-items: center; justify-content: center; gap: 6px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .02em; cursor: pointer; touch-action: none; transition: height .28s, padding .28s; }
 .pbar .grip { position: absolute; left: 50%; top: 4px; width: 34px; height: 4px; margin-left: -17px; border-radius: 2px; background: var(--line); }
@@ -301,7 +324,7 @@ input:focus, textarea:focus { border-color: var(--accent); }
 /* Sheets */
 .back { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / .45); display: flex; align-items: flex-end; justify-content: center; }
 .back.mid { align-items: center; padding: 16px; }
-.sheet { width: 100%; max-width: 520px; max-height: 88vh; overflow: auto; background: var(--card); border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + var(--sb)); box-shadow: 0 -10px 40px rgb(0 0 0 / .25); }
+.sheet { width: 100%; max-width: 520px; max-height: 88vh; max-height: 88dvh; overflow: auto; background: var(--card); border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + var(--sb)); box-shadow: 0 -10px 40px rgb(0 0 0 / .25); overscroll-behavior: contain; }
 .back.mid .sheet { border-radius: 18px; padding-bottom: 16px; max-width: 380px; }
 .sheet h2 { font-size: 17px; margin: 0 0 4px; }
 .sheet p { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; }
@@ -314,8 +337,69 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .menu button small { margin-left: auto; color: var(--muted); font-size: 12px; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; margin: 8px 0 14px; }
 .kv b { color: var(--muted); font-weight: 500; }
+.kv .tapedit { all: unset; justify-self: start; cursor: pointer; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.kv .tapedit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* A bottom sheet's grabber: stays on top while the sheet scrolls; a swipe down on it closes the sheet
+   (app.js swipeDownToClose). Pulled over the sheet's top padding. */
+.sheet > .grab { position: sticky; top: -16px; z-index: 2; height: 30px; margin: -16px -16px 2px; background: var(--card); border-radius: 18px 18px 0 0; }
+.sheet > .grab::after { content: ""; position: absolute; left: 50%; top: 10px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--muted); opacity: .45; }
+.trkform input, .sheet select { width: 100%; margin-bottom: 12px; }
+.sheet select { font: inherit; font-size: 16px; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.trk-codes { display: flex; gap: 6px; } .trk-codes input { flex: 1; min-width: 0; }
+.sheet .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 12px; }
+.sheet .chk input { width: auto; margin: 0; }
+.sheet .sglist { max-height: 40vh; overflow: auto; }
+.bar .you { width: 34px; height: 34px; margin: 0 4px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; font-weight: 700; letter-spacing: 0; display: grid; place-items: center; padding: 0; }
+.hometabs { display: inline-flex; margin: 0 auto; max-width: 100%; }
+.hometabs button { padding: 5px 14px; font-size: 14px; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }   /* (several sites of a kind: long tabs shrink, the title names the site) */
+.bar .mini.off { visibility: hidden; }
+.home main.in-r { animation: pageInR .22s ease; } .home main.in-l { animation: pageInL .22s ease; }
+@keyframes pageInR { from { transform: translateX(40%); opacity: .3; } to { transform: none; opacity: 1; } }
+@keyframes pageInL { from { transform: translateX(-40%); opacity: .3; } to { transform: none; opacity: 1; } }
+.sgb-filter { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.sgb-filter select, .sgb-filter input { width: 100%; font: inherit; font-size: 16px; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.sgb-filter select[hidden] { display: none; }
+.sgb-types { display: flex; margin: 0; } .sgb-types button { flex: 1; }
+.sgb-row { display: flex; gap: 8px; } .sgb-row select { flex: 0 0 38%; } .sgb-row input { flex: 1; min-width: 0; }
+.sgb-msg { color: var(--muted); font-size: 13.5px; margin: 0 0 8px; } .sgb-msg:empty { display: none; }
+.sgb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.sgb-tile { display: flex; flex-direction: column; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); text-align: left; cursor: pointer; color: var(--fg); font: inherit; }
+.sgb-tile .th { aspect-ratio: 16 / 9; background: var(--line); display: grid; place-items: center; overflow: hidden; }
+.sgb-tile .th { position: relative; touch-action: pan-y; }
+.sgb-tile .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sgb-tile .strip { position: absolute; inset: 0; background-repeat: no-repeat; opacity: 0; pointer-events: none; }
+.sgb-tile.scrub .strip { opacity: 1; } .sgb-tile.scrub .th img { opacity: 0; }
+.sgb-acts .btn { flex: 1; min-height: 40px; }
+.sgb-where.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* the filter builder (core/filter-core.js mountBuilder) in the ShotGrid page's Filter sheet */
+.flt-sheet .flt .flt-group { display: flex; flex-direction: column; gap: 8px; }
+.flt-sheet .flt .flt-group:not(.root) { padding: 8px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px; }
+.flt-sheet .flt .flt-ghead { display: flex; align-items: center; gap: 8px; }
+.flt-sheet .flt .flt-ghead span { color: var(--muted); font-size: 13.5px; flex: 1; }
+.flt-sheet .flt .flt-ghead .flt-join { width: auto; flex: none; }
+.flt-sheet .flt select, .flt-sheet .flt input { margin: 0; min-width: 0; min-height: 40px; }
+.flt-sheet .flt .flt-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.flt-sheet .flt .flt-row .flt-f, .flt-sheet .flt .flt-row .flt-o { flex: 1 1 0; width: auto; }
+.flt-sheet .flt .flt-row .flt-x { order: 0; }
+.flt-sheet .flt .flt-row > .flt-v, .flt-sheet .flt .flt-row > .flt-days { order: 1; flex: 1 1 100%; width: 100%; }
+.flt-sheet .flt .flt-days { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.flt-sheet .flt .flt-days .flt-v { flex: 1; width: auto; }
+.flt-sheet .flt .flt-row.incomplete .flt-v { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.flt-sheet .flt .flt-x { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: var(--chip); color: var(--muted); cursor: pointer; padding: 0; }
+.flt-sheet .flt .flt-none { color: var(--muted); font-size: 13.5px; padding: 4px 2px; }
+.flt-sheet .flt .flt-gacts { display: flex; flex-wrap: wrap; gap: 8px; }
+.flt-sheet .flt .flt-gacts .btn { min-height: 40px; }
+.flt-sheet .flt .flt-clear { margin-left: auto; color: var(--red); }
+.flt-sheet .acts { margin-top: 14px; }
+.sheet .sgb-flist { display: flex; flex-direction: column; max-height: 55vh; overflow: auto; margin-bottom: 12px; }
+.sgb-tile .cap { padding: 6px 8px 8px; display: flex; flex-direction: column; min-width: 0; }
+.sgb-tile .cap b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sgb-tile .cap small { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sgb-tile.has { border-color: var(--accent); }
+.sgb-more { display: block; margin: 14px auto 0; }
+.sgb-empty { text-align: center; padding: 40px 10px; } .sgb-empty p { color: var(--muted); }
 .sheet .lab { display: block; font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 4px; }
-.sheet .seg.themes, .sheet .seg.fs, .sheet .seg.thumbs { margin: 0 0 14px; }
+.sheet .seg.themes, .sheet .seg.fs, .sheet .seg.thumbs, .sheet .seg.ahead, .sheet .seg.debug { margin: 0 0 14px; }
 .sheet .seg.fs + p { margin-top: -8px; }
 /* Full-screen picture viewer */
 /* Full-screen picture viewer: no bar; round buttons float over the picture. Swipe up / down: the
@@ -345,6 +429,9 @@ input:focus, textarea:focus { border-color: var(--accent); }
 <script type="importmap">{"imports":{"three":"./three/three.module.js","three/addons/":"./three/jsm/","@sparkjsdev/spark":"./three/spark.module.js"}}</script>
 <script src="core/review-core.js"></script>
 <script src="core/review-draw.js"></script>
+<script src="core/trackers-core.js"></script>
+<script src="core/shotgrid-core.js"></script>
+<script src="core/filter-core.js"></script>
 <script>window.SIGHT_REVIEW_VERSION = "%%VERSION%%";</script>
 <script type="module" src="js/app.js"></script>
 </body>

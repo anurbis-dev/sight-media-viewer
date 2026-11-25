@@ -9,8 +9,15 @@
 // side by side; a header button toggles whether the grid pane is visible) — there is no back
 // button or toolbar here, and no separate "add files" UI, because the grid itself is the source
 // for the existing card drag (application/x-sight-ids), same as dropping onto a Collection.
+//
+// Drawings and review notes on a board come from annotate.js (a second annotator, created by index.html and
+// passed in as `annot`; board mode, see its header): free in world coordinates over the whole board, not tied
+// to items. This file only hosts it — mounts its bar / panel in the view, binds the viewport (geometry =
+// the camera), saves / reloads it per board, gives it the keys while its mode is on, and adds the touch pinch.
 
 import { runHotkeys } from "/static/keys.js";
+import { FINE, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
+import { setCursor, zoomCursor } from "/static/cursors.js";
 
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 const DEFAULT_SIZE = 240;
@@ -40,10 +47,10 @@ function injectStyles(){
 /* :not([hidden]) rather than a bare display:flex here: a same-specificity class rule declared
    after the UA [hidden]{display:none} rule would otherwise win the cascade by source order and
    defeat "hidden" entirely — this way the rule simply doesn't match while hidden is set. */
-.canvas-view:not([hidden]) { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+.canvas-view:not([hidden]) { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); position: relative; isolation: isolate; }
 .canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: default; background-color: var(--surface);
   background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px); background-size: 24px 24px;
-  user-select: none; -webkit-user-select: none; }
+  user-select: none; -webkit-user-select: none; touch-action: none; }
 .canvas-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 /* An item is styled exactly like a library card (same theme variables: radius, padding, background,
    frame, hover and active frame). Frame widths are divided by the board zoom (--cz, set in
@@ -65,6 +72,15 @@ function injectStyles(){
 .citem .citem-meta { position: absolute; left: calc(var(--card-pad) / var(--cz, 1)); right: calc(var(--card-pad) / var(--cz, 1)); bottom: calc(var(--card-pad) / var(--cz, 1)); z-index: 2; min-width: 0; padding: 14px 8px 5px; border-radius: 0 0 var(--thumb-radius) var(--thumb-radius); background: linear-gradient(to top, rgb(0 0 0 / .72), rgb(0 0 0 / .4) 62%, transparent); color: #fff; pointer-events: none; text-shadow: 0 1px 2px rgb(0 0 0 / .5); }
 .citem .citem-meta .n { font-size: calc(var(--text-size) - 2px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-no-names .citem .citem-meta { display: none; }
+/* A card whose file is gone (source removed / file deleted): icon, "Missing", the name and where the file was. Sizes are
+   in cqmin of the card's own picture area, so the text scales with the card and stays readable when zoomed out. */
+.citem.missing .citem-thumb { container-type: size; }
+.citem.missing .citem-meta { display: none; }
+.citem .citem-miss { width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.5cqmin; padding: 5cqmin; text-align: center; color: var(--subtle); overflow: hidden; }
+.citem .citem-miss svg { width: 22cqmin; height: 22cqmin; flex: none; color: var(--danger, #e5534b); }
+.citem .citem-miss .ml { font-size: 9cqmin; font-weight: 600; line-height: 1.1; color: var(--danger, #e5534b); text-transform: uppercase; letter-spacing: .06em; }
+.citem .citem-miss .mn { font-size: 8cqmin; line-height: 1.2; color: var(--fg); max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.citem .citem-miss .mp { font-size: 6cqmin; line-height: 1.25; color: var(--muted); max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 /* Ctrl held = box-select mode (Ctrl-drag draws a marquee even over an item): show a plain arrow instead of the grab hand. */
 .canvas-viewport.ctrl-box, .canvas-viewport.ctrl-box .citem { cursor: default; }
 /* The transform frame lives in screen space (a sibling of the world, not inside it), so its handles
@@ -78,7 +94,7 @@ function injectStyles(){
 .cframe[data-corner="tl"] .chandle { left: -6px; top: -6px; right: auto; bottom: auto; }
 .cframe[data-corner="tr"] .chandle { right: -6px; top: -6px; bottom: auto; }
 .cframe[data-corner="bl"] .chandle { left: -6px; bottom: -6px; right: auto; }
-.cframe .crot { left: 50%; top: -22px; margin-left: -6px; cursor: grab; }
+.cframe .crot { left: 50%; top: -22px; margin-left: -6px; cursor: var(--cur-rot, grab); } /* (cursors.js) */
 /* Crop grips (Alt held over an item): screen-space like the transform frame, so they stay the same size at any zoom. */
 .ccrop { position: absolute; left: 0; top: 0; pointer-events: none; transform-origin: 50% 50%; outline: 1px solid var(--card-active-color); }
 .ccrop i { position: absolute; pointer-events: auto; background: var(--card-active-color); border: 1px solid var(--bg); box-sizing: border-box; }
@@ -90,6 +106,13 @@ function injectStyles(){
 .canvas-viewport.alt-crop .citem { cursor: move; }
 .ccrop i[data-edge="tl"] { left: -7px; top: -7px; cursor: nwse-resize; } .ccrop i[data-edge="br"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
 .ccrop i[data-edge="tr"] { right: -7px; top: -7px; cursor: nesw-resize; } .ccrop i[data-edge="bl"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+/* Annotation mode: the drawing cursor wins over the items' grab hand. The toggle sits top left (the notes panel
+   covers the right edge); the annotator's bar is centred at the top. */
+.canvas-viewport.an-active .citem, .canvas-viewport.an-active .cframe .chandle, .canvas-viewport.an-active .cframe .crot, .canvas-viewport.an-active .ccrop i { cursor: inherit; }
+.canvas-annbtn { position: absolute; left: 10px; top: 10px; z-index: 12; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); cursor: pointer; }
+.canvas-annbtn:hover { color: var(--fg); background: var(--surface-2); }
+.canvas-annbtn.on { color: var(--accent); border-color: var(--accent); }
+.canvas-annbtn[hidden] { display: none; }
 .canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 13px; pointer-events: none; text-align: center; padding: 24px; }
 `;
   document.head.appendChild(style);
@@ -99,15 +122,36 @@ function injectStyles(){
 // reused for the lifetime of the page — assets don't change kind/size once indexed.
 const assetCache = new Map();
 const assetResolved = new Map(); // same records once fetched, readable synchronously (Space preview)
+// null = the server says there is no such asset (404: its source was removed); undefined = could not find out
+// (server restarting, 500, network) — not cached, and a card keeps what it shows.
 async function getAsset(aid){
   if (assetCache.has(aid)) return assetCache.get(aid);
-  const p = api("/api/assets/" + aid).catch(() => null);
+  const p = fetch("/api/assets/" + aid).then(async (r) => {
+    if (r.status === 404) return null;
+    if (!r.ok) return undefined;
+    return r.json();
+  }).catch(() => undefined);
   assetCache.set(aid, p);
   const a = await p;
-  assetCache.set(aid, a);
-  if (a) assetResolved.set(aid, a);
+  if (assetCache.get(aid) === p){ // not evicted (forgetAssets) while the request was in flight
+    if (a === undefined) assetCache.delete(aid);
+    else assetCache.set(aid, a);
+    if (a) assetResolved.set(aid, a);
+  }
   return a;
 }
+// Drops the cached answers for these assets (null = all) so the next getAsset asks the server again.
+function forgetAssets(ids){
+  for (const aid of ids || [...assetCache.keys()]) assetCache.delete(aid);
+}
+// A file that is gone: its asset row was deleted with the source, or it is flagged 'missing' (still indexed, file not found).
+const isGone = (a) => a === null || (!!a && a.status === "missing");
+function midEllipsis(p, max = 80){
+  if (p.length <= max) return p;
+  const head = Math.ceil((max - 1) * 0.4);
+  return p.slice(0, head) + "\u2026" + p.slice(p.length - (max - 1 - head));
+}
+const MISSING_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9.5 12.5l5 5M14.5 12.5l-5 5"/></svg>`;
 function thumbUrl(a){
   return "/api/thumb/" + a.id + (a.thumb_v ? "?v=" + a.thumb_v : "");
 }
@@ -122,15 +166,19 @@ function fullResUrl(a){
   return "";
 }
 
-export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled, onContextMenu }){
+// annButton: the host's toggle for annotating the board (index.html puts it in the top bar, where the lightbox's
+// pen is: one place for every view). Without it the board gets its own button in the corner.
+export function createCanvasView({ mount, getZoomSettings, combineSelection, markSmallSrc, syncPixelation, keysEnabled, onContextMenu, annot, annButton }){
   injectStyles();
   const zoomSettings = getZoomSettings || (() => ({ zoomAxis: "y", zoomSpeed: 1, zoomInvert: false }));
 
-  mount.innerHTML = `<div class="canvas-viewport" data-el="viewport"><div class="canvas-world" data-el="world"></div><div class="cframe" data-el="frame" hidden><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div></div><div class="ccrop" data-el="crop" hidden><i data-edge="l"></i><i data-edge="r"></i><i data-edge="t"></i><i data-edge="b"></i><i data-edge="tl"></i><i data-edge="tr"></i><i data-edge="bl"></i><i data-edge="br"></i></div></div>`;
+  mount.innerHTML = `<div class="canvas-viewport" data-el="viewport"><div class="canvas-world" data-el="world"></div><div class="cframe" data-el="frame" hidden><div class="chandle" data-act="resize"></div><div class="crot" data-act="rotate"></div></div><div class="ccrop" data-el="crop" hidden><i data-edge="l"></i><i data-edge="r"></i><i data-edge="t"></i><i data-edge="b"></i><i data-edge="tl"></i><i data-edge="tr"></i><i data-edge="bl"></i><i data-edge="br"></i></div></div>`
+    + (annot && !annButton ? `<button type="button" class="canvas-annbtn" data-el="annbtn" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>` : "");
   const viewportEl = mount.querySelector('[data-el="viewport"]');
   const worldEl = mount.querySelector('[data-el="world"]');
   const frameEl = mount.querySelector('[data-el="frame"]');
   const cropEl = mount.querySelector('[data-el="crop"]');
+  const annBtn = annot ? annButton || mount.querySelector('[data-el="annbtn"]') : null;
 
   let isOpen = false;
   let boardId = null;
@@ -234,6 +282,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     syncAllPixelation();
     updateFrame();
     scheduleResCheck();
+    annot?.viewChanged();
   }
   function screenToWorld(clientX, clientY){
     const r = viewportEl.getBoundingClientRect();
@@ -270,28 +319,58 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     worldEl.appendChild(el);
     getAsset(item.asset_id).then((a) => {
       if (!dom.has(item.id)) return; // item was removed before the fetch resolved
-      const thumb = el.querySelector(".citem-thumb");
-      el.querySelector(".citem-meta .n").textContent = a ? a.name : "";
-      if (a && a.has_thumb){
-        thumb.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
-        const img = thumb.querySelector("img");
-        img.dataset.thumb = thumbUrl(a);
-        img.dataset.full = fullResUrl(a);
-        img.dataset.fullW = a.width || "";
-        img.dataset.res = "thumb";
-        // Not once: it fires again on every thumbnail <-> original swap (see syncResolution).
-        img.addEventListener("load", () => {
-          if (img.dataset.res === "thumb") img.dataset.thumbW = img.naturalWidth;
-          markSmallSrc(img);
-          syncItemPixelation(items.get(item.id) || item);
-          scheduleResCheck();
-        });
-        applyCropFlip(items.get(item.id) || item);
-      } else {
-        thumb.innerHTML = `<div class="citem-ph">${esc(a ? a.name : "?")}</div>`;
-      }
+      fillItemEl(el, item, a);
     });
     return el;
+  }
+
+  // Paints a card from its asset record: the picture, or the "Missing" placeholder. data-state tells refreshMissing()
+  // which cards still need another look (missing, or no thumbnail yet).
+  let retryTimer = 0; // one pending retry for cards whose lookup failed (server restarting, network): every 5 s at most
+  function fillItemEl(el, item, a){
+    if (a === undefined){ // lookup failed (not a 404): keep the card as it is and retry once things settle
+      if (!retryTimer) retryTimer = setTimeout(() => { retryTimer = 0; refreshMissing({ sweep: "bad" }); }, 5000);
+      return;
+    }
+    const thumb = el.querySelector(".citem-thumb");
+    if (el.dataset.state === "ok" && !isGone(a) && a.has_thumb && el.querySelector("img")?.dataset.thumb === thumbUrl(a)) return; // unchanged: keep the full-res / crop / pixelation state
+    const gone = isGone(a);
+    el.classList.toggle("missing", gone);
+    if (gone) assetResolved.delete(item.asset_id); // nothing to preview / compare / reveal
+    const live = items.get(item.id) || item;
+    const name = (a && a.name) || live.asset_name || item.asset_name || "";
+    el.querySelector(".citem-meta .n").textContent = name;
+    if (gone){
+      const path = (a && a.path) || live.asset_path || item.asset_path || "";
+      el.dataset.state = "missing";
+      el.title = path ? `Missing: ${path}` : "Missing file";
+      thumb.innerHTML = `<div class="citem-miss">${MISSING_ICON}<div class="ml">Missing</div><div class="mn">${esc(name || "Unknown file")}</div>`
+        + (path ? `<div class="mp" title="${esc(path)}">${esc(midEllipsis(path))}</div>` : "") + `</div>`;
+      applyCropFlip(live);
+      return;
+    }
+    el.removeAttribute("title");
+    if (a.has_thumb){
+      el.dataset.state = "ok";
+      thumb.innerHTML = `<img src="${thumbUrl(a)}" draggable="false" alt="">`;
+      const img = thumb.querySelector("img");
+      img.dataset.thumb = thumbUrl(a);
+      img.dataset.full = fullResUrl(a);
+      img.dataset.fullW = a.width || "";
+      img.dataset.res = "thumb";
+      // Not once: it fires again on every thumbnail <-> original swap (see syncResolution).
+      img.addEventListener("load", () => {
+        if (img.dataset.res === "thumb") img.dataset.thumbW = img.naturalWidth;
+        markSmallSrc(img);
+        syncItemPixelation(items.get(item.id) || item);
+        scheduleResCheck();
+      });
+      applyCropFlip(live);
+    } else {
+      el.dataset.state = "nothumb";
+      thumb.innerHTML = `<div class="citem-ph">${esc(name || "?")}</div>`;
+      applyCropFlip(live);
+    }
   }
 
   function layoutItemEl(item){
@@ -316,7 +395,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     const el = dom.get(item.id);
     if (!el) return;
     const thumb = el.querySelector(".citem-thumb");
-    thumb.style.transform = item.flip_x || item.flip_y ? `scale(${item.flip_x ? -1 : 1}, ${item.flip_y ? -1 : 1})` : "";
+    thumb.style.transform = !el.classList.contains("missing") && (item.flip_x || item.flip_y) ? `scale(${item.flip_x ? -1 : 1}, ${item.flip_y ? -1 : 1})` : "";
     const img = thumb.querySelector("img");
     if (!img) return;
     if (item.crop_w == null || item.crop_h == null){ img.style.cssText = ""; return; }
@@ -507,8 +586,7 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   }
 
   // Fit the given items (or all) into the viewport. Rotated items count by their rotated corners.
-  function frameItems(list){
-    if (!list.length) return;
+  function boxOfItems(list){
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const it of list){
       const cx = it.x + it.w / 2, cy = it.y + it.h / 2, rad = (it.rotation || 0) * Math.PI / 180;
@@ -517,14 +595,66 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       minX = Math.min(minX, cx - hw); maxX = Math.max(maxX, cx + hw);
       minY = Math.min(minY, cy - hh); maxY = Math.max(maxY, cy + hh);
     }
-    const r = viewportEl.getBoundingClientRect();
-    const pad = 48;
-    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
-    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((r.width - pad * 2) / bw, (r.height - pad * 2) / bh)));
-    vx = r.width / 2 - (minX + bw / 2) * zoom;
-    vy = r.height / 2 - (minY + bh / 2) * zoom;
-    worldTransform();
+    return list.length ? [minX, minY, maxX, maxY] : null;
   }
+  function frameItems(list){
+    if (list.length) frameRect(...boxOfItems(list));
+  }
+  // Everything on the board: the items and the drawings (annotations are free of the items).
+  function frameAll(){
+    const a = boxOfItems(allItems()), b = annot?.bounds?.() || null;
+    const box = a && b ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : a || b;
+    if (box) frameRect(...box);
+  }
+  // Fit a world rectangle into the viewport (items, or a note's drawings for the annotator).
+  // The annotator's notes panel overlays the right edge of the view: the visible strip is left of it.
+  function stripWidth(r){
+    const panel = mount.querySelector(":scope > .an-panel");
+    return r.width - (panel && !panel.hidden ? Math.min(panel.offsetWidth, r.width - 120) : 0);
+  }
+  // opts.pad (screen px around the rectangle, default 48); opts.smooth: fly there (flyTo) instead of a jump.
+  function frameRect(minX, minY, maxX, maxY, opts = {}){
+    const r = viewportEl.getBoundingClientRect();
+    const pad = opts.pad ?? 48;
+    const width = stripWidth(r);
+    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((width - pad * 2) / bw, (r.height - pad * 2) / bh)));
+    const tx = width / 2 - (minX + bw / 2) * z, ty = r.height / 2 - (minY + bh / 2) * z;
+    if (opts.smooth) flyTo(tx, ty, z);
+    else { stopFly(); zoom = z; vx = tx; vy = ty; worldTransform(); }
+  }
+  // The part of the board on screen now (world units, the strip left of the notes panel): a board note keeps it
+  // (annotate.js ctx.bv) to bring the camera back there.
+  function viewRect(){
+    const r = viewportEl.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const rd = (v) => Math.round(v * 10) / 10;
+    return { x: rd(-vx / zoom), y: rd(-vy / zoom), w: rd(stripWidth(r) / zoom), h: rd(r.height / zoom) };
+  }
+  // A camera move with a smooth start and a smooth stop (ease-in-out): the centre glides, the zoom changes by
+  // equal ratios (log scale), so a far zoom-out-and-in reads as one motion. Any wheel / press on the board stops it.
+  let fly = 0;
+  function stopFly(){ if (fly){ cancelAnimationFrame(fly); fly = 0; } }
+  function flyTo(tx, ty, tz){
+    stopFly();
+    const r = viewportEl.getBoundingClientRect(), w = stripWidth(r), h = r.height;
+    // Interpolate the world point at the strip's centre and the zoom, then turn back into vx / vy.
+    const c0 = { x: (w / 2 - vx) / zoom, y: (h / 2 - vy) / zoom }, c1 = { x: (w / 2 - tx) / tz, y: (h / 2 - ty) / tz };
+    const z0 = zoom, ms = Math.min(1100, Math.max(450, 350 + 120 * Math.abs(Math.log2(tz / z0)) + 0.25 * Math.hypot((c1.x - c0.x) * tz, (c1.y - c0.y) * tz) / 4));
+    const t0 = performance.now();
+    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms), k = ease(t);
+      zoom = z0 * Math.pow(tz / z0, k);
+      const cx = c0.x + (c1.x - c0.x) * k, cy = c0.y + (c1.y - c0.y) * k;
+      vx = w / 2 - cx * zoom; vy = h / 2 - cy * zoom;
+      worldTransform();
+      fly = t < 1 ? requestAnimationFrame(step) : 0;
+    };
+    fly = requestAnimationFrame(step);
+  }
+  viewportEl.addEventListener("pointerdown", stopFly, true);
+  viewportEl.addEventListener("wheel", stopFly, { capture: true, passive: true });
 
   // ---- persistence -------------------------------------------------------------------------
   let saveTimer = 0;
@@ -567,7 +697,8 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   // of this same entry deletes/recreates the right server rows instead of drifting out of sync.
   const createBody = (it, extra = {}) => ({
     asset_id: it.asset_id, x: it.x, y: it.y, w: it.w, h: it.h, rotation: it.rotation, z_index: it.z_index, opacity: it.opacity,
-    crop_x: it.crop_x, crop_y: it.crop_y, crop_w: it.crop_w, crop_h: it.crop_h, flip_x: it.flip_x, flip_y: it.flip_y, ...extra,
+    crop_x: it.crop_x, crop_y: it.crop_y, crop_w: it.crop_w, crop_h: it.crop_h, flip_x: it.flip_x, flip_y: it.flip_y,
+    asset_name: it.asset_name, asset_path: it.asset_path, ...extra, // snapshot: only used server-side when the asset row is gone
   });
   async function recreateOnServer(entry){
     const fresh = [];
@@ -658,11 +789,21 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       drag = { kind: "grotate", ids: list.map((it) => it.id), cx, cy, startAngle: Math.atan2(w0.y - cy, w0.x - cx) * 180 / Math.PI, starts: before, moved: false, before };
     }
     el_setPointerCapture(e);
+    syncDragCursor();
   }
   frameEl.querySelector('[data-act="resize"]').addEventListener("pointerdown", startResize);
   frameEl.querySelector('[data-act="rotate"]').addEventListener("pointerdown", startRotate);
   function el_setPointerCapture(e){
     try { e.target.setPointerCapture(e.pointerId); } catch {}
+  }
+  // The running drag's cursor (cursors.js "gesture" layer on the viewport, over items and handles too): a board pan
+  // or an item move = grabbing, an item turn = rotate, the right-drag zoom = zoom-in / zoom-out by its direction.
+  function syncDragCursor(){
+    const d = drag;
+    const k = !d ? null : d.kind === "pan" || (d.kind === "move" && d.moved) ? "pan"
+      : d.kind === "rotate" || d.kind === "grotate" ? "rotate"
+      : d.kind === "zoomdrag" && d.moved ? zoomCursor(zoom / d.scale0) : null;
+    setCursor(viewportEl, "gesture", k);
   }
 
   // Un-crops an item mid-resize: the box grows outward to the full image at the same scale (the picture stays
@@ -823,24 +964,33 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
       return;
     }
     if (drag && drag.kind === "pan"){
-      vx = drag.startVx + (e.clientX - drag.startClient.x);
-      vy = drag.startVy + (e.clientY - drag.startClient.y);
+      // Shift: slower (×0.2). The move that sees Shift change still counts at the old speed, then the drag
+      // rebases on it, so pressing / releasing Shift mid-drag neither jumps nor drops that step.
+      const f = drag.fine ? FINE : 1;
+      vx = drag.startVx + (e.clientX - drag.startClient.x) * f;
+      vy = drag.startVy + (e.clientY - drag.startClient.y) * f;
+      if (e.shiftKey !== !!drag.fine){ drag.fine = e.shiftKey; drag.startClient = { x: e.clientX, y: e.clientY }; drag.startVx = vx; drag.startVy = vy; }
       worldTransform();
       return;
     }
     if (drag && drag.kind === "zoomdrag"){
       if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
       drag.moved = true;
-      // Right-drag zoom: same formula, and the same theme axis/speed/invert knobs, as the
-      // lightbox's image zoom (bindStageDrag in index.html) — one zoom control everywhere.
-      const zs = zoomSettings();
-      const raw = zs.zoomAxis === "x" ? (e.clientX - drag.x) : (drag.y - e.clientY);
-      const d = (zs.zoomInvert ? -raw : raw) * 0.012 * (zs.zoomSpeed ?? 1);
-      zoomAt(drag.mx, drag.my, drag.scale * Math.exp(d));
+      // Right-drag zoom: the shared formula and theme axis / speed / invert knobs (viewer-input.js), anchored
+      // at the press as in the lightbox — one zoom control everywhere.
+      // (Shift: slower; rebased after this step, as the pan)
+      zoomAt(drag.mx, drag.my, drag.scale * zoomFactorDrag(e.clientX - drag.x, e.clientY - drag.y, zoomSettings(), drag.fine));
+      if (e.shiftKey !== !!drag.fine){ drag.fine = e.shiftKey; drag.x = e.clientX; drag.y = e.clientY; drag.scale = zoom; }
     }
   }
   function onPointerUp(e){
     if (!drag) return;
+    // A cancelled pointer is no click: a press that never moved / never grew into a box just ends.
+    if (e.type === "pointercancel" && (drag.kind === "zoomdrag" || drag.kind === "marquee") && !drag.moved && !drag.active){
+      if (drag.el) drag.el.remove();
+      drag = null;
+      return;
+    }
     if (drag.kind === "zoomdrag" && !drag.moved && onContextMenu){
       // Same rule as the library grid: right-clicking an item outside the selection selects just it.
       const hit = drag.itemId && items.has(drag.itemId) ? drag.itemId : null;
@@ -867,16 +1017,16 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   viewportEl.addEventListener("pointerdown", (e) => {
     if (e.button === 1 || (e.button === 0 && e.altKey)){
       e.preventDefault();
-      drag = { kind: "pan", startClient: { x: e.clientX, y: e.clientY }, startVx: vx, startVy: vy };
-      viewportEl.style.cursor = "grabbing";
+      drag = { kind: "pan", startClient: { x: e.clientX, y: e.clientY }, startVx: vx, startVy: vy, fine: e.shiftKey };
       el_setPointerCapture(e);
+      syncDragCursor();
       return;
     }
     if (e.button === 2){
       e.preventDefault();
       const r = viewportEl.getBoundingClientRect();
       // A right-click that never turns into a zoom drag opens the item menu (see onPointerUp).
-      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, moved: false, itemId: e.target.closest?.(".citem")?.dataset.id || null };
+      drag = { kind: "zoomdrag", x: e.clientX, y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top, scale: zoom, scale0: zoom, moved: false, fine: e.shiftKey, itemId: e.target.closest?.(".citem")?.dataset.id || null };
       el_setPointerCapture(e);
       return;
     }
@@ -910,27 +1060,63 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     lastPtr = { x: e.clientX, y: e.clientY };
     if (altDown !== e.altKey){ altDown = e.altKey; updateCrop(); }
     onPointerMove(e);
+    syncDragCursor();
     if (!drag && !frameEl.hidden) updateHandleCorner();
     if (altDown) refreshCropTarget();
   });
-  window.addEventListener("pointerup", (e) => {
+  // (a cancelled pointer — a lost capture, the OS taking it — ends the drag like a release)
+  for (const t of ["pointerup", "pointercancel"]) window.addEventListener(t, (e) => {
     if (!isOpen) return;
-    if (drag && drag.kind === "pan") viewportEl.style.cursor = "default";
     onPointerUp(e);
+    syncDragCursor();
   });
   viewportEl.addEventListener("wheel", (e) => {
     e.preventDefault();
     const r = viewportEl.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
     if (e.ctrlKey || e.metaKey){
-      const zs = zoomSettings();
-      const d = (zs.zoomInvert ? e.deltaY : -e.deltaY) * 0.0016 * (zs.zoomSpeed ?? 1);
-      zoomAt(px, py, zoom * Math.exp(d));
+      zoomAt(px, py, zoom * zoomFactorWheel(wheelDelta(e), zoomSettings(), e.shiftKey)); // (Ctrl+Shift: slower)
     } else {
       vx -= e.deltaX; vy -= e.deltaY;
       worldTransform();
     }
   }, { passive: false });
+
+  // ---- touch: two fingers pan and pinch-zoom (a touch screen has no wheel, middle button or right-drag) ----
+  // Registered before the annotator binds its own capture listener, so the second finger never reaches it: what
+  // the first finger began (a stroke, an item move, a marquee) is finished or dropped first.
+  // (the finger maths is viewer-input.js's pinchTracker, shared with the lightbox, compare and 3D)
+  const fingers = pinchTracker();
+  let pinching = false;
+  viewportEl.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    fingers.down(e);
+    if (fingers.size < 2) return;
+    if (!pinching){
+      annot?.abortGesture();
+      if (drag) onPointerUp(e);
+      syncDragCursor();
+      pinching = true;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
+  window.addEventListener("pointermove", (e) => {
+    const s = fingers.move(e);
+    if (!s || !pinching) return;
+    // The world point under the pair's previous middle goes under its new middle, at the new zoom (one redraw).
+    const r = viewportEl.getBoundingClientRect(), px = s.x - r.left, py = s.y - r.top;
+    const wx = (px - vx) / zoom, wy = (py - vy) / zoom;
+    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * s.factor));
+    vx = px + s.dx - wx * zoom;
+    vy = py + s.dy - wy * zoom;
+    worldTransform();
+  });
+  const fingerUp = (e) => {
+    if (fingers.up(e) && fingers.size < 2) pinching = false;
+  };
+  window.addEventListener("pointerup", fingerUp);
+  window.addEventListener("pointercancel", fingerUp);
 
   // ---- placing assets: drag a card in from the library grid (now shown side by side, see
   // index.html's split view) the same way dropping onto a Collection already works. ----------
@@ -1241,8 +1427,9 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   const selectedItems = () => [...selection].map((id) => items.get(id)).filter(Boolean);
   const ifSelected = (fn) => () => (selection.size ? fn() : false);
   const KEYMAP = [
-    ["KeyF", () => frameItems(selection.size ? selectedItems() : allItems())], // frame the selection (all if none)
-    ["KeyA", () => frameItems(allItems())], // frame everything (Ctrl+A, select all, is index.html's)
+    ["KeyF", () => (selection.size ? frameItems(selectedItems()) : frameAll())], // frame the selection (all if none)
+    ["KeyA", () => frameAll()], // frame everything (Ctrl+A, select all, is index.html's)
+    ["Shift+KeyA", (e) => (annot ? (e.repeat || annot.toggle(), true) : false)], // annotation mode on (leaving it is the annotator's own key)
     // Align, normalize, distribute, arrange — the same shortcuts PureRef uses.
     ["Ctrl+ArrowLeft", () => alignItems("left")], ["Ctrl+ArrowRight", () => alignItems("right")],
     ["Ctrl+ArrowUp", () => alignItems("top")], ["Ctrl+ArrowDown", () => alignItems("bottom")],
@@ -1263,11 +1450,17 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   ];
 
   // ---- keyboard -------------------------------------------------------------------------------
+  // While the annotation mode is on, the annotator gets every key first (tools, Ctrl+Z, Delete … — it ignores keys
+  // typed into a field) and the board's own item commands are off, so X / Delete / arrows can never remove or
+  // restack items by accident; only the view keys (F, A, Esc) still reach the board.
+  const VIEW_KEYS = new Set(["KeyF", "KeyA", "Escape"]);
   document.addEventListener("keydown", (e) => {
-    if (!isOpen || (keysEnabled && !keysEnabled())) return;
+    // index.html's handler runs first: a key it already acted on (Esc closing the palette / a popup) is not the board's.
+    if (!isOpen || e.defaultPrevented || (keysEnabled && !keysEnabled())) return;
+    if (annot?.onKey(e)) return;
     const tag = e.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    runHotkeys(e, KEYMAP);
+    runHotkeys(e, annot?.isOn() ? KEYMAP.filter((r) => VIEW_KEYS.has(r[0])) : KEYMAP);
   });
 
   // ---- open/close ------------------------------------------------------------------------------
@@ -1276,16 +1469,29 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   // close() (leaving the canvas view entirely), so neither path can skip it.
   async function persistCurrent(){
     await flushSave();
+    if (boardId) await annot?.flush();  // the old board's drawings, before the annotator is pointed elsewhere
     if (boardId){
       try { await api(`/api/boards/${boardId}`, jsonOpts("PATCH", { viewport_x: vx, viewport_y: vy, viewport_zoom: zoom })); } catch {}
     }
   }
   async function open(id){
+    stopFly();   // a glide still running would write the old board's camera over this one
     await persistCurrent();
     isOpen = true;
     boardId = id;
     clearWorld();
-    const full = await api(`/api/boards/${id}/full`);
+    // Point the annotator at this board at once: the previous board's drawings must not stay over it, and its
+    // own drawings / notes load while the board does.
+    const boardAsset = { id, kind: "board", name: "Board" };
+    annot?.setAsset(boardAsset);
+    let full;
+    try { full = await api(`/api/boards/${id}/full`); }
+    catch (err){
+      // Leave a safe state: no half-open board, annotator off and unbound (setAsset above nulled its surface).
+      if (annot?.isOn()) annot.toggle(false);
+      isOpen = false; boardId = null;
+      throw err;
+    }
     boardId = id; // guard against a stale response if the user switched boards mid-fetch
     vx = full.board.viewport_x || 0;
     vy = full.board.viewport_y || 0;
@@ -1293,18 +1499,89 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
     worldTransform();
     for (const item of full.items) addItemLocal(item);
     updateEmptyState();
+    boardAsset.name = full.board.name || "Board";
+    bindAnnot();
+  }
+  // The viewport (geometry = the camera) goes to the annotator: its drawings show and follow pan / zoom.
+  function bindAnnot(){
+    if (!annot) return;
+    annot.bind2d({
+      wrap: viewportEl, media: null, isVid: false, board: true,
+      geom: () => ({ x0: vx, y0: vy, s: zoom, w: viewportEl.clientWidth / zoom, h: viewportEl.clientHeight / zoom }),
+    });
+    syncAnnotUi();
   }
   function close(){
+    stopFly();   // a glide still running would write the old board's camera over this one
     isOpen = false;
+    drag = null; // (a drag left over would put its cursor back on the next pointer move after a reopen)
+    setCursor(viewportEl, "gesture", null);
     updateFrame();
-    persistCurrent();
+    if (annot?.isOn()) annot.toggle(false);  // saves what is pending; the mode is not carried out of the board view
+    return persistCurrent();
   }
+  // The toggle button follows the annotator's mode (it also changes from the annotator's own keys / buttons).
+  function syncAnnotUi(){
+    annBtn?.classList.toggle("on", !!annot?.isOn());
+  }
+  annBtn?.addEventListener("click", () => { if (isOpen) annot.toggle(); });
+  annot?.mount(mount);
+  // The viewport can change size without a window resize (the grid / board split handle): the drawings' layer
+  // is laid out by the viewport's size, so it follows.
+  if (annot && typeof ResizeObserver === "function") new ResizeObserver(() => annot.viewChanged()).observe(viewportEl);
 
   // Asset record for an item's asset_id once loaded (null before) — lets index.html's Space
   // preview open the lightbox for whatever item is under the cursor, same as for a library card.
   function assetOf(aid){ return assetResolved.get(aid) || null; }
   // Library assets behind the selected items, deduplicated (one asset can be placed several times).
-  function selectedAssetIds(){ return [...new Set(selectedItems().map((it) => it.asset_id))]; }
+  function selectedAssetIds(){ return [...new Set(selectedItems().filter((it) => !dom.get(it.id)?.classList.contains("missing")).map((it) => it.asset_id))]; }
 
-  return { open, close, selectAll, assetOf, selectedAssetIds };
+  // Files come and go while a board is open (a source is removed and added again, a scan finishes, a thumbnail
+  // lands): re-ask the server about the affected cards and repaint them. Debounced and merged — a scan publishes many
+  // events. `refreshMissing({ id })` (a thumb event): only cards of that asset that have no picture yet.
+  // `refreshMissing({ sweep: "all" })` (source removed): every card, any file may be gone. `{ sweep: "bad" }` (scan
+  // finished): the cards that are missing or picture-less. Cards that are fine are never rebuilt (see fillItemEl).
+  let refreshTimer = 0, refreshBusy = false;
+  let pend = { ids: new Set(), sweep: "" };
+  function refreshMissing(req = {}){
+    if (!isOpen) return;
+    if (req.id) pend.ids.add(req.id);
+    if (req.sweep === "all" || (req.sweep && !pend.sweep)) pend.sweep = req.sweep;
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(runRefresh, 500);
+  }
+  async function runRefresh(){
+    if (refreshBusy){ refreshTimer = setTimeout(runRefresh, 500); return; }
+    const job = pend;
+    pend = { ids: new Set(), sweep: "" };
+    refreshBusy = true;
+    try {
+      const board = boardId;
+      const stale = new Set();
+      for (const [id, el] of dom){
+        const aid = items.get(id)?.asset_id;
+        if (!aid) continue;
+        if (job.sweep === "all" || (job.sweep && el.dataset.state !== "ok") || (job.ids.has(aid) && el.dataset.state !== "ok")) stale.add(aid);
+      }
+      if (stale.size){
+        forgetAssets([...stale]);
+        await Promise.all([...stale].map(getAsset));
+        if (board === boardId){
+          for (const [id, el] of dom){
+            const it = items.get(id);
+            if (it && stale.has(it.asset_id)) fillItemEl(el, it, await getAsset(it.asset_id));
+          }
+          scheduleResCheck();
+        }
+      }
+    } finally {
+      refreshBusy = false;
+    }
+  }
+
+  return {
+    open, close, selectAll, assetOf, selectedAssetIds, refreshMissing,
+    // For index.html and the annotator's host (see createAnnotator's `board` host): camera hook, mode state.
+    frameRect, viewRect, syncAnnotUi, annotating: () => !!annot?.isOn(), annotModal: () => !!annot?.modal(), toggleAnnotHelp: () => annot?.toggleHelp?.(),
+  };
 }

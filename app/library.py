@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import fnmatch
 import heapq
+import logging
+import math
 import json
 import os
 import queue
@@ -12,7 +14,10 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import secrets
 import time
+import unicodedata
+from contextlib import nullcontext
 from pathlib import Path
 
 from .fileinfo import NO_WINDOW, _ffprobe_text, file_info, obj_is_binary
@@ -42,6 +47,10 @@ SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".sight", ".svn", ".hg",
     ".Trash", ".trashes", "System Volume Information",
 }
+# Built-in scan filter (see IgnoreRules): shipped next to this file, replaced by <SIGHT_HOME>/<same name>
+# when the user edits it (the app folder may be read-only in a frozen build).
+FILTER_INI = "initial_filtering.ini"
+SHIPPED_FILTER = Path(__file__).resolve().parent / FILTER_INI
 KIND_LABEL = {
     "image": "Images",
     "video": "Video",
@@ -105,6 +114,144 @@ _OPEN_NOTES_SQL = (
     "AND an.target_asset_id=assets.id AND an.deleted_at IS NULL "
     "AND COALESCE(json_extract(an.data, '$.status'), 'open') != 'done')"
 )
+# Drawings left on the file and never added to a note (annotate.js pendingDrawings: a drawing
+# with no data.note). Notes and the review-state row are not drawings.
+_LOOSE_DRAW_SQL = (
+    "(SELECT COUNT(*) FROM annotations an WHERE an.scope='asset' "
+    "AND an.target_asset_id=assets.id AND an.deleted_at IS NULL "
+    "AND an.kind NOT IN ('note', 'status') "
+    "AND COALESCE(json_extract(an.data, '$.note'), '') = '')"
+)
+
+# The filter builder's conditions (docs/PLAN-trackers.md stage 3b): a tree {"op": "and"|"or", "c": [cond | group]},
+# cond {"f": field, "o": op, "v": value}, as app/static/filter-core.js sends it (`toLibWire`: dates already resolved
+# to epoch ms in the viewer's time zone). Fields and ops are whitelisted here; anything else is a ValueError (400).
+_WHERE_TEXT = {"name": "name", "ext": "ltrim(ext, '.')", "path": "path", "note": "note"}
+_WHERE_DATE = {"mtime": "(mtime * 1000)", "added": "added_at"}
+_WHERE_MAX_DEPTH = 4
+_WHERE_MAX_CONDS = 100
+_TAGS_JSON = "(CASE WHEN json_valid(assets.tags) THEN assets.tags ELSE '[]' END)"
+
+
+MAX_RULE_CHARS = 64_000
+
+
+def _rule_json(rule: object) -> str:
+    """A smart collection's rule as stored: a JSON object (the client's Filter ▾ tree, sanitized there), bounded."""
+    if not isinstance(rule, dict):
+        raise ValueError("a smart collection's rule must be an object")
+    try:
+        s = json.dumps(rule, ensure_ascii=False, separators=(",", ":"))
+        s.encode("utf-8")   # (a lone surrogate would fail in SQLite instead)
+    except (RecursionError, TypeError, ValueError):
+        raise ValueError("the smart collection's rule is not valid") from None
+    if len(s) > MAX_RULE_CHARS:
+        raise ValueError("the smart collection's rule is too long")
+    return s
+
+
+def where_sql(tree: object) -> tuple[str, list[object]] | None:
+    """SQL (and its arguments) for a filter-builder tree; None when it has no condition."""
+    count = [0]
+
+    def num(v: object) -> float:
+        try:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise ValueError
+            return float(v)
+        except (ValueError, OverflowError):
+            raise ValueError("filter: a number is expected") from None
+
+    def text(v: object) -> str:
+        if not isinstance(v, str) or len(v) > 500:
+            raise ValueError("filter: a text value is expected")
+        return v.lower()
+
+    def cond(c: dict) -> tuple[str, list[object]]:
+        count[0] += 1
+        if count[0] > _WHERE_MAX_CONDS:
+            raise ValueError("filter: too many conditions")
+        f, o, v = c.get("f"), c.get("o"), c.get("v")
+        if f in _WHERE_TEXT:
+            col = f"ulower(COALESCE({_WHERE_TEXT[f]}, ''))"
+            if o == "empty":
+                return f"{col} = ''", []
+            if o == "not_empty":
+                return f"{col} != ''", []
+            t = text(v)
+            if f == "ext":
+                t = t.lstrip(".")
+                if not t:
+                    raise ValueError("filter: an extension is expected")
+            if o == "contains":
+                return f"instr({col}, ?) > 0", [t]
+            if o == "not_contains":
+                return f"instr({col}, ?) = 0", [t]
+            if o == "is":
+                return f"{col} = ?", [t]
+            if o == "is_not":
+                return f"{col} != ?", [t]
+            if o == "starts_with":
+                return f"substr({col}, 1, ?) = ?", [len(t), t]
+            if o == "ends_with":
+                return (f"substr({col}, -?) = ?", [len(t), t]) if t else ("1", [])
+        elif f in ("kind", "review"):
+            col = "kind" if f == "kind" else f"COALESCE({_REVIEW_SQL}, 'none')"
+            allowed = KIND_LABEL if f == "kind" else REVIEW_STATES + ("none",)
+            if o in ("is", "is_not"):
+                if v not in allowed:
+                    raise ValueError(f"filter: unknown {f} {v!r}")
+                return f"{col} {'=' if o == 'is' else '!='} ?", [v]
+        elif f == "tags":
+            each = f"SELECT 1 FROM json_each({_TAGS_JSON})"
+            if o == "empty":
+                return f"json_array_length({_TAGS_JSON}) = 0", []
+            if o == "not_empty":
+                return f"json_array_length({_TAGS_JSON}) > 0", []
+            if o == "has":
+                return f"EXISTS ({each} WHERE ulower(value) = ?)", [text(v)]
+            if o == "not_has":
+                return f"NOT EXISTS ({each} WHERE ulower(value) = ?)", [text(v)]
+            if o == "contains":
+                return f"EXISTS ({each} WHERE instr(ulower(value), ?) > 0)", [text(v)]
+        elif f == "rating":
+            sql_op = {"is": "=", "is_not": "!=", "gt": ">", "lt": "<"}.get(str(o))
+            if sql_op:
+                return f"COALESCE(rating, 0) {sql_op} ?", [num(v)]
+        elif f in _WHERE_DATE:
+            col = _WHERE_DATE[f]
+            if o == "gte":
+                return f"{col} >= ?", [num(v)]
+            if o == "lt":
+                return f"{col} < ?", [num(v)]
+            if o == "between":
+                if not isinstance(v, list) or len(v) != 2:
+                    raise ValueError("filter: between takes two numbers")
+                return f"({col} >= ? AND {col} < ?)", [num(v[0]), num(v[1])]
+        else:
+            raise ValueError(f"filter: unknown field {f!r}")
+        raise ValueError(f"filter: {f} has no operator {o!r}")
+
+    def group(g: object, depth: int) -> tuple[str, list[object]] | None:
+        if not isinstance(g, dict) or g.get("op") not in ("and", "or") or not isinstance(g.get("c"), list):
+            raise ValueError("filter: a group is {op: and|or, c: [...]}")
+        if depth > _WHERE_MAX_DEPTH:
+            raise ValueError("filter: groups nested too deep")
+        parts: list[str] = []
+        args: list[object] = []
+        for c in g["c"]:
+            if not isinstance(c, dict):
+                raise ValueError("filter: a condition is an object")
+            r = group(c, depth + 1) if "op" in c else cond(c)
+            if r:
+                parts.append(f"({r[0]})")
+                args.extend(r[1])
+        if not parts:
+            return None
+        return (" AND " if g["op"] == "and" else " OR ").join(parts), args
+
+    return group(tree, 1)
+
 
 # A version token in a file name: shot_v003, shot.v3, shot-ver2, shot_rev12, shot_r4 (the last
 # such token wins). Files in one folder whose names are equal once it is cut out are versions of
@@ -125,21 +272,71 @@ def version_key(name: str) -> tuple[str, int]:
 
 def normpath(p: object) -> str:
     """Case/separator-normalized form of a filesystem path, for cross-platform prefix and
-    equality checks (excluded-subfolder matching, source-boundary checks) without hitting disk."""
-    return os.path.normcase(os.path.normpath(str(p)))
+    equality checks (excluded-subfolder matching, source-boundary checks) without hitting disk.
+    Unicode is composed (NFC): macOS hands out decomposed names ("Й" as "И" + breve) where a
+    typed or pasted path is composed, and both name the same folder there."""
+    s = os.path.normcase(os.path.normpath(str(p)))
+    return s if s.isascii() or unicodedata.is_normalized("NFC", s) else unicodedata.normalize("NFC", s)
+
+
+def path_under(child_n: str, parent_n: str) -> bool:
+    """`child_n` lies strictly inside `parent_n` (both normpath()ed). A drive root such as
+    'c:\\' already ends with the separator."""
+    prefix = parent_n if parent_n.endswith(os.sep) else parent_n + os.sep
+    return child_n != parent_n and child_n.startswith(prefix)
+
+
+def disk_spelling(p: Path) -> Path:
+    """`p` with each non-ASCII component spelled the way its folder listing spells it (Unicode
+    form; on Windows resolve() already fixes case). A source root must match the paths an outer
+    source's walk produces for the same folder, or prefix checks between them miss."""
+    if str(p).isascii():
+        return p
+    cur = Path(p.anchor)
+    for name in p.parts[1:] if p.anchor else p.parts:
+        if not name.isascii():
+            want = unicodedata.normalize("NFC", name)
+            try:
+                with os.scandir(cur) as it:
+                    names = [e.name for e in it]
+                if name not in names:
+                    name = next((n for n in names if unicodedata.normalize("NFC", n) == want), name)
+            except OSError:
+                pass
+        cur = cur / name
+    return cur
+
+
+def fallback_filter_text() -> str:
+    """The built-in filter when the ini cannot be read: the hard-coded folder list."""
+    return "\n".join(sorted(f"{d}/" for d in SKIP_DIRS))
+
+
+def read_default_filter(home: Path) -> tuple[str, bool]:
+    """(text, custom): the user's copy in SIGHT_HOME if present, else the shipped ini, else the
+    hard-coded fallback. Never raises."""
+    for path, custom in ((Path(home) / FILTER_INI, True), (SHIPPED_FILTER, False)):
+        try:
+            return path.read_text(encoding="utf-8-sig").replace("\r\n", "\n"), custom
+        except (OSError, UnicodeDecodeError) as e:
+            if not custom:
+                logging.getLogger("sight").warning("default scan filter %s unreadable (%s): using the built-in folder list", path, e)
+            continue
+    return fallback_filter_text(), False
 
 
 class IgnoreRules:
-    """The user's scan ignore list (Settings → Scanning), one pattern per line, gitignore-like:
+    """The scan ignore rules: the built-in filter (initial_filtering.ini) plus the user's list
+    (Settings → Scan Filtering), one pattern per line, gitignore-like:
     `*.meta` / `Thumbs.db` match a file or folder name anywhere; a trailing `/` (`Library/`)
     matches folders only; a pattern with a `/` inside (`Library/PackageCache`) matches that run of
     names anywhere in the tree. `*`, `?` and `[..]` globs, case-insensitive; `#` starts a comment.
     Paths are taken relative to the source root, so the root's own name never matches."""
 
-    def __init__(self, text: str = "") -> None:
-        self.text = text or ""
+    def __init__(self, text: str = "", default_text: str = "") -> None:
+        self.text = text or ""  # the user's list only (what the DB and the settings field hold)
         self.rules: list[tuple[list[str], bool]] = []
-        for line in self.text.splitlines():
+        for line in (default_text or "").splitlines() + self.text.splitlines():
             line = line.strip().replace("\\", "/")
             if not line or line.startswith("#"):
                 continue
@@ -416,9 +613,19 @@ def _read_blend_thumb(path: Path) -> tuple[int, int, bytes] | None:
 class Bus:
     """Fan-out of small JSON events to SSE subscribers."""
 
+    # Delivered by close(): an /api/events stream ends on it (compared by identity).
+    CLOSE: dict = {"type": "close"}
+
     def __init__(self) -> None:
         self._subs: list[queue.Queue[dict]] = []
         self._lock = threading.Lock()
+        self.closed = False
+
+    def close(self) -> None:
+        """Ends every open event stream (and any opened later), so a server shutdown does not wait
+        for them. Used by the macOS Quit (Sight.py); a stream otherwise only ends with its tab."""
+        self.closed = True
+        self.publish(self.CLOSE)
 
     def subscribe(self) -> queue.Queue[dict]:
         q: queue.Queue[dict] = queue.Queue(maxsize=512)
@@ -445,32 +652,59 @@ class Bus:
                     pass
 
 
-class SlidingVideoCache:
-    """RAM window over one video file that follows the playhead.
+class _Window:
+    """One file's part of the sliding cache: its blocks, the block under its playhead and the block ranges planned
+    for it (``ranges``: (lo, hi, head, base) — blocks from ``head`` on cost ``base + distance``, blocks before it
+    ``(base + distance) * behind_weight``, so the part behind a playhead fills alongside the part ahead)."""
 
-    The file is held as fixed 1 MiB blocks. ``focus`` (fed from the player's current time) decides
-    which blocks belong in the window — most of the budget ahead of the playhead, the rest behind
-    it for scrubbing backwards — and a background thread evicts what fell out of it and loads what
-    is missing, nearest to the playhead first. Blocks that stay inside the window are never
-    re-read, so the window slides instead of being rebuilt. ``stream`` serves HTTP range requests
-    from the blocks and falls back to disk for anything outside the window: always correct, only
-    ever faster.
+    __slots__ = ("size", "stamp", "head", "blocks", "ranges")
+
+    def __init__(self, size: int, stamp: tuple[int, int]) -> None:
+        self.size = size
+        self.stamp = stamp  # (size, mtime_ns) the blocks were read at
+        self.head = 0
+        self.blocks: dict[int, bytes] = {}
+        self.ranges: list[tuple[int, int, int, int]] = []
+
+    @property
+    def last(self) -> int:
+        return (self.size - 1) // SlidingVideoCache.CHUNK if self.size > 0 else -1
+
+    def wants(self, k: int) -> bool:
+        return any(lo <= k <= hi for lo, hi, _, _ in self.ranges)
+
+
+class SlidingVideoCache:
+    """RAM windows over the playing video files that follow their playheads.
+
+    Each file is held as fixed 1 MiB blocks. ``focus`` (the lightbox: one file, plus the sequence's neighbours) /
+    ``focus_many`` (the version compare: every clip on screen) decide which blocks belong in RAM — the budget is
+    split evenly between the playing files, so the more clips play, the smaller each one's window; inside a window
+    the share ``ahead`` (Settings, 70 % by default) lies ahead of the playhead, the rest behind it. Missing blocks
+    load outwards from the playhead, a block behind it costing ``ahead / (1 - ahead)`` blocks ahead, so both ends
+    of the window are reached at the same time. In a sequence the part of the window past the clip's end goes to
+    the next clip's start, the part before its start to the previous clip's end (a cut, either way, finds its blocks
+    in RAM); with no neighbour it goes to the other side of the playhead. A background thread evicts what fell out
+    and loads what is missing, cheapest first, taking the files in turn. Blocks that stay inside their window are
+    never re-read, so the windows slide instead of being rebuilt. ``stream`` serves HTTP range requests from the
+    blocks and falls back to disk for anything outside the windows: always correct, only ever faster.
     """
 
     CHUNK = 1024 * 1024
-    AHEAD = 0.72  # share of the budget kept in front of the playhead
+    AHEAD = 0.7  # default share of a window kept in front of its playhead
 
     def __init__(self, budget_mb: int = 128) -> None:
         self.lock = threading.Lock()
         self.cv = threading.Condition(self.lock)
         self.budget = self._clamp(budget_mb) * 1024 * 1024
-        self.path = ""
-        self.size = 0
-        self.stamp: tuple[int, int] | None = None  # (size, mtime_ns) the blocks were read at
-        self.blocks: dict[int, bytes] = {}
-        self.head = 0  # block under the playhead
+        self.ahead = self.AHEAD
+        self.wins: dict[str, _Window] = {}  # path -> window, in focus order
+        self.heads: list[str] = []  # the files whose playheads the windows follow (the rest: sequence neighbours)
+        self.seq: tuple[str, str] = ("", "")  # (next, previous) file of the lightbox's sequence
         self.pending = 0  # blocks the loader still has to fetch
-        self._gen = 0  # bumped whenever the window moves; the loader re-plans when it changes
+        self.focus_gen = 0  # newest applied client generation; a lower one does not move the windows
+        self._weight = 1.0  # cost of a block behind a playhead, in blocks ahead (_plan)
+        self._gen = 0  # bumped whenever a window moves; the loader re-plans when it changes
         self._stop = False
         self._thread = threading.Thread(target=self._loop, name="video-cache", daemon=True)
         self._thread.start()
@@ -479,106 +713,246 @@ class SlidingVideoCache:
     def _clamp(mb: int) -> int:
         return max(32, min(2048, int(mb)))
 
+    @staticmethod
+    def clamp_ahead(pct) -> float:
+        """Settings' percent (50-90) as a share; anything unreadable gives the default."""
+        try:
+            v = float(pct)
+        except (TypeError, ValueError):
+            return SlidingVideoCache.AHEAD
+        if not math.isfinite(v):
+            return SlidingVideoCache.AHEAD
+        return max(0.5, min(0.9, v / 100.0))
+
     @property
     def budget_mb(self) -> int:
         return max(1, self.budget // (1024 * 1024))
 
-    def _window(self) -> tuple[int, int]:
-        """Inclusive block range that belongs in RAM around the playhead (caller holds the lock)."""
-        if not self.path or self.size <= 0:
-            return 0, -1
-        last = (self.size - 1) // self.CHUNK
-        n = max(1, self.budget // self.CHUNK)
-        head = min(self.head, last)
-        ahead = min(max(1, int(n * self.AHEAD)), last - head + 1)
-        behind = min(n - ahead, head)
-        ahead = min(n - behind, last - head + 1)  # little behind (start of file) -> read further ahead
-        return head - behind, head + ahead - 1
+    @property
+    def path(self) -> str:
+        """The first (lightbox: the playing) file with a window, "" when none."""
+        return self.heads[0] if self.heads else next(iter(self.wins), "")
+
+    def _plan(self) -> None:
+        """Block ranges of every window from the playheads, the budget, ``ahead`` and the sequence (caller holds
+        the lock)."""
+        n = max(1, self.budget // self.CHUNK // max(1, len(self.heads)))
+        weight = self.ahead / max(1e-6, 1.0 - self.ahead)
+        nxt, prv = self.seq
+        for w in self.wins.values():
+            w.ranges = []
+        for path in self.heads:
+            w = self.wins[path]
+            last = w.last
+            if last < 0:
+                continue
+            head = min(w.head, last)
+            ahead = max(1, int(round(n * self.ahead)))
+            behind = n - ahead
+            lo, hi = head - behind, head + ahead - 1
+            nw = self.wins.get(nxt) if len(self.heads) == 1 and nxt else None
+            pw = self.wins.get(prv) if len(self.heads) == 1 and prv else None
+            cap_n = nw.last + 1 if nw is not None else 0
+            cap_p = pw.last + 1 if pw is not None else 0
+            over, under = max(0, hi - last), max(0, -lo)
+            take_n = min(over, cap_n)
+            take_p = min(under, cap_p - take_n if pw is nw else cap_p)  # a 2-clip loop: one file for both ends
+            left_o, left_u = over - take_n, under - take_p
+            lo, hi = max(0, lo), min(last, hi)
+            # What a neighbour cannot hold (none there, or a short one) goes to the other side of the playhead,
+            # then to the neighbours' spare room.
+            g = min(left_o, lo); lo -= g; left_o -= g
+            g = min(left_u, last - hi); hi += g; left_u -= g
+            left = left_o + left_u
+            g = min(left, lo); lo -= g; left -= g
+            g = min(left, last - hi); hi += g; left -= g
+            g = min(left, cap_n - take_n - (take_p if pw is nw else 0)); take_n += max(0, g); left -= max(0, g)
+            g = min(left, cap_p - take_p - (take_n if pw is nw else 0)); take_p += max(0, g)
+            w.ranges.append((lo, hi, head, 0))
+            if take_n > 0:
+                nw.ranges.append((0, take_n - 1, 0, last - head + 1))
+            if take_p > 0:
+                pw.ranges.append((pw.last + 1 - take_p, pw.last, pw.last + 1, head))
+        self._weight = weight
 
     def _replan(self) -> None:
-        """Evict everything outside the window and wake the loader (caller holds the lock)."""
-        lo, hi = self._window()
-        for k in [k for k in self.blocks if k < lo or k > hi]:
-            del self.blocks[k]
+        """Plan, evict everything outside the windows and wake the loader (caller holds the lock)."""
+        self._plan()
+        for w in self.wins.values():
+            for k in [k for k in w.blocks if not w.wants(k)]:
+                del w.blocks[k]
         self.pending = len(self._missing())  # set here, not by the loader, so "busy" is true from the first instant
         self._gen += 1
         self.cv.notify_all()
 
+    def _totals(self) -> tuple[int, int, bool]:
+        """(bytes held, budget MB, loader still fetching). Caller holds the lock."""
+        total = sum(len(b) for w in self.wins.values() for b in w.blocks.values())
+        return total, self.budget_mb, self.pending > 0
+
+    def _spans(self, w: _Window) -> list[list[int]]:
+        """Half-open byte ranges of the blocks actually in RAM, contiguous runs merged, in order.
+        The planned window (``ranges``) is not included: a block counts only once it has been read."""
+        if w.size <= 0 or not w.blocks:
+            return []
+        last = w.last
+        ks = sorted(k for k in w.blocks if 0 <= k <= last)
+        if not ks:
+            return []
+        out: list[list[int]] = []
+        lo = hi = ks[0]
+        for k in ks[1:]:
+            if k == hi + 1:
+                hi = k
+                continue
+            out.append([lo * self.CHUNK, min(w.size, (hi + 1) * self.CHUNK)])
+            lo = hi = k
+        out.append([lo * self.CHUNK, min(w.size, (hi + 1) * self.CHUNK)])
+        return out
+
+    def _one(self, w: _Window | None, total: int, mb: int, busy: bool) -> dict:
+        """One file's snapshot. ``start``/``end`` stay the cached run that contains the playhead (a point,
+        ``start == end``, when that block is not loaded yet) so older clients keep their meaning; ``spans``
+        is every cached run."""
+        if w is None:
+            return {"start": 0, "end": 0, "size": 0, "bytes": total, "mb": mb, "busy": busy, "spans": []}
+        spans = self._spans(w)
+        start = end = 0
+        if w.size > 0:
+            start = end = min(w.head, (w.size - 1) // self.CHUNK) * self.CHUNK
+            for a, b in spans:
+                if a <= start < b:
+                    start, end = a, b
+                    break
+        return {
+            "start": start,
+            "end": end,
+            "size": w.size,
+            "bytes": total,
+            "mb": mb,
+            "busy": busy,
+            "spans": spans,
+        }
+
     def snapshot(self, path: str | None = None) -> dict:
         with self.lock:
-            if path and self.path != str(path):
-                return {"start": 0, "end": 0, "size": 0, "bytes": 0, "mb": self.budget_mb, "busy": False}
-            start = end = 0
-            if self.path and self.size > 0:
-                k = min(self.head, (self.size - 1) // self.CHUNK)
-                start = end = k * self.CHUNK
-                if k in self.blocks:  # the run of cached blocks that contains the playhead
-                    lo = hi = k
-                    while lo - 1 in self.blocks:
-                        lo -= 1
-                    while hi + 1 in self.blocks:
-                        hi += 1
-                    start, end = lo * self.CHUNK, min(self.size, (hi + 1) * self.CHUNK)
-            return {
-                "start": start,
-                "end": end,
-                "size": self.size,
-                "bytes": sum(len(b) for b in self.blocks.values()),
-                "mb": self.budget_mb,
-                "busy": self.pending > 0,
-            }
+            total, mb, busy = self._totals()
+            w = self.wins.get(str(path)) if path else self.wins.get(self.path)
+            return self._one(w, total, mb, busy)
 
-    def configure(self, mb: int) -> None:
-        nxt = self._clamp(mb) * 1024 * 1024
+    def snapshots(self, paths: list[str]) -> dict[str, dict]:
+        """``path -> snapshot`` for each path, one lock. A path with no window still gets an empty snapshot
+        (``size`` 0, ``spans`` []), and every snapshot's ``bytes`` is the total held across all windows."""
+        with self.lock:
+            total, mb, busy = self._totals()
+            return {str(p): self._one(self.wins.get(str(p)), total, mb, busy) for p in paths}
+
+    def configure(self, mb: int | None = None, ahead=None) -> None:
+        """Budget in MB and / or the ahead share (percent, 50-90); a change re-plans the windows at once."""
         with self.cv:
-            if nxt == self.budget:
+            nxt = self.budget if mb is None else self._clamp(mb) * 1024 * 1024
+            share = self.ahead if ahead is None else self.clamp_ahead(ahead)
+            if nxt == self.budget and abs(share - self.ahead) < 1e-9:
                 return
-            self.budget = nxt
+            self.budget, self.ahead = nxt, share
             self._replan()  # shrinking evicts right away, growing starts filling the extra room
 
-    def release(self) -> None:
-        """Drop the window (the player closed) so a 2 GB budget doesn't stay resident."""
+    def _claim(self, gen: int | None) -> bool:
+        """Caller holds the lock. ``None`` always applies (a post with no generation). A generation
+        lower than the newest applied one is a late post from a player that no longer owns the windows."""
+        if gen is None:
+            return True
+        if gen < self.focus_gen:
+            return False
+        self.focus_gen = gen
+        return True
+
+    def release(self, gen: int | None = None) -> bool:
+        """Drop every window (the player closed) so a 2 GB budget doesn't stay resident.
+        False when ``gen`` is older than the windows' owner: they stay."""
         with self.cv:
-            self.path = ""
-            self.size = 0
-            self.stamp = None
-            self.head = 0
-            self.blocks = {}
+            if not self._claim(gen):
+                return False
+            self.wins = {}
+            self.heads = []
+            self.seq = ("", "")
             self.pending = 0
             self._gen += 1
             self.cv.notify_all()
+            return True
 
     def close(self) -> None:
         with self.cv:
             self._stop = True
-            self.path = ""
-            self.blocks = {}
+            self.wins = {}
+            self.heads = []
             self.cv.notify_all()
 
-    def focus(self, path: str, pos: int) -> None:
-        """Move the window so byte ``pos`` of ``path`` (the playhead) sits inside it."""
-        path = str(path)
-        try:
-            st = os.stat(path)
-        except OSError:
-            return
-        stamp = (st.st_size, st.st_mtime_ns)
-        with self.cv:
-            if self.path != path or self.stamp != stamp:  # other video, or the file changed underneath us
-                self.path, self.size, self.stamp = path, st.st_size, stamp
-                self.blocks = {}
-            self.head = max(0, min(st.st_size, int(pos))) // self.CHUNK
-            self._replan()
+    def focus(self, path: str, pos: int, next_path: str = "", prev_path: str = "", gen: int | None = None) -> bool:
+        """One playing file: move its window so byte ``pos`` (the playhead) sits inside it; ``next_path`` /
+        ``prev_path``: the sequence's neighbours, which take the part of the window past the clip's end / start.
+        Other files' windows go. False when ``gen`` is older than the current owner: the windows stay."""
+        return self.focus_many([(path, pos)], str(next_path or ""), str(prev_path or ""), gen)
 
-    def _missing(self) -> list[int]:
-        """Blocks still to load, ordered so ``pop()`` yields the one nearest the playhead first
-        (forward before backward). Caller holds the lock."""
-        lo, hi = self._window()
-        if hi < lo:
-            return []
-        head = min(max(self.head, lo), hi)
-        order = list(range(head, hi + 1)) + list(range(head - 1, lo - 1, -1))
-        return [k for k in reversed(order) if k not in self.blocks]
+    def focus_many(self, items: list[tuple[str, int]], next_path: str = "", prev_path: str = "", gen: int | None = None) -> bool:
+        """Windows for exactly these files, each with its playhead at byte ``pos``; the budget is split between
+        them. A file already held keeps the blocks that stay inside its (possibly smaller) window. Neighbours are
+        used with one file only (the lightbox). False when ``gen`` is older than the current owner."""
+        stats = []
+        for path, pos in items:
+            path = str(path)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            stats.append((path, int(pos), (st.st_size, st.st_mtime_ns)))
+        extra = []
+        if len(stats) == 1:
+            for p in dict.fromkeys(x for x in (next_path, prev_path) if x and x != stats[0][0]):
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                extra.append((p, (st.st_size, st.st_mtime_ns)))
+        with self.cv:
+            if not self._claim(gen):
+                return False
+            wins: dict[str, _Window] = {}
+            for path, stamp in [(p, s) for p, _, s in stats] + extra:
+                w = wins.get(path) or self.wins.get(path)
+                if w is None or w.stamp != stamp:  # new file, or the file changed underneath us
+                    w = _Window(stamp[0], stamp)
+                wins[path] = w
+            for path, pos, _ in stats:
+                wins[path].head = max(0, min(wins[path].size, pos)) // self.CHUNK
+            self.wins = wins
+            self.heads = list(dict.fromkeys(p for p, _, _ in stats))
+            have = {p for p, _ in extra}
+            self.seq = (next_path if next_path in have else "", prev_path if prev_path in have else "")
+            self._replan()
+            return True
+
+    def _missing(self) -> list[tuple[str, int]]:
+        """(path, block) still to load, ordered so ``pop()`` yields the cheapest first: outwards from a playhead,
+        a block behind it costing ``ahead / (1 - ahead)`` ahead (see ``_plan``), the files taken in turn on a tie.
+        Caller holds the lock."""
+        weight = self._weight
+        ranked = []
+        for i, (path, w) in enumerate(self.wins.items()):
+            for lo, hi, head, base in w.ranges:
+                for k in range(lo, hi + 1):
+                    if k in w.blocks:
+                        continue
+                    cost = base + (k - head) if k >= head else (base + (head - k)) * weight
+                    ranked.append((cost, i, path, k))
+        ranked.sort()
+        seen: set[tuple[str, int]] = set()  # a block in two ranges (a 2-clip loop) is listed once, at its lowest cost
+        out = []
+        for _, _, path, k in ranked:
+            if (path, k) not in seen:
+                seen.add((path, k))
+                out.append((path, k))
+        return out[::-1]
 
     def _loop(self) -> None:
         gen, todo = -1, []
@@ -594,12 +968,13 @@ class SlidingVideoCache:
                 if not todo:
                     self.pending = 0
                     continue
-                k = todo.pop()
-                if k in self.blocks:  # a range request already pulled it in
+                path, k = todo.pop()
+                w = self.wins.get(path)
+                if w is None or k in w.blocks:  # a range request already pulled it in
                     self.pending = len(todo)
                     continue
                 self.pending = len(todo) + 1  # +1: the block being read right now
-                path, stamp = self.path, self.stamp
+                stamp = w.stamp
             try:
                 with open(path, "rb") as fh:
                     fh.seek(k * self.CHUNK)
@@ -607,14 +982,14 @@ class SlidingVideoCache:
             except OSError:
                 data = b""
             with self.lock:
-                lo, hi = self._window()
-                if data and self.path == path and self.stamp == stamp and lo <= k <= hi:
-                    self.blocks[k] = data
-                if self._gen == gen:  # otherwise the window moved and _replan already counted afresh
+                w = self.wins.get(path)
+                if data and w is not None and w.stamp == stamp and w.wants(k):
+                    w.blocks[k] = data
+                if self._gen == gen:  # otherwise a window moved and _replan already counted afresh
                     self.pending = len(todo)
 
     def stream(self, path: str, start: int, end: int):
-        """Yield bytes [start, end) of ``path`` — from RAM where the window holds them, else from disk
+        """Yield bytes [start, end) of ``path`` — from RAM where its window holds them, else from disk
         (keeping the block when it belongs in the window, so the loader needn't fetch it again)."""
         path = str(path)
         pos = max(0, int(start))
@@ -623,19 +998,19 @@ class SlidingVideoCache:
             while pos < end:
                 k, off = divmod(pos, self.CHUNK)
                 with self.lock:
-                    mine = self.path == path
-                    block = self.blocks.get(k) if mine else None
-                    lo, hi = self._window() if mine else (0, -1)
+                    w = self.wins.get(path)
+                    block = w.blocks.get(k) if w is not None else None
+                    wanted = w is not None and w.wants(k)
                 if block is None:
                     if fh is None:
                         fh = open(path, "rb")
-                    if lo <= k <= hi:
+                    if wanted:
                         fh.seek(k * self.CHUNK)
                         block = fh.read(self.CHUNK)
                         if block:
                             with self.lock:
-                                if self.path == path:
-                                    self.blocks[k] = block
+                                if self.wins.get(path) is w and w is not None and w.wants(k):
+                                    w.blocks[k] = block
                     else:
                         fh.seek(pos)
                         block, off = fh.read(min(self.CHUNK - off, end - pos)), 0
@@ -856,13 +1231,16 @@ class Library:
         self._heavy_failed: set[tuple[str, int]] = set()  # (path, mtime) that timed out / crashed
         self.conn = sqlite3.connect(str(root / "library.db"), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # Unicode lower case for search and the filter builder (SQLite's own lower() folds ASCII only: "Фон" ≠ "фон")
+        self.conn.create_function("ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA busy_timeout=4000")
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self._migrate()
         row = self.conn.execute("SELECT value FROM meta WHERE key='scan_ignore'").fetchone()
-        self.ignore = IgnoreRules(row["value"] if row else "")
+        self.default_filter, self.default_custom = read_default_filter(root)
+        self.ignore = IgnoreRules(row["value"] if row else "", self.default_filter)
         self.bus = Bus()
         # find_ffmpeg() can take ~150 ms (imageio-ffmpeg runs `ffmpeg -version`), so it runs off the
         # startup path. Readers go through ffmpeg_exe(), which waits for it.
@@ -874,7 +1252,14 @@ class Library:
         self.scanning = 0
         self.scanned = 0
         self._watchers: dict[str, object] = {}
+        # Bumped when a source is removed (or absorbed by a folder that contains it): a scan of it
+        # still walking sees the change and stops (see scan_source).
+        self._src_gen: dict[str, int] = {}
+        self._scans_running: dict[str, int] = {}  # sid -> scans walking it now (under _scan_lock)
         self._stop = threading.Event()
+        # Files opened from a window drop without adding them to the library (POST /api/files/drop
+        # mode=view). Same path-hash ids as a real row, so adding later reuses the id. Not listed.
+        self._ephemeral: dict[str, dict] = {}
         self._heap: list[tuple[int, int, str]] = []
         self._heap_lock = threading.Lock()
         self._seq = 0
@@ -899,7 +1284,16 @@ class Library:
         self.video_cache = SlidingVideoCache()
         self._play_lock = threading.Lock()
         self._play_jobs: dict[str, dict] = {}  # asset id -> state of its playback copy (see start_play_copy)
-        self._play_slot = threading.Semaphore(1)  # one conversion at a time: they take every core
+        self._play_slot = threading.Semaphore(1)  # one playback copy at a time: it takes every core
+        # Playback copies (someone waits on "Converting…") go before scrub copies: see _encode_copy.
+        # Several scrub copies may encode at once (a compare of N clips); a playback copy stops all of them.
+        self._play_cv = threading.Condition()
+        self._play_waiting = 0  # playback copies waiting for the slot
+        self._play_active = 0  # playback copies holding the slot
+        self._scrub_slots = threading.Semaphore(self.SCRUB_PARALLEL)
+        self._scrub_procs: set[subprocess.Popen] = set()
+        self._scrub_proc: subprocess.Popen | None = None  # one of them (tests, and "is a scrub running")
+        self._scrub_audio_slot = threading.Semaphore(1)  # one scrub-audio extract at a time, beside the video slot
         self._play_enc: dict[str, tuple[str, list[str], str] | None] = {}
         workers = max(2, min(4, os.cpu_count() or 2))
         for _ in range(workers):
@@ -1091,6 +1485,25 @@ class Library:
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+            -- ShotGrid link of an asset (docs/SHOTGRID.md): the Version it syncs with (link JSON) and what
+            -- this machine last saw / sent (state JSON, SightShotGrid.sync's own bookkeeping).
+            CREATE TABLE IF NOT EXISTS sg_links (
+              asset_id TEXT PRIMARY KEY,
+              link TEXT NOT NULL,
+              state TEXT NOT NULL DEFAULT '{}',
+              updated_at INTEGER NOT NULL
+            );
+            -- 0.107+: an asset's link to a tracker's media entity (docs/ARCHITECTURE.md "Tracker adapters"), one per
+            -- tracker key "<kind>:<host>". sg_links (above) is the pre-0.107 ShotGrid-only table: copied in once
+            -- (_migrate_tracker_links), then left as it was (never written again; an older Sight still reads it).
+            CREATE TABLE IF NOT EXISTS tracker_links (
+              asset_id TEXT NOT NULL,
+              tracker TEXT NOT NULL,
+              link TEXT NOT NULL,
+              state TEXT NOT NULL DEFAULT '{}',
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (asset_id, tracker)
+            );
             """
         )
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(assets)")}
@@ -1118,6 +1531,30 @@ class Library:
             self.conn.execute("ALTER TABLE collections ADD COLUMN icon TEXT")
         if "color" not in ccols:
             self.conn.execute("ALTER TABLE collections ADD COLUMN color TEXT")
+        # Smart collections (docs/PLAN-trackers.md stage 3c): `rule` holds a saved Filter ▾ tree (JSON, the client's
+        # model); a ShotGrid one also names its site (host) and project.
+        if "rule" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN rule TEXT")
+        if "sg_site" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN sg_site TEXT")
+        if "sg_project" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN sg_project INTEGER")
+        # 0.107+ (stage 5b): a tracker project's smart collection is filed under its tracker key ("<kind>:<host>") and
+        # project id (text: not every tracker's ids are numbers). A ShotGrid one still writes sg_site / sg_project too
+        # (an older Sight reads those); rows from before 0.107 are given their key here (idempotent: only rows with
+        # sg_site and no tracker yet — every launch, so a row an older Sight added meanwhile is picked up too; a row whose
+        # host cannot be read stays without a key: the page keeps it out of Collections all the same).
+        if "tracker" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN tracker TEXT")
+        if "tracker_project" not in ccols:
+            self.conn.execute("ALTER TABLE collections ADD COLUMN tracker_project TEXT")
+        from .trackers import tracker_key_of_host
+        for r in self.conn.execute("SELECT id, sg_site, sg_project FROM collections WHERE sg_site IS NOT NULL AND tracker IS NULL").fetchall():
+            key = tracker_key_of_host("shotgrid", r["sg_site"])   # (a host as URL.host gave it: its port kept)
+            if key:
+                self.conn.execute("UPDATE collections SET tracker=?, tracker_project=? WHERE id=?",
+                                  (key, None if r["sg_project"] is None else str(r["sg_project"]), r["id"]))
+        self._migrate_tracker_links()
         if "sort_order" not in ccols:
             self.conn.execute("ALTER TABLE collections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
             # Backfill from creation order so existing collections keep their current order on upgrade.
@@ -1135,6 +1572,17 @@ class Library:
             self.conn.execute("ALTER TABLE board_items ADD COLUMN flip_x INTEGER NOT NULL DEFAULT 0")
         if "flip_y" not in bicols:
             self.conn.execute("ALTER TABLE board_items ADD COLUMN flip_y INTEGER NOT NULL DEFAULT 0")
+        if "asset_name" not in bicols:
+            # Snapshot of the asset's name / path (see add_board_item): the asset row is deleted with its source,
+            # and a board card must still say which file it was. Backfilled once from the live rows.
+            self.conn.execute("ALTER TABLE board_items ADD COLUMN asset_name TEXT")
+            self.conn.execute("ALTER TABLE board_items ADD COLUMN asset_path TEXT")
+        # Idempotent (also repairs a crash between the ALTER and the commit): rows that still lack a snapshot whose asset exists.
+        self.conn.execute(
+            "UPDATE board_items SET asset_name=(SELECT name FROM assets WHERE assets.id=board_items.asset_id), "
+            "asset_path=(SELECT path FROM assets WHERE assets.id=board_items.asset_id) "
+            "WHERE asset_name IS NULL AND asset_id IN (SELECT id FROM assets)"
+        )
         self.conn.commit()
 
     def _load_thumb_cache(self) -> None:
@@ -1229,8 +1677,8 @@ class Library:
         return out
 
     def review_counts(self) -> dict:
-        """Assets per review state and with open notes — the sidebar's Review rows."""
-        out = {f"review_{k}": 0 for k in (*REVIEW_STATES, "open")}
+        """Assets per review state, with open notes, and with drawings not in a note — the sidebar's Review rows."""
+        out = {f"review_{k}": 0 for k in (*REVIEW_STATES, "open", "drawings")}
         rows = self.query(
             f"SELECT {_REVIEW_SQL} st, {_OPEN_NOTES_SQL} n FROM assets WHERE status != 'excluded' "
             "AND id IN (SELECT target_asset_id FROM annotations WHERE scope='asset' AND deleted_at IS NULL "
@@ -1241,17 +1689,26 @@ class Library:
                 out[f"review_{r['st']}"] += 1
             if r["n"]:
                 out["review_open"] += 1
+        out["review_drawings"] = self.query(
+            f"SELECT COUNT(*) c FROM assets WHERE status != 'excluded' AND {_LOOSE_DRAW_SQL} > 0"
+        )[0]["c"]
         return out
 
     def sources(self) -> list[dict]:
-        rows = self.query(
-            """
-            SELECT s.id, s.name, s.path, COUNT(a.id) AS count
-            FROM sources s LEFT JOIN assets a ON a.source_id = s.id AND a.status != 'excluded'
-            GROUP BY s.id ORDER BY s.sort_order, s.added_at
-            """
-        )
-        return [dict(r) for r in rows]
+        rows = [dict(r) for r in self.query("SELECT id, name, path FROM sources ORDER BY sort_order, added_at")]
+        own = {r["source_id"]: r["c"] for r in self.query(
+            "SELECT source_id, COUNT(*) c FROM assets WHERE status != 'excluded' GROUP BY source_id")}
+        dropped = self.dropped_source_id()
+        for r in rows:
+            r["dropped"] = bool(dropped) and r["id"] == dropped
+            # "own": what removing it forgets; "count" adds the files of sources nested inside it.
+            r["own"] = own.get(r["id"], 0)
+            if self._nested_ids(r["id"]):
+                clause, args = self._source_scope(r["id"])
+                r["count"] = self.query(f"SELECT COUNT(*) c FROM assets WHERE status != 'excluded' AND {clause}", tuple(args))[0]["c"]
+            else:
+                r["count"] = r["own"]
+        return rows
 
     def source_root(self, sid: str) -> str | None:
         rows = self.query("SELECT path FROM sources WHERE id=?", (sid,))
@@ -1271,7 +1728,28 @@ class Library:
         unless they sit in an excluded folder. Then every source is rescanned for files that were
         never indexed because of the old list."""
         text = (text or "").replace("\r\n", "\n")
-        self.ignore = IgnoreRules(text)
+        return self._apply_ignore(text, persist_user=True)
+
+    def set_default_filter(self, text: str | None) -> dict:
+        """Write (text) or remove (None) the user's copy of initial_filtering.ini, then re-apply the
+        rules exactly like set_ignore does."""
+        user = self.root / FILTER_INI
+        if text is not None:
+            text = text.replace("\r\n", "\n")
+            shipped, _ = read_default_filter(SHIPPED_FILTER.parent / "no-user-copy")
+            if text == shipped:
+                text = None  # same as the shipped list: no user copy, so shipped updates still reach the user
+        if text is None:
+            user.unlink(missing_ok=True)
+        else:
+            tmp = user.with_name(FILTER_INI + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, user)
+        self.default_filter, self.default_custom = read_default_filter(self.root)
+        return self._apply_ignore(self.ignore.text, persist_user=False)
+
+    def _apply_ignore(self, text: str, persist_user: bool) -> dict:
+        self.ignore = IgnoreRules(text, self.default_filter)
         roots = {r["id"]: (r["path"], self.excluded_set(r["id"])) for r in self.query("SELECT id, path FROM sources")}
         hide: list[tuple[str]] = []
         show: list[tuple[str]] = []
@@ -1290,11 +1768,12 @@ class Library:
             elif ignored:
                 hide.append((r["id"],))
         with self.lock:
-            self.conn.execute(
-                "INSERT INTO meta(key, value) VALUES ('scan_ignore', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (text,),
-            )
+            if persist_user:
+                self.conn.execute(
+                    "INSERT INTO meta(key, value) VALUES ('scan_ignore', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (text,),
+                )
             self.conn.executemany("UPDATE assets SET status='excluded' WHERE id=?", hide)
             self.conn.executemany("UPDATE assets SET status='ready' WHERE id=?", show)
             self.conn.commit()
@@ -1408,21 +1887,252 @@ class Library:
         )
 
     def add_source(self, path: str) -> dict:
-        p = Path(path).expanduser().resolve()
+        """Adds a folder (idempotent for one already added). Sources may nest (a project folder
+        added on its own while its parent is a source too): a file row belongs to the innermost
+        source holding it (asset ids are path hashes, one row per file), a source's view and count
+        go by path (see _source_scope), and the outer source's scan skips the inner one's root."""
+        p = disk_spelling(Path(path).expanduser().resolve())
         if not p.is_dir():
             raise ValueError("Not a folder")
         sid = asset_id(str(p))
+        p_n = normpath(p)
+        roots: dict[str, str] = {}
+        srcs = self.query("SELECT id, name, path FROM sources")
+        for r in srcs:
+            if r["id"] != sid and normpath(r["path"]) == p_n:  # the same folder, spelled differently
+                return {"id": r["id"], "name": r["name"], "path": r["path"]}
+        # Inside a source: spelled from that source's stored root down, so it is a plain string
+        # prefix of the rows the outer source's walk made (its root may be stored in another
+        # Unicode form than the disk's — then the moves below would miss and every file double).
+        outer = [r for r in srcs if path_under(p_n, normpath(r["path"]))]
+        if outer:
+            best = max(outer, key=lambda r: len(normpath(r["path"])))
+            base = Path(best["path"])
+            p = base.joinpath(*p.parts[len(base.parts):])
+            sid = asset_id(str(p))
+        for r in srcs:
+            roots[r["id"]] = normpath(r["path"])
         now = int(time.time() * 1000)
-        next_order = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM sources")[0]["n"]
-        self.execute(
-            "INSERT OR IGNORE INTO sources(id, name, path, added_at, sort_order) VALUES (?,?,?,?,?)",
-            (sid, p.name or str(p), str(p), now, next_order),
-        )
-        self.execute("UPDATE sources SET name=?, path=? WHERE id=?", (p.name or str(p), str(p), sid))
+        with self.lock:
+            next_order = self.conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM sources").fetchone()[0]
+            self.conn.execute(
+                "INSERT OR IGNORE INTO sources(id, name, path, added_at, sort_order) VALUES (?,?,?,?,?)",
+                (sid, p.name or str(p), str(p), now, next_order),
+            )
+            self.conn.execute("UPDATE sources SET name=?, path=? WHERE id=?", (p.name or str(p), str(p), sid))
+            # Inside another source: the rows it already has under this folder move here (tags,
+            # ratings, notes kept). Before, the new source stayed empty (its scan's inserts were
+            # ignored as duplicates) and removing the outer source took these files with it.
+            prefix = str(p).rstrip("\\/") + os.sep
+            moved = []
+            for r in self.conn.execute(
+                "SELECT id, source_id, path, status FROM assets WHERE substr(path, 1, ?) = ? AND source_id != ?",
+                (len(prefix), prefix, sid),
+            ).fetchall():
+                owner = roots.get(r["source_id"])
+                if owner is None or path_under(p_n, owner):  # never take rows of a deeper source
+                    moved.append(r)
+            self._reassign(moved, sid, str(p))
+            # A scan of an outer source still walking would go on indexing this folder under its
+            # own id (it took its nested roots at the start): stop it and walk again.
+            restart = [r["id"] for r in outer if self._scans_running.get(r["id"])]
+            for oid in restart:
+                self._src_gen[oid] = self._src_gen.get(oid, 0) + 1
+            self.conn.commit()
         self._watch(sid, str(p))
+        for oid in restart:
+            threading.Thread(target=self.scan_source, args=(oid,), daemon=True).start()
         threading.Thread(target=self.scan_source, args=(sid,), daemon=True).start()
         self.bus.publish({"type": "source", "id": sid})
         return {"id": sid, "name": p.name or str(p), "path": str(p)}
+
+    def dropped_source_id(self) -> str | None:
+        row = self.query("SELECT value FROM meta WHERE key='dropped_source'")
+        if not row:
+            return None
+        sid = row[0]["value"]
+        if not self.query("SELECT 1 FROM sources WHERE id=?", (sid,)):
+            return None
+        return sid
+
+    def is_dropped_source(self, sid: str) -> bool:
+        return bool(sid) and sid == self.dropped_source_id()
+
+    def ensure_dropped_source(self) -> str:
+        """The inbox source for files dropped onto the sidebar. Not a scanned folder: each file
+        keeps its original path. Created on first use; removing it from the sidebar forgets those
+        files (as with any source) unless they already sit under another folder."""
+        have = self.dropped_source_id()
+        if have:
+            return have
+        p = disk_spelling((self.root / "dropped").expanduser())
+        p.mkdir(parents=True, exist_ok=True)
+        p = disk_spelling(p.resolve())
+        sid = asset_id(str(p))
+        now = int(time.time() * 1000)
+        with self.lock:
+            next_order = self.conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM sources").fetchone()[0]
+            self.conn.execute(
+                "INSERT OR IGNORE INTO sources(id, name, path, added_at, sort_order) VALUES (?,?,?,?,?)",
+                (sid, "Dropped files", str(p), now, next_order),
+            )
+            self.conn.execute("UPDATE sources SET name=? WHERE id=?", ("Dropped files", sid))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('dropped_source', ?)", (sid,),
+            )
+            self.conn.commit()
+        self.bus.publish({"type": "source", "id": sid})
+        return sid
+
+    def add_dropped_file(self, path: str) -> tuple[dict | None, str | None, bool]:
+        """Index one file without adding its parent folder. Returns (asset, error, new).
+
+        Already-indexed files are returned as-is. A file that already sits inside a source is
+        indexed there (the watcher would have anyway). Anything else goes in Dropped files."""
+        try:
+            fp = disk_spelling(Path(path).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError):
+            return None, "unknown", False
+        if not fp.is_file():
+            return None, "unknown", False
+        kind = kind_of(fp.name)
+        if not kind:
+            return None, "unsupported", False
+        real = str(fp)
+        aid = asset_id(real)
+        cur = self.get_asset(aid)
+        if cur:
+            self._ephemeral.pop(aid, None)
+            return cur, None, False
+        owner = self._owner(real)
+        if owner and not self._file_hidden_in(owner, real):
+            self._touch_one(owner, real, kind, force=True)
+            got = self.get_asset(aid)
+            if got:
+                self._ephemeral.pop(aid, None)
+                return got, None, True
+        sid = self.ensure_dropped_source()
+        self._touch_one(sid, real, kind, force=True)
+        got = self.get_asset(aid)
+        if not got:
+            return None, "rejected", False
+        self._ephemeral.pop(aid, None)
+        self.prioritize([aid])
+        return got, None, True
+
+    def _file_hidden_in(self, sid: str, fp: str) -> bool:
+        excluded_n = self.excluded_set(sid)
+        if excluded_n:
+            n = normpath(fp)
+            if any(n == e or n.startswith(e + os.sep) for e in excluded_n):
+                return True
+        root = self.source_root(sid)
+        return bool(root and self.hidden(root, fp))
+
+    def view_file(self, path: str) -> tuple[dict | None, str | None]:
+        """Open a file in the viewer without adding a library row. Same id as add_dropped_file
+        would use, so a later add keeps notes if any. Already-indexed files are the real row."""
+        try:
+            fp = disk_spelling(Path(path).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError):
+            return None, "unknown"
+        if not fp.is_file():
+            return None, "unknown"
+        kind = kind_of(fp.name)
+        if not kind:
+            return None, "unsupported"
+        real = str(fp)
+        aid = asset_id(real)
+        cur = self.get_asset(aid)
+        if cur:
+            return cur, None
+        try:
+            st = fp.stat()
+        except OSError:
+            return None, "unknown"
+        item = {
+            "id": aid,
+            "source_id": "",
+            "path": real,
+            "name": fp.name,
+            "ext": fp.suffix.lower(),
+            "kind": kind,
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "width": None,
+            "height": None,
+            "duration": None,
+            "tags": [],
+            "note": "",
+            "rating": 0,
+            "status": "ready",
+            "has_thumb": 0,
+            "animated": 0,
+            "added_at": int(time.time() * 1000),
+            "ephemeral": True,
+        }
+        self._ephemeral[aid] = item
+        return item, None
+
+    def resolve_asset(self, aid: str) -> dict | None:
+        """A library row, or a file opened to view without adding it."""
+        return self.get_asset(aid) or self._ephemeral.get(aid)
+
+    def _reassign(self, rows: list, sid: str, root: str) -> None:
+        """Moves asset rows to source `sid` (the caller holds self.lock). Their excluded status is
+        decided again by that source's own excluded folders and the ignore list."""
+        if not rows:
+            return
+        row = self.conn.execute("SELECT excluded FROM sources WHERE id=?", (sid,)).fetchone()
+        try:
+            exc = {normpath(x) for x in json.loads((row[0] if row else None) or "[]")}
+        except Exception:
+            exc = set()
+        upd = []
+        for r in rows:
+            p_n = normpath(r["path"])
+            off = any(p_n == e or path_under(p_n, e) for e in exc) or self.hidden(root, r["path"])
+            status = "excluded" if off else ("ready" if r["status"] == "excluded" else r["status"])
+            upd.append((sid, status, r["id"]))
+        self.conn.executemany("UPDATE assets SET source_id=?, status=? WHERE id=?", upd)
+
+    def _source_scope(self, sid: str) -> tuple[str, list[object]]:
+        """SQL for "in this source's view": its rows and those of the sources nested inside it
+        (rows belong to the innermost source), minus what lies in its own excluded folders."""
+        rows = self.query("SELECT path, excluded FROM sources WHERE id=?", (sid,))
+        if not rows:
+            return "0", []
+        nested = self._nested_ids(sid)
+        if not nested:
+            return "source_id=?", [sid]
+        ids = [sid, *nested]
+        sql = [f"source_id IN ({','.join('?' * len(ids))})"]
+        args: list[object] = list(ids)
+        try:
+            exc = [x for x in json.loads(rows[0]["excluded"] or "[]") if isinstance(x, str)]
+        except Exception:
+            exc = []
+        for e in exc:
+            ep = e.rstrip("\\/") + os.sep
+            sql.append("substr(path, 1, ?) != ?")
+            args.extend([len(ep), ep])
+        return "(" + " AND ".join(sql) + ")", args
+
+    def _nested(self, sid: str) -> dict[str, str]:
+        """{id: normpath(root)} of the other sources lying inside source `sid`."""
+        root = self.source_root(sid)
+        if not root:
+            return {}
+        root_n = normpath(root)
+        return {r["id"]: normpath(r["path"]) for r in self.query("SELECT id, path FROM sources WHERE id != ?", (sid,))
+                if path_under(normpath(r["path"]), root_n)}
+
+    def _nested_ids(self, sid: str) -> list[str]:
+        return list(self._nested(sid))
+
+    def _nested_roots(self, sid: str) -> set[str]:
+        """Roots of the sources nested in `sid`: its scan leaves those folders to them."""
+        return set(self._nested(sid).values())
 
     def rescan_source(self, sid: str) -> bool:
         """Force-rescan: same walk `resume_watchers` does at startup, on demand — for catching up
@@ -1436,18 +2146,63 @@ class Library:
     def remove_source(self, sid: str) -> None:
         # Thumbnail files stay on disk; forgetting them here makes them orphans (see thumb_path),
         # so adding the same folder again (same paths, same ids) renders and sizes them anew.
-        gone = [r["id"] for r in self.query("SELECT id FROM assets WHERE source_id=?", (sid,))]
-        self.execute("DELETE FROM assets WHERE source_id=?", (sid,))
+        # Order matters: the watcher stops and a running scan is told to stop first, and the source
+        # row goes in the same transaction as its assets — the scan's and the watcher's inserts
+        # check that the source still exists (see scan_source / _touch_one), so nothing can add a
+        # row for it afterwards (such rows showed in All forever, with no source to remove).
+        # Collection membership goes too (a collection would keep counting files it cannot show);
+        # board cards and annotations stay — a card keeps its name / path snapshot.
+        # Files that still lie inside another source (nested sources, either way round) are not
+        # dropped: they move to the innermost remaining source holding them, which is rescanned.
+        self._src_gen[sid] = self._src_gen.get(sid, 0) + 1
+        self._unwatch(sid)
+        rescan: set[str] = set()
+        with self.lock:
+            src = self.conn.execute("SELECT path FROM sources WHERE id=?", (sid,)).fetchone()
+            others = [(r["id"], r["path"], normpath(r["path"]))
+                      for r in self.conn.execute("SELECT id, path FROM sources WHERE id != ?", (sid,))]
+
+            def holder(p_n: str) -> tuple[str, str, str] | None:
+                best = None
+                for o in others:
+                    if path_under(p_n, o[2]) and (best is None or len(o[2]) > len(best[2])):
+                        best = o
+                return best
+
+            if src is not None:
+                h = holder(normpath(src[0]))  # the outer source now walks this folder itself
+                if h:
+                    rescan.add(h[0])
+            gone: list[str] = []
+            moves: dict[str, list] = {}
+            for r in self.conn.execute("SELECT id, path, status FROM assets WHERE source_id=?", (sid,)).fetchall():
+                h = holder(normpath(r["path"]))
+                if h:
+                    moves.setdefault(h[0], []).append(r)
+                else:
+                    gone.append(r["id"])
+            for oid, rows in moves.items():
+                self._reassign(rows, oid, next(o[1] for o in others if o[0] == oid))
+                rescan.add(oid)
+            self.conn.execute("DELETE FROM sources WHERE id=?", (sid,))
+            self.conn.executemany("DELETE FROM collection_assets WHERE asset_id=?", [(a,) for a in gone])
+            self.conn.execute("DELETE FROM assets WHERE source_id=?", (sid,))
+            if sid == (self.conn.execute("SELECT value FROM meta WHERE key='dropped_source'").fetchone() or [None])[0]:
+                self.conn.execute("DELETE FROM meta WHERE key='dropped_source'")
+            self.conn.commit()
         for aid in gone:
             self._forget_thumb(aid)
-        self.execute("DELETE FROM sources WHERE id=?", (sid,))
+        for oid in rescan:
+            threading.Thread(target=self.scan_source, args=(oid,), daemon=True).start()
+        self.bus.publish({"type": "source", "id": sid})
+
+    def _unwatch(self, sid: str) -> None:
         w = self._watchers.pop(sid, None)
         if w is not None:
             try:
                 w.stop()  # type: ignore[attr-defined]
             except Exception:
                 pass
-        self.bus.publish({"type": "source", "id": sid})
 
     def _migrate_asset(self, old_id: str, new_id: str) -> None:
         """A file was moved/renamed: `old_id` (now missing) and `new_id` (a fresh 'ready' row at
@@ -1491,6 +2246,11 @@ class Library:
                 src.replace(self.thumbs / "video" / (new_id + src.name[len(old_id):]))
             except OSError:
                 pass
+        for src in (self.thumbs / "nprev").glob(f"{old_id}_*"):
+            try:
+                src.replace(self.thumbs / "nprev" / (new_id + src.name[len(old_id):]))
+            except OSError:
+                pass
         self.execute(
             """
             UPDATE assets SET tags=?, note=?, rating=?, added_at=MIN(added_at, ?),
@@ -1510,6 +2270,14 @@ class Library:
                 [(c["collection_id"], new_id) for c in cols],
             )
         self.execute("DELETE FROM collection_assets WHERE asset_id=?", (old_id,))
+        # Board cards follow the file too (and their name / path snapshot with it).
+        new_rows = self.query("SELECT name, path FROM assets WHERE id=?", (new_id,))
+        if new_rows:
+            self.execute(
+                "UPDATE board_items SET asset_id=?, asset_name=?, asset_path=?, updated_at=?, revision=revision+1 "
+                "WHERE asset_id=?",
+                (new_id, new_rows[0]["name"], new_rows[0]["path"], int(time.time() * 1000), old_id),
+            )
         # Lightbox annotations / review notes belong to the file, not to its old path.
         self.execute(
             "UPDATE annotations SET target_asset_id=? WHERE scope='asset' AND target_asset_id=?",
@@ -1556,6 +2324,8 @@ class Library:
         tag: str = "",
         collection_id: str = "",
         folder: str = "",
+        review: str = "",
+        cond: object = None,
     ) -> dict:
         """Drops the index entries of files that are gone (moved or deleted) — status='missing'.
         Only the index is touched, never anything on disk. Each entry is re-checked first: a file
@@ -1566,9 +2336,9 @@ class Library:
         files that still exist. Passing any of the filter args (mirrors list_assets/count_filtered)
         scopes the drop to missing entries matching them, e.g. the current view's filter — moves are
         still reconciled library-wide regardless, since that's never destructive."""
+        clause, args = self._clause(q, kind, source_id, tag, True, collection_id, folder, review, cond)  # (a bad filter fails first)
         moved = self._reconcile_moved()
         usable = {r["id"]: Path(r["path"]).is_dir() for r in self.query("SELECT id, path FROM sources")}
-        clause, args = self._clause(q, kind, source_id, tag, True, collection_id, folder)
         gone: list[str] = []
         revived: list[tuple[str]] = []
         skipped = 0
@@ -1589,6 +2359,7 @@ class Library:
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb", self.thumbs / "usdz" / f"{aid}.anim",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
                 *(self.thumbs / "video").glob(f"{aid}_*"),
+                *(self.thumbs / "nprev").glob(f"{aid}_*"),
             ):
                 try:
                     p.unlink(missing_ok=True)
@@ -1600,12 +2371,23 @@ class Library:
         rows = self.query("SELECT path FROM sources WHERE id=?", (sid,))
         if not rows:
             return
+        # Dropped files live at their original paths, outside this source's folder. Walking the
+        # empty inbox would mark every one of them missing.
+        if self.is_dropped_source(sid):
+            return
         root = Path(rows[0]["path"])
         if not root.is_dir():
             return
-        excluded_n = self.excluded_set(sid)
+        # Registered as running BEFORE the generation and the nested roots are read: an add_source
+        # inside this folder either sees it running (and bumps the generation) or commits its
+        # source before the nested-roots query below.
         with self._scan_lock:
             self.scanning += 1
+            self._scans_running[sid] = self._scans_running.get(sid, 0) + 1
+        gen = self._src_gen.get(sid, 0)
+        # A source nested inside this one indexes its own folder; walking it here as well would
+        # only collide with its rows (one row per file).
+        excluded_n = self.excluded_set(sid) | self._nested_roots(sid)
         self.bus.publish({"type": "scan", "scanning": True, "scanned": self.scanned})
         # Excluded assets are left out of the diff entirely — os.walk never visits their dirs
         # (see the dirnames filter below), so if they stayed in `existing` they'd look "gone"
@@ -1614,6 +2396,7 @@ class Library:
             r["path"]: (r["mtime"], r["size"], r["id"])
             for r in self.query("SELECT id, path, mtime, size, status FROM assets WHERE source_id=?", (sid,))
             if r["status"] != "excluded"
+            and not any(path_under(normpath(r["path"]), e) for e in excluded_n)
         }
         ignore = self.ignore
         seen: set[str] = set()
@@ -1625,23 +2408,34 @@ class Library:
             nonlocal inserts, now
             if not inserts:
                 return
-            self.executemany(
-                """
-                INSERT OR IGNORE INTO assets(
-                  id, source_id, path, name, ext, kind, size, mtime, status, has_thumb, added_at
-                ) VALUES (?,?,?,?,?,?,?,?,'ready',0,?)
-                """,
-                inserts,
-            )
+            # Checked under the lock that add_source / remove_source hold while they bump the
+            # generation: removed, or a source added inside it meanwhile -> a fresh walk follows.
+            # And only while the source exists: nothing more may land under a removed id.
+            with self.lock:
+                if cancelled():
+                    inserts = []
+                    return
+                self.conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO assets(
+                      id, source_id, path, name, ext, kind, size, mtime, status, has_thumb, added_at
+                    ) SELECT ?,?,?,?,?,?,?,?,'ready',0,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)
+                    """,
+                    [t + (sid,) for t in inserts],
+                )
+                self.conn.commit()
             n = len(inserts)
             self.scanned += n
             inserts = []
             now = int(time.time() * 1000)
             self.bus.publish({"type": "batch", "n": n, "scanned": self.scanned, "source": sid})
 
+        def cancelled() -> bool:
+            return self._stop.is_set() or self._src_gen.get(sid, 0) != gen
+
         try:
             for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-                if self._stop.is_set():
+                if cancelled():
                     break
                 base = rel_parts(root, dirpath) or []
                 dirnames[:] = [
@@ -1694,6 +2488,10 @@ class Library:
                     )
                     if len(inserts) >= BATCH:
                         flush()
+            if cancelled():
+                # Removed / absorbed (or Sight is closing): the walk is partial, so the files it did
+                # not reach are not gone — the old code flagged them all 'missing' on shutdown.
+                return
             flush()
             if hide:
                 self.executemany("UPDATE assets SET status='excluded' WHERE id=?", hide)
@@ -1716,6 +2514,11 @@ class Library:
         finally:
             with self._scan_lock:
                 self.scanning = max(0, self.scanning - 1)
+                left = self._scans_running.get(sid, 0) - 1
+                if left > 0:
+                    self._scans_running[sid] = left
+                else:
+                    self._scans_running.pop(sid, None)
                 scanning = self.scanning > 0
             self.bus.publish({"type": "scan", "scanning": scanning, "scanned": self.scanned})
 
@@ -1980,7 +2783,7 @@ class Library:
         return self._heavy("psd", path, dest)
 
     def psd_layers(self, aid: str) -> list[dict] | None:
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".psd":
             return None
         path = Path(a["path"])
@@ -2003,7 +2806,7 @@ class Library:
         return out
 
     def psd_layer_image(self, aid: str, index: int) -> Path | None:
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".psd":
             return None
         cache = self.thumbs / "psd"
@@ -2034,7 +2837,7 @@ class Library:
         """Full-resolution flattened render for the lightbox, cached as thumbs/psd/<id>_full.png
         (the `<id>_*.png` cleanup globs cover it) and re-rendered when the PSD is newer. Falls back
         to the card thumbnail only if the full render fails."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".psd":
             return None
         path = Path(a["path"])
@@ -2115,7 +2918,7 @@ class Library:
             return None
 
     def read_text_preview(self, aid: str, limit: int = 200_000) -> dict | None:
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "document" or a.get("ext") not in TEXT_EXT:
             return None
         path = Path(a["path"])
@@ -2195,14 +2998,64 @@ class Library:
             return None
         return f"{st.st_size}_{st.st_mtime_ns}"
 
-    def _play_copy(self, aid: str, stamp: str | None) -> Path | None:
+    # Scrub copies: a clip with a long GOP (a keyframe every few seconds) seeks slowly in the browser,
+    # since every seek decodes from the keyframe before it — ~0.9 ms a frame for 416x960 H.264, so
+    # ~230 ms just before the next keyframe of a 250-frame GOP. The lightbox asks for this small copy
+    # (≤ 960 px, no audio, a keyframe every 4 frames, no B-frames) once a seek of the clip is slow,
+    # and the compare view asks for one per clip as soon as it opens. Shown over the picture while a
+    # drag scrubs; the player itself keeps the original.
+    # Named "<aid>_<stamp>.scrub<ext>" next to the playback copies, so the rename / delete / stale
+    # cleanups of "<aid>_*" cover it too.
+    SCRUB_TAG = ".scrub"
+    SCRUB_VF = "scale=w='min(960,iw)':h='min(960,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+    SCRUB_ENC = {
+        "mp4": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "fastdecode", "-crf", "26", "-g", "4",
+                "-bf", "0", "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart"],
+        "webm": ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40", "-deadline", "realtime", "-cpu-used", "8",
+                 "-g", "4", "-pix_fmt", "yuv420p", "-threads", "2"],
+    }
+    SCRUB_PARALLEL = 3  # scrub encodes at once (a compare asks for every clip together)
+
+    def _play_copy(self, aid: str, stamp: str | None, tag: str = "") -> Path | None:
         if not stamp:
             return None
         for ext in self.PLAY_EXT:
-            p = self.thumbs / "video" / f"{aid}_{stamp}{ext}"
+            p = self.thumbs / "video" / f"{aid}_{stamp}{tag}{ext}"
             if p.exists():
                 return p
         return None
+
+    SCRUB_KEEP_BYTES = 1 << 30  # scrub copies kept in all (newest first); the one just made always stays
+    SCRUB_KEEP_FILES = 20
+
+    def _prune_scrub_copies(self, keep: Path) -> None:
+        """Deletes the oldest scrub copies beyond SCRUB_KEEP_FILES / SCRUB_KEEP_BYTES, never ``keep``.
+        They are made again on demand (the next slow scrub of that clip)."""
+        found = []
+        for p in (self.thumbs / "video").glob(f"*{self.SCRUB_TAG}.*"):
+            if p.suffix not in self.PLAY_EXT:
+                continue  # a .part / .log of a running job
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            found.append((p == keep, st.st_mtime, st.st_size, p))
+        found.sort(key=lambda f: (f[0], f[1]), reverse=True)  # the new copy, then newest first
+        total = 0
+        for n, (is_keep, _mtime, size, p) in enumerate(found):
+            total += size
+            if not is_keep and (n >= self.SCRUB_KEEP_FILES or total > self.SCRUB_KEEP_BYTES):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def scrub_copy_path(self, aid: str) -> Path | None:
+        """Asset ``aid``'s current scrub copy, or None."""
+        a = self.resolve_asset(aid)
+        if not a or a.get("kind") != "video":
+            return None
+        return self._play_copy(aid, self._play_stamp(a["path"]), self.SCRUB_TAG)
 
     def playback_path(self, a: dict) -> str:
         """The file the player reads for asset ``a``: its current playback copy when there is one."""
@@ -2234,61 +3087,267 @@ class Library:
         self._play_enc[ffmpeg] = found
         return found
 
-    def playback_status(self, aid: str) -> dict:
-        """{state, progress, error} of asset ``aid``'s playback copy: ready / working / failed / none."""
-        a = self.get_asset(aid)
+    def _copy_encoder(self, ffmpeg: str, tag: str = "") -> tuple[str, list[str], str] | None:
+        """_play_encoder's choice; for a scrub copy (``tag``) the same container with the scrub settings."""
+        enc = self._play_encoder(ffmpeg)
+        if enc and tag == self.SCRUB_TAG:
+            enc = (enc[0], ["-an", "-vf", self.SCRUB_VF, *self.SCRUB_ENC[enc[2]]], enc[2])
+        return enc
+
+    def playback_status(self, aid: str, tag: str = "") -> dict:
+        """{state, progress, error} of asset ``aid``'s playback copy (``tag`` SCRUB_TAG: its scrub
+        copy): ready / working / failed / none."""
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return {"state": "missing", "progress": 0, "error": "not a video in the library"}
         stamp = self._play_stamp(a["path"])
-        if self._play_copy(aid, stamp):
+        if self._play_copy(aid, stamp, tag):
             return {"state": "ready", "progress": 1, "error": ""}
         with self._play_lock:
-            job = self._play_jobs.get(aid)
+            job = self._play_jobs.get(aid + tag)
             if job and job["stamp"] == stamp:
                 return {"state": job["state"], "progress": job["progress"], "error": job["error"]}
         return {"state": "none", "progress": 0, "error": ""}
 
-    def start_playback_copy(self, aid: str) -> dict:
-        """Starts converting asset ``aid`` for playback unless its copy is current or running. A failed
-        attempt is tried again when asked; the caller polls playback_status for the outcome."""
-        a = self.get_asset(aid)
+    def scrub_status(self, aid: str) -> dict:
+        return self.playback_status(aid, self.SCRUB_TAG)
+
+    def start_scrub_copy(self, aid: str) -> dict:
+        return self.start_playback_copy(aid, self.SCRUB_TAG)
+
+    # Scrub audio: the picture scrub seeks the <video>, and a play() blip at each position waits on that
+    # seek, so the sound stutters. This is a separate mono s16le PCM of the first audio track (no video
+    # decode), named "<aid>_<stamp>.scruba.pcm" next to the scrub copy. The lightbox plays slices from it
+    # with Web Audio, so a drag does not seek the player for sound. The name contains ".scruba.", which
+    # playback-copy cleanup treats as its own kind (not a playback file). Rename / delete of "<aid>_*" cover them.
+    SCRUB_AUDIO_SR = 22050
+    SCRUB_AUDIO_TAG = ".scruba"
+    SCRUB_AUDIO_KEEP_FILES = 20
+    SCRUB_AUDIO_KEEP_BYTES = 1 << 30
+
+    @classmethod
+    def _video_cache_kind(cls, name: str) -> str:
+        """Which cache a file in thumbs/video is: 'audio' (.scruba), 'scrub' (.scrub.) or 'play'."""
+        if (cls.SCRUB_AUDIO_TAG + ".") in name:
+            return "audio"
+        if (cls.SCRUB_TAG + ".") in name:
+            return "scrub"
+        return "play"
+
+    @staticmethod
+    def _scrub_audio_banner(text: str) -> str:
+        """'audio' / 'silent' when ffmpeg listed the file, 'failed' when it did not (missing, locked, junk)."""
+        if "Input #" not in text:
+            return "failed"
+        return "silent" if "Audio:" not in text else "audio"
+
+    def _scrub_audio_file(self, aid: str, stamp: str | None) -> Path | None:
+        if not stamp:
+            return None
+        return self.thumbs / "video" / f"{aid}_{stamp}{self.SCRUB_AUDIO_TAG}.pcm"
+
+    def scrub_audio_path(self, aid: str) -> Path | None:
+        """Asset ``aid``'s current scrub-audio PCM, or None."""
+        a = self.resolve_asset(aid)
+        if not a or a.get("kind") != "video":
+            return None
+        p = self._scrub_audio_file(aid, self._play_stamp(a["path"]))
+        try:
+            if p and p.stat().st_size >= 2:
+                return p
+        except OSError:
+            return None
+        return None
+
+    def _scrub_audio_view(self, state: str, *, progress: float = 0, error: str = "",
+                          samples: int = 0, rev: str = "") -> dict:
+        sr = self.SCRUB_AUDIO_SR
+        return {
+            "state": state, "progress": progress, "error": error, "sr": sr,
+            "samples": samples, "duration": (samples / sr) if samples else 0, "rev": rev,
+        }
+
+    def scrub_audio_status(self, aid: str) -> dict:
+        """{state, progress, error, sr, samples, duration, rev} of asset ``aid``'s scrub audio.
+        state is ready / working / silent (no audio track) / failed / missing / none (not started)."""
+        a = self.resolve_asset(aid)
+        if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+            return self._scrub_audio_view("missing")
+        stamp = self._play_stamp(a["path"]) or ""
+        p = self._scrub_audio_file(aid, stamp)
+        try:
+            size = p.stat().st_size if p else 0
+        except OSError:
+            size = 0
+        if p and size >= 2:
+            return self._scrub_audio_view("ready", progress=1, samples=size // 2, rev=stamp)
+        with self._play_lock:
+            job = self._play_jobs.get(aid + self.SCRUB_AUDIO_TAG)
+            if job and job["stamp"] == stamp:
+                return self._scrub_audio_view(
+                    job["state"], progress=job["progress"], error=job["error"],
+                    samples=job.get("samples") or 0, rev=stamp,
+                )
+        return self._scrub_audio_view("none")
+
+    def start_scrub_audio(self, aid: str) -> dict:
+        """Starts extracting asset ``aid``'s scrub audio unless it is current, running, or already known
+        silent. A failed attempt is tried again when asked."""
+        a = self.resolve_asset(aid)
+        if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
+            return self._scrub_audio_view("missing")
+        stamp = self._play_stamp(a["path"]) or ""
+        p = self._scrub_audio_file(aid, stamp)
+        try:
+            size = p.stat().st_size if p else 0
+        except OSError:
+            size = 0
+        if p and size >= 2:
+            return self._scrub_audio_view("ready", progress=1, samples=size // 2, rev=stamp)
+        ffmpeg = self.ffmpeg_exe()
+        key = aid + self.SCRUB_AUDIO_TAG
+        with self._play_lock:
+            job = self._play_jobs.get(key)
+            if job and job["stamp"] == stamp and job["state"] in ("working", "silent"):
+                return self._scrub_audio_view(
+                    job["state"], progress=job["progress"], error=job["error"],
+                    samples=job.get("samples") or 0, rev=stamp,
+                )
+            if not ffmpeg:
+                self._play_jobs[key] = {
+                    "stamp": stamp, "state": "failed", "progress": 0, "error": "ffmpeg not found", "samples": 0,
+                }
+                return self._scrub_audio_view("failed", error="ffmpeg not found", rev=stamp)
+            job = {"stamp": stamp, "state": "working", "progress": 0.0, "error": "", "samples": 0}
+            self._play_jobs[key] = job
+        threading.Thread(
+            target=self._run_scrub_audio, args=(aid, a["path"], stamp, ffmpeg, job),
+            name=f"scrub-audio-{aid}", daemon=True,
+        ).start()
+        return self._scrub_audio_view("working", rev=stamp)
+
+    def _prune_scrub_audio(self, keep: Path) -> None:
+        """Deletes the oldest scrub-audio files beyond SCRUB_AUDIO_KEEP_FILES / _BYTES, never ``keep``."""
+        found = []
+        for p in (self.thumbs / "video").glob(f"*{self.SCRUB_AUDIO_TAG}.pcm"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            found.append((p == keep, st.st_mtime, st.st_size, p))
+        found.sort(key=lambda f: (f[0], f[1]), reverse=True)
+        total = 0
+        for n, (is_keep, _mtime, size, p) in enumerate(found):
+            total += size
+            if not is_keep and (n >= self.SCRUB_AUDIO_KEEP_FILES or total > self.SCRUB_AUDIO_KEEP_BYTES):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _run_scrub_audio(self, aid: str, src: str, stamp: str, ffmpeg: str, job: dict) -> None:
+        state, error, samples = "failed", "", 0
+        d = self.thumbs / "video"
+        d.mkdir(parents=True, exist_ok=True)
+        final = d / f"{aid}_{stamp}{self.SCRUB_AUDIO_TAG}.pcm"
+        tmp = d / f"{aid}_{stamp}{self.SCRUB_AUDIO_TAG}.part"
+        try:
+            heard = self._scrub_audio_banner(_ffprobe_text(ffmpeg, Path(src)))
+            if heard == "failed":
+                error = "could not read the file"
+            elif heard == "silent":
+                state = "silent"
+            else:
+                cmd = [
+                    ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                    "-i", src, "-vn", "-map", "0:a:0", "-ac", "1", "-ar", str(self.SCRUB_AUDIO_SR),
+                    "-f", "s16le", str(tmp),
+                ]
+                with self._scrub_audio_slot:
+                    proc = subprocess.run(
+                        cmd, capture_output=True, timeout=900, creationflags=NO_WINDOW,
+                    )
+                err = proc.stderr.decode("utf-8", "replace")
+                size = tmp.stat().st_size if tmp.exists() else 0
+                if proc.returncode == 0 and size >= 2:
+                    for old in d.glob(f"{aid}_*{self.SCRUB_AUDIO_TAG}.pcm"):
+                        if old != final:
+                            try:
+                                old.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    tmp.replace(final)
+                    self._prune_scrub_audio(final)
+                    samples = final.stat().st_size // 2
+                    state = "ready"
+                elif "matches no streams" in err or "Stream map" in err or "does not contain any stream" in err:
+                    state = "silent"
+                else:
+                    lines = [ln for ln in err.splitlines() if ln.strip()]
+                    error = lines[-1][:300] if lines else f"ffmpeg exited with code {proc.returncode}"
+        except Exception as e:
+            error = str(e)[:300] or type(e).__name__
+        finally:
+            tmp.unlink(missing_ok=True)
+            with self._play_lock:
+                job["state"] = state
+                job["progress"] = 1.0 if state in ("ready", "silent") else job["progress"]
+                job["error"] = error
+                job["samples"] = samples
+                # A ready file answers from disk; a silent job stays, so the next ask does not probe again
+                # until the source's stamp changes. A failure stays too and is replaced when asked again
+                # (start_scrub_audio only keeps working / silent).
+                if state == "ready" and self._play_jobs.get(aid + self.SCRUB_AUDIO_TAG) is job:
+                    del self._play_jobs[aid + self.SCRUB_AUDIO_TAG]
+
+    def start_playback_copy(self, aid: str, tag: str = "") -> dict:
+        """Starts converting asset ``aid`` for playback (``tag`` SCRUB_TAG: its scrub copy) unless the
+        copy is current or running. A failed attempt is tried again when asked; the caller polls
+        playback_status for the outcome."""
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return {"state": "missing", "progress": 0, "error": "not a video in the library"}
         stamp = self._play_stamp(a["path"])
-        if self._play_copy(aid, stamp):
+        if self._play_copy(aid, stamp, tag):
             return {"state": "ready", "progress": 1, "error": ""}
+        key = aid + tag
         with self._play_lock:
-            job = self._play_jobs.get(aid)
+            job = self._play_jobs.get(key)
             if job and job["stamp"] == stamp and job["state"] == "working":
                 return {"state": "working", "progress": job["progress"], "error": ""}
         ffmpeg = self.ffmpeg_exe()
-        enc = self._play_encoder(ffmpeg) if ffmpeg else None
+        enc = self._copy_encoder(ffmpeg, tag) if ffmpeg else None
         if not enc:
             why = "ffmpeg not found" if not ffmpeg else "ffmpeg has no H.264 or VP9 encoder"
             with self._play_lock:
-                self._play_jobs[aid] = {"stamp": stamp, "state": "failed", "progress": 0, "error": why}
+                self._play_jobs[key] = {"stamp": stamp, "state": "failed", "progress": 0, "error": why}
             return {"state": "failed", "progress": 0, "error": why}
         job = {"stamp": stamp, "state": "working", "progress": 0.0, "error": ""}
         with self._play_lock:
-            self._play_jobs[aid] = job
+            self._play_jobs[key] = job
         threading.Thread(
             target=self._run_playback_copy,
-            args=(aid, a["path"], stamp, ffmpeg, enc, float(a.get("duration") or 0), job),
-            name=f"play-copy-{aid}", daemon=True,
+            args=(aid, a["path"], stamp, ffmpeg, enc, float(a.get("duration") or 0), job, tag),
+            name=f"play-copy-{key}", daemon=True,
         ).start()
         return {"state": "working", "progress": 0, "error": ""}
 
     def _run_playback_copy(self, aid: str, src: str, stamp: str, ffmpeg: str,
-                           enc: tuple[str, list[str], str], duration: float, job: dict) -> None:
+                           enc: tuple[str, list[str], str], duration: float, job: dict, tag: str = "") -> None:
         ext, enc_args, container = enc
         d = self.thumbs / "video"
         d.mkdir(parents=True, exist_ok=True)
-        stem = f"{aid}_{stamp}"
+        stem = f"{aid}_{stamp}{tag}"
         tmp = d / f"{stem}.part"  # no media extension, so no lookup ever picks it up
         log = d / f"{stem}.log"
+        # A scrub copy's enc_args carry their own -an / -vf (start_playback_copy).
+        # -threads before -i caps the decoder; -filter_threads caps scale. The encoder's own
+        # -threads (SCRUB_ENC) does not cover either, and three compares would otherwise take every core.
+        streams = ["-map", "0:v:0"] if tag else ["-map", "0:v:0", "-map", "0:a:0?", "-vf", self.PLAY_VF]
+        scrub_in = ["-threads", "2", "-filter_threads", "2"] if tag else []
         cmd = [
-            ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src,
-            "-map", "0:v:0", "-map", "0:a:0?", "-vf", self.PLAY_VF, *enc_args, "-ac", "2",
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *scrub_in, "-i", src,
+            *streams, *enc_args, *([] if tag else ["-ac", "2"]),
             "-progress", "pipe:1", "-nostats", "-f", container, str(tmp),
         ]
         state, error = "failed", ""
@@ -2297,29 +3356,24 @@ class Library:
                 m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", _ffprobe_text(ffmpeg, Path(src)))
                 if m:
                     duration = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
-            # stderr goes to a file: a damaged stream can print more than a pipe buffer holds, and
-            # nothing reads the pipe while the progress lines are read.
-            with self._play_slot, open(log, "w", encoding="utf-8", errors="replace") as errf:
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
-                    errors="replace", creationflags=NO_WINDOW,
-                )
-                for line in proc.stdout:
-                    if line.startswith("out_time_us=") and duration > 0:
-                        try:
-                            done = int(line.split("=", 1)[1]) / 1e6 / duration
-                        except ValueError:
-                            continue
-                        with self._play_lock:
-                            job["progress"] = round(min(0.99, max(0.0, done)), 3)
-                proc.stdout.close()
-                rc = proc.wait()
+            rc = None
+            while rc is None:  # a scrub encode stopped for a playback copy starts over after it
+                rc = self._encode_copy(cmd, log, duration, job, bool(tag))
             if rc == 0 and tmp.exists() and tmp.stat().st_size > 0:
                 final = d / f"{stem}{ext}"
-                for old in d.glob(f"{aid}_*"):  # copies of earlier versions of this file
-                    if old.name not in (final.name, log.name, tmp.name):
+                for old in d.glob(f"{aid}_*"):  # earlier copies of this file, of this kind only
+                    # playback, scrub-video and scrub-audio are three kinds; a locked file must not fail the job
+                    if self._video_cache_kind(old.name) != ("scrub" if tag else "play"):
+                        continue
+                    if old.name in (final.name, log.name, tmp.name):
+                        continue
+                    try:
                         old.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 tmp.replace(final)
+                if tag:
+                    self._prune_scrub_copies(final)
                 state = "ready"
             else:
                 lines = [ln for ln in log.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
@@ -2333,8 +3387,101 @@ class Library:
                 job["state"] = state
                 job["progress"] = 1.0 if state == "ready" else job["progress"]
                 job["error"] = error
-                if state == "ready" and self._play_jobs.get(aid) is job:
-                    del self._play_jobs[aid]  # the copy itself answers from now on
+                if state == "ready" and self._play_jobs.get(aid + tag) is job:
+                    del self._play_jobs[aid + tag]  # the copy itself answers from now on
+
+    def _stop_scrub_procs(self) -> None:
+        """Caller holds ``_play_cv``. Stops every running scrub encode; each returns None and starts over."""
+        for proc in list(self._scrub_procs):
+            proc.sight_stopped = True
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+    def _encode_copy(self, cmd: list[str], log: Path, duration: float, job: dict, scrub: bool) -> int | None:
+        """Runs one copy's ffmpeg and returns its exit code. Up to ``SCRUB_PARALLEL`` scrub encodes run
+        at once. A playback copy is alone: while one waits or runs, scrub jobs hold back, and its arrival
+        stops every running scrub encode. A stopped scrub returns None; the caller runs it again once
+        playback is done, so a playback copy never waits out a long scrub encode."""
+        counted = False
+        held = False
+        active = False
+        with self._play_cv:
+            if scrub:
+                while self._play_waiting or self._play_active:
+                    self._play_cv.wait()
+            else:
+                self._play_waiting += 1
+                counted = True
+                self._stop_scrub_procs()
+        try:
+            if scrub:
+                self._scrub_slots.acquire()
+                held = True
+                with self._play_cv:
+                    if self._play_waiting or self._play_active:
+                        return None  # a playback copy arrived while this scrub job waited for a slot
+            with self._play_slot if not scrub else nullcontext():
+                with self._play_cv:
+                    if scrub:
+                        if self._play_waiting or self._play_active:
+                            return None
+                    else:
+                        if counted:
+                            self._play_waiting -= 1
+                            counted = False
+                        self._play_active += 1
+                        active = True
+                        self._play_cv.notify_all()
+                # stderr goes to a file: a damaged stream can print more than a pipe buffer holds, and
+                # nothing reads the pipe while the progress lines are read.
+                try:
+                    with open(log, "w", encoding="utf-8", errors="replace") as errf:
+                        proc = subprocess.Popen(
+                            cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8",
+                            errors="replace", creationflags=NO_WINDOW,
+                        )
+                        if scrub:
+                            with self._play_cv:
+                                self._scrub_procs.add(proc)
+                                self._scrub_proc = proc
+                                if self._play_waiting or self._play_active:  # arrived between the check and here
+                                    proc.sight_stopped = True
+                                    try:
+                                        proc.terminate()
+                                    except OSError:  # died on its own already
+                                        pass
+                        try:
+                            for line in proc.stdout:
+                                if line.startswith("out_time_us=") and duration > 0:
+                                    try:
+                                        done = int(line.split("=", 1)[1]) / 1e6 / duration
+                                    except ValueError:
+                                        continue
+                                    with self._play_lock:
+                                        job["progress"] = round(min(0.99, max(0.0, done)), 3)
+                            proc.stdout.close()
+                            rc = proc.wait()
+                        finally:
+                            if scrub:
+                                with self._play_cv:
+                                    self._scrub_procs.discard(proc)
+                                    if self._scrub_proc is proc:
+                                        self._scrub_proc = next(iter(self._scrub_procs), None)
+                    return None if getattr(proc, "sight_stopped", False) else rc
+                finally:
+                    if active:
+                        with self._play_cv:
+                            self._play_active -= 1
+                            self._play_cv.notify_all()
+        finally:
+            if held:
+                self._scrub_slots.release()
+            if counted:  # only when taking the playback slot failed
+                with self._play_cv:
+                    self._play_waiting -= 1
+                    self._play_cv.notify_all()
 
     def _decode_peaks(self, path: Path, bars: int = 96) -> tuple[list[int], int] | None:
         """Shared ffmpeg PCM decode + peak bucketing, used by both the interactive waveform
@@ -2403,7 +3550,7 @@ class Library:
     def file_info(self, aid: str) -> list[dict] | None:
         """Per-type details for the lightbox info overlay (see app/fileinfo.py). Cached per file
         version, since some readers (ffmpeg, PSD, OBJ line counts) take a moment."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a:
             return None
         path = Path(a["path"])
@@ -2457,7 +3604,7 @@ class Library:
         loaders' relative lookups all land here instead. Looks beside the model and in the
         usual texture folders first, then falls back to any indexed image with that name,
         preferring the one nearest the model."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "model3d":
             return None
         parts = [p for p in re.split(r"[\\/]+", name or "") if p and p != "."]
@@ -2526,7 +3673,7 @@ class Library:
 
     def usdz_is_animated(self, aid: str) -> bool:
         """make_usdz_glb found the .usdz animated (and did not convert it) — the viewer reads it itself."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         p = self.thumbs / "usdz" / f"{aid}.anim"
         try:
             return bool(a) and p.exists() and p.stat().st_mtime >= Path(a["path"]).stat().st_mtime
@@ -2539,7 +3686,7 @@ class Library:
         of its own. Requires the optional `usd-core` dependency; returns
         None (caller falls back to the "open externally" placeholder) if
         that isn't installed or the conversion fails for any reason."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".usdz":
             return None
         path = Path(a["path"])
@@ -2594,7 +3741,7 @@ class Library:
         cached = self.waveform_path(aid)
         if cached:
             return cached
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "audio":
             return None
         path = Path(a["path"])
@@ -2613,6 +3760,8 @@ class Library:
         return dest
 
     def _watch(self, sid: str, path: str) -> None:
+        if self.is_dropped_source(sid):
+            return
         if sid in self._watchers:
             return
         try:
@@ -2636,6 +3785,12 @@ class Library:
 
             def on_moved(self, event):  # type: ignore[no-untyped-def]
                 kind = kind_of(event.dest_path)
+                if kind and not event.is_directory and lib._owner(event.dest_path) != sid:
+                    # Into a nested source: its watcher indexes the new path (and pairs the move
+                    # when it sees both ends); here the old row is only flagged missing.
+                    if lib._owner(event.src_path) == sid:
+                        lib._mark_gone(event.src_path)
+                    return
                 if kind and not event.is_directory:
                     # watchdog pairs the two paths itself here, so unlike _reconcile_moved's
                     # name+size guess this move is known for certain — carry the old row's tags/
@@ -2679,7 +3834,23 @@ class Library:
         if cur.rowcount:
             self.bus.publish({"type": "batch", "n": 0})
 
-    def _touch_one(self, sid: str, fp: str, kind: str) -> None:
+    def _owner(self, fp: str) -> str | None:
+        """The innermost source holding `fp` (sources may nest), or None."""
+        fp_n = normpath(fp)
+        best, best_n = None, ""
+        for r in self.query("SELECT id, path FROM sources"):
+            r_n = normpath(r["path"])
+            if path_under(fp_n, r_n) and len(r_n) > len(best_n):
+                best, best_n = r["id"], r_n
+        return best
+
+    def _touch_one(self, sid: str, fp: str, kind: str, force: bool = False) -> None:
+        # The outer source's watcher sees a nested source's files too; that source's own watcher
+        # handles them, with its own excluded folders and ignore root. A late event of a removed
+        # source finds no owner and adds nothing. force: a file the user dropped, which may sit
+        # outside the source root (Dropped files inbox).
+        if not force and self._owner(fp) != sid:
+            return
         excluded_n = self.excluded_set(sid)
         if excluded_n:
             n = normpath(fp)
@@ -2720,6 +3891,7 @@ class Library:
                 self.thumbs / "wave" / f"{aid}.json", self.thumbs / "usdz" / f"{aid}.glb", self.thumbs / "usdz" / f"{aid}.anim",
                 *(self.thumbs / "psd").glob(f"{aid}_*.png"),
                 *(self.thumbs / "video").glob(f"{aid}_*"),
+                *(self.thumbs / "nprev").glob(f"{aid}_*"),
             ):
                 try:
                     p.unlink(missing_ok=True)
@@ -2734,13 +3906,16 @@ class Library:
             )
             self._forget_thumb(aid)
         else:
-            self.execute(
+            # A late watcher event of a source removed meanwhile must not add a row for it.
+            cur = self.execute(
                 """
-                INSERT INTO assets(id, source_id, path, name, ext, kind, size, mtime, status, has_thumb, added_at)
-                VALUES (?,?,?,?,?,?,?,?,'ready',0,?)
+                INSERT OR IGNORE INTO assets(id, source_id, path, name, ext, kind, size, mtime, status, has_thumb, added_at)
+                SELECT ?,?,?,?,?,?,?,?,'ready',0,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)
                 """,
-                (aid, sid, fp, name, ext, kind, st.st_size, st.st_mtime, now),
+                (aid, sid, fp, name, ext, kind, st.st_size, st.st_mtime, now, sid),
             )
+            if not cur.rowcount:
+                return
         self.bus.publish({"type": "batch", "n": 1, "source": sid})
 
     def first_page_served(self) -> None:
@@ -2748,8 +3923,35 @@ class Library:
         self._first_page.set()
 
     def resume_watchers(self) -> None:
+        # Rows left behind by a source removed while it was being scanned / watched (before
+        # remove_source guarded against that) showed in All with no source to remove them by.
+        with self.lock:
+            stray = [r[0] for r in self.conn.execute(
+                "SELECT id FROM assets WHERE source_id NOT IN (SELECT id FROM sources)")]
+            if stray:
+                self.conn.execute("DELETE FROM assets WHERE source_id NOT IN (SELECT id FROM sources)")
+            self.conn.execute("DELETE FROM collection_assets WHERE asset_id NOT IN (SELECT id FROM assets)")
+            # A source added inside another one used to stay empty, its files owned by the outer
+            # source (see add_source): hand them to the innermost source, deepest first.
+            srcs = [(r["id"], r["path"], normpath(r["path"])) for r in self.conn.execute("SELECT id, path FROM sources")]
+            for cid, cpath, c_n in sorted(srcs, key=lambda s: -len(s[2])):
+                outer = [s[0] for s in srcs if path_under(c_n, s[2])]
+                if not outer:
+                    continue
+                prefix = cpath.rstrip("\\/") + os.sep
+                marks = ",".join("?" * len(outer))
+                rows = self.conn.execute(
+                    f"SELECT id, path, status FROM assets WHERE source_id IN ({marks}) AND substr(path, 1, ?) = ?",
+                    (*outer, len(prefix), prefix),
+                ).fetchall()
+                self._reassign(rows, cid, cpath)
+            self.conn.commit()
+        for aid in stray:
+            self._forget_thumb(aid)  # as remove_source does: a re-added folder renders them anew
         sids = []
         for row in self.query("SELECT id, path FROM sources"):
+            if self.is_dropped_source(row["id"]):
+                continue
             if Path(row["path"]).is_dir():
                 self._watch(row["id"], row["path"])
                 sids.append(row["id"])
@@ -2784,19 +3986,25 @@ class Library:
         collection_id: str = "",
         folder: str = "",
         review: str = "",
+        cond: object = None,
     ) -> tuple[str, list[object]]:
         where = ["status != 'excluded'"]
         args: list[object] = []
+        built = where_sql(cond) if cond else None  # the filter builder's tree (ValueError when malformed)
+        if built:
+            where.append(f"({built[0]})")
+            args.extend(built[1])
         for tok in [t for t in q.replace(",", " ").split() if t]:
             needle = tok.lower()
-            where.append("(instr(lower(name), ?) OR instr(lower(note), ?) OR instr(lower(tags), ?))")
+            where.append("(instr(ulower(name), ?) OR instr(ulower(note), ?) OR instr(ulower(tags), ?))")
             args.extend([needle, needle, needle])
         if kind:
             where.append("kind=?")
             args.append(kind)
         if source_id:
-            where.append("source_id=?")
-            args.append(source_id)
+            scope, scope_args = self._source_scope(source_id)
+            where.append(scope)
+            args.extend(scope_args)
         if tag:
             where.append("tags LIKE ?")
             args.append(f"%{tag}%")
@@ -2814,6 +4022,8 @@ class Library:
             args.append(review)
         elif review == "open":
             where.append(f"{_OPEN_NOTES_SQL} > 0")
+        elif review == "drawings":
+            where.append(f"{_LOOSE_DRAW_SQL} > 0")
         return " AND ".join(where), args
 
     # Sort keys the UI can request, mapped to their SQL expression. "tag" sorts by each asset's
@@ -2853,8 +4063,9 @@ class Library:
         sort: str = "",
         order: str = "asc",
         review: str = "",
+        cond: object = None,
     ) -> list[dict]:
-        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
+        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review, cond)
         order_sql = self._order_by(sort, order)
         sql = f"SELECT {self._LIST_COLS} FROM assets WHERE {clause} {order_sql} LIMIT ? OFFSET ?"
         args.extend([limit, offset])
@@ -2864,7 +4075,7 @@ class Library:
     _LIST_COLS = (
         "id, source_id, path, name, ext, kind, size, mtime, width, height, "
         "duration, tags, note, rating, status, has_thumb, animated, added_at, "
-        f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes"
+        f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes, {_LOOSE_DRAW_SQL} AS loose_draw"
     )
 
     def _list_item(self, r) -> dict:
@@ -2900,13 +4111,16 @@ class Library:
         collection_id: str = "",
         folder: str = "",
         review: str = "",
+        cond: object = None,
     ) -> int:
-        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review)
+        clause, args = self._clause(q, kind, source_id, tag, missing, collection_id, folder, review, cond)
         row = self.query(f"SELECT COUNT(*) c FROM assets WHERE {clause}", tuple(args))
         return int(row[0]["c"]) if row else 0
 
     def collections(self) -> list[dict]:
-        cols = [dict(r) for r in self.query("SELECT id, name, parent_id, created_at, icon, color FROM collections ORDER BY sort_order, created_at")]
+        cols = [dict(r) for r in self.query(
+            "SELECT id, name, parent_id, created_at, icon, color, rule, sg_site, sg_project, tracker, tracker_project"
+            " FROM collections ORDER BY sort_order, created_at")]
         counts = {
             r["collection_id"]: int(r["c"])
             for r in self.query("SELECT collection_id, COUNT(*) c FROM collection_assets GROUP BY collection_id")
@@ -2918,16 +4132,59 @@ class Library:
             c["count"] = counts.get(c["id"], 0)
             c["assetIds"] = members.get(c["id"], [])
             c["parentId"] = c.pop("parent_id")
+            rule = c.pop("rule")
+            try:
+                c["rule"] = json.loads(rule) if rule else None
+            except ValueError:
+                c["rule"] = {"op": "and", "c": []}   # (a smart collection stays one: its rule is just empty)
+            c["tracker"] = c["tracker"] or None
+            proj = c.pop("tracker_project")
+            c["trackerProject"] = proj if c["tracker"] else None
+            # (pre-0.107 names, still sent for an older page: a ShotGrid one's host and project)
+            c["sgSite"] = c.pop("sg_site")
+            c["sgProject"] = c.pop("sg_project")
         return cols
 
-    def add_collection(self, name: str, parent_id: str | None = None) -> dict:
-        cid = asset_id(f"col:{time.time_ns()}:{name}")
+    def add_collection(self, name: str, parent_id: str | None = None, rule: object = None,
+                       tracker: str | None = None, tracker_project: object = None) -> dict:
+        """A collection; with `rule` a smart one (a saved filter, no members). A tracker project's smart collection
+        (`tracker` = the tracker key "<kind>:<host>" + `tracker_project` = the project's id, a positive integer or a
+        short id string) lives under its project in Sources, never nested in a collection."""
+        from .trackers import split_key
+        rule_s = _rule_json(rule) if rule is not None else None
+        if rule_s is None:
+            tracker, tracker_project = None, None
+        sg_site, sg_project, proj = None, None, None
+        if tracker or tracker_project is not None:
+            ok_proj = ((isinstance(tracker_project, int) and not isinstance(tracker_project, bool) and 0 < tracker_project < 2 ** 53)
+                       or (isinstance(tracker_project, str) and 0 < len(tracker_project) <= 200 and tracker_project.isprintable()
+                           and tracker_project.strip() == tracker_project))
+            parts = split_key(tracker)
+            if not parts or not ok_proj:
+                raise ValueError("a tracker smart collection needs its tracker and project")
+            proj = str(tracker_project)
+            if parts[0] == "shotgrid":   # (also the pre-0.107 columns: an older Sight lists it under its project)
+                if not re.fullmatch(r"[1-9]\d{0,15}", proj) or int(proj) >= 2 ** 53:
+                    raise ValueError("a ShotGrid project id is a number")
+                sg_site, sg_project = parts[1], int(proj)
+            parent_id = None
+        if parent_id and self.query("SELECT 1 FROM collections WHERE id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL OR tracker IS NOT NULL)", (parent_id,)):
+            parent_id = None   # (nothing nests inside a smart collection)
+        cid = asset_id(f"col:{time.time_ns()}:{secrets.token_hex(8)}:{name}")
         nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM collections")[0]["n"]
         self.execute(
-            "INSERT INTO collections(id, name, parent_id, created_at, sort_order) VALUES (?,?,?,?,?)",
-            (cid, name.strip() or "Untitled", parent_id or None, int(time.time() * 1000), nxt),
+            "INSERT INTO collections(id, name, parent_id, created_at, sort_order, rule, sg_site, sg_project, tracker, tracker_project)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (cid, name.strip() or "Untitled", parent_id or None, int(time.time() * 1000), nxt, rule_s, sg_site, sg_project,
+             tracker or None, proj),
         )
-        return {"id": cid, "name": name.strip() or "Untitled", "parentId": parent_id, "assetIds": [], "count": 0, "icon": None, "color": None}
+        return {"id": cid, "name": name.strip() or "Untitled", "parentId": parent_id or None, "assetIds": [], "count": 0,
+                "icon": None, "color": None, "rule": json.loads(rule_s) if rule_s else None,
+                "tracker": tracker or None, "trackerProject": proj, "sgSite": sg_site, "sgProject": sg_project}
+
+    def set_collection_rule(self, cid: str, rule: object) -> None:
+        """A smart collection's saved filter (a plain collection never becomes a smart one this way)."""
+        self.execute("UPDATE collections SET rule=? WHERE id=? AND rule IS NOT NULL", (_rule_json(rule), cid))
 
     def set_collection_icon(self, cid: str, icon: str | None, color: str | None) -> None:
         self.execute("UPDATE collections SET icon=?, color=? WHERE id=?", (icon or None, color or None, cid))
@@ -2938,6 +4195,12 @@ class Library:
     def move_collection(self, cid: str, parent_id: str | None) -> None:
         if parent_id == cid:
             return
+        if parent_id:
+            # nothing nests inside a smart collection, and a ShotGrid one stays at the top (under its project)
+            bad = self.query("SELECT 1 FROM collections WHERE (id=? AND (rule IS NOT NULL OR sg_site IS NOT NULL OR tracker IS NOT NULL))"
+                             " OR (id=? AND (sg_site IS NOT NULL OR tracker IS NOT NULL))", (parent_id, cid))
+            if bad:
+                return
         # Walking up from the proposed parent must never reach cid, or the move would turn cid
         # into its own ancestor.
         if parent_id:
@@ -2977,6 +4240,8 @@ class Library:
             self.conn.commit()
 
     def add_to_collection(self, cid: str, ids: list[str]) -> None:
+        if self.query("SELECT 1 FROM collections WHERE id=? AND rule IS NOT NULL", (cid,)):
+            return   # a smart collection has no members: its filter decides
         rows = [(cid, i) for i in ids if i]
         self.executemany(
             "INSERT OR IGNORE INTO collection_assets(collection_id, asset_id) VALUES (?,?)",
@@ -3011,7 +4276,7 @@ class Library:
         return rows
 
     def add_board(self, name: str) -> dict:
-        bid = asset_id(f"board:{time.time_ns()}:{name}")
+        bid = asset_id(f"board:{time.time_ns()}:{secrets.token_hex(8)}:{name}")
         now = int(time.time() * 1000)
         nxt = self.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM boards")[0]["n"]
         name = name.strip() or "Untitled"
@@ -3076,22 +4341,22 @@ class Library:
         groups = [dict(r) for r in self.query(
             "SELECT * FROM board_groups WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
         )]
-        annotations = [self._annotation_out(r) for r in self.query(
-            "SELECT * FROM annotations WHERE board_id=? AND deleted_at IS NULL ORDER BY z_index", (bid,)
-        )]
+        annotations = self.annotations_for_board(bid)
         return {"board": board, "items": items, "groups": groups, "annotations": annotations}
 
     def add_board_item(self, bid: str, body: dict) -> dict:
-        iid = asset_id(f"bitem:{time.time_ns()}:{body.get('asset_id', '')}")
+        iid = asset_id(f"bitem:{time.time_ns()}:{secrets.token_hex(8)}:{body.get('asset_id', '')}")
         now = int(time.time() * 1000)
         playback = body.get("playback_state")
+        aid = str(body.get("asset_id") or "")
+        arow = self.query("SELECT name, path FROM assets WHERE id=?", (aid,))  # snapshot; the body's copy is only a fallback (duplicate / undo of a card whose file is gone)
         self.execute(
             "INSERT INTO board_items(id, board_id, asset_id, group_id, x, y, w, h, rotation, "
             "z_index, opacity, desaturate, always_on_top, crop_x, crop_y, crop_w, crop_h, "
-            "color_label, locked, playback_state, flip_x, flip_y, created_at, updated_at, revision) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            "color_label, locked, playback_state, flip_x, flip_y, asset_name, asset_path, created_at, updated_at, revision) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
             (
-                iid, bid, str(body.get("asset_id") or ""), body.get("group_id"),
+                iid, bid, aid, body.get("group_id"),
                 float(body.get("x", 0)), float(body.get("y", 0)),
                 float(body.get("w", 240)), float(body.get("h", 240)),
                 float(body.get("rotation", 0)), int(body.get("z_index", 0)),
@@ -3101,6 +4366,8 @@ class Library:
                 body.get("color_label"), 1 if body.get("locked") else 0,
                 json.dumps(playback) if playback is not None else None,
                 1 if body.get("flip_x") else 0, 1 if body.get("flip_y") else 0,
+                arow[0]["name"] if arow else (str(body["asset_name"])[:1000] if body.get("asset_name") else None),
+                arow[0]["path"] if arow else (str(body["asset_path"])[:1000] if body.get("asset_path") else None),
                 now, now,
             ),
         )
@@ -3157,7 +4424,7 @@ class Library:
             self.conn.commit()
 
     def add_board_group(self, bid: str, item_ids: list[str], annotation_ids: list[str], name: str = "") -> dict:
-        gid = asset_id(f"bgroup:{time.time_ns()}:{bid}")
+        gid = asset_id(f"bgroup:{time.time_ns()}:{secrets.token_hex(8)}:{bid}")
         now = int(time.time() * 1000)
         self.execute(
             "INSERT INTO board_groups(id, board_id, name, created_at, updated_at, revision) VALUES (?,?,?,?,?,1)",
@@ -3216,11 +4483,21 @@ class Library:
             d["data"] = {}
         return d
 
-    def annotations_for_asset(self, aid: str) -> list[dict]:
+    def annotations_for_asset(self, aid: str, with_deleted: bool = False) -> list[dict]:
+        # with_deleted: tombstones too (deleted_at set) — the ShotGrid sync must see notes deleted here.
         rows = self.query(
-            "SELECT * FROM annotations WHERE scope='asset' AND target_asset_id=? AND deleted_at IS NULL "
-            "ORDER BY z_index",
+            "SELECT * FROM annotations WHERE scope='asset' AND target_asset_id=? "
+            + ("" if with_deleted else "AND deleted_at IS NULL ") + "ORDER BY z_index",
             (aid,),
+        )
+        return [self._annotation_out(r) for r in rows]
+
+    def annotations_for_board(self, bid: str) -> list[dict]:
+        """Free drawings and review notes of a canvas board (scope='board'), bottom to top."""
+        rows = self.query(
+            "SELECT * FROM annotations WHERE scope='board' AND board_id=? AND deleted_at IS NULL "
+            "ORDER BY z_index",
+            (bid,),
         )
         return [self._annotation_out(r) for r in rows]
 
@@ -3241,7 +4518,7 @@ class Library:
                 return self.update_annotation(want, body) or {}
             aid = want
         else:
-            aid = asset_id(f"anno:{time.time_ns()}:{scope}")
+            aid = asset_id(f"anno:{time.time_ns()}:{secrets.token_hex(8)}:{scope}")
         now = int(time.time() * 1000)
         self.execute(
             "INSERT INTO annotations(id, kind, shape_kind, scope, target_asset_id, target_board_item_id, "
@@ -3318,9 +4595,12 @@ class Library:
             "SELECT id, size, kind FROM assets WHERE lower(name)=? AND status='ready' ORDER BY added_at DESC",
             (name,),
         )
-        size = meta.get("size")
+        try:  # (the file's value may be anything; a library row may have no size)
+            size = int(meta.get("size"))
+        except (TypeError, ValueError):
+            size = None
         for r in rows:
-            if size is not None and int(r["size"]) == int(size):
+            if size is not None and r["size"] is not None and int(r["size"]) == size:
                 return self.get_asset(r["id"])
         for r in rows:
             if r["kind"] == meta.get("kind"):
@@ -3398,6 +4678,63 @@ class Library:
         )
         return [{"id": r["id"], "deleted_at": r["deleted_at"]} for r in rows]
 
+    # ---- tracker links (app/trackers.py; ShotGrid: docs/SHOTGRID.md) -----------------------------------
+    # An asset's link to a tracker's media entity (a ShotGrid Version) and the sync state, one per tracker key
+    # "<kind>:<host>". The link JSON is the adapter's own (ShotGrid: {site, project, version, task, entity, firstFrame}).
+    def _migrate_tracker_links(self) -> None:
+        """Once: the pre-0.107 ShotGrid links (sg_links, one per asset) become tracker_links rows under
+        "shotgrid:<the link's site>" (`host_norm`: no scheme guessed, its port kept). Run once only (a meta mark): a link dropped later must not come back from the
+        old table, which stays as it was for an older Sight."""
+        if self.conn.execute("SELECT 1 FROM meta WHERE key='tracker_links_from_sg'").fetchone():
+            return
+        from .trackers import tracker_key_of_host
+        for r in self.conn.execute("SELECT asset_id, link, state, updated_at FROM sg_links").fetchall():
+            try:
+                link = json.loads(r["link"])
+            except (TypeError, ValueError):
+                continue
+            # link.site is a host as the page's URL.host gave it (no scheme): its port is kept as it is
+            key = tracker_key_of_host("shotgrid", link["site"]) if isinstance(link, dict) and isinstance(link.get("site"), str) else ""
+            if key:
+                self.conn.execute("INSERT OR IGNORE INTO tracker_links(asset_id, tracker, link, state, updated_at) VALUES (?,?,?,?,?)",
+                                  (r["asset_id"], key, r["link"], r["state"] or "{}", r["updated_at"]))
+        self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('tracker_links_from_sg', '1')")
+
+    def get_tracker_link(self, aid: str, tracker: str) -> dict | None:
+        rows = self.query("SELECT link, state, updated_at FROM tracker_links WHERE asset_id=? AND tracker=?", (aid, tracker))
+        if not rows:
+            return None
+        try:
+            return {"link": json.loads(rows[0]["link"]), "state": json.loads(rows[0]["state"] or "{}"), "updated_at": rows[0]["updated_at"]}
+        except json.JSONDecodeError:
+            return None
+
+    def set_tracker_link(self, aid: str, tracker: str, link: dict | None = None, state: dict | None = None) -> None:
+        """Store the link and / or the sync state (None keeps what is there; a new link starts a fresh state)."""
+        now = int(time.time() * 1000)
+        with self.lock:
+            cur = self.conn.execute("SELECT link, state FROM tracker_links WHERE asset_id=? AND tracker=?", (aid, tracker)).fetchone()
+            if cur is None and link is None:
+                return
+            new_link = json.dumps(link) if link is not None else cur["link"]
+            if state is not None:
+                new_state = json.dumps(state)
+            elif cur is None or (link is not None and cur["link"] != new_link):
+                new_state = "{}"
+            else:
+                new_state = cur["state"]
+            self.conn.execute(
+                "INSERT INTO tracker_links(asset_id, tracker, link, state, updated_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(asset_id, tracker) DO UPDATE SET link=excluded.link, state=excluded.state, updated_at=excluded.updated_at",
+                (aid, tracker, new_link, new_state, now),
+            )
+            self.conn.commit()
+
+    def drop_tracker_link(self, aid: str, tracker: str) -> None:
+        with self.lock:
+            self.conn.execute("DELETE FROM tracker_links WHERE asset_id=? AND tracker=?", (aid, tracker))
+            self.conn.commit()
+
     @staticmethod
     def merge_replies(a: list | None, b: list | None) -> list[dict]:
         """Union of two reply lists by id; for the same id the later edit (or delete) wins."""
@@ -3409,8 +4746,12 @@ class Library:
             if not isinstance(x, dict) or not x.get("id"):
                 continue
             k = str(x["id"])
-            if k not in out or stamp(x) > stamp(out[k]):
-                out[k] = x
+            prev = out.get(k)
+            # A ShotGrid reply id (FORMAT.md `sg`) is kept from either copy: only one client sent the reply.
+            if prev is None or stamp(x) > stamp(prev):
+                out[k] = {**x, "sg": prev["sg"]} if prev is not None and not x.get("sg") and prev.get("sg") else x
+            elif not prev.get("sg") and x.get("sg"):
+                out[k] = {**prev, "sg": x["sg"]}
         return sorted(out.values(), key=lambda x: Library._stamp(x.get("created")))
 
     @staticmethod
@@ -3440,7 +4781,8 @@ class Library:
         return cls._stamp(updated or created)
 
     def import_annotations(self, target: str, rows: list[dict], deleted: list[dict] | None = None,
-                           shot_map: dict[str, str] | None = None) -> dict:
+                           shot_map: dict[str, str] | None = None, restore: bool = False,
+                           kept_deleted: list[str] | None = None, restore_before: int | None = None) -> dict:
         """Merges the annotation rows of a review package into asset `target`.
 
         Rows keep their ids, so importing the same file twice — or a file that went to a reviewer
@@ -3452,7 +4794,13 @@ class Library:
         its open/done state goes by `data.status_at`, whichever side is newer otherwise.
         `shot_map` renames screenshot ids (see review.put_shot). The whole merge is one
         transaction: a malformed row rolls everything back. Returns counts
-        {added, updated, deleted, unchanged}."""
+        {added, updated, deleted, unchanged}.
+
+        Sight only (not in the JS port): `restore=True` brings back rows deleted here that the
+        package holds even when the delete is later than their content (the user asked to restore
+        them from the file); `kept_deleted`, when given, collects the ids of such rows that stayed
+        deleted, so the caller can offer that restore. `restore_before` (ms): restore only rows deleted
+        at or before it — the time of the first pass, so a row deleted here after the offer stays deleted."""
         stats = {"added": 0, "updated": 0, "deleted": 0, "unchanged": 0}
         id_re = re.compile(r"[0-9a-f]{16}")
         shot_map = shot_map or {}
@@ -3491,6 +4839,8 @@ class Library:
                         data["note"] = ids[data["note"]]
                     if isinstance(data.get("shots"), list):
                         data["shots"] = [shot_map.get(str(x), str(x)) for x in data["shots"]]
+                    if isinstance(data.get("shot"), str):  # a reference image's picture (kind "image")
+                        data["shot"] = shot_map.get(data["shot"], data["shot"])
                     if not isinstance(data.get("replies"), (list, type(None))):
                         data["replies"] = []
                     if data.get("replies"):  # pictures attached to replies (web page / Sight)
@@ -3525,12 +4875,20 @@ class Library:
                     except json.JSONDecodeError:
                         have = {}
                     inc_at = self._content_at(kind, data, r.get("created_at"), upd)
+                    revived = False
                     if cur["deleted_at"] is not None:
                         # Deleted here: only content edited after the delete brings it back.
                         if inc_at <= st(cur["deleted_at"]):
-                            stats["unchanged"] += 1
-                            continue
-                        newer = True
+                            if not restore or (restore_before is not None and st(cur["deleted_at"]) > restore_before):
+                                if kept_deleted is not None:
+                                    kept_deleted.append(rid)
+                                stats["unchanged"] += 1
+                                continue
+                            revived = True  # restored on request: stamped as edited now (below)
+                            # Undelete: the local copy's content stays when it is the newer one.
+                            newer = inc_at > self._content_at(kind, have, cur["created_at"], cur["updated_at"])
+                        else:
+                            newer = True
                     else:
                         newer = inc_at > self._content_at(kind, have, cur["created_at"], cur["updated_at"])
                     merged = dict(data if newer else have)
@@ -3542,11 +4900,21 @@ class Library:
                             merged["status"], merged["status_at"] = data.get("status"), b_at
                         elif a_at > b_at:
                             merged["status"], merged["status_at"] = have.get("status"), a_at
+                        # The ShotGrid link (FORMAT.md `data.sg`) is kept from either side, whichever content won.
+                        other = have if newer else data
+                        if not merged.get("sg") and other.get("sg"):
+                            merged["sg"] = other["sg"]
                     elif kind == "status" and (have.get("history") or data.get("history")):
                         merged["history"] = self.merge_history(have.get("history"), data.get("history"))
-                    if not newer and merged == have:
+                    if not newer and not revived and merged == have:
                         stats["unchanged"] += 1
                         continue
+                    if revived:
+                        # A deliberate restore is an edit made now: an old tombstone of this row (in a
+                        # later package) must not delete it again, and other copies revive it on merge.
+                        if kind == "note":
+                            merged["edited_at"] = now
+                        upd = max(upd, now)
                     if newer:
                         self.conn.execute(
                             "UPDATE annotations SET kind=?, shape_kind=?, x=?, y=?, w=?, h=?, rotation=?, "
@@ -3556,7 +4924,8 @@ class Library:
                         )
                     else:
                         self.conn.execute(
-                            "UPDATE annotations SET data=?, updated_at=?, revision=revision+1 WHERE id=?",
+                            "UPDATE annotations SET data=?, updated_at=?, deleted_at=NULL, revision=revision+1 "
+                            "WHERE id=?",  # (deleted_at is set here only on a restore)
                             (json.dumps(merged), max(now, st(cur["updated_at"])), rid),
                         )
                     stats["updated"] += 1
@@ -3647,6 +5016,84 @@ class Library:
             self.execute("UPDATE OR IGNORE tag_order SET name=? WHERE lower(name)=?", (new_name, want))
             self.execute("UPDATE OR IGNORE tag_meta SET name=? WHERE lower(name)=?", (new_name, want))
         return n
+
+    # ---- Review panel previews (annotate.js previewFrame / view3dPic) ------------------------------
+    # The review panel's note pictures (a video frame, a 3D still) are made in the browser, which is slow (a
+    # seek or a render each); it stores each one here so the next opening of the panel only loads files.
+    # "thumbs/nprev/<aid>_<size>_<mtime_ns>_<key>.jpg": a changed source file makes them stale (dropped on the
+    # next listing); the asset delete / rename / changed-file paths cover "<aid>_*" too. The browser prunes
+    # them when notes go (prune_note_previews with the keys its live notes still show).
+    NPREV_KEY = re.compile(r"^[A-Za-z0-9.-]{1,64}$")
+    NPREV_AID = re.compile(r"^[0-9a-f]{16}$")  # asset_id(): also keeps glob characters out of the patterns below
+    NPREV_MAX_BYTES = 4 * 1048576
+
+    def _nprev_prefix(self, aid: str) -> str | None:
+        if not self.NPREV_AID.match(aid or ""):
+            return None
+        a = self.get_asset(aid)
+        stamp = self._play_stamp(a["path"]) if a else None
+        return f"{aid}_{stamp}_" if stamp else None
+
+    def note_previews(self, aid: str) -> dict:
+        """The keys stored for asset ``aid`` (its current file only; stale ones are deleted) and the stamp
+        that versions their URLs."""
+        prefix = self._nprev_prefix(aid)
+        if not prefix:  # no such asset, or its file is offline: nothing listed, nothing deleted
+            return {"keys": [], "v": ""}
+        keys = []
+        for p in (self.thumbs / "nprev").glob(f"{aid}_*.jpg"):
+            if p.name.startswith(prefix):
+                keys.append(p.name[len(prefix):-4])
+            else:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        return {"keys": sorted(keys), "v": prefix[len(aid) + 1:-1]}
+
+    def note_preview_path(self, aid: str, key: str) -> Path | None:
+        if not self.NPREV_KEY.match(key or ""):
+            return None
+        prefix = self._nprev_prefix(aid)
+        p = self.thumbs / "nprev" / f"{prefix}{key}.jpg" if prefix else None
+        return p if p and p.is_file() else None
+
+    def save_note_preview(self, aid: str, key: str, data: bytes, version: str = "") -> bool:
+        """Stores one preview. ``version``: the stamp the browser listed (note_previews "v") — a preview made
+        from an older version of the file than the one there now is refused, not stored as current."""
+        if not self.NPREV_KEY.match(key or "") or not data or len(data) > self.NPREV_MAX_BYTES or data[:2] != b"\xff\xd8":
+            return False
+        prefix = self._nprev_prefix(aid)
+        if not prefix or prefix != f"{aid}_{version}_":
+            return False
+        d = self.thumbs / "nprev"
+        d.mkdir(parents=True, exist_ok=True)
+        final = d / f"{prefix}{key}.jpg"
+        tmp = d / f"{prefix}{key}.{secrets.token_hex(4)}.part"
+        try:
+            tmp.write_bytes(data)
+            tmp.replace(final)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            return False
+        return True
+
+    def prune_note_previews(self, aid: str, keep: list[str]) -> int:
+        """Deletes asset ``aid``'s stored previews whose key is not in ``keep``; returns how many went."""
+        keep_set = {k for k in keep if isinstance(k, str)}
+        prefix = self._nprev_prefix(aid)
+        if not prefix:  # no such asset / its file offline: leave everything alone
+            return 0
+        gone = 0
+        for p in (self.thumbs / "nprev").glob(f"{aid}_*.jpg"):
+            if p.name.startswith(prefix) and p.name[len(prefix):-4] in keep_set:
+                continue
+            try:
+                p.unlink(missing_ok=True)
+                gone += 1
+            except OSError:
+                pass
+        return gone
 
     def get_asset(self, aid: str) -> dict | None:
         rows = self.query("SELECT * FROM assets WHERE id=?", (aid,))

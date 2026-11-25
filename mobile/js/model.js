@@ -259,6 +259,7 @@ export function shotIds(rows){
   live(rows).forEach((r) => {
     const d = r.data || {};
     (d.shots || []).forEach((s) => out.add(String(s)));
+    if (r.kind === "image" && typeof d.shot === "string") out.add(d.shot);  // a reference image's picture
     (d.replies || []).forEach((x) => { if (x && !x.deleted) (x.shots || []).forEach((s) => out.add(String(s))); });
   });
   return out;
@@ -278,14 +279,48 @@ export function buildPackage({ asset, rows, shots, author, app }, now = Date.now
   };
 }
 // review.parse_package's checks.
-export function parsePackage(text){
-  let pkg;
-  try { pkg = JSON.parse(String(text).replace(/^﻿/, "")); }
-  catch { throw new Error("Not a Sight review file"); }
+function checkPackage(pkg){
   if (!pkg || typeof pkg !== "object" || pkg.format !== RC().FORMAT) throw new Error("Not a Sight review file");
   if ((parseInt(pkg.version, 10) || 0) > RC().FORMAT_VERSION) throw new Error("This review file was made by a newer Sight");
   if (!Array.isArray(pkg.annotations) || !pkg.asset || typeof pkg.asset !== "object") throw new Error("Review file is incomplete");
   return pkg;
+}
+function parseJson(text){
+  try { return JSON.parse(String(text).replace(/^\ufeff/, "")); }
+  catch { throw new Error("Not a Sight review file"); }
+}
+export const parsePackage = (text) => checkPackage(parseJson(text));
+
+// ---- bundle: several clips' packages in one .srev (FORMAT.md "Bundle") --------------------------
+
+export const BUNDLE_FORMAT = "sight-review-bundle", BUNDLE_VERSION = 1;
+// review.parse_review_file: a .srev → {bundle: header (every key but packages) | null, entries}. A plain
+// package gives {bundle: null, entries: [pkg]} and throws like parsePackage; a bundle gives one entry per
+// inner package — the checked package, or the Error it failed with (err.clipName for the report), so a
+// damaged clip is reported for that clip, not for the whole file.
+export function parseReviewFile(text){
+  const obj = parseJson(text);
+  if (!obj || typeof obj !== "object" || obj.format !== BUNDLE_FORMAT) return { bundle: null, entries: [checkPackage(obj)] };
+  // Python's int(version or 0): a number is truncated; a string must be a whole decimal number.
+  const raw = obj.version, v = !raw ? 0 : typeof raw === "number" || typeof raw === "boolean" ? Math.trunc(Number(raw))
+    : typeof raw === "string" && /^\s*[+-]?\d+\s*$/.test(raw) ? parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(v)) throw new Error("Review file is incomplete");
+  if (v > BUNDLE_VERSION) throw new Error("This review file was made by a newer Sight");
+  if (!Array.isArray(obj.packages)) throw new Error("Review file is incomplete");
+  if (!obj.packages.length) throw new Error("This review file holds no clips");
+  const entries = obj.packages.map((p) => {
+    try { return checkPackage(p); }
+    catch (e){ const a = p && typeof p === "object" ? p.asset : null; e.clipName = a && typeof a === "object" ? String(a.name || "") : ""; return e; }
+  });
+  const bundle = Object.fromEntries(Object.entries(obj).filter(([k]) => k !== "packages"));
+  return { bundle, entries };
+}
+// review.build_bundle: the packages (in clip order) in one envelope; `id` = the group's bundle id (a reply
+// keeps the id of the bundle it answers).
+export function buildBundle({ packages, id, title, author, app }, now = Date.now()){
+  const out = { format: BUNDLE_FORMAT, version: BUNDLE_VERSION, id: id || RC().uid(), app, exported_at: now, author: author || "", packages };
+  if (title) out.title = title;
+  return out;
 }
 // Merges a package into the rows held here by the shared rules (review-core mergeRows =
 // Library.import_annotations). shotMap renames picture ids (non-hex ids get one derived from the

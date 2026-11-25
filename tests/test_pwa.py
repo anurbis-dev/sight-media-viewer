@@ -47,21 +47,11 @@ def has_playwright() -> bool:
 
 
 def sight_import(lib: Library, raw: bytes) -> tuple[dict, dict]:
-    """What POST /api/review/import does with a package."""
-    pkg = review.parse_package(raw)
-    meta = pkg["asset"]
-    rows = [r for r in pkg["annotations"] if isinstance(r, dict)]
-    a = lib.get_asset(str(meta["id"])) if meta.get("id") else None
-    a = a if a and a.get("status") == "ready" else None
-    a = a or lib.asset_holding_annotations([str(r.get("id")) for r in rows]) or lib.match_review_asset(meta)
-    if not a:
-        raise AssertionError(f"Sight found no asset for {meta.get('name')}")
-    shot_map = {}
-    for sid, url in (pkg.get("shots") or {}).items():
-        data = review.decode_data_url(url)
-        if data:
-            shot_map[str(sid)] = review.put_shot(lib.root, str(sid), data)
-    return a, lib.import_annotations(a["id"], rows, pkg.get("deleted") or [], shot_map)
+    """What POST /api/review/import does with a package (the same function)."""
+    res = review.import_review_file(lib, raw)
+    if not res.get("ok"):
+        raise AssertionError(f"Sight found no asset for {res.get('missing')}")
+    return lib.get_asset(res["asset_id"]), res
 
 
 class Build(unittest.TestCase):
@@ -78,7 +68,7 @@ class Build(unittest.TestCase):
             files = json.loads(sw.split("var FILES = ", 1)[1].split(";\n", 1)[0])
             on_disk = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()} - {"sw.js", ".nojekyll"}
             self.assertEqual(set(files) - {"./"}, on_disk)
-            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "core/model3d-core.js",
+            for f in ("core/review-core.js", "core/review-draw.js", "core/keys.js", "core/caption-plate.js", "core/model3d-core.js", "core/filter-core.js", "core/trackers-core.js",
                       "three/three.module.js", "three/jsm/loaders/GLTFLoader.js", "three/jsm/libs/draco/gltf/draco_decoder.wasm",
                       "manifest.webmanifest", "icons/icon-512.png"):
                 self.assertIn(f, files)
@@ -99,6 +89,37 @@ class Unit(unittest.TestCase):
             self.assertEqual(doc.metadata["title"], "Review — небо 空")
             self.assertEqual(len(doc[0].get_images()), 1)
             doc.close()
+
+
+    @unittest.skipUnless(NODE and shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs node, ffmpeg and ffprobe")
+    def test_mp4_track(self) -> None:
+        """mp4.js trackFromMoov (0.96.1, the phone's WebCodecs scrub cache): every frame's presentation time as the
+        player has it (ctts + edit list), sync samples, the codec string and the display turn — against ffprobe, on
+        H.264 with B-frames, a 90° turn and a variable frame rate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            src, rot = Path(tmp) / "vfr.mp4", Path(tmp) / "rot.mp4"
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=3",
+                            "-vf", "select='lt(t,1.5)+not(mod(n,2))'", "-fps_mode", "vfr", "-c:v", "libx264", "-g", "20", "-bf", "2",
+                            "-pix_fmt", "yuv420p", str(src)], check=True)
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-display_rotation", "90", "-i", str(src), "-c", "copy", str(rot)], check=True)
+            js = ("import('" + (ROOT / "mobile" / "js" / "mp4.js").as_uri() + "').then(async (m) => { const fs = require('fs');"
+                  " const t = await m.videoTrack(new Blob([fs.readFileSync(process.argv[1])]));"
+                  " console.log(JSON.stringify({ codec: t.codec, rot: t.rot, n: t.n, pts: Array.from(t.sorted), keys: Array.from(t.key).reduce((a, k, i) => k ? a.concat(i) : a, []) })); })")
+            for path, want_rot in ((src, 0), (rot, 270)):
+                r = subprocess.run([NODE, "-e", js, str(path)], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                got = json.loads(r.stdout)
+                pr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "frame=best_effort_timestamp_time,key_frame",
+                                     "-of", "json", str(path)], capture_output=True, text=True, check=True)
+                frames = json.loads(pr.stdout)["frames"]
+                want = sorted(float(f["best_effort_timestamp_time"]) for f in frames)
+                self.assertEqual(len(got["pts"]), len(want))
+                for a, b in zip(got["pts"], want):
+                    self.assertAlmostEqual(a, b, delta=1e-3)
+                self.assertTrue(got["codec"].startswith("avc1.64"), got["codec"])
+                self.assertEqual(got["rot"], want_rot)
+                self.assertEqual(got["keys"][0], 0)
+                self.assertGreater(len(got["keys"]), 1)
 
 
 @unittest.skipUnless(has_playwright(), "node with Playwright is not available")
@@ -253,6 +274,184 @@ class RoundTrip(unittest.TestCase):
         bnote = next(r for r in live if r["kind"] == "note" and r["data"]["text"].startswith("Sky"))
         self.assertIn("From Sight", [x.get("text") for x in bnote["data"]["replies"]])
 
+
+    def test_seq_bar(self) -> None:
+        """Phone sequences (0.88): a group's videos end to end under the timeline; a tap / drag on the bar, play
+        past a clip's end and a scrub on the picture go on into the next clip; a swipe on the title switches."""
+        if not (self.video and has_playwright()):
+            self.skipTest("needs ffmpeg, node and Playwright")
+        d = self.tmp / "seqbar"
+        d.mkdir()
+        for name, color in (("seq_a.webm", "red"), ("seq_b.webm", "blue")):
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:size=320x180:rate=24:duration=2",
+                            "-c:v", "libvpx-vp9", "-b:v", "100k", str(d / name)], check=True)
+        res = self.e2e("seqbar", self.base, str(d))
+        self.assertEqual(res["segs"], [["seq_a.webm", True], ["seq_b.webm", False]])
+        self.assertLessEqual(res["cacheSpan"][0], 1.2)  # the open clip's cache runs around the playhead...
+        self.assertGreaterEqual(res["cacheSpan"][1], 1.9, res.get("cacheDbg"))
+        self.assertTrue(res["adopted"])  # ...and clip b's (filled as the neighbour) is taken over at the cut
+        self.assertAlmostEqual(res["tap"][0], 1.0, delta=0.1)
+        self.assertEqual(res["tap"][1], "seq_b.webm")
+        self.assertAlmostEqual(res["drag"][0], 1.0, delta=0.1)
+        self.assertFalse(res["drag"][1])
+        self.assertTrue(res["played"])
+        self.assertEqual(res["swipe"], ["seq_a.webm", "seq_b.webm"])
+        self.assertFalse(res["scrub"])  # landed in the second clip (ready), the drag over
+        self.assertAlmostEqual(res["touch"][0], 1.6, delta=0.1)
+        self.assertFalse(res["touch"][1])
+        self.assertEqual(res["endSeek"], "seq_b.webm")  # last clip, loop on: a paused seek to the end stays
+        self.assertEqual(res["hist"], 0)  # every move replaces the history entry
+        self.assertEqual(res["hold"], 0)  # the held frame is gone once the clip shows
+        self.assertTrue(res["toolsAbove"])  # drawing canvas: the tools over the transport
+        self.assertGreater(res["rowScroll"][1], 0)  # 300 px wide: the row does not fit...
+        self.assertEqual(res["rowScroll"][0], min(80, res["rowScroll"][1]))  # ...and an 80 px finger drag scrolls it all the way
+
+    def test_wcache(self) -> None:
+        """Phone scrub cache on MP4s (0.96.1): decoded with WebCodecs — every frame of both clips of a sequence;
+        a timeline drag over cached frames does not seek the player until it is let go; a drag across the cut shows
+        the next clip's own cached frame (not the last clip's) while that clip opens. 0.96.2: a play from a frame the
+        player is not on yet, and a play on across the cut, start from the cache (the bridge). VP9 in MP4 (vpcC): Chromium
+        builds without H.264 decode it too."""
+        if not (self.video and has_playwright()):
+            self.skipTest("needs ffmpeg, node and Playwright")
+        d = self.tmp / "wcache"
+        d.mkdir()
+        for name, src in (("wc_a.mp4", "testsrc2"), ("wc_b.mp4", "rgbtestsrc")):
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"{src}=size=320x180:rate=24:duration=3",
+                            "-c:v", "libvpx-vp9", "-b:v", "200k", "-g", "24", "-pix_fmt", "yuv420p", str(d / name)], check=True)
+        res = self.e2e("wcache", self.base, str(d))
+        self.assertEqual(res["cache"], [72, True, 72, True, 0])  # every frame of the open clip and of its neighbour
+        self.assertEqual(res["during"], [0, True, True])  # dragging: the cached picture, the player not sought
+        self.assertEqual(res["rest"], [1, True])  # a finger resting on a frame: one seek there
+        self.assertEqual(res["after"][0], 1)  # let go on that frame: no other seek...
+        self.assertAlmostEqual(res["after"][1], 2.1, delta=0.1)  # ...to where the drag ended (70 % of 3 s)
+        self.assertIn("IMG:blob", res["holds"])  # across the cut: the next clip's cached frame
+        self.assertEqual(res["landed"][0], "wc_b.mp4")
+        self.assertTrue(res["landed"][2])  # its cache taken over
+        # Play from a frame the player is still seeking to (seeks made costly): the cache plays from that frame, the
+        # player is sent to the next keyframe (1 s) and takes over there; the picture never goes back.
+        br = res["bridge"]
+        self.assertEqual(br["t1"], [1])
+        self.assertEqual(len(br["seeks"]), 2, br)  # the tap's seek (0.3 s, a quarter into its frame), then the keyframe
+        self.assertAlmostEqual(br["seeks"][0], 0.302, delta=0.002)
+        self.assertAlmostEqual(br["seeks"][1], 1.01, delta=0.002)
+        self.assertAlmostEqual(br["shown"][0], 0.292, delta=0.002)
+        self.assertGreater(br["shown"][1], br["shown"][0])
+        self.assertEqual(br["back"], 0)
+        self.assertEqual(br["early"], 0, br)  # (a faked slow start) the cache until the player has moved off 1 s
+        self.assertGreater(br["cached"], 3)
+        self.assertEqual(br["end"], [True, False, 1, False])  # the player's own picture, playing, its rate and sound back
+        self.assertFalse(br["elMuted"])  # 0.96.5: the bridge mutes nothing (a clip with no sound catches up at 2x)
+        # Played on past the clip's end: the next clip starts from its cached frames (the bridge), then its player.
+        # (A player that starts at once hands over within a frame or two: the bridge may be too short to be sampled.)
+        last = res["cut"]["last"]
+        self.assertEqual(last["name"], "wc_b.mp4", res["cut"])
+        self.assertLess(last["t"], 0.5)
+        self.assertEqual(res["cut"]["end"], [True, False, 1, False])  # rate and sound back
+        self.assertEqual(res["cut"]["back"], 0)
+        self.assertEqual(res["cut"]["aModes"], [])  # clip a (fast start) played plainly...
+        self.assertEqual(res["cut"]["ended"], 1)  # ...to its end
+        # 0.96.3: from the frame the player stands on, its start slow (faked 0.3 s): the cache plays at once, the
+        # player (not sought) plays at its own rate with sound while the picture slows until it has caught up.
+        st = res["stay"]
+        self.assertEqual(st["modes"], ["stay"], st)
+        self.assertEqual(st["seeks"], [])
+        self.assertAlmostEqual(st["first"], 1.5, delta=0.05)
+        self.assertEqual(st["back"], 0)
+        # 0.96.5, a clip with sound: the player at its own rate with its sound all along, the picture slowed.
+        self.assertEqual(st["fast"], 1)
+        self.assertFalse(st["muted"])
+        self.assertLess(st["speed"], 0.85, st)
+        self.assertEqual(st["midVol"], [False, 0.5, True])  # a level set mid-bridge applies at once
+        self.assertEqual(st["vol"], [False, 0.5])
+        self.assertEqual(st["last"]["why"], "player", st["last"])  # handed over by the player...
+        self.assertLess(st["last"]["ms"], (st["last"]["h"] + 0.35) * 1000, st["last"])  # ...on time
+        ps = res["pauseSeek"]
+        self.assertEqual(ps["atPause"]["sk"], [], ps)  # no seek at the pause...
+        self.assertTrue(ps["atPause"]["paused"], ps)
+        self.assertAlmostEqual(ps["atPause"]["padT"], ps["t"], delta=1e-6)  # ...the frame noted
+        self.assertEqual(ps["sk"], [], ps)  # the next play: no seek (0.96.6)...
+        self.assertEqual(ps["last"]["mode"], "stay", ps)  # ...a bridge from the paused frame...
+        self.assertAlmostEqual(ps["last"]["pad"], ps["t"], delta=1e-6)
+        self.assertAlmostEqual(ps["last"]["x"], ps["t"] + 0.2, delta=1e-3)  # ...expecting the player padJ (0.2) ahead
+        self.assertEqual(ps["last"]["why"], "player", ps)  # handed over by the player (no jump here: it is behind)
+        self.assertLess(ps["last"]["ms"], (ps["last"]["h"] + 0.8) * 1000, ps)
+        self.assertIsNone(ps["muted"]["padT"], ps)  # a muted pause notes nothing
+        self.assertTrue(ps["muted"]["paused"], ps)
+        self.assertIsNotNone(ps["noCache"]["padT"], ps)  # noted, but no cached frames there:
+        self.assertEqual(ps["noCache"]["sk"], [], ps)  # a plain play
+        self.assertFalse(ps["noCache"]["bridge"], ps)
+        self.assertGreater(st["cached"], 3)
+        self.assertEqual(st["end"], [True, False, 1, False])
+        # Near the clip's end with no time to catch up: the cache plays the tail alone, then on into the next clip.
+        tl = res["tail"]
+        self.assertEqual(tl["modes"], ["tail"], tl)
+        self.assertEqual(tl["seeks"], [])  # the player is left where it stands
+        self.assertTrue(tl["paused"])
+        self.assertGreater(tl["last"], 2.9)
+        self.assertTrue(res["again"])  # played to the end of the last clip: a tap plays it from the start
+        # A tap during the bridge: paused on the frame shown; the player lands on that frame.
+        on, T, ended, paused, ct = res["halt"]
+        self.assertTrue(on and ended and paused, res["halt"])
+        self.assertGreater(T, 0.3)
+        self.assertEqual(int(ct * 24 + 1e-6), int(T * 24 + 1e-6), res["halt"])
+
+    def test_bundle(self) -> None:
+        """Multi-clip stage 3: the phone opens a Sight bundle (one group, a damaged clip reported), a note
+        on one clip goes back as a bundle of that clip only, with the same bundle id, and Sight merges it."""
+        home = self.tmp / "home_bundle"
+        home.mkdir()
+        lib = Library(home)
+        try:
+            sid = lib.add_source(str(self.media))["id"]
+            deadline = time.time() + 30
+            while time.time() < deadline and lib.query("SELECT COUNT(*) AS n FROM assets WHERE source_id=? AND status='ready'", (sid,))[0]["n"] < 2:
+                time.sleep(0.2)
+            assets = {a["name"]: a for a in lib.query("SELECT * FROM assets WHERE source_id=?", (sid,))}
+            now = int(time.time() * 1000)
+            pkgs = []
+            for name in ("shot_v001.png", "boxes_v001.glb"):
+                a = lib.get_asset(assets[name]["id"])
+                lib.add_annotation({"scope": "asset", "target_asset_id": a["id"], "kind": "note",
+                                    "data": {"text": "Desk on " + name, "author": "Desk", "created": now, "status": "open", "ctx": None, "shots": []}})
+                pkgs.append(review.build_package(a, lib.annotations_for_asset(a["id"]), lib.root, "Desk", "test"))
+            broken = {"format": "sight-review", "version": 1, "asset": {"name": "broken.mov"}}
+            bundle = review.build_bundle(pkgs + [broken], "Desk", "test", "Sequence review — 2 clips", "b0b0b0b0b0b0b0b0")
+            src, out = self.tmp / "seq.srev", self.tmp / "seq_reply.srev"
+            src.write_text(json.dumps(bundle), encoding="utf-8")
+            res = self.e2e("bundle", self.base, str(src), str(self.media), str(out))
+            self.assertIn("Merged 2 clips from Desk", res["toast"])
+            self.assertIn("1 damaged: broken.mov", res["toast"])
+            self.assertEqual(res["groupRows"], 1)
+            self.assertEqual(len(res["groups"]), 1)
+            g = res["groups"][0]
+            self.assertEqual((g["bundle"], g["name"], len(g["keys"])), ("b0b0b0b0b0b0b0b0", "Sequence review — 2 clips", 2))
+            self.assertEqual(res["nomedia"], 2)
+            self.assertEqual(res["nomediaAfter"], 1)
+            for m in res["metas"]:
+                self.assertEqual((m["groups"], m["changed"], m["nomedia"]), (["b0b0b0b0b0b0b0b0"], False, True))
+            self.assertIn("1 clip", res["sheet"])
+            self.assertEqual(res["changedAfter"], [False, False])
+            self.assertEqual(res["second"], "Nothing changed")
+            # The sequence: opened from the group's picture, clip by clip, Back leaves it, reopens where left.
+            self.assertEqual(res["seq"][:2], ["shot_v001.png", True])
+            self.assertIn("Sequence review — 2 clips · 1 / 2", res["seq"][2])
+            self.assertTrue(res["seq"][3])
+            self.assertEqual(res["seqHist"], 1)  # one entry for the whole sequence
+            self.assertEqual(res["seqResume"], "boxes_v001.glb")
+            reply = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual((reply["format"], reply["id"], reply["author"]), ("sight-review-bundle", "b0b0b0b0b0b0b0b0", "Phone Tester"))
+            self.assertEqual([p["asset"]["name"] for p in reply["packages"]], ["shot_v001.png"])
+            back = review.import_review_file(lib, out.read_bytes())
+            self.assertTrue(back.get("bundle"))
+            self.assertEqual([(r["ok"], r.get("added")) for r in back["results"]], [(True, 1)])
+            texts = sorted(r["data"]["text"] for r in lib.annotations_for_asset(assets["shot_v001.png"]["id"]) if r["kind"] == "note")
+            self.assertEqual(texts, ["Desk on shot_v001.png", "Phone note in the bundle"])
+        finally:
+            for w in list(lib._watchers.values()):
+                w.stop()
+                w.join(5)
+            lib.close()
 
     def test_model3d(self) -> None:
         out = self.tmp / "out3d"
@@ -481,6 +680,36 @@ class RoundTrip(unittest.TestCase):
         for a, b in zip(u["bounds"]["min"] + u["bounds"]["max"], [-1.5, -0.5, -0.5, 1.5, 0.5, 0.5]):
             self.assertAlmostEqual(a, b, delta=0.02)
 
+    def test_shotgrid(self) -> None:
+        # docs/SHOTGRID.md: the phone's connection form, link to a Version and Sync against the fake site (any origin)
+        fake = subprocess.Popen([NODE, str(ROOT / "tests" / "sg_fake_server.cjs")], stdout=subprocess.PIPE, text=True)
+        try:
+            site = json.loads(fake.stdout.readline())["site"]
+            r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg.cjs"), self.base, str(self.media / "shot_v001.png"), site],
+                               capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+            self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
+            res = json.loads(r.stdout.strip().splitlines()[-1])
+            self.assertEqual((res["ok"], res["rows"], res["attachments"]), (True, 2, 1))
+            # the home screen's ShotGrid page: swipe, filter, cached thumbnails, a Version opened linked
+            r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg_browser.cjs"), self.base, site, str(self.tmp)],
+                               capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+            self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
+            # two sites of ShotGrid at once (0.110): the old single connection migrated, a tab per site, one disconnected
+            fake2 = subprocess.Popen([NODE, str(ROOT / "tests" / "sg_fake_server.cjs")], stdout=subprocess.PIPE, text=True)
+            try:
+                site2 = json.loads(fake2.stdout.readline())["site"]
+                r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_sg_multi.cjs"), self.base, site, site2],
+                                   capture_output=True, text=True, timeout=300, cwd=ROOT / "tests")
+                self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-4000:])
+            finally:
+                fake2.terminate()
+                fake2.wait(5)
+                fake2.stdout.close()
+        finally:
+            fake.terminate()
+            fake.wait(5)
+            fake.stdout.close()
+
     def test_touch(self) -> None:
         if not self.video:
             self.skipTest("ffmpeg is not installed (no test clip)")
@@ -509,7 +738,7 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(res["itemsAfterHold"], 0)  # the hold's dot is dropped
         self.assertEqual(res["undoRedo"], [1, 0, 1])
         self.assertEqual(res["brushReset"], [6, True, 1])
-        # Hold + drag sideways: the tool's opacity (not its size), shown in the preview; nothing drawn.
+        # Hold + drag down: the tool's opacity (not its size), shown in the preview; nothing drawn.
         self.assertEqual(res["opac"][0], 1)
         self.assertLess(res["opac"][1], 0.9)
         self.assertEqual(res["opac"][2:], [True, True, 0])
@@ -593,6 +822,8 @@ class RoundTrip(unittest.TestCase):
         # Auto full screen on a plain tap, not a scrub / drag / hold (again after the reload);
         # Settings → Off leaves it.
         self.assertEqual(res["fullscreen"], [False, True, False, True, [False, "0"]])
+        # Settings: no Done / Change name buttons, the name is tappable, a swipe down closes it.
+        self.assertEqual(res["settingsUi"], [True, True, True])
         self.assertEqual(res["group"], [["shot", "grp-a,grp-b", False], ["shot", "grp-a,grp-b", True], None, 0])
         # Reply on a video note: over the player (panel closed, compose bar, 2 frame chips + ticks),
         # from the note's first frame; a chip goes to its frame; drawn on a new frame, sent, the

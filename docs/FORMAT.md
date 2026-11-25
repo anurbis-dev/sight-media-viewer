@@ -3,10 +3,16 @@
 The data contract shared by Sight, the HTML reviewer page, the mobile app (docs/PLAN-mobile.md)
 and the owner's tracker. Sight stores the same rows in its `annotations` table; a `.srev` file is
 those rows plus the media's identity and the pictures. Code that reads or writes this data:
-`app/review.py` (`build_package`, `parse_package`), `app/library.py` (`import_annotations` and
+`app/review.py` (`build_package`, `parse_package`, `build_bundle`, `parse_review_file`), `app/library.py` (`import_annotations` and
 friends — the reference merge), `app/static/review-core.js` (rendering + the JS port of the merge),
 `app/static/annotate.js` (Sight's editor), `mobile/js/model.js` (the phone app: every row it
 writes, the package it builds / merges).
+
+> Rows with `scope='board'` (`board_id`, drawings and notes made on a Canvas board, Sight 0.63+) use the
+> same row shapes but live only in the library database: they have no asset, are never written to a `.srev`
+> / HTML page / PDF, and are not read by import.
+> A board note's `ctx` is `{bv: {x, y, w, h}}` (Sight 0.73+): the board rectangle on screen when it was written
+> (world units), used to fly the camera back there; board drawings have no `ctx`.
 
 ## Rules for changing the format
 
@@ -49,6 +55,32 @@ UTF-8 JSON (a BOM is accepted on import).
 | `deleted` | `[{id, deleted_at}]` | tombstones of rows deleted on the sending side (since 0.17; older Sight ignores it) |
 | `shots` | `{shotId: dataURL}` | pictures referenced by notes / replies (`data:image/jpeg;base64,…` or PNG) |
 
+## Bundle (`.srev` too) — several clips in one file
+
+A sequence's review (Sight 0.75+): an envelope around complete packages, one per clip. Every package in it is
+exactly a package as above (its own `asset`, `annotations`, `deleted`, `shots`) and merges by the same rules.
+
+| Key | Type | |
+|-----|------|--|
+| `format` | `"sight-review-bundle"` | required; import tells a bundle from a package by this, not by the extension |
+| `version` | `1` | required; a newer one is refused ("made by a newer Sight") |
+| `id` | string | a random bundle id (16 hex), made by the exporter; the HTML page's storage key and the phone's group key use it, and a reply bundle keeps it |
+| `app`, `exported_at`, `author` | | as in a package |
+| `title` | string | optional, e.g. `"Sequence review — 3 clips"` |
+| `packages` | array of packages | required, at least one; in clip order; one asset at most once |
+
+- A bundle with one package is legal; an empty one is an error ("holds no clips").
+- An inner package that fails a package's checks (format, version, `asset`, `annotations`) is reported for that
+  clip only; the others are imported. Each package is committed on its own (no rollback across packages).
+- Two packages that match the same local file (for example by name + size) import once: the later one is
+  reported as "same file as clip N".
+- Clips are in the bundle when they have notes **or** tombstones (deletes since the last send must still travel).
+  Board rows are never in a bundle.
+- The phone app (0.77+) opens a bundle as one group of reviews and replies with a bundle of the clips
+  changed there, keeping the bundle's `id`.
+- Older Sight (< 0.75) and older phone apps reject a bundle as "Not a Sight review file". A one-clip reply from
+  the HTML page stays a plain package for that reason.
+
 ### Asset identity
 
 `asset = {id, name, path, ext, kind, size, mtime, width, height, duration}` — `id` is Sight's
@@ -73,8 +105,8 @@ One row per object; the same shape in the package and (plus Sight-only columns) 
 | Key | |
 |-----|--|
 | `id` | row id |
-| `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `status` |
-| `shape_kind` | `stroke`: `brush` · `pencil` · `marker`; `shape`: `rect` · `ellipse` · `line` · `arrow`; else null |
+| `kind` | `note` · `stroke` · `shape` · `text` · `pin` · `image` · `grade` · `status` |
+| `shape_kind` | `stroke`: `brush` · `pencil` · `marker` · `arrows` (0.81+); `shape`: `rect` · `ellipse` · `line` · `arrow`; else null |
 | `x` `y` `w` `h` | the drawing's bounding box in doc units — for queries only, the geometry is in `data`; null for notes / status |
 | `rotation`, `z_index` | `z_index` = paint order (higher on top); `rotation` stays 0 (rotation lives in `data.rot`) |
 | `color` | the drawing's main colour (copy of `data.color`), or null |
@@ -97,9 +129,23 @@ data = {
   shots: [shotId],                    // attached pictures (screenshots, uploads)
   replies?: [reply | event],          // the thread, oldest first
   from?: {id, asset, name},           // copied from note `id` on the previous version `asset`
-  captions?: {key: text}              // 0.46+: each picture's own text, see below
+  captions?: {key: text},             // 0.46+: each picture's own text, see below
+  sg?: {site, id, v},                 // 0.99+: the ShotGrid Note it is synced with (host, Note id, Version id), docs/SHOTGRID.md
+  compare?: {                         // 0.68+: written in Sight's version compare — that comparison
+    ids: [assetId],                   //   its files in layer order (2+, this note's file among them)
+    sel,                              //   the selected layer (= this note's file); the first id is the base
+    ref?,                             //   0.114+: written as ids[0] for older Sights (their reference layer); ignored on read
+    layout: "swipe"|"stack"|"grid"|"row"|"col", //   0.112+: "swipe" = Stack with Swipe on, "stack" = Swipe off
+    blend: "over"|"difference", dir: "x"|"y",    //   (blend applies in Stack only)
+    starts: {assetId: frames}         //   video layers' first-frame offsets (0 omitted)
+  }
 }
 ```
+
+**Comparison** (`compare`, 0.68+): Sight only. The note button "⧉ Compare" and `K` on the file open
+these files again with this look; ids not in the receiving library are skipped. Older Sights, the HTML
+page and the phone app ignore it and keep it (rows are rewritten with `data` as is); it does not take
+part in merging (the note's content stamp decides, as for every field).
 
 **Picture texts** (`captions`, 0.46+): the note's `text` is the topic; each of the note's own
 pictures may carry a text of its own. Keys (`picKey` in `review-core.js`):
@@ -125,6 +171,11 @@ add replies).
 `progress` appeared in 0.19; older Sight shows such a note as open. "Open notes" (counts,
 carry-over, the report's *Open*) means status ≠ `done`.
 
+**ShotGrid link** (`sg`, 0.99+): set by the ShotGrid sync (docs/SHOTGRID.md) on a note sent to or pulled from
+ShotGrid, and `sg: <Reply id>` on such a reply. Kept from either copy by the merge (rule 4), so a `.srev` carries it to
+the other client and its sync finds the same ShotGrid records. Older clients ignore it and keep it (rows are rewritten
+with `data` as is; an older merge may drop it when the other copy wins — the next sync then sends a duplicate).
+
 **Reply**: `{id, text, author, created, edited?, shots?: [shotId]}` — `edited` is stamped on a
 change of its text or pictures (the phone app since 0.32 keeps it past the reply's own stamp); the
 reply merges as one unit (the later `edited` keeps its text *and* pictures), its drawings as rows of
@@ -136,7 +187,7 @@ the reply back. Reply pictures appeared in 0.19 (older Sight ignores `shots` on 
 author, created}`. Never edited or deleted. The note's real state is still `status` / `status_at`;
 events are only the history. Older Sight shows an event as an empty reply.
 
-### Drawings — `stroke`, `shape`, `text`, `pin`
+### Drawings — `stroke`, `shape`, `text`, `pin`, `image`
 
 Common `data` keys:
 
@@ -154,7 +205,23 @@ Per type (all lengths in doc units):
   mouse input), `color`, `size` (full width at pressure 1), `pen` (true = pressure was recorded),
   `pressure` (false = draw at constant width even with a pen). Rendered as a filled outline from
   per-point radii: pen → `size/2 · (lo + (1 − lo)·p)` with lo = 0.12 brush, 0.45 pencil; mouse
-  brush → a short taper at both ends; mouse pencil → constant.
+  brush → a short taper at both ends; mouse pencil → constant. **0.81+ closed strokes** (Sight's brush
+  *Close*): `close` (true = the outline runs back to the first point; a mouse brush then has no taper),
+  `pattern` `none` | `solid` | `diag` (╱) | `diag2` (╲) | `horiz` | `vert` | `grid` | `cross` | `dots` |
+  `dashes` (the fill inside the centre-line polygon, nonzero winding), `fill` (colour), `fillOpacity` (default 0.5,
+  times `opacity`), `gap` (pattern spacing; staggered rows of dots), **0.109+** `hatchWidth` (the hatch lines'
+  width, for `dots` the dots' diameter; absent or ≤ 0 = auto: lines 0.18·gap wide, dots 0.2·gap in radius — the
+  look before the field existed; a length, scaled with the drawing like `gap`; where a huge area caps the spacing,
+  it grows by the same factor; **0.111.3+** drawn at most 0.9·`gap` wide so lines / dots stay distinct, a larger stored value draws as that). The fill never depends on the outline `size`: editors write `gap` down before changing `size`; only rows without `gap` (before 0.109) still fall back to `size` for it. Sight's *Lasso* tool makes these (0.109+; before, the brush's *Close* switch).
+  Patterns are plain geometry clipped to the polygon (no SVG pattern / clip ids). Older clients draw the open
+  stroke only; clients before 0.109 ignore `hatchWidth` (auto widths).
+- **`stroke` arrows** (0.81+, Sight's *Stroke arrows* tool; 0.81–0.108 the arrow tool's *Stroke* mode): `pts` as above (pressure unused, 0.5),
+  `color`, `width`, `opacity`, `dash` (the guide), `guide` (false = the stroke itself is not drawn), `head1`
+  (the arrows' heads, kinds as for line / arrow), `headSize`, `step` (spacing along the stroke: the count is
+  round(length / step), at least 1, spread evenly, centred), `len` (each arrow's length), `dir` `out` (away
+  from the stroke) | `in` (at it), `side` `left` | `right` | `both` (left = the tangent turned a quarter
+  anticlockwise on screen, y down — the left of the drawing direction). Arrows start 1.2·width (+ width / 2
+  with the guide) off the stroke. Older clients skip it (`validItem` false).
 - **`stroke` marker** (highlighter): same `pts`, `color`, `size` = stroke width; a round-capped
   stroked path, default opacity 0.4.
 - **`shape` rect / ellipse**: `x, y, w, h` (box, may be negative before normalising), `rot`
@@ -162,16 +229,44 @@ Per type (all lengths in doc units):
   `dotted`, `fillOn`, `fill`, `fillOpacity`, `radius` (rect corners).
 - **`shape` line / arrow**: `pts: [x1, y1, x2, y2]`, `color`, `width`, `dash`, `head0` / `head1`
   (start / end) `none` | `triangle` | `open` | `diamond` | `dot` | `bar`, `headSize` (×), `body`
-  `straight` | `curve` | `elbow`, `bend` (curve: signed offset of the apex from the chord's
-  midpoint; default a quarter of the length). `arrow` and `line` differ only in defaults.
+  `straight` | `curve` | `elbow`, `bend` (curve: signed offset of the curve's middle point from the chord's
+  midpoint, across the chord; default a quarter of the length), `bendA` (optional, 0 when absent: the same
+  point's offset along the chord, positive toward `pts[2..3]`; the quadratic's control point is 2·H − M). A reader without
+  `bendA` draws a symmetric arc of the same `bend`. `arrow` and `line` differ only in defaults.
 - **`text`**: `text` (lines split by `\n`), `x, y` (top-left of the first line), `font` `sans` |
   `serif` | `mono` | `hand` | `impact`, `size` (px of the font), `color`, `bold`, `italic`,
   `underline`, `align` `left` | `center` | `right`, `bgOn`, `bg`, `bgOpacity` (box behind the text,
   padding 0.3·size), `outline` (width), `outlineColor`, `rot`. Line height 1.25·size.
-- **`pin`**: `x, y` (centre), `color`, `size` (diameter). Shows the number of its note.
+- **`pin`**: `x, y` (centre of the circle), `color`, `size` (diameter). **0.86+**: `label` (string, the number
+  typed for it — shown in the circle; absent / empty = older pins: the number of its note), `ax, ay` (optional:
+  the start of a leader line, drawn from there to the circle's edge, width max(1.5, 0.07·size), with a dot of
+  1.3× that radius at the start; ignored when inside the circle). Moving / scaling moves both points. Older
+  clients show the note's number and no line.
+- **`image`** (reference image, Sight 0.79+; `shape_kind` null): `shot` (id of the picture in the shots — the
+  package's `shots` map carries it like a note's screenshot; import remaps it like `data.shots`), `x, y, w, h`
+  (the box the shown part fills, positive), `rot` (degrees about the box centre), `crop` (`[x, y, w, h]` of the
+  source picture, 0…1; null / absent = all of it — the box keeps the shown part's aspect, so the picture is
+  never stretched), `iw, ih` (the stored picture's pixel size), `border` (frame width outside the box, doc
+  units; 0 = none), `borderColor`, `shadow` (0…1, strength of a soft shadow down-right), `opacity`. Older
+  clients (before 0.79) skip it as an unknown kind (`validItem` false) and keep the row.
+
+- **`grade`** (colour correction area, Sight 0.118+; `shape_kind` null): `mode` `lasso` (the closed outline
+  through `pts`, filled nonzero) | `brush` (a stroke `size` wide along `pts`, even width, round ends), `pts` (flat
+  `[x, y, p, …]` like a stroke; p unused), `rings` (0.119+, lasso only, optional: every closed outline of an area
+  that was added to / cut from — outer outlines and holes, filled nonzero, so holes run the other way; `pts` is then
+  the biggest ring, which is all a 0.118 client draws), `size` (brush only), `feather` (soft edge, doc units: the area's mask
+  blurred by feather / 2), `hue` (degrees, −180…180), `sat`, `bright`, `contrast` (−100…100, 0 = unchanged). No
+  colour or fill of its own: inside the area the picture is shown as the CSS filter chain
+  `brightness(1 + bright/100) contrast(1 + contrast/100) saturate(1 + sat/100) hue-rotate(hue deg)` (review-core
+  `gradeFilter`; `gradePixels` is the same on pixels), under every other drawing; overlapping areas apply in z
+  order. A client that cannot apply it draws a dashed outline (`primsOf`). Older clients skip it as an unknown
+  kind (`validItem` false) and keep the row.
 
 The exact rendering (primitives, SVG and canvas) is `primsOf` / `primSvg` / `primCanvas` in
-`review-core.js`; every client draws through it, so a drawing looks the same everywhere.
+`review-core.js`; every client draws through it, so a drawing looks the same everywhere. An `image`
+drawing's picture is found through `setImageSource(fn)` (shot id → URL: Sight's `/api/review/shots/<id>`, the
+page's / phone's data or object URLs); canvas drawing needs it decoded first (`imagesReady(items)`), else a grey
+placeholder is drawn.
 
 ### Context — `data.ctx`
 
@@ -248,8 +343,12 @@ Merging a package into what a client holds (Sight: `Library.import_annotations`;
    same id the later of `edited` (else `created`) / `deleted` wins; sorted by `created` — and
    `status` comes from the copy with the later `status_at` (no change on a tie). For a **status**
    row the `history` lists are unioned (same `at` + `state` + `author` = one entry, the local one
-   kept), sorted by `at`.
+   kept), sorted by `at`. *0.99+:* a note's `data.sg` and a reply's `sg` (ShotGrid ids) are kept from the other copy
+   when the winning one has none.
 5. A row **deleted here** comes back only if the incoming content stamp is later than the delete.
+   *Sight only (0.83+):* the import reports how many rows stayed deleted this way (`deleted_here`) and, when
+   the user agrees, merges again with `restore` — those rows come back stamped as edited at the merge
+   (`data.edited_at` / `updated_at` = now), so old tombstones do not delete them again. Not in the JS port.
 6. Each package tombstone deletes the local row if the tombstone is later than that row's content
    stamp.
 7. Bookkeeping: an updated row gets `updated_at = max(now, old)` when only its replies / state /

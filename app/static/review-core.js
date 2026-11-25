@@ -21,7 +21,7 @@ var SightReviewCore = (function(){
   var FORMAT = "sight-review";
   var FORMAT_VERSION = 1;
 
-  var STROKE_TOOLS = new Set(["brush", "pencil", "marker"]);
+  var STROKE_TOOLS = new Set(["brush", "pencil", "marker", "arrows"]);
   var SHAPE_TOOLS = new Set(["rect", "ellipse", "line", "arrow"]);
   // [id, label, CSS font stack] — text drawings store the id (data.font).
   var FONTS = [
@@ -92,7 +92,7 @@ var SightReviewCore = (function(){
       if (i) acc += hyp(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
       var r = base;
       if (pen) r = base * (lo + (1 - lo) * clamp(pts[i * 3 + 2], 0, 1));
-      else if (typeOf(it) === "brush"){
+      else if (typeOf(it) === "brush" && !d.close){
         // Mouse strokes have no pressure — taper the ends a little so they still read as a brush.
         var t = Math.min(1, acc / (base * 4 + 1e-6), (total - acc) / (base * 4 + 1e-6));
         r = base * (0.4 + 0.6 * Math.sqrt(clamp(t, 0, 1)));
@@ -104,6 +104,11 @@ var SightReviewCore = (function(){
 
   // The filled outline of a brush / pencil stroke from its per-point radii.
   function strokeOutline(it){
+    // A closed stroke (data.close, the brush's lasso) runs back to its first point.
+    if (it.data.close && it.data.pts.length >= 9 && !it._closed){
+      var cd = Object.assign({}, it.data, { pts: it.data.pts.concat(it.data.pts.slice(0, 3)) });
+      return strokeOutline({ sub: typeOf(it), data: cd, _closed: true });
+    }
     var pts = it.data.pts, n = pts.length / 3;
     var rs = strokeRadii(it);
     if (n === 1 || (n === 2 && hyp(pts[3] - pts[0], pts[4] - pts[1]) < 0.01)){
@@ -150,7 +155,8 @@ var SightReviewCore = (function(){
   }
 
   // Points along a line/arrow body: straight, curved (quadratic, data.bend = signed offset of the
-  // control point from the chord's midpoint) or elbow (one right-angle corner).
+  // curve's apex from the chord's midpoint across the chord, data.bendA along it — 0 / absent: a symmetric
+  // arc) or elbow (one right-angle corner).
   function linePoints(d){
     var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3];
     if (d.body === "curve"){
@@ -170,15 +176,24 @@ var SightReviewCore = (function(){
   function bendCtrl(d){
     var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3];
     var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, l = hyp(x2 - x1, y2 - y1) || 1;
-    var b = d.bend != null ? d.bend : l * 0.25;
-    // Control point so that the curve's apex (t = .5) sits `b` away from the chord midpoint.
-    return [mx - (y2 - y1) / l * b * 2, my + (x2 - x1) / l * b * 2];
+    var b = d.bend != null ? d.bend : l * 0.25, a = Number(d.bendA) || 0;
+    // Control point so that the curve's point at t = .5 (the handle) sits `b` across and `a` along the chord
+    // from its midpoint: that point is (P1 + 2C + P2) / 4, so C = 2H − M.
+    return [mx - (y2 - y1) / l * b * 2 + (x2 - x1) / l * a * 2, my + (x2 - x1) / l * b * 2 + (y2 - y1) / l * a * 2];
   }
   function bendHandle(d){
     var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3];
     var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, l = hyp(x2 - x1, y2 - y1) || 1;
-    var b = d.bend != null ? d.bend : l * 0.25;
-    return [mx - (y2 - y1) / l * b, my + (x2 - x1) / l * b];
+    var b = d.bend != null ? d.bend : l * 0.25, a = Number(d.bendA) || 0;
+    return [mx - (y2 - y1) / l * b + (x2 - x1) / l * a, my + (x2 - x1) / l * b + (y2 - y1) / l * a];
+  }
+  // Sets bend / bendA so that the curve's middle (the handle) is at (x, y), for the chord in d.pts.
+  function setBendAt(d, x, y){
+    var x1 = d.pts[0], y1 = d.pts[1], x2 = d.pts[2], y2 = d.pts[3], l = hyp(x2 - x1, y2 - y1) || 1;
+    var dx = x - (x1 + x2) / 2, dy = y - (y1 + y2) / 2;
+    d.bend = (dx * -(y2 - y1) + dy * (x2 - x1)) / l;
+    var a = (dx * (x2 - x1) + dy * (y2 - y1)) / l;
+    if (Math.abs(a) > 1e-9) d.bendA = a; else delete d.bendA;
   }
 
   function headPrims(kind, tip, from, w, size, color, op){
@@ -233,10 +248,636 @@ var SightReviewCore = (function(){
     return { lines: lines, widths: widths, w: w, h: lh * lines.length, lh: lh, pad: pad, box: [d.x - pad, d.y - pad, w + pad * 2, lh * lines.length + pad * 2] };
   }
 
-  // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known.
+  // ---- reference images (kind "image", FORMAT.md) -------------------------------------------------
+  // A reference image's picture is a shot (data.shot); each client says where its shots live:
+  // Sight → /api/review/shots/<id>, the HTML page / phone app → the package's data URLs.
+  var imgSrc = function(){ return ""; };
+  function setImageSource(fn){ imgSrc = typeof fn === "function" ? fn : function(){ return ""; }; if (imgCache) imgCache.clear(); }
+  function imageUrl(shot){ return shot ? String(imgSrc(shot) || "") : ""; }
+  // Decoded pictures for canvas drawing (exports), one per URL. Not loaded yet → drawCanvas paints a
+  // placeholder; await imagesReady(items) before drawing a picture that must be complete.
+  var imgCache = typeof Map !== "undefined" ? new Map() : null;
+  function imageEl(shot){
+    var u = imageUrl(shot);
+    if (!u || !imgCache || typeof Image === "undefined") return null;
+    var im = imgCache.get(u);
+    if (!im){ im = new Image(); im.decoding = "async"; im.src = u; imgCache.set(u, im); }
+    return im;
+  }
+  function imagesReady(items){
+    return Promise.all((items || []).filter(function(it){ return typeOf(it) === "image"; }).map(function(it){
+      var im = imageEl(it.data.shot);
+      if (!im || im.complete) return null;
+      return new Promise(function(res){
+        im.addEventListener("load", res, { once: true });
+        im.addEventListener("error", res, { once: true });
+        setTimeout(res, 15000);
+      });
+    }));
+  }
+  // The crop window of a reference image: [x, y, w, h] of the source picture, 0…1 (null = all of it).
+  function imgCrop(d){
+    var c = d.crop;
+    if (!Array.isArray(c) || c.length !== 4 || !c.every(Number.isFinite) || c[2] <= 0 || c[3] <= 0) return [0, 0, 1, 1];
+    return c;
+  }
+
+  // ---- closed strokes: pattern fill (brush data.close, FORMAT.md) ---------------------------------
+  // Patterns are plain geometry clipped to the stroke's polygon (no SVG <pattern> / clip ids, which differ
+  // between clients), so the SVG overlay and the canvas compositor draw the same thing.
+  var PATTERNS = ["none", "solid", "diag", "diag2", "horiz", "vert", "grid", "cross", "dots", "dashes"];
+  // The pattern pickers' names and icons — one set for Sight's props bar and the drawing canvas (the HTML page,
+  // the phone). "random" is a tool choice only (a real pattern is picked per stroke). patternIcon(id) is the
+  // inside of a 24 x 24 stroke icon drawn in currentColor (the caller wraps it in its own <svg>).
+  var PATTERN_LABELS = { none: "No fill", solid: "Solid", diag: "Lines \u2571", diag2: "Lines \u2572", horiz: "Lines \u2500", vert: "Lines \u2502", grid: "Grid", cross: "Cross-hatch", dots: "Dots", dashes: "Dashes", random: "Random pattern" };
+  function patternIcon(id){
+    var box = '<rect x="4" y="4" width="16" height="16" rx="3"/>', g = function(d){ return box + '<path d="' + d + '" stroke-width="1.3"/>'; };
+    switch (id){
+      case "solid": return '<rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor" fill-opacity=".55"/>';
+      case "diag": return g("M4 12 12 4M4 20 20 4M12 20l8-8");
+      case "diag2": return g("M12 4l8 8M4 4l16 16M4 12l8 8");
+      case "horiz": return g("M4 8.5h16M4 12h16M4 15.5h16");
+      case "vert": return g("M8.5 4v16M12 4v16M15.5 4v16");
+      case "grid": return g("M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16");
+      case "cross": return g("M4 12 12 4M4 20 20 4M12 20l8-8M12 4l8 8M4 4l16 16M4 12l8 8");
+      case "dots": return box + '<g fill="currentColor" stroke="none"><circle cx="8.5" cy="8.5" r="1.3"/><circle cx="15.5" cy="8.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="8.5" cy="15.5" r="1.3"/><circle cx="15.5" cy="15.5" r="1.3"/></g>';
+      case "dashes": return g("M6 9h4M14 9h4M8 15h4M16 15h2");
+      case "random": return box + '<text x="12" y="16.5" font-size="12" fill="currentColor" stroke="none" text-anchor="middle" font-family="system-ui, sans-serif">?</text>';
+      default: return box;
+    }
+  }
+  // Tool icons both toolbars show (same 24 x 24 stroke style): the lasso (a closed loop, hatched) and arrows
+  // along a stroke.
+  var TOOL_ICONS = {
+    lasso: '<path d="M12 3.5c5 0 9 2.6 9 6.2s-4 6.2-9 6.2-9-2.6-9-6.2 4-6.2 9-6.2z"/><path d="M7.5 15c-1.2 2-.6 3.8 1.6 5"/><path d="M8 12.6 13.6 7M11.6 13.6 16.8 8.4" stroke-width="1.3"/>',
+    arrows: '<path d="M3 17c3-5 6 5 9 0s6-5 9 0"/><path d="M7.5 11V4M5 6.5 7.5 4 10 6.5"/><path d="M16.5 11V4M14 6.5 16.5 4 19 6.5"/>',
+  };
+  var PATTERN_ANGLES = { diag: [-45], diag2: [45], horiz: [0], vert: [90], grid: [0, 90], cross: [45, -45], dashes: [0] };
+  function polyOf(pts){
+    var out = [];
+    for (var i = 0; i + 1 < pts.length; i += 3) out.push([pts[i], pts[i + 1]]);
+    return out;
+  }
+  // Nonzero winding (as SVG / canvas fill a path by default): a lasso drawn round twice stays filled.
+  function inPoly(poly, x, y){
+    var wn = 0;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++){
+      var a = poly[j], b = poly[i];
+      if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) wn += b[1] > a[1] ? 1 : -1;
+    }
+    return wn !== 0;
+  }
+  // Parallel lines at `deg`, `gap` apart, clipped to the polygon (nonzero): "M x y L x y" segments.
+  function hatchPath(poly, deg, gap){
+    var a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    // Rotate by -deg: the lines become horizontal (y' = const).
+    var rp = poly.map(function(p){ return [p[0] * c + p[1] * s, -p[0] * s + p[1] * c]; });
+    var y0 = Infinity, y1 = -Infinity, i;
+    for (i = 0; i < rp.length; i++){ y0 = Math.min(y0, rp[i][1]); y1 = Math.max(y1, rp[i][1]); }
+    if (!(y1 > y0)) return "";
+    var g = Math.max(gap, (y1 - y0) / 300), d = "";
+    var seg = function(xa, xb, y){ d += "M" + r2(xa * c - y * s) + " " + r2(xa * s + y * c) + "L" + r2(xb * c - y * s) + " " + r2(xb * s + y * c); };
+    for (var y = y0 + g / 2; y < y1; y += g){
+      var xs = [];
+      for (i = 0; i < rp.length; i++){
+        var p = rp[i], q = rp[(i + 1) % rp.length];
+        if ((p[1] > y) !== (q[1] > y)) xs.push([p[0] + (y - p[1]) * (q[0] - p[0]) / (q[1] - p[1]), q[1] > p[1] ? 1 : -1]);
+      }
+      xs.sort(function(u, v){ return u[0] - v[0]; });
+      var wn = 0, from = 0;
+      for (i = 0; i < xs.length; i++){
+        var was = wn;
+        wn += xs[i][1];
+        if (!was && wn) from = xs[i][0];
+        else if (was && !wn && xs[i][0] - from > 1e-6) seg(from, xs[i][0], y);
+      }
+    }
+    return d;
+  }
+  // Staggered dots inside the polygon, `gap` apart.
+  function dotsPath(poly, gap, rad){
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, i;
+    for (i = 0; i < poly.length; i++){ x0 = Math.min(x0, poly[i][0]); y0 = Math.min(y0, poly[i][1]); x1 = Math.max(x1, poly[i][0]); y1 = Math.max(y1, poly[i][1]); }
+    var g = Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0), d = "", row = 0;
+    if (!(g > 0)) return "";
+    for (var y = y0 + g / 2; y < y1; y += g * 0.866, row++){
+      for (var x = x0 + (row % 2 ? g : g / 2); x < x1; x += g){
+        if (inPoly(poly, x, y)) d += "M" + r2(x - rad) + " " + r2(y) + "a" + r2(rad) + " " + r2(rad) + " 0 1 0 " + r2(rad * 2) + " 0a" + r2(rad) + " " + r2(rad) + " 0 1 0 " + r2(-rad * 2) + " 0Z";
+      }
+    }
+    return d;
+  }
+  // The fill of a closed stroke: solid (the smoothed centre line) or a pattern; [] when there is none.
+  function fillPrims(d){
+    var pat = d.pattern || "none";
+    if (!d.close || pat === "none" || !Array.isArray(d.pts) || d.pts.length < 9) return [];
+    var poly = polyOf(d.pts), color = d.fill || d.color;
+    var op = (d.opacity != null ? d.opacity : 1) * (d.fillOpacity != null ? d.fillOpacity : 0.5);
+    if (pat === "solid") return [{ d: smoothPath(poly, true), fill: color, op: op }];
+    var m = hatchMetrics(d);
+    if (pat === "dots"){
+      var dp = dotsPath(poly, m.gap, m.width / 2);
+      return dp ? [{ d: dp, fill: color, op: op }] : [];
+    }
+    var angles = PATTERN_ANGLES[pat];
+    if (!angles) return [];
+    var path = angles.map(function(a){ return hatchPath(poly, a, m.gap); }).join("");
+    return path ? [{ d: path, stroke: color, sw: m.width, op: op, cap: "butt", dash: pat === "dashes" ? [m.gap * 0.9, m.gap * 0.6] : null }] : [];
+  }
+  // A lasso's hatch, as drawn: {gap0: data's spacing (fallback size, 8), gap: the spacing actually used (capped for
+  // huge areas, as hatchPath / dotsPath do — without pts, uncapped), width: the lines' width / the dots' diameter,
+  // auto: the width Auto draws, autoStored: the hatchWidth that draws exactly that (auto · gap0 / gap)}, doc units.
+  // Data without `gap` (before the lasso stored it) keeps the old fallback to size, so it draws as it always did;
+  // an edit that changes size must first write that gap down (annotate.js / review-draw.js) to stop the coupling.
+  // data.hatchWidth (0.109+): absent or 0 = auto (0.18 / 0.4 of the spacing, the look before it existed); it is
+  // relative to gap0: where the spacing is capped it grows by the same factor. Sight's Lines control starts a drag
+  // from Auto at autoStored.
+  function hatchMetrics(d){
+    var dots = d.pattern === "dots", gap0 = Math.max(0.5, Number(d.gap) || d.size || 8), gap = gap0;
+    if (Array.isArray(d.pts) && d.pts.length >= 3){
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (var i = 0; i + 1 < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
+      // (lines: the diagonal ≥ the extent across any line direction)
+      gap = dots ? Math.max(gap, Math.sqrt((x1 - x0) * (y1 - y0) / 4000) || 0) : Math.max(gap, hyp(x1 - x0, y1 - y0) / 300);
+    }
+    var auto = dots ? gap * 0.4 : Math.max(0.3, gap * 0.18), hw = Number(d.hatchWidth) > 0 ? Number(d.hatchWidth) : 0;
+    // The width never exceeds HATCH_CAP of the spacing (lines / dots stay distinct, never merge into solid): cap is the
+    // drawn maximum, capStored the same in data.hatchWidth's terms (relative to gap0). A stored width above it draws as it.
+    return { gap0: gap0, gap: gap, auto: auto, autoStored: auto * gap0 / gap, cap: gap * HATCH_CAP, capStored: gap0 * HATCH_CAP,
+      width: hw ? Math.max(0.1, Math.min(hw * gap / gap0, gap * HATCH_CAP)) : auto };
+  }
+  var HATCH_CAP = 0.9;
+  // A closed pattern-filled stroke (the lasso): its fill (gap, hatchWidth) is independent of the outline's size.
+  function isFillStroke(d){ return !!(d && d.close && d.pattern && d.pattern !== "none"); }
+
+  // ---- colour correction area (kind "grade", FORMAT.md) ------------------------------------------
+  // An area of the picture shown with its own hue / saturation / brightness / contrast. data.mode "lasso" = the
+  // closed outline through data.pts, filled; "brush" = a stroke data.size wide along data.pts (round ends).
+  // data.feather softens the edge (doc units). It has no fill or colour of its own: a client shows the picture
+  // corrected inside it (Sight: a backdrop-filter; exports: gradeCanvas) and, in the overlay, a dashed outline.
+  function gradeNum(d, k, lo, hi){ var v = Number(d[k]); return Number.isFinite(v) ? clamp(v, lo, hi) : 0; }
+  // hue: degrees −180…180; sat / bright / contrast: −100…100 (0 = unchanged; −100 sat = grey, −100 bright = black).
+  function gradeParams(d){
+    return { hue: gradeNum(d, "hue", -180, 180), sat: gradeNum(d, "sat", -100, 100), bright: gradeNum(d, "bright", -100, 100), contrast: gradeNum(d, "contrast", -100, 100) };
+  }
+  function gradeIdentity(d){ var g = gradeParams(d); return !g.hue && !g.sat && !g.bright && !g.contrast; }
+  // The CSS filter chain of an area (live view): brightness → contrast → saturate → hue-rotate. gradePixels is the
+  // same chain on pixels, so an export matches the screen.
+  function gradeFilter(d){
+    var g = gradeParams(d);
+    return "brightness(" + r2(1 + g.bright / 100) + ") contrast(" + r2(1 + g.contrast / 100) + ") saturate(" + r2(1 + g.sat / 100) + ") hue-rotate(" + r2(g.hue) + "deg)";
+  }
+  // The area as an SVG path, filled nonzero: the lasso's smoothed closed outline, or the brush stroke's outline (an even width).
+  // `d` is the area's data or a stroke being added / cut ({op, mode, pts, size}): the same shape rules. A lasso area with
+  // `rings` (0.119+, what adding / cutting leaves) is every ring, filled nonzero (outer rings and holes run opposite ways).
+  function gradePath(d){
+    if (d.mode === "brush") return strokeOutline({ sub: "pencil", data: { pts: d.pts, size: Math.max(0.1, Number(d.size) || 1), pen: false } });
+    return gradeRings(d).map(function(r){ return smoothPath(polyOf(r), true); }).join(" ");
+  }
+  // A lasso shape's closed rings: data.rings when it has valid ones, else [data.pts].
+  function gradeRings(d){
+    if (d.mode !== "brush" && Array.isArray(d.rings) && Array.isArray(d.pts)){
+      var rs = d.rings.filter(function(r){ return Array.isArray(r) && r.length >= 9 && r.length % 3 === 0 && r.every(Number.isFinite); });
+      // (Only while one ring is pts itself: a client before 0.119 that moved / scaled the area changed pts alone, and
+      // then pts is the truth.)
+      var same = function(r){ if (r.length !== d.pts.length) return false; for (var q = 0; q < r.length; q++) if (Math.abs(r[q] - d.pts[q]) > 1e-6) return false; return true; };
+      if (rs.length && rs.some(same)) return rs;
+    }
+    return [d.pts];
+  }
+  // A shape (the area's own or a part) that can be drawn: a brush needs a point, a lasso three.
+  function gradeShapeOk(s){
+    return !!s && Array.isArray(s.pts) && s.pts.length % 3 === 0 && s.pts.length >= (s.mode === "brush" ? 3 : 9) && s.pts.every(Number.isFinite);
+  }
+  // The area's shapes in order: its own, then the strokes being added / cut while one is drawn (data.parts, in memory
+  // only: Sight's annotate.js bakes them into new rings with gradeBake on release, they are never stored). A part that
+  // is not a valid shape is skipped.
+  function gradeShapes(d){
+    var out = [{ op: "add", mode: d.mode, pts: d.pts, size: d.size, rings: d.rings }];
+    if (Array.isArray(d.parts)) d.parts.forEach(function(p){ if (p && (p.op === "add" || p.op === "sub") && gradeShapeOk(p)) out.push(p); });
+    return out;
+  }
+  // Inside one shape (a lasso's outline within `tol` counts too; a brush shape = within its half width + tol).
+  function gradeShapeIn(s, x, y, tol){
+    if (s.mode !== "brush"){
+      var cnt = 0;
+      gradeRings(s).forEach(function(r){ if (r.length >= 9 && inPoly(polyOf(r), x, y)) cnt++; });
+      if (cnt % 2) return true;  // (inside an odd number of rings: in the area, not in one of its holes)
+    }
+    return gradeEdge(s, x, y, tol);
+  }
+  // Inside the area after its parts: the last shape that holds the point decides (add = in, sub = out). A cut takes
+  // no tolerance, so a click just inside a hole's edge is still out of the area.
+  function gradeIn(d, x, y, tol){
+    var inside = false;
+    gradeShapes(d).forEach(function(s){ if (gradeShapeIn(s, x, y, s.op === "sub" ? 0 : tol)) inside = s.op === "add"; });
+    return inside;
+  }
+  // The filter chain as numbers (Filter Effects: each function's matrix, results clamped to 0…1 between steps).
+  function gradeOps(d){
+    var g = gradeParams(d), s = 1 + g.sat / 100, a = g.hue * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a);
+    return {
+      b: 1 + g.bright / 100, c: 1 + g.contrast / 100,
+      S: [0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s],
+      H: [0.213 + cs * 0.787 - sn * 0.213, 0.715 - cs * 0.715 - sn * 0.715, 0.072 - cs * 0.072 + sn * 0.928,
+        0.213 - cs * 0.213 + sn * 0.143, 0.715 + cs * 0.285 + sn * 0.140, 0.072 - cs * 0.072 - sn * 0.283,
+        0.213 - cs * 0.213 - sn * 0.787, 0.715 - cs * 0.715 + sn * 0.715, 0.072 + cs * 0.928 + sn * 0.072],
+    };
+  }
+  var c01 = function(v){ return v < 0 ? 0 : v > 1 ? 1 : v; };
+  // Corrects RGBA bytes `px` in place (alpha kept).
+  function gradePixels(px, ops){
+    var b = ops.b, c = ops.c, off = 0.5 - 0.5 * c, S = ops.S, H = ops.H;
+    for (var i = 0; i < px.length; i += 4){
+      var r = c01(px[i] / 255 * b), g = c01(px[i + 1] / 255 * b), bl = c01(px[i + 2] / 255 * b);
+      r = c01(r * c + off); g = c01(g * c + off); bl = c01(bl * c + off);
+      var r1 = c01(S[0] * r + S[1] * g + S[2] * bl), g1 = c01(S[3] * r + S[4] * g + S[5] * bl), b1 = c01(S[6] * r + S[7] * g + S[8] * bl);
+      px[i] = Math.round(c01(H[0] * r1 + H[1] * g1 + H[2] * b1) * 255);
+      px[i + 1] = Math.round(c01(H[3] * r1 + H[4] * g1 + H[5] * b1) * 255);
+      px[i + 2] = Math.round(c01(H[6] * r1 + H[7] * g1 + H[8] * b1) * 255);
+    }
+  }
+  // Near a lasso shape's outline, or on a brush shape's stroke (one shape: `d` is the area's data or a part).
+  function gradeEdge(d, x, y, tol){
+    if (d.mode !== "brush") return gradeRings(d).some(function(pts){ return ringEdge(pts, 0, true, x, y, tol); });
+    return ringEdge(d.pts, (Number(d.size) || 0) / 2, false, x, y, tol);
+  }
+  function ringEdge(pts, r, closed, x, y, tol){
+    var n = pts.length / 3, i;
+    if (n === 1) return hyp(x - pts[0], y - pts[1]) <= r + tol;
+    for (i = 1; i < n; i++) if (segDist(x, y, pts[i * 3 - 3], pts[i * 3 - 2], pts[i * 3], pts[i * 3 + 1]) <= r + tol) return true;
+    return closed && n >= 3 && segDist(x, y, pts[n * 3 - 3], pts[n * 3 - 2], pts[0], pts[1]) <= tol;
+  }
+  // Inside any of a lasso area's rings (holes included) or on a brush area: where an add may start.
+  function gradeInRings(d, x, y){
+    if (d.mode === "brush") return gradeEdge(d, x, y, 0);
+    return gradeRings(d).some(function(r){ return r.length >= 9 && inPoly(polyOf(r), x, y); });
+  }
+  // Near the edge of any of the area's shapes (an eraser takes an area by its edge, not by its inside).
+  function gradeEdgeAny(d, x, y, tol){
+    return gradeShapes(d).some(function(s){ return gradeEdge(s, x, y, tol); });
+  }
+  // The area's bounds without padding: its own shape and the added parts (a cut never grows it).
+  function gradeBox(d){
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    gradeShapes(d).forEach(function(s){
+      if (s.op === "sub") return;
+      var r = s.mode === "brush" ? (Number(s.size) || 0) / 2 : 0;
+      (s.mode === "brush" ? [s.pts] : gradeRings(s)).forEach(function(pts){
+        for (var i = 0; i < pts.length; i += 3){ x0 = Math.min(x0, pts[i] - r); y0 = Math.min(y0, pts[i + 1] - r); x1 = Math.max(x1, pts[i] + r); y1 = Math.max(y1, pts[i + 1] + r); }
+      });
+    });
+    return [x0, y0, x1, y1];
+  }
+  // Bakes the strokes being added / cut (data.parts) into the area's outline: the shapes are filled in order on a grid
+  // of `cell` doc units, the grid's edges traced into closed rings (inside on the right, so holes run the other way) and
+  // thinned (Douglas-Peucker, one cell). Returns {pts, rings} — pts the biggest ring (what a client before 0.119 draws),
+  // rings all of them — or null when nothing is left. Needs a canvas (browser).
+  function gradeBake(d, cell){
+    var bb = gradeBox(d);
+    if (!(bb[2] > bb[0]) || !(bb[3] > bb[1])) return null;
+    cell = Math.max(cell, Math.max(bb[2] - bb[0], bb[3] - bb[1]) / 1400);
+    var x0 = bb[0] - 2 * cell, y0 = bb[1] - 2 * cell;
+    var W = Math.ceil((bb[2] - bb[0]) / cell) + 4, H = Math.ceil((bb[3] - bb[1]) / cell) + 4;
+    var cv = makeCanvas(W, H), cx = cv && cv.getContext("2d");
+    if (!cx || typeof Path2D === "undefined") return undefined;
+    cx.setTransform(1 / cell, 0, 0, 1 / cell, -x0 / cell, -y0 / cell);
+    cx.fillStyle = "#ffffff";
+    gradeShapes(d).forEach(function(sh){
+      cx.globalCompositeOperation = sh.op === "sub" ? "destination-out" : "source-over";
+      cx.fill(new Path2D(gradePath(sh)));
+    });
+    var a = cx.getImageData(0, 0, W, H).data, inside = new Uint8Array(W * H), i, j, any = false;
+    for (i = 0; i < W * H; i++) if (a[i * 4 + 3] >= 128){ inside[i] = 1; any = true; }
+    if (!any) return null;
+    var at = function(x, y){ return x >= 0 && y >= 0 && x < W && y < H && inside[y * W + x] === 1; };
+    // Directed pixel edges round every inside pixel, clockwise on screen (y down): from vertex → to vertex.
+    var VW = W + 1, out = new Map(), add = function(ax, ay, bx, by){
+      var k = ay * VW + ax, l = out.get(k);
+      if (!l) out.set(k, l = []);
+      l.push(by * VW + bx);
+    };
+    for (j = 0; j < H; j++) for (i = 0; i < W; i++){
+      if (!inside[j * W + i]) continue;
+      if (!at(i, j - 1)) add(i, j, i + 1, j);
+      if (!at(i + 1, j)) add(i + 1, j, i + 1, j + 1);
+      if (!at(i, j + 1)) add(i + 1, j + 1, i, j + 1);
+      if (!at(i - 1, j)) add(i, j + 1, i, j);
+    }
+    var rings = [];
+    out.forEach(function(list, start){
+      while (list.length){
+        var loop = [start], cur = list.pop(), prev = start, guard = 0;
+        while (cur !== start && guard++ < 4e6){
+          loop.push(cur);
+          var nx = out.get(cur);
+          if (!nx || !nx.length) break;
+          // At a corner where two pixels touch diagonally: turn right (keeps the two pixels apart, the ring simple).
+          var pick = nx.length - 1;
+          if (nx.length > 1){
+            var dx = (cur % VW) - (prev % VW), dy = Math.floor(cur / VW) - Math.floor(prev / VW);
+            for (var q = 0; q < nx.length; q++){
+              var ex = (nx[q] % VW) - (cur % VW), ey = Math.floor(nx[q] / VW) - Math.floor(cur / VW);
+              if (ex === -dy && ey === dx){ pick = q; break; }
+            }
+          }
+          prev = cur; cur = nx.splice(pick, 1)[0];
+        }
+        if (cur !== start || loop.length < 4) continue;
+        var poly = loop.map(function(v){ return [x0 + (v % VW) * cell, y0 + Math.floor(v / VW) * cell]; });
+        poly = cornerRing(thinRing(poly, cell), cell);
+        if (poly.length < 3) continue;
+        var ar = 0;
+        for (var m = 0; m < poly.length; m++){ var n2 = poly[(m + 1) % poly.length]; ar += poly[m][0] * n2[1] - n2[0] * poly[m][1]; }
+        if (Math.abs(ar) / 2 < 4 * cell * cell) continue;  // a speck
+        var flat = [];
+        poly.forEach(function(pt){ flat.push(r2(pt[0]), r2(pt[1]), 0.5); });
+        rings.push({ pts: flat, area: Math.abs(ar) });
+      }
+    });
+    if (!rings.length) return null;
+    rings.sort(function(p1, p2){ return p2.area - p1.area; });
+    return { pts: rings[0].pts, rings: rings.map(function(r){ return r.pts; }) };
+  }
+  // Ready for gradePath's smoothing (quadratics through edge midpoints, the points as controls): a point one cell from
+  // each corner along a long edge, so a corner rounds by about half a cell, not by half its edges; the ring starts in
+  // the middle of its longest edge (smoothPath leaves the first point a sharp corner).
+  function cornerRing(poly, cell){
+    var n = poly.length, out = [], i, best = 0, bl = -1;
+    if (n < 3) return poly;
+    for (i = 0; i < n; i++){
+      var a = poly[i], b = poly[(i + 1) % n], len = hyp(b[0] - a[0], b[1] - a[1]);
+      if (len > bl){ bl = len; best = i; }
+    }
+    var along = function(a, b, dd){ var l = hyp(b[0] - a[0], b[1] - a[1]) || 1; return [a[0] + (b[0] - a[0]) * dd / l, a[1] + (b[1] - a[1]) * dd / l]; };
+    var a0 = poly[best], b0 = poly[(best + 1) % n];
+    out.push([(a0[0] + b0[0]) / 2, (a0[1] + b0[1]) / 2]);
+    for (var k = 1; k <= n; k++){
+      var v = poly[(best + k) % n], pv = poly[(best + k - 1) % n], nx = poly[(best + k + 1) % n];
+      if (hyp(v[0] - pv[0], v[1] - pv[1]) > 2.5 * cell) out.push(along(v, pv, cell));
+      out.push(v);
+      if (hyp(nx[0] - v[0], nx[1] - v[1]) > 2.5 * cell) out.push(along(v, nx, cell));
+    }
+    return out;
+  }
+  // Douglas-Peucker on a closed ring (split at the point farthest from the first).
+  function thinRing(poly, tol){
+    var n = poly.length, far = 0, fd = -1, i;
+    for (i = 1; i < n; i++){ var dd = hyp(poly[i][0] - poly[0][0], poly[i][1] - poly[0][1]); if (dd > fd){ fd = dd; far = i; } }
+    var dp = function(a){
+      if (a.length < 3) return a;
+      var keep = new Uint8Array(a.length), st = [[0, a.length - 1]];
+      keep[0] = keep[a.length - 1] = 1;
+      while (st.length){
+        var se = st.pop(), s0 = se[0], s1 = se[1], bi = -1, bd = tol;
+        for (var k2 = s0 + 1; k2 < s1; k2++){ var dd2 = segDist(a[k2][0], a[k2][1], a[s0][0], a[s0][1], a[s1][0], a[s1][1]); if (dd2 > bd){ bd = dd2; bi = k2; } }
+        if (bi >= 0){ keep[bi] = 1; st.push([s0, bi], [bi, s1]); }
+      }
+      return a.filter(function(_, k3){ return keep[k3]; });
+    };
+    var h1 = dp(poly.slice(0, far + 1)), h2 = dp(poly.slice(far).concat([poly[0]]));
+    return h1.concat(h2.slice(1, -1));
+  }
+  function makeCanvas(w, h){
+    if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+    if (typeof document === "undefined") return null;
+    var c = document.createElement("canvas"); c.width = w; c.height = h; return c;
+  }
+  // Draws an area's correction onto a canvas that already holds the picture (its transform maps doc units): the
+  // pixels under the area are read, corrected, and drawn back through the area's (feathered) mask, so the canvas's
+  // clip still applies. Nothing happens where the canvas cannot be read (a tainted canvas) or without getTransform.
+  function gradeCanvas(cx, it){
+    // (A failure — a huge area past the canvas size limits — leaves the picture uncorrected, never breaks the export.)
+    try { gradeCanvas1(cx, it); } catch (_){}
+  }
+  function gradeCanvas1(cx, it){
+    var d = it.data;
+    if (gradeIdentity(d) || !cx.getTransform || !cx.getImageData || typeof Path2D === "undefined") return;
+    var m = cx.getTransform(), sc = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
+    var cw = cx.canvas.width, ch = cx.canvas.height, bb = boundsOf(it);
+    var f = Math.max(0, Number(d.feather) || 0), pad = f * 1.5 + 2 / sc;
+    var X0 = 1e30, Y0 = 1e30, X1 = -1e30, Y1 = -1e30;
+    [[bb[0] - pad, bb[1] - pad], [bb[2] + pad, bb[1] - pad], [bb[0] - pad, bb[3] + pad], [bb[2] + pad, bb[3] + pad]].forEach(function(p){
+      var qx = m.a * p[0] + m.c * p[1] + m.e, qy = m.b * p[0] + m.d * p[1] + m.f;
+      X0 = Math.min(X0, qx); X1 = Math.max(X1, qx); Y0 = Math.min(Y0, qy); Y1 = Math.max(Y1, qy);
+    });
+    var x0 = Math.max(0, Math.floor(X0)), y0 = Math.max(0, Math.floor(Y0)), x1 = Math.min(cw, Math.ceil(X1)), y1 = Math.min(ch, Math.ceil(Y1));
+    var w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return;
+    var img;
+    try { img = cx.getImageData(x0, y0, w, h); } catch (_){ return; }
+    var mk = makeCanvas(w, h), mx = mk && mk.getContext("2d");
+    if (!mx) return;
+    // The mask: the shapes in order (added white, cut out), then blurred as one by the feather (as the live view's SVG).
+    var sh = gradeShapes(d), mm = mx;
+    if (f > 0 && "filter" in mx && sh.length > 1){ var m1 = makeCanvas(w, h); mm = (m1 && m1.getContext("2d")) || mx; }
+    mm.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0);
+    if (f > 0 && mm === mx && "filter" in mx) mx.filter = "blur(" + r2(f * sc / 2) + "px)";
+    mm.fillStyle = "#ffffff";
+    sh.forEach(function(s){
+      mm.globalCompositeOperation = s.op === "sub" ? "destination-out" : "source-over";
+      mm.fill(new Path2D(gradePath(s)));
+    });
+    mm.globalCompositeOperation = "source-over";
+    if (mm !== mx){
+      mx.setTransform(1, 0, 0, 1, 0, 0);
+      mx.filter = "blur(" + r2(f * sc / 2) + "px)";
+      mx.drawImage(mm.canvas, 0, 0);
+    }
+    var ma = mx.getImageData(0, 0, w, h).data, px = img.data;
+    gradePixels(px, gradeOps(d));
+    // The mask becomes the alpha: drawn over the original it blends corrected × mask + original × (1 − mask).
+    for (var i = 3; i < px.length; i += 4) px[i] = Math.round(px[i] * ma[i] / 255);
+    mx.setTransform(1, 0, 0, 1, 0, 0); mx.filter = "none";
+    mx.clearRect(0, 0, w, h);
+    mx.putImageData(img, 0, 0);
+    cx.save();
+    try {
+      cx.setTransform(1, 0, 0, 1, 0, 0);
+      cx.globalAlpha = 1; cx.globalCompositeOperation = "source-over";
+      cx.drawImage(mk, x0, y0);
+    } finally { cx.restore(); }
+  }
+
+  // ---- colour correction in SVG (the HTML review page, the phone) ----------------------------------
+  // Clients without Sight's backdrop-filter layer show an area corrected inside the drawings' SVG overlay: the picture
+  // under the overlay (`media` {href, vb}: its URL and the doc box it covers) drawn again through the area's filter
+  // (the CSS chain as SVG primitives, so it matches gradeFilter / gradePixels) and mask. Works wherever SVG filters do
+  // (iOS Safari included); a playing video needs another way (the phone mirrors its frame to a canvas per area).
+  // The area's box with room for the feathered edge [x, y, w, h] (annotate.js's live div uses the same).
+  function gradePadBox(it){
+    var b = boundsOf(it), pad = Math.max(0, Number(it.data.feather) || 0) * 1.5 + 1;
+    return [b[0] - pad, b[1] - pad, b[2] - b[0] + 2 * pad, b[3] - b[1] + 2 * pad].map(r2);
+  }
+  // The area's mask as SVG markup in doc units over `box`: white where the area is (shapes in order, added white, cut
+  // black, blurred as a whole by feather / 2). `id` prefixes the ids it uses (unique in the document it goes into).
+  // Read as alpha (a CSS mask-image) or as luminance (an SVG <mask>) it is the same mask.
+  function gradeMaskSvg(d, box, id){
+    var f = Math.max(0, Number(d.feather) || 0), sh = gradeShapes(d), paths = sh.map(gradePath);
+    var bx = 'x="' + box[0] + '" y="' + box[1] + '" width="' + box[2] + '" height="' + box[3] + '"';
+    var filt = f > 0 ? '<filter id="' + id + 'f" filterUnits="userSpaceOnUse" ' + bx + '><feGaussianBlur stdDeviation="' + r2(f / 2) + '"/></filter>' : "";
+    var fa = f > 0 ? ' filter="url(#' + id + 'f)"' : "";
+    // (With parts: a luminance mask over one white rect, blurred as a whole — a black fill alone would not cut an alpha mask.)
+    var body = sh.length > 1
+      ? '<mask id="' + id + 's" maskUnits="userSpaceOnUse" ' + bx + ">" + sh.map(function(s, i){ return '<path d="' + paths[i] + '" fill="' + (s.op === "sub" ? "#000" : "#fff") + '"/>'; }).join("") + "</mask><g" + fa + "><rect " + bx + ' fill="#fff" mask="url(#' + id + 's)"/></g>'
+      : '<path d="' + paths[0] + '" fill="#fff"' + fa + "/>";
+    return filt + body;
+  }
+  // The area's correction as an SVG <filter> over `box` (Filter Effects' own definitions of brightness / contrast /
+  // saturate / hue-rotate, in sRGB, each step clamped — as gradePixels).
+  function gradeFilterSvg(d, box, id){
+    var o = gradeOps(d), off = Math.round((0.5 - 0.5 * o.c) * 1e5) / 1e5;
+    var m = function(M){ return [M[0], M[1], M[2], 0, 0, M[3], M[4], M[5], 0, 0, M[6], M[7], M[8], 0, 0, 0, 0, 0, 1, 0].map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" "); };
+    var lin = function(sl, ic){ return ["R", "G", "B"].map(function(c){ return "<feFunc" + c + ' type="linear" slope="' + Math.round(sl * 1e5) / 1e5 + '" intercept="' + ic + '"/>'; }).join(""); };
+    return '<filter id="' + id + '" filterUnits="userSpaceOnUse" x="' + box[0] + '" y="' + box[1] + '" width="' + box[2] + '" height="' + box[3] + '" color-interpolation-filters="sRGB">' +
+      "<feComponentTransfer>" + lin(o.b, 0) + "</feComponentTransfer><feComponentTransfer>" + lin(o.c, off) + "</feComponentTransfer>" +
+      '<feColorMatrix type="matrix" values="' + m(o.S) + '"/><feColorMatrix type="matrix" values="' + m(o.H) + '"/></filter>';
+  }
+  var gradeSeq = 0, gradeUrls = typeof Map !== "undefined" ? new Map() : null;
+  // A data: URL (the review page inlines its pictures, several MB each) as a blob: URL, made once per picture, so the
+  // overlays' markup holds a short URL instead of another copy of the picture (other URLs as they are).
+  function gradeHref(href){
+    if (!gradeUrls || !/^data:/i.test(href) || typeof URL === "undefined" || !URL.createObjectURL || typeof Blob === "undefined") return href;
+    var u = gradeUrls.get(href);
+    if (u) return u;
+    try {
+      var i = href.indexOf(","), head = href.slice(5, i), body = href.slice(i + 1), bin, bytes;
+      bin = /;base64$/i.test(head) ? atob(body) : unescape(body);  // (percent-encoded bytes kept as bytes)
+      bytes = new Uint8Array(bin.length);
+      for (var k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k) & 255;
+      u = URL.createObjectURL(new Blob([bytes], { type: head.split(";")[0] || "application/octet-stream" }));
+    } catch (_){ u = href; }
+    gradeUrls.set(href, u);
+    return u;
+  }
+  // SVG markup of every area of `items` drawn corrected over `media` (lowest z first; an area that overlaps earlier ones
+  // corrects what they left, as gradeCanvas does — until that nesting gets too deep, then the plain picture).
+  function gradeSvgMarkup(items, media){
+    if (!media || !media.href || !media.vb) return "";
+    var list = items.filter(function(it){ return typeOf(it) === "grade" && !gradeIdentity(it.data) && gradeShapeOk(it.data); }).sort(function(a, b){ return zOf(a) - zOf(b); });
+    if (!list.length) return "";
+    var p = "rcg" + (++gradeSeq) + "-", vb = media.vb, img = p + "i", done = [], out = "";
+    var defs = '<image id="' + img + '" href="' + esc(gradeHref(media.href)) + '" x="' + r2(vb[0]) + '" y="' + r2(vb[1]) + '" width="' + r2(vb[2]) + '" height="' + r2(vb[3]) + '" preserveAspectRatio="none"/>';
+    list.forEach(function(it, k){
+      var box = gradePadBox(it), id = p + k, cost = 1, under = [];
+      if (!(box[2] > 0 && box[3] > 0)) return;
+      done.forEach(function(e){
+        if (e.box[0] < box[0] + box[2] && e.box[0] + e.box[2] > box[0] && e.box[1] < box[1] + box[3] && e.box[1] + e.box[3] > box[1]){ under.push(e); cost += e.cost; }
+      });
+      if (cost > 32){ under = []; cost = 1; }  // (each nested area is drawn again: keep the work bounded)
+      var src = img;
+      if (under.length){
+        src = id + "u";
+        defs += '<g id="' + src + '"><use href="#' + img + '"/>' + under.map(function(e){ return '<use href="#' + e.id + '"/>'; }).join("") + "</g>";
+      }
+      defs += gradeFilterSvg(it.data, box, id + "g") +
+        '<mask id="' + id + 'm" maskUnits="userSpaceOnUse" x="' + box[0] + '" y="' + box[1] + '" width="' + box[2] + '" height="' + box[3] + '">' + gradeMaskSvg(it.data, box, id + "m") + "</mask>" +
+        '<use id="' + id + '" href="#' + src + '" filter="url(#' + id + 'g)" mask="url(#' + id + 'm)"/>';
+      out += '<use href="#' + id + '"/>';
+      done.push({ id: id, box: box, cost: cost });
+    });
+    return out ? "<defs>" + defs + "</defs>" + out : "";
+  }
+
+  // ---- arrows along a stroke (kind stroke, shape_kind "arrows", FORMAT.md) ------------------------
+  // Arrows spread evenly along the stroke (about data.step apart), each data.len long along the stroke's
+  // normal, pointing away from it (dir "out") or at it ("in"), on one side ("left" / "right" of the
+  // direction it was drawn in) or both.
+  function arrowsGeom(d){
+    var poly = polyOf(d.pts), n = poly.length, cum = [0], i;
+    for (i = 1; i < n; i++) cum.push(cum[i - 1] + hyp(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]));
+    var total = cum[n - 1] || 0, out = [];
+    if (total < 1e-6) return out;
+    var step = Math.max(Number(d.step) || 0, total / 400, 1e-3), cnt = Math.max(1, Math.round(total / step));
+    var w = d.width || 2, len = Math.max(Number(d.len) || w * 6, w), gap0 = w * 1.2 + (d.guide !== false ? w / 2 : 0);
+    var at = function(s){
+      // Point at arc length s; the tangent from a window around it (steadier than one segment of a shaky stroke).
+      var j = 1;
+      while (j < n - 1 && cum[j] < s) j++;
+      var t = (s - cum[j - 1]) / ((cum[j] - cum[j - 1]) || 1);
+      var p = [poly[j - 1][0] + (poly[j][0] - poly[j - 1][0]) * t, poly[j - 1][1] + (poly[j][1] - poly[j - 1][1]) * t];
+      var win = Math.min(step / 2, total / 2, len), a = ptAt(Math.max(0, s - win)), b = ptAt(Math.min(total, s + win));
+      var tx = b[0] - a[0], ty = b[1] - a[1], l = hyp(tx, ty);
+      if (l < 1e-9){ tx = poly[j][0] - poly[j - 1][0]; ty = poly[j][1] - poly[j - 1][1]; l = hyp(tx, ty) || 1; }
+      return { p: p, t: [tx / l, ty / l] };
+    };
+    var ptAt = function(s){
+      var j = 1;
+      while (j < n - 1 && cum[j] < s) j++;
+      var t = (s - cum[j - 1]) / ((cum[j] - cum[j - 1]) || 1);
+      return [poly[j - 1][0] + (poly[j][0] - poly[j - 1][0]) * t, poly[j - 1][1] + (poly[j][1] - poly[j - 1][1]) * t];
+    };
+    var sides = d.side === "right" ? [-1] : d.side === "both" ? [1, -1] : [1];
+    for (i = 0; i < cnt; i++){
+      var g = at((i + 0.5) * total / cnt);
+      // "left" of the drawing direction on screen (y down): the tangent turned a quarter anticlockwise.
+      var nx = g.t[1], ny = -g.t[0];
+      sides.forEach(function(sg){
+        var near = [g.p[0] + nx * sg * gap0, g.p[1] + ny * sg * gap0], far = [g.p[0] + nx * sg * (gap0 + len), g.p[1] + ny * sg * (gap0 + len)];
+        out.push(d.dir === "in" ? { tail: far, tip: near } : { tail: near, tip: far });
+      });
+    }
+    return out;
+  }
+  function arrowsPrims(d){
+    var w = d.width || 2, op = d.opacity != null ? d.opacity : 1, out = [], body = "", heads = {};
+    if (d.guide !== false){
+      var gp = polyOf(d.pts);
+      if (gp.length === 1) gp.push([gp[0][0] + 0.01, gp[0][1]]);
+      out.push({ d: smoothPath(gp, false), stroke: d.color, sw: w, op: op, dash: dashArray(d.dash, w), cap: "round", join: "round" });
+    }
+    arrowsGeom(d).forEach(function(a){
+      var h = headPrims(d.head1 || "triangle", a.tip, a.tail, w, d.headSize, d.color, op);
+      var b = trimPolyline([a.tail, a.tip], false, h.trim);
+      body += "M" + r2(b[0][0]) + " " + r2(b[0][1]) + "L" + r2(b[1][0]) + " " + r2(b[1][1]);
+      // Heads of one kind share a path (one element per kind, not per arrow).
+      h.prims.forEach(function(p, k){
+        var key = k + "|" + (p.fill ? "f" : "") + (p.stroke ? "s" : "");
+        if (heads[key]) heads[key].d += p.d; else heads[key] = Object.assign({}, p);
+      });
+    });
+    if (body) out.push({ d: body, stroke: d.color, sw: w, op: op, cap: "round", join: "round" });
+    return out.concat(Object.keys(heads).map(function(k){ return heads[k]; }));
+  }
+  // How far an arrows drawing reaches from its stroke (bounds, hit tests).
+  function arrowsReach(d){
+    var w = d.width || 2;
+    return w * 1.7 + Math.max(Number(d.len) || w * 6, w) + Math.max(w * 4.5, w + 9) * (d.headSize || 1) * 0.6;
+  }
+
+  // A pin's leader line: present when its start (ax, ay) lies outside the circle.
+  function pinLeader(d){ return Number.isFinite(d.ax) && Number.isFinite(d.ay) && hyp(d.x - d.ax, d.y - d.ay) > d.size / 2 + 0.5; }
+  function pinLineW(d){ return Math.max(1.5, d.size * 0.07); }
+  // The number's colour on a pin of fill `c`: near-black on a light fill (yellow, white, light green…), white otherwise.
+  // Luma of the sRGB values with Rec.709 weights — the same measure model3d-core.js gridColors uses for the 3D grid,
+  // but here a two-way pick at 0.6 (not WCAG's ~0.18 crossover, which would turn the red and blue pins' text black).
+  // Accepts #rgb / #rrggbb (#rrggbbaa: alpha ignored), rgb() (numbers or %) and a few light colour names; anything else keeps white.
+  function pinInk(c){
+    var s = String(c || "").trim(), m, rgb = null;
+    if ((m = /^#([0-9a-f]{3,8})$/i.exec(s))){
+      var h = m[1];
+      if (h.length === 3 || h.length === 4) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      if (h.length === 6 || h.length === 8) rgb = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    } else if ((m = /^rgba?\(\s*([\d.]+)(%?)[\s,]+([\d.]+)(%?)[\s,]+([\d.]+)(%?)/i.exec(s))){
+      rgb = [1, 3, 5].map(function(i){ return m[i + 1] ? +m[i] * 2.55 : +m[i]; });
+    } else if (/^(white|yellow|ivory|snow|lightyellow|beige)$/i.test(s)) return "#111111";
+    if (!rgb) return "#ffffff";
+    return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 > 0.6 ? "#111111" : "#ffffff";
+  }
+
+  // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known; a pin with
+  // its own `label` shows that instead.
   function primsOf(it, numOf){
     var d = it.data, t = typeOf(it), op, rot, out, path;
-    if (t === "brush" || t === "pencil") return [{ d: strokeOutline(it), fill: d.color, op: d.opacity != null ? d.opacity : 1 }];
+    if (t === "brush" || t === "pencil") return fillPrims(d).concat([{ d: strokeOutline(it), fill: d.color, op: d.opacity != null ? d.opacity : 1 }]);
+    if (t === "arrows") return arrowsPrims(d);
+    if (t === "grade"){
+      // No fill: a dashed outline (black under white dashes, readable on any picture), about 0.4 % of the area's size —
+      // what a picture without the correction shows (note previews, an SVG overlay). Canvases apply it (drawCanvas).
+      // (Added / cut parts: every shape's outline, dashed alike.)
+      var gb = boundsOf(it), gw = Math.max(0.5, Math.max(gb[2] - gb[0], gb[3] - gb[1]) * 0.004), gp = gradeShapes(d).map(gradePath).join(" ");
+      return [{ d: gp, stroke: "#000000", sw: gw * 1.8, op: 0.5, join: "round", grade: true }, { d: gp, stroke: "#ffffff", sw: gw, op: 0.95, dash: [gw * 4, gw * 3], join: "round", grade: true }];
+    }
     if (t === "marker"){
       var mp = [];
       for (var i = 0; i < d.pts.length; i += 3) mp.push([d.pts[i], d.pts[i + 1]]);
@@ -270,20 +911,73 @@ var SightReviewCore = (function(){
       out.push({ text: L.lines, widths: L.widths, x: d.x, y: d.y, w: L.w, lh: L.lh, font: textFont(d), family: fontStack(d.font), size: d.size, bold: d.bold, italic: d.italic, underline: d.underline, align: d.align || "left", fill: d.color, stroke: d.outline ? d.outlineColor : null, sw: d.outline ? d.outline * 2 : 0, op: op, rot: rot });
       return out;
     }
+    if (t === "image"){
+      op = d.opacity != null ? d.opacity : 1;
+      var bw = Math.max(0, d.border || 0), ix = d.x, iy = d.y, iw = d.w, ih = d.h;
+      rot = d.rot ? [d.rot, ix + iw / 2, iy + ih / 2] : null;
+      out = [];
+      // The shadow: stacked translucent rounded boxes (no blur filter — SVG ids and canvas filters differ
+      // between clients; this looks the same everywhere), offset down-right in the picture's own axes.
+      var sh = clamp(Number(d.shadow) || 0, 0, 1);
+      if (sh > 0 && !(bw > 0)){
+        // No border: the shadow follows the picture's alpha (PNG/WebP with transparency), not its box. A blurred
+        // black silhouette of the picture itself (SVG filter / canvas shadowBlur), offset in the picture's own axes.
+        var sp = Math.max(1, Math.min(Math.abs(iw), Math.abs(ih)) * 0.05);
+        out.push({ img: d.shot, x: ix, y: iy, w: iw, h: ih, crop: imgCrop(d), op: op, rot: rot, shadow: { dx: sp * 0.45, dy: sp * 0.7, blur: sp * 0.45, a: Math.min(1, sh * 0.7) } });
+      } else if (sh > 0){
+        var spread = Math.max(1, Math.min(iw, ih) * 0.05 + bw), N = 6;
+        var ux = rot ? Math.cos(d.rot * Math.PI / 180) : 1, uy = rot ? Math.sin(d.rot * Math.PI / 180) : 0;
+        var offx = spread * 0.45, offy = spread * 0.7, dx = offx * ux - offy * uy, dy = offx * uy + offy * ux;
+        for (var si = N; si >= 1; si--){
+          var e = spread * si / N, sx0 = ix - bw - e + dx, sy0 = iy - bw - e + dy;
+          var sr = rot ? [d.rot, ix + iw / 2 + dx, iy + ih / 2 + dy] : null;
+          out.push({ d: rectPath(sx0, sy0, iw + 2 * bw + 2 * e, ih + 2 * bw + 2 * e, e), fill: "#000000", op: op * sh * 0.32, rot: sr });
+        }
+      }
+      out.push({ img: d.shot, x: ix, y: iy, w: iw, h: ih, crop: imgCrop(d), op: op, rot: rot });
+      if (bw > 0) out.push({ d: rectPath(ix - bw / 2, iy - bw / 2, iw + bw, ih + bw, 0), stroke: d.borderColor || "#ffffff", sw: bw, op: op, join: "miter", rot: rot });
+      return out;
+    }
     if (t === "pin"){
-      var r = d.size / 2, num = numOf ? numOf(it) : "";
-      return [
-        { d: ellipsePath(d.x, d.y, r, r), fill: d.color, stroke: "#ffffff", sw: Math.max(1, r * 0.14), op: 1 },
-        { text: [String(num || "•")], widths: null, x: d.x, y: d.y - r * 0.62, w: 0, lh: r * 1.24, font: "700 " + (r * 1.05) + "px " + fontStack("sans"), family: fontStack("sans"), size: r * 1.05, bold: true, align: "center", fill: "#ffffff", op: 1, center: true },
-      ];
+      // 0.84+: `label` = the number typed for it (else, older pins: the note's number); `ax, ay` = the leader
+      // line's start (the point pinned), drawn from there to the circle's edge with a dot at the start.
+      var r = d.size / 2, lab = d.label != null && d.label !== "" ? String(d.label) : String((numOf ? numOf(it) : "") || "\u2022");
+      var fs = r * 1.05 * (lab.length >= 3 ? 0.62 : lab.length === 2 ? 0.82 : 1);
+      out = [];
+      if (pinLeader(d)){
+        var lw = pinLineW(d), ll = hyp(d.x - d.ax, d.y - d.ay);
+        var ex = d.x - (d.x - d.ax) / ll * r, ey = d.y - (d.y - d.ay) / ll * r;
+        out.push({ d: "M" + r2(d.ax) + " " + r2(d.ay) + "L" + r2(ex) + " " + r2(ey), stroke: d.color, sw: lw, op: 1, cap: "round", join: "round" });
+        out.push({ d: ellipsePath(d.ax, d.ay, lw * 1.3, lw * 1.3), fill: d.color, op: 1 });
+      }
+      out.push({ d: ellipsePath(d.x, d.y, r, r), fill: d.color, stroke: "#ffffff", sw: Math.max(1, r * 0.14), op: 1 });
+      out.push({ text: [lab], widths: null, x: d.x, y: d.y - fs * 0.59, w: 0, lh: fs * 1.18, font: "700 " + fs + "px " + fontStack("sans"), family: fontStack("sans"), size: fs, bold: true, align: "center", fill: pinInk(d.color), op: 1, center: true });
+      return out;
     }
     return [];
   }
 
+  var shadowSeq = 0;
   function primSvg(p){
     var tf = p.rot ? ' transform="rotate(' + r2(p.rot[0]) + " " + r2(p.rot[1]) + " " + r2(p.rot[2]) + ')"' : "";
     var op = p.op != null && p.op < 1 ? ' opacity="' + r2(p.op) + '"' : "";
     var st;
+    if (p.img !== undefined){
+      var u = imageUrl(p.img), c = p.crop || [0, 0, 1, 1];
+      if (p.shadow){
+        // Shadow-only prim: the picture turned black, scaled to the shadow alpha, blurred, then moved. Ids are unique per page.
+        if (!u) return "";
+        var fid = "rcsh" + (++shadowSeq), s = p.shadow, k = r2(s.a);
+        var sw2 = r2(Math.max(0, p.w)), sh2 = r2(Math.max(0, p.h)), fm = s.blur * 3 + 1;
+        return "<g" + tf + op + '><g transform="translate(' + r2(s.dx) + " " + r2(s.dy) + ')"><defs><filter id="' + fid + '" filterUnits="userSpaceOnUse" x="' + r2(p.x - fm) + '" y="' + r2(p.y - fm) + '" width="' + r2(sw2 + 2 * fm) + '" height="' + r2(sh2 + 2 * fm) + '" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ' + k + ' 0"/><feGaussianBlur stdDeviation="' + r2(s.blur) + '"/></filter></defs><g filter="url(#' + fid + ')"><svg x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + sw2 + '" height="' + sh2 + '" style="width:' + sw2 + 'px;height:' + sh2 + 'px;overflow:hidden" viewBox="' + c.map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" ") + '" preserveAspectRatio="none" overflow="hidden"><image href="' + esc(u) + '" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g></g></g>';
+      }
+      if (!u) return "<g" + tf + op + '><rect x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + r2(p.w) + '" height="' + r2(p.h) + '" fill="#808080" fill-opacity="0.35"/></g>';
+      // A nested viewport clips to the crop window; the picture is 1 × 1 units inside it, so the crop needs no pixel size.
+      // The size is also an inline style: host pages size their own <svg>s by CSS (`.x svg { width: 100% }`),
+      // which would hit this nested one too (CSS beats the attribute) and stretch the cropped picture.
+      var iw = r2(Math.max(0, p.w)), ih = r2(Math.max(0, p.h));
+      return "<g" + tf + op + '><svg x="' + r2(p.x) + '" y="' + r2(p.y) + '" width="' + iw + '" height="' + ih + '" style="width:' + iw + 'px;height:' + ih + 'px;overflow:hidden" viewBox="' + c.map(function(v){ return Math.round(v * 1e5) / 1e5; }).join(" ") + '" preserveAspectRatio="none" overflow="hidden"><image href="' + esc(u) + '" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg></g>';
+    }
     if (p.text){
       var anchor = p.align === "center" ? "middle" : p.align === "right" ? "end" : "start";
       var x0 = p.center ? p.x : p.align === "center" ? p.x + p.w / 2 : p.align === "right" ? p.x + p.w : p.x;
@@ -300,6 +994,44 @@ var SightReviewCore = (function(){
     cx.save();
     if (p.rot){ cx.translate(p.rot[1], p.rot[2]); cx.rotate(p.rot[0] * Math.PI / 180); cx.translate(-p.rot[1], -p.rot[2]); }
     cx.globalAlpha = p.op != null ? p.op : 1;
+    if (p.img !== undefined){
+      var im = imageEl(p.img), c = p.crop || [0, 0, 1, 1];
+      if (im && im.complete && im.naturalWidth){
+        var nw = im.naturalWidth, nh = im.naturalHeight;
+        if (p.shadow){
+          // shadowOffset/shadowBlur ignore the transform, so they are converted from doc units. The picture itself is
+          // drawn shifted left in device space until it is fully off-canvas; the offset compensates, so only the shadow lands.
+          var s = p.shadow;
+          if (!cx.getTransform){
+            cx.fillStyle = "rgba(0,0,0," + s.a * 0.6 + ")"; cx.fillRect(Math.min(p.x, p.x + p.w) + s.dx, Math.min(p.y, p.y + p.h) + s.dy, Math.abs(p.w), Math.abs(p.h));
+            cx.restore(); return;
+          }
+          var m = cx.getTransform(), sc = Math.hypot(m.a, m.b) || 1;
+          var xs = [p.x, p.x + p.w], ys = [p.y, p.y + p.h], x0 = 1e30, x1 = -1e30, y0 = 1e30, y1 = -1e30;
+          for (var ci = 0; ci < 4; ci++){
+            var qx = xs[ci & 1], qy = ys[ci >> 1], dx = m.a * qx + m.c * qy + m.e, dy = m.b * qx + m.d * qy + m.f;
+            x0 = Math.min(x0, dx); x1 = Math.max(x1, dx); y0 = Math.min(y0, dy); y1 = Math.max(y1, dy);
+          }
+          var ox = m.a * s.dx + m.c * s.dy, oy = m.b * s.dx + m.d * s.dy, mg = 3 * s.blur * sc + 2;
+          var cw = cx.canvas.width, ch = cx.canvas.height;
+          if (x1 + ox + mg < 0 || x0 + ox - mg > cw || y1 + oy + mg < 0 || y0 + oy - mg > ch){ cx.restore(); return; }
+          var D = x1 + mg + 1;
+          cx.setTransform(m.a, m.b, m.c, m.d, m.e - D, m.f);
+          cx.shadowColor = "rgba(0,0,0," + s.a + ")";
+          cx.shadowBlur = 2 * s.blur * sc;
+          cx.shadowOffsetX = ox + D;
+          cx.shadowOffsetY = oy;
+          try { cx.drawImage(im, c[0] * nw, c[1] * nh, c[2] * nw, c[3] * nh, p.x, p.y, p.w, p.h); } catch (_){}
+          cx.restore();
+          return;
+        }
+        try { cx.drawImage(im, c[0] * nw, c[1] * nh, c[2] * nw, c[3] * nh, p.x, p.y, p.w, p.h); } catch (_){}
+      } else if (!p.shadow){
+        cx.globalAlpha *= 0.35; cx.fillStyle = "#808080"; cx.fillRect(p.x, p.y, p.w, p.h);
+      }
+      cx.restore();
+      return;
+    }
     if (p.text){
       cx.font = p.font;
       cx.textBaseline = "alphabetic";
@@ -333,24 +1065,37 @@ var SightReviewCore = (function(){
 
   var zOf = function(it){ return (it.z != null ? it.z : it.z_index) || 0; };
   // All drawings of a list onto a canvas whose transform maps doc units, lowest z first.
+  // Colour correction areas first (they correct the picture under every drawing, as on screen), then the rest.
   function drawCanvas(cx, items, numOf){
-    items.slice().sort(function(a, b){ return zOf(a) - zOf(b); }).forEach(function(it){
-      primsOf(it, numOf).forEach(function(p){ primCanvas(cx, p); });
+    var list = items.slice().sort(function(a, b){ return zOf(a) - zOf(b); });
+    list.forEach(function(it){ if (typeOf(it) === "grade") gradeCanvas(cx, it); });
+    list.forEach(function(it){
+      if (typeOf(it) !== "grade") primsOf(it, numOf).forEach(function(p){ primCanvas(cx, p); });
     });
   }
   // SVG markup (no <svg> wrapper) for a list of drawings, lowest z first.
-  function svgMarkup(items, numOf){
-    return items.slice().sort(function(a, b){ return zOf(a) - zOf(b); }).map(function(it){ return primsOf(it, numOf).map(primSvg).join(""); }).join("");
+  // opts.media {href, vb}: the picture the overlay lies on — colour correction areas are then shown corrected
+  // (gradeSvgMarkup, under every other drawing) and without their dashed outline, unless opts.gradeLines is true.
+  // opts.gradeLines false with no media: areas draw nothing (the host shows them its own way, e.g. a playing video).
+  function svgMarkup(items, numOf, opts){
+    opts = opts || {};
+    var lines = opts.gradeLines != null ? !!opts.gradeLines : !opts.media;
+    var under = opts.media ? gradeSvgMarkup(items, opts.media) : "";
+    return under + items.slice().sort(function(a, b){ return zOf(a) - zOf(b); }).map(function(it){
+      if (!lines && typeOf(it) === "grade") return "";
+      return primsOf(it, numOf).map(primSvg).join("");
+    }).join("");
   }
 
   // ---- bounds / hit testing / transforms --------------------------------------------------------
 
   function boundsOf(it){
     var d = it.data, t = typeOf(it), i;
+    if (t === "grade") return gradeBox(d);
     if (STROKE_TOOLS.has(t)){
       var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (i = 0; i < d.pts.length; i += 3){ x0 = Math.min(x0, d.pts[i]); y0 = Math.min(y0, d.pts[i + 1]); x1 = Math.max(x1, d.pts[i]); y1 = Math.max(y1, d.pts[i + 1]); }
-      var rr = d.size / 2;
+      var rr = t === "arrows" ? arrowsReach(d) : d.size / 2;
       return [x0 - rr, y0 - rr, x1 + rr, y1 + rr];
     }
     if (t === "line" || t === "arrow"){
@@ -359,12 +1104,16 @@ var SightReviewCore = (function(){
       return [Math.min.apply(null, xs) - r, Math.min.apply(null, ys) - r, Math.max.apply(null, xs) + r, Math.max.apply(null, ys) + r];
     }
     var box, rot = d.rot || 0;
-    if (t === "rect" || t === "ellipse") box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
+    if (t === "rect" || t === "ellipse" || t === "image") box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
     else if (t === "text") box = textLayout(d).box;
-    else if (t === "pin") return [d.x - d.size / 2, d.y - d.size / 2, d.x + d.size / 2, d.y + d.size / 2];
+    else if (t === "pin"){
+      var pr = d.size / 2, pb = [d.x - pr, d.y - pr, d.x + pr, d.y + pr];
+      if (pinLeader(d)){ var pl = pinLineW(d) * 1.3; pb = [Math.min(pb[0], d.ax - pl), Math.min(pb[1], d.ay - pl), Math.max(pb[2], d.ax + pl), Math.max(pb[3], d.ay + pl)]; }
+      return pb;
+    }
     else return [0, 0, 0, 0];
     var x = box[0], y = box[1], w = box[2], h = box[3], cx = x + w / 2, cy = y + h / 2;
-    var pad = t === "text" ? 0 : (d.strokeOn !== false ? d.width / 2 : 0);
+    var pad = t === "text" ? 0 : t === "image" ? Math.max(0, d.border || 0) : (d.strokeOn !== false ? d.width / 2 : 0);
     var cs = [[x - pad, y - pad], [x + w + pad, y - pad], [x + w + pad, y + h + pad], [x - pad, y + h + pad]].map(function(p){ return rotPt(p[0], p[1], cx, cy, rot); });
     var cxs = cs.map(function(c){ return c[0]; }), cys = cs.map(function(c){ return c[1]; });
     return [Math.min.apply(null, cxs), Math.min.apply(null, cys), Math.max.apply(null, cxs), Math.max.apply(null, cys)];
@@ -374,7 +1123,27 @@ var SightReviewCore = (function(){
     var d = it.data, t = typeOf(it), i;
     var b = boundsOf(it);
     if (x < b[0] - tol || y < b[1] - tol || x > b[2] + tol || y > b[3] + tol) return false;
+    if (t === "grade"){
+      // Inside the area (a click anywhere in it picks it): a lasso's outline, a brush area's stroke, after its parts.
+      return gradeIn(d, x, y, tol);
+    }
+    if (t === "arrows"){
+      // The guide's width all along; the arrows' reach only on their side(s) of the stroke.
+      var reach = arrowsReach(d), np = d.pts.length / 3, near = (d.width || 2) / 2 + tol;
+      if (np === 1) return hyp(x - d.pts[0], y - d.pts[1]) <= near;
+      for (i = 1; i < np; i++){
+        var ax = d.pts[i * 3 - 3], ay = d.pts[i * 3 - 2], bx2 = d.pts[i * 3], by2 = d.pts[i * 3 + 1];
+        var dd = segDist(x, y, ax, ay, bx2, by2);
+        if (dd <= near) return true;
+        if (dd > reach + tol) continue;
+        // Left of the drawing direction (screen, y down): a negative cross product of the segment and the point.
+        var left = (bx2 - ax) * (y - ay) - (by2 - ay) * (x - ax) < 0;
+        if (d.side === "both" || (d.side === "right" ? !left : left)) return true;
+      }
+      return false;
+    }
     if (STROKE_TOOLS.has(t)){
+      if (d.close && d.pattern && d.pattern !== "none" && d.pts.length >= 9 && inPoly(polyOf(d.pts), x, y)) return true;
       var rs = t === "marker" ? null : strokeRadii(it);
       var n = d.pts.length / 3;
       if (n === 1) return hyp(x - d.pts[0], y - d.pts[1]) <= (rs ? rs[0] : d.size / 2) + tol;
@@ -382,6 +1151,8 @@ var SightReviewCore = (function(){
         var r = rs ? Math.max(rs[i], rs[i - 1]) : d.size / 2;
         if (segDist(x, y, d.pts[i * 3 - 3], d.pts[i * 3 - 2], d.pts[i * 3], d.pts[i * 3 + 1]) <= r + tol) return true;
       }
+      // A closed stroke's seam: from its last point back to the first.
+      if (d.close && n >= 3 && segDist(x, y, d.pts[n * 3 - 3], d.pts[n * 3 - 2], d.pts[0], d.pts[1]) <= (rs ? Math.max(rs[n - 1], rs[0]) : d.size / 2) + tol) return true;
       return false;
     }
     if (t === "line" || t === "arrow"){
@@ -389,12 +1160,13 @@ var SightReviewCore = (function(){
       for (i = 1; i < pts.length; i++) if (segDist(x, y, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) <= d.width / 2 + tol) return true;
       return false;
     }
-    if (t === "pin") return hyp(x - d.x, y - d.y) <= d.size / 2 + tol;
+    if (t === "pin") return hyp(x - d.x, y - d.y) <= d.size / 2 + tol || (pinLeader(d) && segDist(x, y, d.ax, d.ay, d.x, d.y) <= pinLineW(d) * 1.3 + tol);
     var box;
     if (t === "text") box = textLayout(d).box;
     else box = [Math.min(d.x, d.x + d.w), Math.min(d.y, d.y + d.h), Math.abs(d.w), Math.abs(d.h)];
     var bx = box[0], by = box[1], bw = box[2], bh = box[3], cx = bx + bw / 2, cy = by + bh / 2;
     var lp = rotPt(x, y, cx, cy, -(d.rot || 0)), lx = lp[0], ly = lp[1];
+    if (t === "image"){ var ib = Math.max(0, d.border || 0) + tol; return lx >= bx - ib && lx <= bx + bw + ib && ly >= by - ib && ly <= by + bh + ib; }
     if (t === "text" || d.fillOn) return lx >= bx - tol && lx <= bx + bw + tol && ly >= by - tol && ly <= by + bh + tol;
     var sw = d.width / 2 + tol;
     if (t === "rect"){
@@ -414,14 +1186,31 @@ var SightReviewCore = (function(){
   function transformItem(it, src, map, opts){
     var o = opts || {}, k = o.k != null ? o.k : 1, da = o.da || 0, sx = o.sx != null ? o.sx : 1, sy = o.sy != null ? o.sy : 1;
     var d = it.data, s = src.data, t = typeOf(it), c;
-    if (STROKE_TOOLS.has(t)){
+    if (t === "grade"){
+      for (var gi = 0; gi < s.pts.length; gi += 3){ c = map(s.pts[gi], s.pts[gi + 1]); d.pts[gi] = c[0]; d.pts[gi + 1] = c[1]; }
+      if (s.size != null) d.size = s.size * k;
+      if (s.feather != null) d.feather = s.feather * k;
+      if (Array.isArray(s.rings) && Array.isArray(d.rings)) s.rings.forEach(function(sr, ri){
+        var dr = d.rings[ri];
+        if (!Array.isArray(sr) || !Array.isArray(dr)) return;
+        for (var rj = 0; rj + 1 < sr.length; rj += 3){ c = map(sr[rj], sr[rj + 1]); dr[rj] = c[0]; dr[rj + 1] = c[1]; }
+      });
+    } else if (STROKE_TOOLS.has(t)){
       for (var i = 0; i < s.pts.length; i += 3){ c = map(s.pts[i], s.pts[i + 1]); d.pts[i] = c[0]; d.pts[i + 1] = c[1]; }
-      d.size = s.size * k;
+      if (s.size != null) d.size = s.size * k;
+      if (s.width != null) d.width = s.width * k;
+      if (s.gap != null) d.gap = s.gap * k;
+      if (s.hatchWidth != null) d.hatchWidth = s.hatchWidth * k;
+      if (s.step != null) d.step = s.step * k;
+      if (s.len != null) d.len = s.len * k;
+      // A mirror (one negative axis) swaps an arrows drawing's left and right.
+      if (t === "arrows" && sx * sy < 0 && (s.side === "left" || s.side === "right")) d.side = s.side === "left" ? "right" : "left";
     } else if (t === "line" || t === "arrow"){
       var a = map(s.pts[0], s.pts[1]), b = map(s.pts[2], s.pts[3]);
       d.pts = [a[0], a[1], b[0], b[1]];
       d.width = s.width * k;
-      if (s.bend != null) d.bend = s.bend * k * (sx * sy < 0 ? -1 : 1);
+      // (a quadratic curve maps exactly under any affine map: its middle point goes where the map takes it)
+      if (s.bend != null || s.bendA || s.body === "curve"){ var hm = bendHandle(s); hm = map(hm[0], hm[1]); setBendAt(d, hm[0], hm[1]); }
     } else if (t === "rect" || t === "ellipse"){
       c = map(s.x + s.w / 2, s.y + s.h / 2);
       var rotd = !!s.rot || !!da;
@@ -438,8 +1227,18 @@ var SightReviewCore = (function(){
       var N = textLayout(d);
       d.x = c[0] - N.box[2] / 2 + N.pad; d.y = c[1] - N.box[3] / 2 + N.pad;
       d.rot = ((s.rot || 0) + da) % 360;
+    } else if (t === "image"){
+      // Always uniform (a picture never stretches): a corner / rotation passes k; an edge of a mixed selection
+      // passes axis scales, whose mean scale is used.
+      var q = k !== 1 ? k : Math.sqrt(Math.abs(sx * sy));
+      c = map(s.x + s.w / 2, s.y + s.h / 2);
+      d.w = Math.abs(s.w) * q; d.h = Math.abs(s.h) * q;
+      d.x = c[0] - d.w / 2; d.y = c[1] - d.h / 2;
+      d.rot = ((s.rot || 0) + da) % 360;
+      if (s.border) d.border = s.border * q;
     } else if (t === "pin"){
       c = map(s.x, s.y); d.x = c[0]; d.y = c[1];
+      if (Number.isFinite(s.ax) && Number.isFinite(s.ay)){ c = map(s.ax, s.ay); d.ax = c[0]; d.ay = c[1]; }
     }
   }
 
@@ -472,6 +1271,17 @@ var SightReviewCore = (function(){
       else out.push(["mid", (d.pts[0] + d.pts[2]) / 2, (d.pts[1] + d.pts[3]) / 2]);
       return out;
     }
+    // One pin: "pa" = the point pinned (with no leader line yet: just outside the circle, lower left, to pull one
+    // out), "pc" = the circle (only with a leader: just outside the circle, on the side away from the line, so the
+    // circle itself still moves the whole pin and its number stays readable). Several pins: none.
+    if (list.length === 1 && typeOf(list[0]) === "pin"){
+      var pd = list[0].data, rr = pd.size / 2 + 9 * px;
+      if (pinLeader(pd)){
+        var pl = hyp(pd.x - pd.ax, pd.y - pd.ay);
+        return [["pa", pd.ax, pd.ay], ["pc", pd.x + (pd.x - pd.ax) / pl * rr, pd.y + (pd.y - pd.ay) / pl * rr]];
+      }
+      return [["pa", pd.x - rr * Math.SQRT1_2, pd.y + rr * Math.SQRT1_2]];
+    }
     if (!list.length || list.every(function(it){ return typeOf(it) === "pin"; })) return [];
     if (D && D.handle === "rot" && D.at) return [["rot", D.at[0], D.at[1]]];
     var b = xfBox(list), mx = (b[0] + b[2]) / 2, my = (b[1] + b[3]) / 2;
@@ -487,12 +1297,33 @@ var SightReviewCore = (function(){
   function xfStart(h, items, x, y){
     return { handle: h, x: x, y: y, items: items, src: items.map(cloneItem), box: xfBox(items), moved: false, at: null };
   }
+  // Shift while drawing: keeps the end on the horizontal or the vertical through (x0, y0), whichever is nearer.
+  function snapHV(x0, y0, x, y){ return Math.abs(x - x0) >= Math.abs(y - y0) ? [x, y0] : [x0, y]; }
   function snap15(x0, y0, x, y){
     var a = Math.atan2(y - y0, x - x0), l = hyp(x - x0, y - y0), s = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
     return [x0 + Math.cos(s) * l, y0 + Math.sin(s) * l];
   }
-  // Moves the drag to (x, y). m: {shift, alt} — move: Shift keeps one axis; line ends: Shift snaps
-  // to 15°; rotate: Shift snaps to 15°; corners: Shift keeps the ratio; Alt scales about the centre.
+  // ---- size / opacity drag -----------------------------------------------------------------------
+  // One gesture for a tool's (or a selection's) line size and opacity, shared by Sight's editor
+  // (Ctrl + right-drag) and the drawing canvas (press and hold, then drag). Sideways: the size, as a
+  // ratio of the size it had (right = bigger; the view's width = x SIZE_SPAN, so small sizes move as
+  // finely as big ones). Up / down: the opacity (up = more solid; 80 % of the view's height = the whole
+  // 0..1 range). One axis per drag, set by the first 10 px; g.op === false (no opacity, the eraser):
+  // always the size. g = { axis: null, op } is the caller's, kept for the drag; (dx, dy) from the press,
+  // (w, h) the view's size in the same pixels. null until the axis is set, then { f } (size factor) or
+  // { dOp } (opacity change).
+  var SIZE_SPAN = 16;
+  function sizeOpDrag(g, dx, dy, w, h){
+    if (!g.axis){
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return null;
+      g.axis = g.op === false || Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    }
+    return g.axis === "x" ? { f: Math.pow(SIZE_SPAN, dx / Math.max(1, w)) } : { dOp: -dy / Math.max(1, h * 0.8) };
+  }
+  // Opacity after a drag's change, kept within 0.05..1 and to whole per cent (a missing one is 1).
+  function opAfter(o0, dOp){ return Math.round(clamp((o0 != null ? o0 : 1) + dOp, 0.05, 1) * 100) / 100; }
+  // Moves the drag to (x, y). m: {shift, alt} — move: Shift keeps one axis; line ends: Shift keeps the line
+  // horizontal / vertical; rotate: Shift snaps to 15°; corners: Shift keeps the ratio; Alt scales about the centre.
   function xfDrag(D, x, y, m){
     m = m || {};
     D.moved = true;
@@ -507,14 +1338,28 @@ var SightReviewCore = (function(){
       var d = its[0].data, s = src[0].data;
       if (h === "p0" || h === "p1"){
         var fx = h === "p0" ? s.pts[2] : s.pts[0], fy = h === "p0" ? s.pts[3] : s.pts[1];
-        var p = m.shift ? snap15(fx, fy, x, y) : [x, y];
+        var p = m.shift ? snapHV(fx, fy, x, y) : [x, y];
         d.pts = h === "p0" ? [p[0], p[1], s.pts[2], s.pts[3]] : [s.pts[0], s.pts[1], p[0], p[1]];
       } else {
-        // Dragging the middle bends the line (a straight one turns into a curve).
-        var x1 = s.pts[0], y1 = s.pts[1], x2 = s.pts[2], y2 = s.pts[3], l = hyp(x2 - x1, y2 - y1) || 1;
+        // Dragging the middle bends the line (a straight one turns into a curve) through the pointer, in any
+        // direction: across the chord curves it, along it leans the arc toward one end. Shift: a symmetric arc.
         d.body = "curve";
-        d.bend = ((x - (x1 + x2) / 2) * -(y2 - y1) + (y - (y1 + y2) / 2) * (x2 - x1)) / l;
+        setBendAt(d, x, y);
+        if (m.shift) delete d.bendA;
       }
+      return;
+    }
+    if (h === "pa" || h === "pc"){
+      // A pin's two points move apart: the point pinned (pa) or the circle (pc); Shift keeps the leader line
+      // horizontal / vertical. A point pinned that ends up inside the circle drops the leader.
+      // (pa: the pointer is the point; pc: the circle moves by the pointer's travel, its handle sits off-centre)
+      var pd2 = its[0].data, ps = src[0].data, lead = pinLeader(ps);
+      var ox0 = h === "pa" ? ps.x : ps.ax, oy0 = h === "pa" ? ps.y : ps.ay;
+      var tx = h === "pa" ? x : ps.x + x - D.x, ty = h === "pa" ? y : ps.y + y - D.y;
+      var pp = m.shift ? snapHV(ox0, oy0, tx, ty) : [tx, ty];
+      if (h === "pa"){ pd2.x = ps.x; pd2.y = ps.y; pd2.ax = pp[0]; pd2.ay = pp[1]; }
+      else if (lead){ pd2.ax = ps.ax; pd2.ay = ps.ay; pd2.x = pp[0]; pd2.y = pp[1]; }
+      if (!pinLeader(pd2)){ delete pd2.ax; delete pd2.ay; }
       return;
     }
     var bx0 = D.box[0], by0 = D.box[1], bx1 = D.box[2], by1 = D.box[3], cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
@@ -535,7 +1380,7 @@ var SightReviewCore = (function(){
     var sx = horiz ? (x - ox) / (Math.abs(w0) < 1e-6 ? 1e-6 : w0) : 1;
     var sy = vert ? (y - oy) / (Math.abs(h0) < 1e-6 ? 1e-6 : h0) : 1;
     var corner = h.length === 2;
-    var onlyText = its.every(function(it){ var t = typeOf(it); return t === "text" || t === "pin"; });
+    var onlyText = its.every(function(it){ var t = typeOf(it); return t === "text" || t === "pin" || t === "image"; });
     if ((corner && m.shift) || onlyText){
       var mm = corner ? Math.max(Math.abs(sx), Math.abs(sy)) : Math.abs(h === "n" || h === "s" ? sy : sx);
       sx = Math.sign(sx || 1) * mm; sy = Math.sign(sy || 1) * mm;
@@ -571,13 +1416,13 @@ var SightReviewCore = (function(){
         out += '<line x1="' + r2(from[0]) + '" y1="' + r2(from[1]) + '" x2="' + r2(p[0]) + '" y2="' + r2(p[1]) + '" stroke="' + C + '" stroke-width="' + r2(u) + '"/>';
         if (rotating) out += '<circle cx="' + r2(from[0]) + '" cy="' + r2(from[1]) + '" r="' + r2(3 * z) + '" fill="#fff" stroke="' + C + '" stroke-width="' + r2(1.5 * u) + '"/>';
       }
-      if (id === "rot" || id === "bend" || id === "mid") out += '<circle cx="' + r2(p[0]) + '" cy="' + r2(p[1]) + '" r="' + r2(5 * z) + '" fill="' + C + '" stroke="#fff" stroke-width="' + r2(1.5 * u) + '"/>';
+      if (id === "rot" || id === "bend" || id === "mid" || id === "pc") out += '<circle cx="' + r2(p[0]) + '" cy="' + r2(p[1]) + '" r="' + r2(5 * z) + '" fill="' + C + '" stroke="#fff" stroke-width="' + r2(1.5 * u) + '"/>';
       else out += '<rect x="' + r2(p[0] - 4.5 * z) + '" y="' + r2(p[1] - 4.5 * z) + '" width="' + r2(9 * z) + '" height="' + r2(9 * z) + '" fill="#fff" stroke="' + C + '" stroke-width="' + r2(1.5 * u) + '"/>';
     });
     return out;
   }
   // The cursor for a handle (desktop).
-  var XF_CURSOR = { rot: "grab", p0: "move", p1: "move", bend: "move", mid: "move", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize" };
+  var XF_CURSOR = { rot: "grab", p0: "move", p1: "move", bend: "move", mid: "move", pa: "move", pc: "move", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize" };
 
   // Whether a row / item carries geometry a client can draw (notes always pass; status rows and
   // unknown kinds do not).
@@ -585,9 +1430,12 @@ var SightReviewCore = (function(){
     var d = it.data || {}, t = typeOf(it);
     if (it.kind === "note") return true;
     if (STROKE_TOOLS.has(t)) return Array.isArray(d.pts) && d.pts.length >= 3;
+    // (data.rings is optional; a ring that is not a shape is skipped when drawn, never makes the area invalid.)
+    if (t === "grade") return Array.isArray(d.pts) && d.pts.length >= (d.mode === "brush" ? 3 : 9) && d.pts.every(Number.isFinite);
     if (t === "line" || t === "arrow") return Array.isArray(d.pts) && d.pts.length === 4;
     if (t === "rect" || t === "ellipse") return [d.x, d.y, d.w, d.h].every(Number.isFinite);
     if (t === "text" || t === "pin") return Number.isFinite(d.x) && Number.isFinite(d.y);
+    if (t === "image") return typeof d.shot === "string" && !!d.shot && [d.x, d.y, d.w, d.h].every(Number.isFinite);
     return false;
   }
 
@@ -758,7 +1606,10 @@ var SightReviewCore = (function(){
     [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(function(x){
       if (!isObj(x) || !pyTrue(x.id)) return;
       var k = pyStr(x.id);
-      if (!out.has(k) || st(x) > st(out.get(k))) out.set(k, x);
+      var prev = out.get(k);
+      // A ShotGrid reply id (FORMAT.md `sg`) is kept from either copy: only one client sent the reply.
+      if (!prev || st(x) > st(prev)) out.set(k, prev && !pyTrue(x.sg) && pyTrue(prev.sg) ? Object.assign({}, x, { sg: prev.sg }) : x);
+      else if (!pyTrue(prev.sg) && pyTrue(x.sg)) out.set(k, Object.assign({}, prev, { sg: x.sg }));
     });
     return Array.from(out.values()).sort(function(x, y){ return stamp(x.created) - stamp(y.created); });
   }
@@ -821,6 +1672,7 @@ var SightReviewCore = (function(){
       var data = isObj(r.data) ? clone(r.data) : {};
       if (typeof data.note === "string" && Object.prototype.hasOwnProperty.call(ids, data.note)) data.note = ids[data.note];
       if (Array.isArray(data.shots)) data.shots = data.shots.map(mapShot);
+      if (typeof data.shot === "string") data.shot = mapShot(data.shot);  // a reference image's picture
       if (data.replies !== undefined && data.replies !== null && !Array.isArray(data.replies)) data.replies = [];
       if (pyTrue(data.replies)){  // pictures attached to replies (web page / Sight)
         data.replies = data.replies.map(function(x){ return isObj(x) && Array.isArray(x.shots) ? Object.assign({}, x, { shots: x.shots.map(mapShot) }) : x; });
@@ -856,6 +1708,9 @@ var SightReviewCore = (function(){
         var aAt = stamp(have.status_at), bAt = stamp(data.status_at);
         if (bAt > aAt){ merged.status = data.status === undefined ? null : data.status; merged.status_at = bAt; }
         else if (aAt > bAt){ merged.status = have.status === undefined ? null : have.status; merged.status_at = aAt; }
+        // The ShotGrid link (FORMAT.md `data.sg`) is kept from either side, whichever content won.
+        var other = newer ? have : data;
+        if (!pyTrue(merged.sg) && pyTrue(other.sg)) merged.sg = other.sg;
       } else if (kind === "status" && (pyTrue(have.history) || pyTrue(data.history))){
         merged.history = mergeHistory(have.history, data.history);
       }
@@ -883,14 +1738,17 @@ var SightReviewCore = (function(){
 
   return {
     FORMAT: FORMAT, FORMAT_VERSION: FORMAT_VERSION,
-    STROKE_TOOLS: STROKE_TOOLS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
-    uid: uid, clamp: clamp, r2: r2, hyp: hyp, typeOf: typeOf, esc: esc, fontStack: fontStack, segDist: segDist, rotPt: rotPt,
+    STROKE_TOOLS: STROKE_TOOLS, PATTERNS: PATTERNS, PATTERN_LABELS: PATTERN_LABELS, patternIcon: patternIcon, TOOL_ICONS: TOOL_ICONS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
+    pinInk: pinInk, uid: uid, clamp: clamp, r2: r2, hyp: hyp, typeOf: typeOf, esc: esc, fontStack: fontStack, segDist: segDist, rotPt: rotPt,
     smoothPath: smoothPath, strokeRadii: strokeRadii, strokeOutline: strokeOutline, dashArray: dashArray,
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,
-    primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
+    setImageSource: setImageSource, imageUrl: imageUrl, imageEl: imageEl, imagesReady: imagesReady, imgCrop: imgCrop,
+    hatchMetrics: hatchMetrics, isFillStroke: isFillStroke,
+    gradeParams: gradeParams, gradeIdentity: gradeIdentity, gradeFilter: gradeFilter, gradePath: gradePath, gradeShapes: gradeShapes, gradeIn: gradeIn, gradeEdge: gradeEdge, gradeEdgeAny: gradeEdgeAny, gradeInRings: gradeInRings, gradeBake: gradeBake, gradeOps: gradeOps, gradePixels: gradePixels, gradeCanvas: gradeCanvas, gradeShapeOk: gradeShapeOk, gradeHref: gradeHref, gradePadBox: gradePadBox, gradeMaskSvg: gradeMaskSvg, gradeFilterSvg: gradeFilterSvg, gradeSvgMarkup: gradeSvgMarkup, primsOf: primsOf, primSvg: primSvg, primCanvas: primCanvas, drawCanvas: drawCanvas, svgMarkup: svgMarkup,
     boundsOf: boundsOf, hitTest: hitTest, transformItem: transformItem, validItem: validItem,
-    xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15,
+    xfBox: xfBox, xfLine: xfLine, xfHandles: xfHandles, xfAt: xfAt, xfStart: xfStart, xfDrag: xfDrag, xfSvg: xfSvg, XF_CURSOR: XF_CURSOR, snap15: snap15, snapHV: snapHV,
+    sizeOpDrag: sizeOpDrag, opAfter: opAfter,
     ctxVisible: ctxVisible, camMatch: camMatch, animMatch: animMatch, drawingRow: drawingRow,
     picKey: picKey, captionOf: captionOf, withCaption: withCaption, noteTimes: noteTimes, frameLabel: frameLabel, picFileName: picFileName,
     stamp: stamp, contentAt: contentAt, mergeReplies: mergeReplies, mergeHistory: mergeHistory, mergeRows: mergeRows, same: same,

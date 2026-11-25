@@ -104,6 +104,46 @@ class MergeParity(unittest.TestCase):
         stats, rows = py_merge(self.lib, by["new rows are added"])
         self.assertEqual(stats["added"], 3)
         self.assertEqual(rows["00000000000000a4"]["data"]["reply"], "00000000000000a7")
+        _, rows = py_merge(self.lib, by["lasso hatch width rides with the row"])
+        self.assertEqual(rows["00000000000000a3"]["data"]["hatchWidth"], 1.5)    # newer copy brings it
+        self.assertNotIn("hatchWidth", rows["00000000000000a4"]["data"])          # newer copy set it back to Auto
+        self.assertEqual(rows["00000000000000a5"]["data"]["hatchWidth"], 4)
+
+    def test_restore_deleted_here(self) -> None:
+        """Sight only: rows of the file deleted here later than their content stay deleted and are
+        reported in `kept_deleted`; restore=True brings them back stamped as edited now, so the
+        file's own old tombstones (or a later package's) do not delete them again."""
+        lib, t0 = self.lib, 1_700_000_000_000
+        note = {"id": "00000000000000b1", "kind": "note", "created_at": t0, "updated_at": t0,
+                "data": {"text": "Keep", "created": t0}}
+        stroke = {"id": "00000000000000b2", "kind": "stroke", "shape_kind": "brush", "created_at": t0,
+                  "updated_at": t0, "data": {"pts": [0, 0, 1, 5, 5, 1], "note": "00000000000000b1"}}
+        local = [{**note, "deleted_at": t0 + 10}, {**stroke, "deleted_at": t0 + 10}]
+        py_merge(lib, {"local": local, "incoming": [], "deleted": [], "shot_map": {}, "now": t0 + 20})
+        kept: list[str] = []
+        stats = lib.import_annotations(TARGET, [note, stroke], [], {}, kept_deleted=kept)
+        self.assertEqual(stats["unchanged"], 2)
+        self.assertEqual(sorted(kept), ["00000000000000b1", "00000000000000b2"])
+        tomb = [{"id": "00000000000000b1", "deleted_at": t0 + 10}, {"id": "00000000000000b2", "deleted_at": t0 + 10}]
+        stats = lib.import_annotations(TARGET, [note, stroke], tomb, {}, restore=True)
+        self.assertEqual((stats["updated"], stats["deleted"]), (2, 0))
+        rows = {r["id"]: r for r in lib.query("SELECT id, data, updated_at, deleted_at FROM annotations")}
+        self.assertTrue(all(r["deleted_at"] is None for r in rows.values()))
+        self.assertGreater(json.loads(rows["00000000000000b1"]["data"])["edited_at"], t0 + 10)
+        self.assertGreater(rows["00000000000000b2"]["updated_at"], t0 + 10)
+        stats = lib.import_annotations(TARGET, [], tomb, {})  # the old tombstones again: nothing deleted
+        self.assertEqual(stats["deleted"], 0)
+        # Edited here after the file was made, then deleted: restore undeletes the local (newer) copy.
+        newer = {**note, "data": {"text": "Local", "created": t0, "edited_at": t0 + 5}}
+        moved = {**stroke, "x": 50, "updated_at": t0 + 5}
+        py_merge(lib, {"local": [{**newer, "deleted_at": t0 + 10}, {**moved, "deleted_at": t0 + 10}],
+                       "incoming": [], "deleted": [], "shot_map": {}, "now": t0 + 20})
+        stats = lib.import_annotations(TARGET, [note, stroke], [], {}, restore=True)
+        self.assertEqual(stats["updated"], 2)
+        rows = {r["id"]: r for r in lib.query("SELECT id, x, data, deleted_at FROM annotations")}
+        self.assertTrue(all(r["deleted_at"] is None for r in rows.values()))
+        self.assertEqual(json.loads(rows["00000000000000b1"]["data"])["text"], "Local")
+        self.assertEqual(rows["00000000000000b2"]["x"], 50)
 
 
 class PageInlinesCore(unittest.TestCase):

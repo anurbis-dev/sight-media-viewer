@@ -8,10 +8,19 @@ Close the terminal window to quit.
 
 from __future__ import annotations
 
+import sys
+
+if len(sys.argv) >= 2 and sys.argv[1] == "--splash":
+    # Frozen build: the launch splash is this exe started again (see app/splash_win.py). Handled
+    # before any other import so it is on screen within milliseconds; never falls through to main().
+    from app.splash_win import run as _run_splash
+
+    _run_splash(sys.argv[2:])
+    raise SystemExit(0)
+
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import webbrowser
@@ -262,56 +271,30 @@ def bundle_root() -> Path:
     return ROOT
 
 
-def start_splash(show_after_ms: int = 0) -> subprocess.Popen | None:
-    """Shows a small native "Sight is loading" indicator the instant Sight launches — purely a
-    sign of life while bootstrap/server start happen, not a mask for the real window (that's
-    reveal_when_ready() below: the real fix for the browser's own blank/white first frame is to
-    never let it reach the screen in the first place, not to cover it with something else the same
-    size). Windows only (no equivalent here for macOS yet); returns None on any failure, since a
-    missing splash should never block the app itself from starting."""
-    if sys.platform != "win32":
-        return None
-    script = bundle_root() / "app" / "splash_screen.ps1"
-    if not script.exists():
-        return None
-    try:
-        return subprocess.Popen(
-            [
-                "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-                "-File", str(script), "-MaxWaitSeconds", "45", "-ShowAfterMs", str(show_after_ms),
-            ],
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except OSError:
-        return None
+class Splash:
+    """Handle on the out-of-process launch splash (app/splash_win.py). It is started at the very
+    start of main() — it needs only milliseconds, unlike the PowerShell window it replaced — and
+    close() works from any thread, repeatedly, and across bootstrap()'s re-exec (the close event's
+    name travels in the environment until bootstrap() is past; see forget_env())."""
 
+    def __init__(self) -> None:
+        from app import splash_win
 
-class LazySplash:
-    """Starts the splash only if the launch is still going after `delay` seconds. PowerShell costs
-    ~0.7 s of CPU to start, which every launch used to pay although a launch that brings its window
-    up within ~1.7 s never showed the splash (it waited ShowAfterMs = 1 s after starting). Now a
-    fast launch starts nothing, and a slow one shows the splash at about the same moment as before
-    (delay + PowerShell's own start). close() is safe from any thread, before or after the start."""
+        self._splash_win = splash_win
+        self.event, self._handle = splash_win.launch(bundle_root())
 
-    def __init__(self, delay: float = 1.0) -> None:
-        self._lock = threading.Lock()
-        self._closed = False
-        self.proc: subprocess.Popen | None = None
-        self._timer = threading.Timer(delay, self._start)
-        self._timer.daemon = True
-        self._timer.start()
-
-    def _start(self) -> None:
-        with self._lock:
-            if not self._closed:
-                self.proc = start_splash()
+    def forget_env(self) -> None:
+        """Called once bootstrap() has returned (no re-exec can happen any more): stops the browser
+        and any nested/restarted Sight from inheriting the name and skipping their own splash."""
+        os.environ.pop(self._splash_win.ENV_VAR, None)
 
     def close(self) -> None:
-        with self._lock:
-            self._closed = True
-            self._timer.cancel()
-            if self.proc and self.proc.poll() is None:
-                self.proc.terminate()
+        self._splash_win.signal(self._handle)
+
+    def dispose(self) -> None:
+        """Closes the event handle (after close()); the process is ending."""
+        self._splash_win.release(self._handle)
+        self._handle = None
 
 
 def _process_tree(root: int) -> set[int]:
@@ -383,6 +366,132 @@ def _find_browser_window(pids: set[int], user32) -> int | None:
     return found[0] if found else None
 
 
+# Taskbar identity (Windows). The browser's window carries the browser's own AppUserModelID, so the
+# taskbar shows "Microsoft Edge" whatever the page title says. Setting System.AppUserModel.ID on the
+# window (SHGetPropertyStoreForWindow) to APP_ID, and giving the Start Menu shortcut the same id, makes
+# Windows show the shortcut's name and icon instead. Tested: the window's id reads back as set.
+APP_ID = "Sight.MediaViewer"
+APP_NAME = "Sight Media Viewer"
+_IID_IPROPERTYSTORE = "886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"
+_PKEY_APPUSERMODEL_ID_FMTID = "9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"
+
+
+def _guid_bytes(text: str):
+    import ctypes
+    import uuid
+
+    return (ctypes.c_ubyte * 16)(*uuid.UUID(text).bytes_le)
+
+
+def _store_set_app_id(store: int) -> bool:
+    """Sets System.AppUserModel.ID = APP_ID on an IPropertyStore (vtable: 2 Release, 6 SetValue,
+    7 Commit) and commits it. `store` is the raw interface pointer."""
+    import ctypes
+
+    class PropKey(ctypes.Structure):
+        _fields_ = [("fmtid", ctypes.c_ubyte * 16), ("pid", ctypes.c_uint32)]
+
+    class PropVariant(ctypes.Structure):
+        _fields_ = [("vt", ctypes.c_uint16), ("r1", ctypes.c_uint16), ("r2", ctypes.c_uint16),
+                    ("r3", ctypes.c_uint16), ("p", ctypes.c_void_p), ("p2", ctypes.c_int64)]
+
+    # `release` is bound before the try, so the finally below can never hit an unbound name.
+    vtbl = ctypes.cast(ctypes.c_void_p(store), ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])
+    try:
+        set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(PropKey),
+                                       ctypes.POINTER(PropVariant))(vtbl[6])
+        commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtbl[7])
+        buf = ctypes.create_unicode_buffer(APP_ID)  # VT_LPWSTR; SetValue copies it, so buf lives until then
+        key = PropKey(_guid_bytes(_PKEY_APPUSERMODEL_ID_FMTID), 5)
+        pv = PropVariant(vt=31, p=ctypes.cast(buf, ctypes.c_void_p))
+        hr = set_value(store, ctypes.byref(key), ctypes.byref(pv))
+        if hr == 0:
+            hr = commit(store)
+        return hr == 0
+    finally:
+        release(store)
+
+
+def set_window_app_id(hwnd: int) -> bool:
+    """Gives one browser window APP_ID as its taskbar identity. Never raises: failing only means the
+    taskbar keeps the browser's name, as before."""
+    import ctypes
+
+    if sys.platform != "win32":
+        return False
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, 0)  # see set_shortcut_app_id()
+        store = ctypes.c_void_p()
+        hr = ctypes.windll.shell32.SHGetPropertyStoreForWindow(
+            ctypes.c_void_p(hwnd), ctypes.byref(_guid_bytes(_IID_IPROPERTYSTORE)), ctypes.byref(store))
+        return hr == 0 and bool(store.value) and _store_set_app_id(store.value)
+    except Exception:
+        return False
+
+
+def shortcut_path() -> Path | None:
+    """The Start Menu shortcut that names Sight in the taskbar (Windows)."""
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / f"{APP_NAME}.lnk"
+
+
+def ensure_start_menu_shortcut() -> None:
+    """Writes the 'Sight Media Viewer' Start Menu shortcut (Windows) if it is missing or points at
+    another copy of the app, then gives it APP_ID. Runs in a background thread at startup and never
+    raises: without it the taskbar just keeps the browser's name."""
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess as sp
+
+        lnk = shortcut_path()
+        if lnk is None:
+            return
+        if getattr(sys, "frozen", False):
+            target, args = sys.executable, ""
+        else:
+            pyw = Path(sys.executable).with_name("pythonw.exe")
+            target = str(pyw if pyw.exists() else sys.executable)
+            args = f'"{Path(__file__).resolve()}"'
+        # PowerShell only for the .lnk fields (WScript.Shell); the paths travel in the environment so
+        # no quoting is involved. Exits at once when the shortcut already matches.
+        icon = str(bundle_root() / "app" / "sight.ico")
+        script = (
+            "$p=$env:SIGHT_LNK; $t=$env:SIGHT_T; $a=$env:SIGHT_A; $w=$env:SIGHT_W; $i=$env:SIGHT_I; "
+            "$sh=New-Object -ComObject WScript.Shell; "
+            "if (Test-Path -LiteralPath $p) { $o=$sh.CreateShortcut($p); if ($o.TargetPath -eq $t -and $o.Arguments -eq $a -and $o.IconLocation -eq \"$i,0\") { exit 0 } }; "
+            "$s=$sh.CreateShortcut($p); $s.TargetPath=$t; $s.Arguments=$a; $s.WorkingDirectory=$w; $s.IconLocation=\"$i,0\"; "
+            "$s.Description='Sight media viewer'; $s.Save()"
+        )
+        env = dict(os.environ, SIGHT_LNK=str(lnk), SIGHT_T=target, SIGHT_A=args, SIGHT_I=icon,
+                   SIGHT_W=str(Path(__file__).resolve().parent))
+        sp.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], env=env,
+               creationflags=0x08000000, timeout=20, check=False)  # CREATE_NO_WINDOW
+        set_shortcut_app_id(lnk)
+    except Exception:
+        return
+
+
+def set_shortcut_app_id(lnk: Path) -> bool:
+    """Writes System.AppUserModel.ID = APP_ID into the .lnk (what ties the shortcut's name and icon to
+    the window's taskbar identity). Never raises."""
+    import ctypes
+
+    try:
+        # The thread that calls this (the startup thread) has not initialised COM, and without it the
+        # call fails with CO_E_NOTINITIALIZED. MTA; S_FALSE / RPC_E_CHANGED_MODE just mean it already is.
+        ctypes.windll.ole32.CoInitializeEx(None, 0)
+        store = ctypes.c_void_p()
+        hr = ctypes.windll.shell32.SHGetPropertyStoreFromParsingName(
+            str(lnk), None, 2, ctypes.byref(_guid_bytes(_IID_IPROPERTYSTORE)), ctypes.byref(store))  # GPS_READWRITE
+        return hr == 0 and bool(store.value) and _store_set_app_id(store.value)
+    except Exception:
+        return False
+
+
 def _offscreen_point() -> tuple[int, int]:
     """A fixed point far outside any plausible monitor arrangement — _open() launches the browser
     window there instead of hiding it (see reveal_when_ready() for why hiding doesn't work).
@@ -438,6 +547,7 @@ def reveal_when_ready(
             time.sleep(0.02)
     if hwnd is None:
         return
+    set_window_app_id(hwnd)  # the taskbar shows the Start Menu shortcut's name, not "Microsoft Edge"
     if maximized:
         user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
     _bring_to_front(hwnd, user32)
@@ -483,7 +593,24 @@ def allow_foreground_handoff() -> None:
         pass
 
 
-def close_browser(proc: subprocess.Popen) -> None:
+def mac_launch_prefix(browser: list[str]) -> list[str]:
+    """On macOS a browser exec'd straight from Sight is Sight's child, and macOS privacy protection (TCC)
+    treats Sight as the "responsible" app for it: the first microphone capture (dictation) then kills the
+    whole browser, because Sight.app / the Python that runs Sight declares no NSMicrophoneUsageDescription
+    ("Google Chrome quit unexpectedly", reported on 0.62.1). Launched through `open`, launchd starts the
+    browser as an app of its own, which asks for the microphone under its own name. `-n`: a new instance
+    even while the user's own Chrome runs (Sight's separate --user-data-dir needs its own process anyway);
+    `--args` hands the rest of the command line to it. Other platforms: unchanged."""
+    if sys.platform != "darwin" or len(browser) != 1:
+        return browser
+    exe = browser[0]
+    cut = exe.find(".app/Contents/MacOS/")
+    if cut < 0:
+        return browser
+    return ["/usr/bin/open", "-n", "-a", exe[: cut + 4], "--args"]
+
+
+def close_browser(proc: subprocess.Popen, user_data_dir: str | None = None) -> None:
     """Closes the browser main() opened, when the start failed after the launch. On Windows the
     Popen handle is usually only a launcher that has already exited (see _process_tree()), so the
     processes it started are closed too. The launcher goes first, so it cannot start the browser
@@ -499,6 +626,23 @@ def close_browser(proc: subprocess.Popen) -> None:
             if handle:
                 kernel32.TerminateProcess(handle, 1)
                 kernel32.CloseHandle(handle)
+    elif sys.platform == "darwin" and user_data_dir:
+        # Started through `open` (mac_launch_prefix): proc is `open` itself, long gone; the browser is
+        # found by Sight's own profile directory on its command line.
+        # pkill -f takes an extended regex over the whole command line: escape the path and stop at its end, so
+        # `.../browser` neither breaks on odd characters nor matches `.../browser2`. Twice: `open` returns as soon
+        # as the launch is accepted, the browser may not be running yet at the first try.
+        import re
+
+        # Only the POSIX ERE metacharacters (re.escape also escapes spaces, undefined in ERE).
+        pattern = "--user-data-dir=" + re.sub(r"([.^$*+?()\[\]{}|\\])", r"\\\1", user_data_dir) + "( |$)"
+        for attempt in range(2):
+            if attempt:
+                time.sleep(1.0)
+            try:
+                subprocess.run(["/usr/bin/pkill", "-f", "--", pattern], check=False, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
 
 
 def _wait_for_ping(ready_port: int, timeout: float) -> None:
@@ -526,6 +670,8 @@ def _wait_for_ping(ready_port: int, timeout: float) -> None:
 def main() -> None:
     allow_foreground_handoff()
     fix_frozen_streams()
+    if sys.platform == "win32":
+        threading.Thread(target=ensure_start_menu_shortcut, daemon=True).start()
     import argparse
 
     parser = argparse.ArgumentParser(add_help=False)
@@ -541,23 +687,34 @@ def main() -> None:
     # rewrites app/static/defaults.json. A packaged build never honours it.
     dev = (args.dev or os.environ.get("SIGHT_DEV") == "1") and not getattr(sys, "frozen", False)
 
-    splash: LazySplash | None = None
+    splash: Splash | None = None
     # The server once built (its `started` turns True when it serves) and the browser process this
     # launch opened, so a failed start can close a window that would otherwise wait off-screen.
     launched: dict[str, object] = {}
     # Guards the browser launch against main()'s exit: once main() has given up ("failed"), the
     # launcher thread must not start a browser any more.
     launch_lock = threading.Lock()
+
+    def _cleanup() -> None:
+        _main_cleanup(launched, launch_lock, splash)
+
     try:
-        bootstrap()
-        # After bootstrap(), not before: a source/dev run without its deps yet re-execs itself into
-        # a private venv (os.execv, which on Windows spawns a whole new process rather than replacing
-        # this one), so main() — and anything started earlier in it — would otherwise run twice. A
-        # packaged build's bootstrap() returns immediately, so this costs it nothing. The splash
-        # closes itself once _open() below is done opening the window — the try/finally here is
-        # only the fallback for "something went wrong before that ever happened".
+        # First thing, before even bootstrap(): the splash is a separate tiny process that appears
+        # within milliseconds. A source/dev run without its deps yet re-execs itself into a private
+        # venv (os.execv, which on Windows spawns a whole new process), so main() runs twice; the
+        # splash's close-event name goes into the environment, so the second main() starts nothing
+        # new and closes the same window. The splash is closed once _open() below is done opening
+        # the window — the try/finally here is only the fallback for "something went wrong first".
         if not args.no_browser and sys.platform == "win32":
-            splash = LazySplash()
+            if str(ROOT) not in sys.path:
+                sys.path.insert(0, str(ROOT))
+            try:
+                splash = Splash()
+            except Exception:
+                splash = None  # a missing splash must never keep the app from starting
+        bootstrap()
+        if splash:
+            splash.forget_env()
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
 
@@ -596,7 +753,16 @@ def main() -> None:
                 ready_port = free_port(47990) if sys.platform == "win32" else None
                 query = "?app=1" + (f"&ready={ready_port}" if ready_port else "")
                 if browser:
-                    launch_extra: list[str] = []
+                    # Every platform: a minimized / hidden window is "hidden" to Chromium, which throttles
+                    # timers to once a minute after ~5 minutes (intensive wake-up throttling). The page's
+                    # 3 s heartbeat then stops reaching the packaged build's watchdog (10 s), the server
+                    # quits under the minimized window, and the restored window is a dead page. Windows
+                    # always had these; macOS / Linux lacked them.
+                    launch_extra: list[str] = [
+                        "--disable-backgrounding-occluded-windows",
+                        "--disable-renderer-backgrounding",
+                        "--disable-background-timer-throttling",
+                    ]
                     maximized = False
                     if sys.platform == "win32":
                         # Launch off-screen (not hidden — see reveal_when_ready() for why) at its
@@ -611,11 +777,7 @@ def main() -> None:
                             f"--window-size={w},{h}",
                             f"--window-position={off_x},{off_y}",
                             "--disable-features=CalculateNativeWinOcclusion",
-                            "--disable-backgrounding-occluded-windows",
-                            "--disable-renderer-backgrounding",
-                            # A minimized window is "hidden" to Chromium, which would otherwise
-                            # throttle the heartbeat timer to once a minute and let the watchdog quit.
-                            "--disable-background-timer-throttling",
+                            *launch_extra,
                         ]
                     try:
                         # Sight gets its own browser profile, hence its own browser process. With the
@@ -629,15 +791,17 @@ def main() -> None:
                         with launch_lock:
                             if launched.get("failed"):
                                 return
-                            proc = subprocess.Popen([
-                                *browser,
+                            cmd = [
+                                *mac_launch_prefix(browser),
                                 f"--user-data-dir={home / 'browser'}",
                                 "--no-first-run",
                                 "--no-default-browser-check",
                                 *launch_extra,
                                 f"--app={url}{query}",
-                            ])
+                            ]
+                            proc = subprocess.Popen(cmd)
                             launched["browser"] = proc
+                            launched["cmd"] = cmd  # macOS Dock reopen opens a closed window again
                         if sys.platform == "win32" and ready_port:
                             reveal_when_ready(proc, ready_port, maximized, on_ready=_close_splash)
                         return
@@ -673,6 +837,7 @@ def main() -> None:
         threading.Thread(target=_log_ffmpeg, daemon=True).start()
         lib.resume_watchers()
         app = build_app(lib, settings, dev)
+        app.state.port = port  # shown in About
         if dev:
             log("developer mode - 'Save as app defaults' rewrites app/static/defaults.json")
 
@@ -692,6 +857,8 @@ def main() -> None:
             # hibernate): every thread was frozen, so the stale heartbeat says nothing about the tab.
             # Without this the watchdog woke first after resume and quit under a perfectly live window.
             RESUME_GAP = 5.0
+            # The quit decision vs. the macOS Dock reopening a closed window (_relaunch below).
+            hb_lock = threading.Lock()
 
             def _watch_tab() -> None:
                 last_tick = time.time()
@@ -701,30 +868,107 @@ def main() -> None:
                     if now - last_tick > RESUME_GAP:
                         app.state.last_heartbeat = now + (STARTUP_GRACE - HEARTBEAT_TIMEOUT)
                     last_tick = now
-                    if now - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
-                        server.should_exit = True
-                        return
+                    with hb_lock:
+                        if time.time() - app.state.last_heartbeat > HEARTBEAT_TIMEOUT:
+                            # Logged so a "window came back dead" report can be told apart from a crash.
+                            log(f"no heartbeat from the window for {now - app.state.last_heartbeat:.0f} s - quitting")
+                            server.should_exit = True
+                            return
 
             threading.Thread(target=_watch_tab, daemon=True).start()
 
-        try:
-            server.run(sockets=[sock])
-        finally:
-            lib.close()
-    finally:
-        # A browser window opened for a server that never started would wait off-screen for good,
-        # so close it, and stop the launcher thread from opening one after this point.
-        if not getattr(launched.get("server"), "started", False):
-            with launch_lock:
-                launched["failed"] = True
+        def _serve() -> None:
+            try:
+                server.run(sockets=[sock])
+            finally:
+                lib.close()
+
+        if frozen and sys.platform == "darwin" and not args.no_browser:
+            # Packaged macOS: Cocoa owns the main thread so Sight.app answers the Dock (see app/macapp.py).
+            from app import macapp
+
+            # Quit must not wait for the page's endless /api/events stream (logout would hang).
+            config.timeout_graceful_shutdown = 3
+
+            def _window_alive() -> bool:
+                # A live Sight window pings every 3 s, minimized too (anti-throttling flags); during
+                # the start-up grace last_heartbeat lies in the future. A browser process alone says
+                # nothing: Chromium on macOS keeps running after its last window closed.
+                # The page also reports its own close (?bye=1), so a Dock click right after closing
+                # does not reopen the windowless browser into a blank window.
+                if getattr(app.state, "window_bye", None) is not None:
+                    return False
+                return time.time() - app.state.last_heartbeat <= HEARTBEAT_TIMEOUT
+
+            def _relaunch() -> None:
+                with hb_lock:
+                    if server.should_exit:
+                        return
+                    # A fresh window needs time to load before its first heartbeat.
+                    app.state.window_bye = None
+                    app.state.last_heartbeat = max(app.state.last_heartbeat,
+                                                   time.time() + (STARTUP_GRACE - HEARTBEAT_TIMEOUT))
+                # `open -n` with Sight's profile: a still-running windowless browser of that profile
+                # takes the command over (Chromium's profile lock) and opens the --app window.
+                cmd = launched.get("cmd")
+                try:
+                    if cmd:
+                        launched["browser"] = subprocess.Popen(cmd)
+                    else:
+                        webbrowser.open(url)
+                except OSError as exc:
+                    log(f"macOS: could not open the window again: {exc}")
+
+            def _close_window() -> None:
                 browser_proc = launched.get("browser")
-                if isinstance(browser_proc, subprocess.Popen):
-                    close_browser(browser_proc)
-        # Normally _open()'s own finally has already closed the splash — this only catches
-        # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
-        # it doesn't sit on screen for its full timeout.
-        if splash:
-            splash.close()
+                if isinstance(browser_proc, subprocess.Popen) and not launched.get("window_closed"):
+                    launched["window_closed"] = True
+                    close_browser(browser_proc, str(home / "browser"))
+
+            def _request_stop() -> None:
+                # Quit from the Dock / Cmd+Q / logout: the window goes too, first, so its open
+                # connections end; close_browser may sleep, so not on the main thread.
+                server.should_exit = True
+                lib.bus.close()  # end the page's /api/events stream, or shutdown waits for it
+                threading.Thread(target=_close_window, daemon=True).start()
+
+            def _on_server_exit(exc: BaseException | None, quit_requested: bool) -> None:
+                # AppKit exits the process after this, skipping main()'s finally: do its work here.
+                if quit_requested:
+                    _close_window()
+                _cleanup()
+                if exc is not None and not isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    fatal(f"Sight failed to start:\n{exc}")
+
+            if macapp.run(_serve, user_data_dir=str(home / "browser"), window_alive=_window_alive, relaunch=_relaunch,
+                          request_stop=_request_stop, on_server_exit=_on_server_exit, log=log):
+                return
+        _serve()
+    finally:
+        _cleanup()
+
+
+def _main_cleanup(launched: dict, launch_lock: threading.Lock, splash: "Splash | None") -> None:
+    """main()'s exit work, run once: from its `finally`, or on macOS from the Cocoa loop just before
+    AppKit exits the process (see app/macapp.py)."""
+    if launched.get("cleaned"):
+        return
+    launched["cleaned"] = True
+    # A browser window opened for a server that never started would wait off-screen for good,
+    # so close it, and stop the launcher thread from opening one after this point.
+    if not getattr(launched.get("server"), "started", False):
+        with launch_lock:
+            launched["failed"] = True
+            browser_proc = launched.get("browser")
+            if isinstance(browser_proc, subprocess.Popen):
+                close_browser(browser_proc, str(data_dir() / "browser"))
+    # Normally _open()'s own finally has already closed the splash — this only catches
+    # "something went wrong before _open() ever ran" (failed bootstrap, an exception above), so
+    # it doesn't sit on screen for its full timeout.
+    if splash:
+        splash.close()
+        splash.forget_env()
+        splash.dispose()
 
 
 if __name__ == "__main__":

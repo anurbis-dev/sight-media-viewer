@@ -6,6 +6,7 @@
     "res": false,
     "size": false,
     "videoCache": 128,
+    "videoAhead": 70,
     "bg": "#17181b",
     "fg": "#e9eaec",
     "border": "#e9eaec",
@@ -28,6 +29,8 @@
     "cardActiveColor": "#5b8cff",
     "cardActiveBorder": 1,
     "captions": "below",
+    "secColor": "#e9eaec",
+    "secSize": 12,
     "themeRev": 2
   },
   "viewer3d": {

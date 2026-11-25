@@ -4,8 +4,8 @@
 //   node tests/pwa_touch.cjs <baseURL> <video file>
 //   player: a finger scrub, then Play — plays from the scrubbed frame; frame steps queued up, then
 //   Space; two fingers zoom / turn the picture; the drawing canvas opens in the player's place and
-//   view and hands it back. Canvas: hold + drag up = a bigger brush (preview on the left), two- /
-//   three-finger taps undo / redo, the transform tool's hold + drag sideways = opacity, a hold on
+//   view and hands it back. Canvas: hold + drag right = a bigger brush (preview on the left), two- /
+//   three-finger taps undo / redo, the transform tool's hold + drag down = less opacity, a hold on
 //   a tool's button = its default size. Panel: swipe up opens it ("+ Note" shows), pulling the list
 //   down closes it; a swipe down on the player goes back to the reviews.
 "use strict";
@@ -139,17 +139,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.centreShift = Math.hypot(picOnStage[0] - picOnCanvas[0], picOnStage[1] - picOnCanvas[1]);
   out.canvasScale = await ev(() => { const m = new DOMMatrix(getComputedStyle(document.querySelector(".draw .dbox")).transform); return Math.hypot(m.a, m.b); });
 
-  // Hold with the brush, drag up: a bigger brush, the preview on the left.
+  // Hold with the brush, drag right: a bigger brush, the preview on the left.
   await ev(() => { const x = document.querySelector('.draw button[title="Brush"]'); if (!x.classList.contains("on")) x.click(); });
   const s0 = await ev(() => window.SightReviewDraw.SIZE.brush);
-  await holdDrag([cx, cy], 0, -200);
+  await holdDrag([cx, cy], 150, 0);
   out.preview = await ev(() => { const d = document.querySelector(".draw .dsize"); return d ? [d.getBoundingClientRect().left < 60, d.querySelector("span").textContent] : null; });
   await touch("touchEnd", []);
   out.brush = [s0, await ev(() => window.SightReviewDraw.SIZE.brush)];
   out.itemsAfterHold = await ev(() => document.querySelectorAll(".draw .dbox svg > g")[1].children.length);
-  // Hold, drag left: the brush gets more transparent (the size stays), the preview says by how much.
+  // Hold, drag down: the brush gets more transparent (the size stays), the preview says by how much.
   const o0 = await ev(() => [window.SightReviewDraw.OPAC.brush, window.SightReviewDraw.SIZE.brush]);
-  await holdDrag([cx, cy], -150, 4);
+  await holdDrag([cx, cy], 4, 150);
   const lab = await ev(() => { const d = document.querySelector(".draw .dsize"); return d ? d.querySelector("span").textContent : ""; });
   await touch("touchEnd", []);
   out.opac = [o0[0], await ev(() => window.SightReviewDraw.OPAC.brush), / %$/.test(lab), (await ev(() => window.SightReviewDraw.SIZE.brush)) === o0[1],
@@ -162,10 +162,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   out.undoRedo.push(await nItems());
   await tapN([[cx - 30, cy], [cx + 30, cy], [cx, cy + 40]]); await sleep(100);
   out.undoRedo.push(await nItems());
-  // The transform tool: hold on the stroke, drag left = more transparent.
+  // The transform tool: hold on the stroke, drag down = more transparent.
   await ev(() => document.querySelector('.draw button[title="Select / transform"]').click());
   await tapN([[cx, cy + 35]]); await sleep(100);
-  await holdDrag([cx, cy + 35], -160, 0);
+  await holdDrag([cx, cy + 35], 0, 160);
   await touch("touchEnd", []);
   // A hold on the brush's button: back to its default size, brush in hand.
   const bb = await p.locator('.draw button[title="Brush"]').boundingBox();
@@ -561,7 +561,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ev(() => document.querySelector('.bar button[title="Settings"]').click());
   await p.waitForSelector(".sheet .seg.fs");
   await ev(() => [...document.querySelectorAll(".sheet .seg.fs button")].find((b) => b.textContent === "Off").click()); await sleep(300);
-  await ev(() => [...document.querySelectorAll(".sheet .btn")].find((b) => b.textContent === "Done").click()); await sleep(300);
+  // The sheet closes with a swipe down on it (no Done button); the name is tapped to rename.
+  out.settingsUi = await ev(() => [![...document.querySelectorAll(".sheet .btn")].some((b) => /^(Done|Change name)$/.test(b.textContent)), !!document.querySelector(".sheet .kv .tapedit")]);
+  { const r = await p.locator(".sheet").boundingBox(); await drag([r.x + r.width / 2, r.y + 20], [r.x + r.width / 2, r.y + 220], 8, 16); }
+  await sleep(300);
+  out.settingsUi.push(await ev(() => !document.querySelector(".back .sheet")));
   await tapN([[200, 30]]); await sleep(300);
   out.fullscreen.push(await ev(() => [!!document.fullscreenElement, localStorage.getItem("sight-review:fs")]));
   // Between groups: two groups (a+b, c+d); a held and dropped on the second group's header moves

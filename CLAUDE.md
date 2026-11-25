@@ -9,7 +9,8 @@ Read this file first; it is short on purpose. Details live in `docs/`.
 2. `docs/ARCHITECTURE.md` — how the pieces fit (files, DB tables, API, canvas internals, gotchas).
 3. `README.md` / `MANUAL.md` — user-facing behaviour.
 4. `docs/PLAN.md` — queued improvements and known bugs, with the numbers behind them. Take work from here.
-   Bigger tracks: `docs/PLAN-mobile.md` (local review app on the phone, then trackers, clouds) and `docs/PLAN-viewer.md`.
+   Bigger tracks: `docs/PLAN-mobile.md` (local review app on the phone, then trackers, clouds), `docs/PLAN-viewer.md`
+   and `docs/PLAN-multiclip.md` (one review page / `.srev` bundle for several clips). Tracker links: `docs/SHOTGRID.md`.
 5. `docs/FORMAT.md` — the review data contract (rows, `.srev`, merge rules) shared with the HTML page and
    the mobile app. Read it before touching annotations / review code; merge changes go into both
    `Library.import_annotations` and `app/static/review-core.js` (`python -m unittest tests.test_merge_parity`).
@@ -39,7 +40,7 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   (format is in that file): what changed, which files, and what the next agent must know
   (gotchas, invariants, things deliberately not done). Write for someone who will not read the diff.
 - Bump `APP_VERSION` in `app/version.py` (minor = feature, patch = fix) and use that number in the entry.
-  The version is shown in the window title and next to "Sight" in the sidebar.
+  The version is shown in the window title and in About (the sidebar icon).
 - Keep `docs/ARCHITECTURE.md` for facts that stay true; put "what happened" in RECENT.
 - User-facing behaviour (new shortcuts, features) also goes into `MANUAL.md`.
 - Archiving: RECENT.md holds the newest 15 entries. When you add one, run
@@ -72,6 +73,9 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   send the fixes back to **the same reviewer agent** (SendMessage to its id: it knows its own findings)
   and ask it to confirm each fix is right and introduced nothing new; repeat until it confirms them all,
   and say so in the RECENT entry. One review per block — do not batch several blocks into one late review.
+- **How to continue (owner's request):** end every finished piece of work with one line on how best to go on — in a
+  new session, in this one after a compact, or in this one as is — and why (context size, a reviewer agent that lives
+  only in this session, whether the docs already carry the state).
 - **Builds:** no local build is needed before a push or a merge — builds are made by releases.
 - **Testing UI:** run the dev server (`SIGHT_DEV=1 ~/.sight/runtime/Scripts/python.exe Sight.py --dev
   --no-browser --port NNNN`, pick a fresh port) and drive it with Playwright. Tests must create their

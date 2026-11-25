@@ -8,11 +8,13 @@
 import * as DB from "./store.js";
 import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, ScrubCache, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
 import { videoFps } from "./mp4.js";
+import { dbg } from "./debug.js";
 import { createViewer } from "./model3d.js";
 import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
 import { createPlate } from "../core/caption-plate.js";
+import { trackerSheet, trackerBrowser, userSheet, trackers, trackerDisconnect, connectTracker, trackerSettings, trackerLabel, TRACKER_KINDS, linkReview, reviewLinkLabel } from "./trackers.js";
 
 const RC = window.SightReviewCore, DRAW = window.SightReviewDraw;
 if (DRAW.css) DRAW.css();  // its floating bar (.rd-panel) dresses the player's header and transport too
@@ -26,6 +28,7 @@ const root = document.getElementById("app");
 function el(tag, cls, text){ const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 function btn(cls, text, fn, title){ const b = el("button", cls, text); b.type = "button"; if (fn) b.onclick = fn; if (title){ b.title = title; b.setAttribute("aria-label", title); } return b; }
 const ICONS = {
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/>',
   photo: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
   back: '<path d="m15 5-7 7 7 7"/>', more: '<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>',
@@ -87,17 +90,69 @@ function busy(msg){
   const b = el("div", "busy"), d = el("div", "", msg); b.appendChild(d); document.body.appendChild(b);
   return { set(m){ d.textContent = m; }, done(){ b.remove(); } };
 }
-// A sheet over the page: from the bottom (menus) or centred (questions). Returns close().
+// A sheet over the page: from the bottom (menus, settings) or centred (questions). Returns close().
+// A bottom sheet also closes with a swipe down, as a tap beside it: anywhere on a short one; on one that
+// scrolls (Settings) from its grabber (which stays on top) or its title, the rest scrolls.
 const sheets = [];
 function sheet(build, mid){
   const back = el("div", "back" + (mid ? " mid" : "")), sh = el("div", "sheet");
   back.appendChild(sh);
   const close = () => { back.remove(); const i = sheets.indexOf(close); if (i >= 0) sheets.splice(i, 1); };
   back.addEventListener("click", (e) => { if (e.target === back) close(); });
+  if (!mid){ sh.appendChild(el("div", "grab")); swipeDownToClose(sh, close); }
   build(sh, close);
   document.body.appendChild(back);
   sheets.push(close);
   return close;
+}
+// One finger down a bottom sheet: the sheet follows it; let go past 80 px (or a quick flick) and it
+// closes, else it springs back. Where it starts: anywhere on a sheet with nothing to scroll; on one
+// that scrolls, on the grabber, or within its top 64 px while scrolled to the top — the rest of it
+// only scrolls (no swipe to tell from a scroll there). Fields keep their own touches.
+function swipeDownToClose(sh, close){
+  let st = null;
+  const reset = () => { sh.style.transition = "transform 160ms ease"; sh.style.transform = ""; st = null; };
+  sh.addEventListener("touchstart", (e) => {
+    if (st && st.on) reset();  // a second finger: the sheet back in place, no swipe
+    st = null;
+    if (e.touches.length !== 1 || e.target.closest("input, textarea, select")) return;
+    const t = e.touches[0];
+    const scrolls = sh.scrollHeight > sh.clientHeight + 1;
+    if (scrolls && !e.target.closest(".grab") && (sh.scrollTop > 0 || t.clientY - sh.getBoundingClientRect().top > 64)) return;
+    st = { x: t.clientX, y: t.clientY, top: sh.scrollTop <= 0 || !!e.target.closest(".grab"), on: false, dy: 0, v: 0, lt: e.timeStamp, ly: t.clientY };
+  }, { passive: true });
+  sh.addEventListener("touchmove", (e) => {
+    if (!st) return;
+    if (e.touches.length !== 1){ reset(); return; }
+    const t = e.touches[0], dx = t.clientX - st.x, dy = t.clientY - st.y;
+    if (!st.on){
+      if (dy === 0 && dx === 0) return;  // (a zero-length first move: not prevented, an upward scroll may follow)
+      // Only a downward drag from the sheet's top; sideways or up (or a scrolled sheet) is the page's.
+      if (!st.top || dy < 0 || Math.abs(dx) > Math.abs(dy)){ st = null; return; }
+      // Prevented from the first move, below the slop too: iOS lets the native scroll / bounce start on
+      // the first unprevented move and ignores preventDefault after it.
+      e.preventDefault();
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+      st.on = true; sh.style.transition = "none";
+    }
+    e.preventDefault();  // (no scroll / pull-to-refresh under it)
+    // The speed of the last move (a slow drag ending in a flick counts as a flick).
+    if (e.timeStamp > st.lt){ st.v = (t.clientY - st.ly) / (e.timeStamp - st.lt); st.lt = e.timeStamp; st.ly = t.clientY; }
+    st.dy = Math.max(0, dy);
+    sh.style.transform = `translateY(${st.dy}px)`;
+  }, { passive: false });
+  const end = (e) => {
+    if (!st) return;
+    if (!st.on){ st = null; return; }
+    const fast = st.dy > 30 && st.v > 0.6 && e.timeStamp - st.lt < 120;  // still moving down fast as it lifts
+    if (st.dy > 80 || fast){
+      st = null;
+      sh.style.transition = "transform 160ms ease"; sh.style.transform = "translateY(100%)";
+      setTimeout(close, 150);
+    } else reset();
+  };
+  sh.addEventListener("touchend", end);
+  sh.addEventListener("touchcancel", () => { if (st) reset(); });
 }
 function menu(title, items){
   sheet((sh, close) => {
@@ -164,6 +219,16 @@ applyTheme();
 // ---- reviewer name -----------------------------------------------------------------------------
 let who = "";
 try { who = localStorage.getItem("sight-review:name") || ""; } catch {}
+// Settings → "Cache ahead": percent of the scrub cache's window in front of the playhead (the rest behind it).
+const AHEADS = [50, 60, 70, 80, 90];
+let cacheAhead = 70;
+try { const n = Number(localStorage.getItem("sight-review:cacheAhead")); if (AHEADS.includes(n)) cacheAhead = n; } catch {}
+ScrubCache.AHEAD = cacheAhead / 100;
+function setCacheAhead(n){
+  cacheAhead = n; ScrubCache.AHEAD = n / 100;
+  try { localStorage.setItem("sight-review:cacheAhead", String(n)); } catch {}
+  cacheFocus();
+}
 async function setName(){
   const v = await askText({ title: "Who is reviewing?", text: "Your name goes on every note, reply, drawing and state change you make.", value: who, ok: "Continue", placeholder: "Your name" });
   if (v == null || !v.trim()) return false;
@@ -192,8 +257,11 @@ let NUM = new Map();
 const numOf = (it) => NUM.get(it.data && it.data.note) || "";
 
 let saveT = null, savePending = null;
-function dirty(){
+// user: an edit made here (not a merge) — marks the review as changed since it was last sent
+// (meta.changed = when; false after a send, see markSent); the reply bundle takes the changed ones.
+function dirty(user = true){
   R.meta.updated = now();
+  if (user) R.meta.changed = R.meta.updated;
   R.meta.counts = M.counts(R.rows);
   const meta = R.meta, rows = R.rows;
   clearTimeout(saveT);
@@ -250,6 +318,22 @@ function getFrame(t, rv = R){
 function getPicture(rv = R){
   return cachedFrame(rv, "img", rv.file ? async () => { const im = await decode(rv.file); const s = await scaled(im, 1600); if (im.close) im.close(); return s; } : null);
 }
+// Reference images (kind "image", made in Sight) show their picture from the review's stored shots. The core
+// asks synchronously, so the pictures' object URLs are made ahead (refShots) and the stage repainted.
+RC.setImageSource((id) => (R && R.shotUrls.get(id)) || "");
+// Each id is asked for once per review (rv.refAsked, misses too): a shot missing from the package must not
+// start another lookup and repaint on every paint. Returns a promise that settles once they are known.
+function refShots(rv){
+  rv.refAsked = rv.refAsked || new Set();
+  const need = [...new Set((rv.rows || []).filter((r) => r && r.kind === "image" && !r.deleted_at && r.data && typeof r.data.shot === "string").map((r) => r.data.shot))]
+    .filter((id) => !rv.refAsked.has(id) && !rv.shotUrls.has(id));
+  if (!need.length) return rv.refWait || Promise.resolve();
+  need.forEach((id) => rv.refAsked.add(id));
+  rv.refWait = Promise.all(need.map((id) => shotUrl(id).catch(() => null))).then((urls) => {
+    if (R === rv && urls.some(Boolean)){ paintOverlay(); if (els && els.notes) renderNotes(); }  // stage and note pictures
+  });
+  return rv.refWait;
+}
 async function shotUrl(id){
   if (R.shotUrls.has(id)) return R.shotUrls.get(id);
   const s = await DB.get("shots", id).catch(() => null);
@@ -280,7 +364,9 @@ async function openAny(files){
   }
   toast("The app opens pictures, videos, 3D models (glTF / GLB, FBX, OBJ, STL, PLY, USD, Gaussian splats) and Sight review files (.srev)", 4000);
 }
-async function openMedia(file, extras){
+// trkLink: {key, link} — a media entity from a tracker's page (ShotGrid: a Version), the review is tied to it under that
+// tracker key (another one than before starts a fresh sync state).
+async function openMedia(file, extras, trkLink){
   const key = await assetKey(file.name, file.size);
   let meta = await DB.get("reviews", key);
   if (!meta){
@@ -310,37 +396,59 @@ async function openMedia(file, extras){
     await DB.saveReview(meta, []);
     DB.persist();
   }
-  await openReview(key, file, false, extras);
+  if (trkLink){
+    linkReview(meta, trkLink.key, trkLink.link);
+    await DB.put("reviews", meta);
+  }
+  await openReview(key, file, false, extras);  // (a picked file is kept on the device by autoKeep)
 }
 
 // ---- import / merge a .srev ------------------------------------------------------------------
+// A plain package: merged into its review (or `intoKey`, asked first when the names differ), toasted, and
+// the review opens. A bundle (several clips, FORMAT.md "Bundle"): every clip merged into its own review,
+// one summary toast, the clips put in one group on the home screen (the bundle's id kept with them for the
+// reply); only a one-clip bundle opens its review. "Merge into this review" does not apply to a bundle.
 async function importReviewFile(file, intoKey){
-  let pkg;
-  try { pkg = M.parsePackage(await file.text()); }
+  let parsed;
+  try { parsed = M.parseReviewFile(await file.text()); }
   catch (e){ toast(e.message || "Not a Sight review file", 4000); return; }
-  const a = pkg.asset;
-  if (a.kind && a.kind !== "image" && a.kind !== "video" && a.kind !== "model3d"){ toast(`This review is for a ${a.kind} file — the app opens pictures, videos and 3D models.`, 5000); return; }
+  if (parsed.bundle) return importBundle(parsed);
+  const pkg = parsed.entries[0], a = pkg.asset;
+  if (!kindOk(a)){ toast(`This review is for a ${a.kind} file — the app opens pictures, videos and 3D models.`, 5000); return; }
   await flush();
-  let key = intoKey;
-  if (!key){
-    // An earlier import of the same review first (it holds the rows), then the same name + size.
-    let best = null, bestN = 0;
-    for (const m of await DB.all("reviews")){
-      const rr = await DB.get("rows", m.key), n = M.overlap(rr ? rr.rows : [], pkg);
-      if (n > bestN){ best = m.key; bestN = n; }
-    }
-    key = best || await assetKey(a.name, a.size);
-  }
-  let meta = await DB.get("reviews", key);
+  const key = intoKey || await reviewKeyFor(pkg);
+  const meta = await DB.get("reviews", key);
   if (intoKey && meta && (String(meta.asset.name).toLowerCase() !== String(a.name || "").toLowerCase() || (a.size != null && meta.asset.size !== a.size))){
     if (!await ask({ title: "Another file?", text: `This review file is for “${a.name}”. Merge it into the review of “${meta.asset.name}” anyway?`, ok: "Merge" })) return;
   }
+  const res = await mergeInto(key, pkg);
+  toast(res.parts.length ? `Merged the review${pkg.author ? " from " + pkg.author : ""}: ${res.parts.join(" · ")}` : "Already up to date — nothing new in this review file", 4000);
+  if (!res.open) await openReview(key, null);
+}
+const kindOk = (a) => !a.kind || a.kind === "image" || a.kind === "video" || a.kind === "model3d";
+// The review a package goes into: an earlier import of the same review first (it holds the rows), then
+// the same name + size.
+async function reviewKeyFor(pkg){
+  let best = null, bestN = 0;
+  for (const m of await DB.all("reviews")){
+    const rr = await DB.get("rows", m.key), n = M.overlap(rr ? rr.rows : [], pkg);
+    if (n > bestN){ best = m.key; bestN = n; }
+  }
+  return best || assetKey(pkg.asset.name, pkg.asset.size);
+}
+// Merges one package into review `key` (made from the package's identity when the phone has none: no
+// media, its notes readable — `nomedia` until the file is picked), with its pictures. No toast, no
+// question, nothing opens. `group`: a bundle id kept with the review (meta.groups, the reply reuses it).
+// A review made here starts as not changed (`changed: false`); a user edit marks it (dirty).
+async function mergeInto(key, pkg, group){
+  const a = pkg.asset;
+  let meta = await DB.get("reviews", key);
   if (!meta){
     const t = now();
     const asset = Object.fromEntries(M.ASSET_KEYS.map((k) => [k, a[k] === undefined ? null : a[k]]));
     if (!asset.kind) asset.kind = kindOf({ name: asset.name || "", type: "" }) || "image";
     if (!asset.ext) asset.ext = extOf(asset.name);
-    meta = { key, asset, fps: null, created: t, opened: t, updated: t, counts: M.counts([]), thumb: null, kept: false };
+    meta = { key, asset, fps: null, created: t, opened: t, updated: t, counts: M.counts([]), thumb: null, kept: false, changed: false, nomedia: true };
   }
   // Pictures: hex ids are kept (the same id is the same picture), others get one from the bytes.
   const shotMap = {};
@@ -351,16 +459,70 @@ async function importReviewFile(file, intoKey){
     if (id !== sid) shotMap[sid] = id;
     if (!await DB.has("shots", id)) await DB.put("shots", { id, blob: new Blob([d.bytes], { type: d.type }) });
   }
-  const open = R && R.meta.key === key;
+  const open = !!(R && R.meta.key === key);
   const rows = open ? R.rows : ((await DB.get("rows", key)) || { rows: [] }).rows;
   const res = M.mergePackage(rows, pkg, shotMap);
-  meta.counts = M.counts(res.rows); meta.updated = now();
+  const groups = (open ? R.meta.groups : meta.groups) || [];
+  const ch = { counts: M.counts(res.rows), updated: now() };
+  if (group && !groups.includes(group)) ch.groups = groups.concat([group]);
   // The open review takes the merged rows at once: an edit made while they are saved goes into them.
-  if (open){ R.rows = res.rows; R.meta = Object.assign(R.meta, { counts: meta.counts, updated: meta.updated }); dirty(); }
-  else await DB.saveReview(meta, res.rows);
-  const s = res.stats, parts = [["new", s.added], ["updated", s.updated], ["deleted", s.deleted]].filter((x) => x[1]).map((x) => x[1] + " " + x[0]);
-  toast(parts.length ? `Merged the review${pkg.author ? " from " + pkg.author : ""}: ${parts.join(" · ")}` : "Already up to date — nothing new in this review file", 4000);
-  if (!open) await openReview(key, null);
+  if (open){ R.rows = res.rows; Object.assign(R.meta, ch); dirty(false); }
+  else await DB.saveReview(Object.assign(meta, ch), res.rows);
+  const s = res.stats;
+  return { key, open, stats: s, parts: [["new", s.added], ["updated", s.updated], ["deleted", s.deleted]].filter((x) => x[1]).map((x) => x[1] + " " + x[0]) };
+}
+async function importBundle({ bundle, entries }){
+  await flush();
+  // Over the whole loop: a review opened mid-import would read its rows before they are merged (and a
+  // later save of them would drop the merge).
+  const bz = busy(`Merging ${entries.length} clips…`);
+  try { await importLoop(bundle, entries); } finally { bz.done(); }
+}
+async function importLoop(bundle, entries){
+  const bid = typeof bundle.id === "string" && bundle.id ? bundle.id : RC.uid();
+  const keys = [], at = [], damaged = [], dups = [], skipped = [], tot = { added: 0, updated: 0, deleted: 0 };
+  for (let i = 0; i < entries.length; i++){
+    const e = entries[i];
+    if (e instanceof Error){ damaged.push(e.clipName || "clip " + (i + 1)); continue; }
+    const name = e.asset.name || "clip " + (i + 1);
+    if (!kindOk(e.asset)){ skipped.push(name); continue; }
+    try {
+      const key = await reviewKeyFor(e);
+      // Two packages for one review (the same file twice): the first wins, the later is reported.
+      const j = keys.indexOf(key);
+      if (j >= 0){ dups.push(`${name}: same file as clip ${at[j] + 1}`); continue; }
+      const res = await mergeInto(key, e, bid);
+      keys.push(key); at.push(i);
+      Object.keys(tot).forEach((k) => { tot[k] += res.stats[k] || 0; });
+    } catch (err){ console.error(err); damaged.push(name); }
+  }
+  if (keys.length) bundleGroup(bid, bundle.title, keys);  // one clip: only into the bundle's group made earlier
+  const n = keys.length, parts = [["new", tot.added], ["updated", tot.updated], ["deleted", tot.deleted]].filter((x) => x[1]).map((x) => x[1] + " " + x[0]);
+  const msg = [n ? (parts.length ? `Merged ${n} clip${n > 1 ? "s" : ""}${bundle.author ? " from " + bundle.author : ""}: ${parts.join(" · ")}` : `Already up to date — ${n} clip${n > 1 ? "s" : ""}, nothing new`) : "No clip could be merged"];
+  if (damaged.length) msg.push(`${damaged.length} damaged: ${damaged.join(", ")}`);
+  if (skipped.length) msg.push(`not a picture, video or 3D model: ${skipped.join(", ")}`);
+  msg.push(...dups);
+  toast(msg.join(" · "), damaged.length || skipped.length || dups.length ? 7000 : 4500);
+  if (entries.length === 1 && n === 1){ if (!(R && R.meta.key === keys[0])) await openReview(keys[0], null); }
+  else if (!R) renderHome();
+  else if (keys.includes(R.meta.key)) paintReview();
+}
+// The bundle's clips as one group on the home screen: the group made for this bundle earlier (g.bundle)
+// takes the clips that are in no group; else a new group of those (at least two), first in the list. A
+// clip the user put in another group stays there (it still goes out with this bundle's reply: meta.groups).
+function bundleGroup(bid, title, keys){
+  const gs = loadGroups(), inAny = (k) => gs.some((g) => g.keys.includes(k));
+  const g = gs.find((x) => x.bundle === bid), free = keys.filter((k) => !inAny(k));
+  if (!free.length) return;
+  let order = loadOrder().filter((k) => !free.includes(k));
+  if (g) g.keys.push(...free);
+  else {
+    if (free.length < 2) return;
+    const ng = { id: RC.uid(), name: String(title || "").trim() || "Sequence review", keys: free, open: true, bundle: bid };
+    gs.push(ng);
+    order = ["g:" + ng.id].concat(order);
+  }
+  saveGroups(gs); saveOrderKeys(order);
 }
 
 // ---- screens -------------------------------------------------------------------------------
@@ -374,7 +536,7 @@ function route(){
   }
   const m = /^#r=([0-9a-f]{16})$/.exec(location.hash);
   if (m && (!R || R.meta.key !== m[1])) openReview(m[1], null, true);
-  else if (!m) { closeReview(); renderHome(); }
+  else if (!m) { ++openSeq; openingKey = null; seqStop(); closeReview(); renderHome(); }
 }
 window.addEventListener("popstate", route);
 
@@ -433,6 +595,49 @@ const fsUp = (e) => {
 document.addEventListener("pointerup", fsUp, true);
 document.addEventListener("pointercancel", fsUp, true);
 
+// The home screen's page ("reviews" or a connected tracker's key: Reviews | ShotGrid | …), its swipe and the reviews it
+// knows (a tracker page marks the records a review is linked to). trkViews: tracker key → its page (trackerBrowser).
+let homePage = "reviews", homeSwipe = null, homeMetas = [];
+const trkViews = new Map();
+const savedHomePage = () => { try { return sessionStorage.getItem("sight-review:page") || "reviews"; } catch { return "reviews"; } };
+// A review linked to a tracker's media entity (ShotGrid: a Version), opened from its page: with the downloaded proxy when its own
+// media is not on the device — the same file: bound at once; another one (a desktop original reviewed in Sight): the
+// review opens and the usual "A different file?" question decides (drawings are in the original's pixels).
+async function openLinked(key, file){
+  if (!file) return openReview(key, null);
+  const m = await DB.get("reviews", key).catch(() => null);
+  const same = m && file.size === m.asset.size && file.name.toLowerCase() === String(m.asset.name || "").toLowerCase();
+  if (same) return openReview(key, file);
+  await openReview(key, null);
+  if (!R || R.meta.key !== key || R.file) return;  // (its own file was on the device after all)
+  // another kind of media (the Version's movie for a review of a still): not bound — the notes open without it
+  if (m && m.asset.kind && kindOf(file) !== m.asset.kind){ toast(`This review is for a ${m.asset.kind}; the Version's playable copy is a ${kindOf(file) || "file"} — pick the file to see the media`, 5000); return; }
+  await rebind(file);
+}
+homePage = savedHomePage();
+// A tracker connected / disconnected (Settings → Trackers, the connection form, another tab): the home screen's
+// tracker parts come / go at once. Elsewhere nothing to redo: a review's ⋯ menu is built when it opens.
+window.addEventListener("sight-trackers", () => {
+  if (root.classList.contains("home")){ homePage = savedHomePage(); renderHome(); }
+});
+const initials = (n) => (n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+// A horizontal swipe on the home screen: not on a review card (its own swipes), a field, a sheet or the filter bar's
+// controls; clearly sideways (≥ 60 px, twice its height).
+{
+  let hs = null;
+  document.addEventListener("touchstart", (e) => {
+    hs = null;
+    if (!root.classList.contains("home") || e.touches.length !== 1) return;
+    if (e.target.closest(".item, .row, input, select, textarea, .sheet, .back, .sgb-types, .sgb-tile .th, .selbar")) return;  // (a tile's picture: its filmstrip drag)
+    hs = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: true });
+  document.addEventListener("touchend", (e) => {
+    if (!hs || !homeSwipe) return;
+    const t = e.changedTouches[0], dx = t.clientX - hs.x, dy = t.clientY - hs.y;
+    hs = null;
+    if (Math.abs(dx) >= 60 && Math.abs(dx) > 2 * Math.abs(dy)) homeSwipe(dx);
+  }, { passive: true });
+}
 async function renderHome(){
   fsArm();  // a new screen: auto full screen may ask again
   document.title = "Sight Review";
@@ -455,8 +660,44 @@ async function renderHome(){
     mini.appendChild(l);
   });
   mini.hidden = true;
-  bar.appendChild(el("span")); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
+  // You (name, tracker logins) on the left; the pages — Reviews and one per connected tracker (ShotGrid…) — as tabs in
+  // the title (a swipe sideways anywhere but on a review card steps between them; the cards keep their own swipes).
+  const paintYou = () => { you.textContent = initials(who) || ""; if (!you.textContent) you.innerHTML = ico("user", 20); };
+  const you = btn("ib you", "", () => userSheet({ sheet, el, btn, toast, who: () => who,
+    setName: async () => { const ok = await setName(); paintYou(); return ok; } }), "You: reviewer name and tracker logins");
+  paintYou();
+  // A tracker's page, its tab and the swipe to it only while that tracker is connected (docs/PLAN-trackers.md decision
+  // 10); none connected: the plain title. A connect / disconnect re-renders the home screen ("sight-trackers" below).
+  const tl = trackers(), pages = ["reviews", ...tl.map((t) => t.key)];
+  if (!pages.includes(homePage)) homePage = "reviews";   // (the remembered page is kept for when it is connected again)
+  const tabs = el("div", "seg hometabs");
+  [["reviews", "Reviews"], ...tl.map((t) => [t.key, trackerLabel(t, tl, true), trackerLabel(t, tl)])].forEach(([k, label, title]) => { const b = btn("", label, () => setHomePage(k)); b.dataset.p = k; if (title) b.title = title; tabs.appendChild(b); });
+  if (tl.length){ ttl.textContent = ""; ttl.appendChild(tabs); }
+  bar.appendChild(you); bar.appendChild(ttl); bar.appendChild(mini); bar.appendChild(ibtn("gear", "Settings", settings));
   root.appendChild(bar);
+  // (the previous render's pages: their thumbnails revoked, their queues dropped)
+  trkViews.forEach((v) => v.dispose()); trkViews.clear();
+  const trkMains = new Map(tl.map((t) => { const m = el("main", "sgb"); m.dataset.tracker = t.key; m.hidden = true; return [t.key, m]; }));
+  const setHomePage = (k, dir, keep) => {
+    if (!pages.includes(k)) k = "reviews";
+    const changed = homePage !== k;
+    homePage = k;
+    if (!keep) try { sessionStorage.setItem("sight-review:page", k); } catch {}
+    tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.p === k));
+    main.hidden = k !== "reviews";
+    trkMains.forEach((m, key) => { m.hidden = key !== k; });
+    mini.classList.toggle("off", k !== "reviews");
+    const shown = trkMains.get(k) || main;
+    if (dir){ shown.classList.remove("in-l", "in-r"); void shown.offsetWidth; shown.classList.add(dir > 0 ? "in-r" : "in-l"); }
+    const t = tl.find((x) => x.key === k);
+    if (t && !trkViews.has(k)) trkViews.set(k, trackerBrowser({ el, btn, toast, busy, sheet,
+      reviews: () => homeMetas, openReview: (key, file) => openLinked(key, file), openFile: (file, link) => openMedia(file, null, link) }, trkMains.get(k), t));
+    if (changed) window.scrollTo(0, 0);
+  };
+  homeSwipe = tl.length ? (dx) => {
+    const i = pages.indexOf(homePage), j = i + (dx < 0 ? 1 : -1);
+    if (i >= 0 && j >= 0 && j < pages.length) setHomePage(pages[j], dx < 0 ? 1 : -1);
+  } : null;
   const main = el("main");
   const opens = el("div", "opens");
   const l1 = el("label", "main pick-media"), l2 = el("label", "pick-file");
@@ -493,7 +734,10 @@ async function renderHome(){
   foot.appendChild(el("span", "", APP_LABEL)); foot.appendChild(el("br")); foot.appendChild(el("span", "", "Nothing leaves this device unless you share it"));
   main.appendChild(foot);
   root.appendChild(main);
+  trkMains.forEach((m) => root.appendChild(m));
+  setHomePage(homePage, 0, true);
   const all = await DB.all("reviews").catch(() => []);
+  homeMetas = all;
   if (!main.isConnected) return;  // another screen took over meanwhile
   // One set of open buttons in the page: the big ones only while there is no review at all.
   (all.length ? opens : mini).remove();
@@ -666,6 +910,7 @@ function groupMenu(g){
   menu(g.name, [
     { label: g.open ? "Close the group" : "Open the group", fn: () => setGroup(g.id, { open: !g.open }) },
     { label: "Rename…", fn: async () => { const v = await askText({ title: "Group name", value: g.name }); if (v != null && v.trim()) setGroup(g.id, { name: v.trim() }); } },
+    { label: "Review file for Sight (.srev)", note: "the clips changed here, in one file", fn: () => exportBundle(g) },
     { label: "Picture…", note: "a frame, a picture or a colour", fn: () => groupThumbSheet(g) },
     { label: "Ungroup", fn: () => {
       const all = loadGroups(), cur = all.find((x) => x.id === g.id) || g, gs = all.filter((x) => x.id !== g.id), order = loadOrder(), i = order.indexOf("g:" + g.id);
@@ -785,7 +1030,9 @@ function reviewRow(m, grp){
   } else info.appendChild(document.createTextNode("No notes"));
   info.appendChild(document.createTextNode(" · " + fmtDate(m.updated)));
   tx.appendChild(info);
-  tx.appendChild(el("span", "", m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : m.asset.kind === "model3d" ? " 3D model" : " picture")));
+  const nomedia = m.nomedia && !m.kept;
+  row.classList.toggle("nomedia", !!nomedia);
+  tx.appendChild(el("span", "", nomedia ? "Media not on this device — notes readable" : m.kept ? "File kept on this device" : fmtBytes(m.asset.size) + (m.asset.kind === "video" ? " video" : m.asset.kind === "model3d" ? " 3D model" : " picture")));
   it.appendChild(th); it.appendChild(tx);
   return rowGestures(row, it, { open: () => toggleSel(m.key, row), thumb: () => { homeSel.clear(); openReview(m.key, null); }, menu: () => reviewMenu(m), name: m.asset.name });
 }
@@ -830,7 +1077,8 @@ function groupHead({ g, ms }){
   const chev = el("span", "chev"); chev.innerHTML = ico("back", 18);
   it.appendChild(th); it.appendChild(tx); it.appendChild(chev);
   row.appendChild(it);
-  return rowGestures(row, it, { group: true, name: g.name,
+  th.title = "Review the sequence"; th.setAttribute("aria-label", "Review “" + g.name + "” clip by clip");
+  return rowGestures(row, it, { group: true, name: g.name, thumb: () => openSequence(g),
     open: () => { g.open = !g.open; row.classList.toggle("shut", !g.open); setGroup(g.id, { open: g.open }, true); },
     menu: () => groupMenu(g) });
 }
@@ -1101,8 +1349,12 @@ async function settings(){
   sheet((sh, close) => {
     sh.appendChild(el("h2", "", "Settings"));
     const kv = el("div", "kv");
-    const row = (k, v) => { kv.appendChild(el("b", "", k)); kv.appendChild(el("span", "", v)); };
-    row("Your name", who || "—");
+    const row = (k, v) => { kv.appendChild(el("b", "", k)); return kv.appendChild(el("span", "", v)); };
+    // A tap on the name renames (the question opens over the settings, which stay open).
+    // (a button: a keyboard reaches it too)
+    kv.appendChild(el("b", "", "Your name"));
+    const nm = kv.appendChild(btn("tapedit", who || "—", async () => { if (await setName()) nm.textContent = who; }));
+    nm.title = "Tap to change your name";  // (a title only: the button's name stays the reviewer's name)
     if (u) row("Storage", `${fmtBytes(u.used)} used${u.quota ? " of " + fmtBytes(u.quota) : ""}${u.persisted ? " · kept" : ""}`);
     row("Version", VERSION);
     sh.appendChild(kv);
@@ -1116,6 +1368,28 @@ async function settings(){
     const paintTr = () => tr.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === thumbsRow));
     THUMBS.forEach((n) => { const b = btn("", String(n), () => { setThumbs(n); paintTr(); }); b.dataset.n = String(n); tr.appendChild(b); });
     sh.appendChild(tr); paintTr();
+    sh.appendChild(el("b", "lab", "Cache ahead"));
+    const ca = el("div", "seg ahead");
+    const paintCa = () => ca.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === cacheAhead));
+    AHEADS.forEach((n) => { const b = btn("", n + "%", () => { setCacheAhead(n); paintCa(); }); b.dataset.n = String(n); ca.appendChild(b); });
+    sh.appendChild(ca); paintCa();
+    sh.appendChild(el("p", "", "Share of the video frames kept in memory ahead of the playhead; the rest stays behind it for scrubbing back."));
+    sh.appendChild(el("b", "lab", "Debug log"));
+    const dg = el("div", "seg debug");
+    const dgNote = el("p", "");
+    const paintDg = () => {
+      dg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", (b.dataset.v === "1") === dbg.on));
+      const n = dbg.count();
+      dgNote.textContent = dbg.on ? `Recording: ${n} events. Do what goes wrong, then send the log.`
+        : n ? `Stopped: ${n} events kept until you clear them (after the app closes: the newest ≈ 1 MB).` : "Records what the video player and the frame cache do on this device, to send as a file.";
+      dgSend.hidden = dgClear.hidden = !n;
+    };
+    [["1", "On"], ["0", "Off"]].forEach(([v, label]) => { const b = btn("", label, () => { if (dbg.on !== (v === "1")) dbg.set(v === "1"); paintDg(); }); b.dataset.v = v; dg.appendChild(b); });
+    const dgActs = el("div", "acts");
+    const dgSend = btn("btn primary", "Send debug log…", () => { dbg.log("export", {}); offerFile(new Blob([dbg.text()], { type: "text/plain" }), dbg.fileName(), "Debug log"); });
+    const dgClear = btn("btn", "Clear", () => { dbg.clear(); paintDg(); });
+    dgActs.appendChild(dgClear); dgActs.appendChild(dgSend);
+    sh.appendChild(dg); sh.appendChild(dgNote); sh.appendChild(dgActs); paintDg();
     sh.appendChild(el("b", "lab", "Full screen"));
     if (fsCan()){
       const fs = el("div", "seg fs");
@@ -1124,21 +1398,42 @@ async function settings(){
       sh.appendChild(fs); paintFs();
       sh.appendChild(el("p", "", "Auto: the app goes full screen at your first tap, and again after you leave it."));
     } else sh.appendChild(el("p", "", isStandalone() ? "The installed app is full screen already." : isIOS() ? "Safari on iPhone / iPad does not keep a page full screen. Add the app to the Home Screen: it then runs full screen." : "This browser cannot show a page full screen. Add the app to the Home Screen: it then runs full screen."));
+    // Trackers (docs/PLAN-trackers.md decision 10): the connected ones — site, Disconnect, its settings — and
+    // Connect a tracker…, the only way in while none is connected.
+    sh.appendChild(el("b", "lab", "Trackers"));
+    const ui = { sheet, el, btn, toast };
+    const tl = trackers();
+    if (tl.length){
+      const tkv = el("div", "kv trackers");
+      tl.forEach((t) => { tkv.appendChild(el("b", "", trackerLabel(t, tl))); tkv.appendChild(el("span", "", "connected · " + t.host)); });
+      sh.appendChild(tkv);
+    } else sh.appendChild(el("p", "", "None connected. A tracker (ShotGrid) adds its Versions to the home screen and syncs a review's notes both ways."));
+    const trA = el("div", "acts");
+    tl.forEach((t) => {
+      const name = trackerLabel(t, tl);
+      trA.appendChild(btn("btn", "Disconnect " + name, () => { close(); trackerDisconnect(t.key); toast(name + " disconnected"); }));
+      trA.appendChild(btn("btn", name + " settings…", () => { close(); trackerSettings(t.kind, ui, t.key); }));
+    });
+    // (a connected kind is offered too: another site of it)
+    if (TRACKER_KINDS.length) trA.appendChild(btn("btn", "Connect a tracker…", () => { close(); connectTracker(ui); }));
+    sh.appendChild(trA);
     if (u && !u.persisted) sh.appendChild(el("p", "", "The browser may clear the reviews when the device runs low on space. Installing the app (Add to Home Screen) and allowing storage below keeps them."));
     const a = el("div", "acts");
-    a.appendChild(btn("btn", "Change name", async () => { close(); await setName(); }));
     if (u && !u.persisted) a.appendChild(btn("btn", "Keep storage", async () => { close(); toast(await DB.persist() ? "Storage will be kept" : "The browser did not allow it (install the app first)", 3500); }));
-    a.appendChild(btn("btn primary", "Done", close));
-    sh.appendChild(a);
+    if (a.childNodes.length) sh.appendChild(a);
   });
 }
 
-function closeReview(){
+// park: a move along a sequence — the clip's scrub cache waits in scrubPool (the next clip may be its neighbour).
+function closeReview(park){
   if (!R) return;
   flush();
+  bridgeEnd(R, "close", true);
   if (R.video){ R.video.pause(); R.video.removeAttribute("src"); R.video.load(); }
   if (R.grab) R.grab.close();
-  if (R.scrub) R.scrub.close();
+  if (R.scrub && park){ R.scrub.prio = 1; R.scrub.onProgress = null; scrubPool.set(R.meta.key, R.scrub); }
+  else if (R.scrub) R.scrub.close();
+  if (!park) scrubPoolClear();
   if (R.v3d) R.v3d.dispose();
   if (R.url) URL.revokeObjectURL(R.url);
   R.frames.forEach((f) => URL.revokeObjectURL(f.url));
@@ -1153,13 +1448,25 @@ function closeReview(){
 // Only the latest open counts: a second tap while the first review is still loading wins, and the
 // first one stops at its next step (each open has its own `rv`, nothing writes through `R` late).
 let openSeq = 0;
-async function openReview(key, file, fromRoute, extras){
+// opts.replace: the next / previous clip of a sequence (seqGo) — it takes the current history entry's place,
+// so Back leaves the sequence instead of walking through its clips.
+async function openReview(key, file, fromRoute, extras, opts){
+  try { return await openReviewNow(key, file, fromRoute, extras, opts); }
+  catch (e){ if (openingKey === key) openingKey = null; throw e; }  // a failed open: › steps from the shown review
+}
+async function openReviewNow(key, file, fromRoute, extras, opts){
   const seq = ++openSeq;
+  openingKey = key;
+  if (!(opts && opts.seq)) seqStop();  // not a move along the sequence bar / a cut: nothing pending from one
   fsArm();
   await flush();
   const meta = await DB.get("reviews", key);
   if (seq !== openSeq) return;
-  if (!meta){ if (fromRoute){ history.replaceState(null, "", location.pathname); renderHome(); } else toast("This review is not on the device any more"); return; }
+  if (!meta){
+    openingKey = null;
+    // A clip of a sequence that is gone (deleted elsewhere): out of its group, on to the one after it.
+    if (opts && opts.replace){ dropFromGroups(key); if (R){ paintSeq(); seqGo(opts.dir || 1); } return; }
+    if (fromRoute){ history.replaceState(null, "", location.pathname); renderHome(); } else toast("This review is not on the device any more"); return; }
   const rr = await DB.get("rows", key);
   // A file picked before is kept on the device (autoKeep), so the review opens with it; without
   // one the stage asks for the file.
@@ -1174,16 +1481,28 @@ async function openReview(key, file, fromRoute, extras){
     if (kept && kept.extras && kept.blob && kept.blob.size === file.size) extras = kept.extras;
   }
   if (seq !== openSeq) return;
-  closeReview();
+  // The history entry is settled now, before any await, so a later open reads a settled `pushed`. A review
+  // still loading when this one takes over (never shown) leaves its entry to this one.
+  const prev = R, wasPushed = !!(prev && prev.pushed), replace = !!(opts && opts.replace) || !!(prev && !prev.shown && wasPushed);
+  closeReview(!!(opts && (opts.seq || opts.replace)) && meta.asset.kind === "video");
   const rv = R = { meta, rows: rr ? rr.rows : [], file: null, url: null, video: null, grab: null, fps: meta.fps || 25, fpsKnown: !!meta.fps,
-    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, cacheF: 0, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
+    frames: new Map(), shotUrls: new Map(), drafts: {}, openReply: {}, newOpen: false, replyTo: null, curNote: null, filter: "all", hide: false, scrubT: null, want: null, dragging: false, panel: false, drawS: null, pv: PV0(), rate: 1, hasAudio: typeof meta.audio === "boolean" ? meta.audio : null, audioSure: typeof meta.audio === "boolean",
     views: meta.asset.kind === "model3d" ? M.views3d(rr ? rr.rows : []) : new Map(), curVk: null, v3d: null, v3dReady: null, extras: extras || [] };
+  // A move along the sequence keeps the speed and the hidden controls.
+  if (opts && opts.replace && prev){ rv.rate = prev.rate; rv.clean = prev.clean; }
+  if (opts && opts.seq && prev){ rv.panel = prev.panel; rv.filter = prev.filter; rv.hide = prev.hide; }
+  if (replace){ history.replaceState(null, "", "#r=" + key); rv.pushed = wasPushed; }
+  else if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
   if (file) await bindFile(rv, file);
   if (R !== rv) return;
+  if (!rv.file) scrubPoolClear();  // a clip without its file builds no cache: the parked ones would only go on decoding
   meta.opened = now();
+  if (rv.file) delete meta.nomedia;
   DB.put("reviews", meta).catch(() => {});
-  if (!fromRoute && location.hash !== "#r=" + key){ history.pushState(null, "", "#r=" + key); rv.pushed = true; }
+  if (seq === openSeq) openingKey = null;
+  seqRemember(key);
   renderReview();
+  rv.shown = true;
   if (picked && rv.file) autoKeep(rv);
 }
 // Keeps the picked file in the app (IndexedDB "files") so the review opens with it next time — the
@@ -1266,6 +1585,7 @@ let nbRO = null;
 function renderReview(){
   const a = R.meta.asset;
   document.title = a.name + " — Sight Review";
+  seqKeepTarget();
   root.textContent = ""; root.className = "review" + (R.panel ? " open" : "");
   const slide = el("div", "slide"), player = el("div", "player"), stage = el("div", "stage");
   const hdr = el("header", "hdr rd-panel"), r1 = el("div", "row"), r2 = el("div", "row"), ttl = el("div", "ttl");
@@ -1273,7 +1593,12 @@ function renderReview(){
   const sub = el("span");
   ttl.appendChild(sub);
   r1.appendChild(ibtn("back", "All reviews", leaveReview));
+  // In a group (a sequence): the previous / next clip around the title, "2 / 5" under it.
+  const sq = seqOf(R.meta.key), sks = sq ? seqKeys(sq, R.meta.key) : [], pos = sks.indexOf(R.meta.key);
+  const seqBtn = (d) => { const b = ibtn(d < 0 ? "prev" : "next", d < 0 ? "Previous clip (Page Up)" : "Next clip (Page Down)", () => seqGo(d)); b.classList.add("seqb"); b.disabled = !sks[pos + d]; return b; };
+  if (sq){ r1.appendChild(seqBtn(-1)); bindTitleSwipe(ttl); }
   r1.appendChild(ttl);
+  if (sq) r1.appendChild(seqBtn(1));
   r1.appendChild(ibtn("more", "Export and more", reviewActions));
   hdr.appendChild(r1); hdr.appendChild(r2);
   const tp = el("div", "tp rd-panel");
@@ -1285,7 +1610,7 @@ function renderReview(){
   const newbar = el("footer", "newbar"), nb = el("div");
   newbar.appendChild(nb);
   root.appendChild(newbar);
-  els = { sub, stage, tools: r2, tp, pbar, plist, keep, notes, nb, newbar, svg: null, T: null };
+  els = { seq: sq ? `${sq.name} · ${pos + 1} / ${sks.length}` : "", sub, stage, tools: r2, tp, pbar, plist, keep, notes, nb, newbar, svg: null, T: null };
   // The player's height leaves room for the new-note bar, whatever it holds.
   if (!nbRO) nbRO = new ResizeObserver(() => { if (els && els.newbar.isConnected) root.style.setProperty("--nbh", els.newbar.offsetHeight + "px"); });
   nbRO.disconnect(); nbRO.observe(newbar);
@@ -1294,7 +1619,360 @@ function renderReview(){
   buildStage();
   paintReview();
 }
+// ---- sequences: a group's reviews one after another ------------------------------------------------
+// The key of the open in flight (a › tapped twice quickly steps from where the first tap is going).
+let openingKey = null;
+// The group a review is in, or null; its sequence = its keys as listed (reviews hidden for now left out,
+// except `key` itself).
+function seqOf(key){ return loadGroups().find((g) => g.keys.includes(key)) || null; }
+function seqKeys(g, key){ const h = hiddenKeys(); return g.keys.filter((k) => k === key || !h.has(k)); }
+// The clip a group's sequence opens on: the one last seen in it (g.cur), else its first.
+function openSequence(g){
+  const cur = loadGroups().find((x) => x.id === g.id) || g, ks = seqKeys(cur);
+  if (!ks.length) return;
+  homeSel.clear();
+  openReview(ks.includes(cur.cur) ? cur.cur : ks[0], null);
+}
+function seqRemember(key){ const g = seqOf(key); if (g && g.cur !== key) setGroup(g.id, { cur: key }, true); }
+// The header's ‹ › and "i / n" after the group changed under the open review (the player is left alone).
+function paintSeq(){
+  if (!R || !els) return;
+  const sq = seqOf(R.meta.key), sks = sq ? seqKeys(sq, R.meta.key) : [], pos = sks.indexOf(R.meta.key);
+  els.seq = sq ? `${sq.name} · ${pos + 1} / ${sks.length}` : "";
+  document.querySelectorAll(".hdr .seqb").forEach((b) => { b.disabled = !sks[pos + (b.title.startsWith("Previous") ? -1 : 1)]; });
+  paintReview();
+  if (R.video) seqLoad(R.meta.key);
+}
+function dropFromGroups(key){ const gs = loadGroups(); gs.forEach((g) => { g.keys = g.keys.filter((k) => k !== key); }); saveGroups(gs); }
+// The previous / next clip of the open review's group (no wrap). Edits are saved by openReview (flush).
+// Not while a busy overlay works on the open review (an export reads its frames).
+function seqGo(d, sure){
+  if (!R || document.querySelector(".busy")) return false;
+  // A note / reply being written is not dropped without asking (as a swipe down asks).
+  if (!sure && draftBusy()){
+    if (sheets.length) return;  // one question at a time (a sheet closed by its backdrop / Back never answers)
+    const rv = R;
+    ask({ title: "Go to the " + (d < 0 ? "previous" : "next") + " clip?", text: "A note or reply you are writing is not sent yet and will be lost.", ok: "Go", danger: true })
+      .then((y) => { if (y && R === rv) seqGo(d, true); });
+    return;
+  }
+  const base = openingKey || R.meta.key, g = seqOf(base), ks = g ? seqKeys(g, base) : [], k = ks[ks.indexOf(base) + d];
+  if (!g || !k) return false;
+  openReview(k, null, false, undefined, { replace: true, dir: d });
+}
+// Swipe the header's title sideways: the next (left) / previous (right) clip. It follows the finger a little.
+function bindTitleSwipe(ttl){
+  ttl.style.touchAction = "none";
+  ttl.classList.add("swipe");
+  let s = null;
+  const reset = () => { ttl.style.transition = "transform .18s ease-out"; ttl.style.transform = ""; };
+  ttl.addEventListener("pointerdown", (e) => {
+    if (s || (e.pointerType === "mouse" && e.button !== 0)) return;
+    s = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    try { ttl.setPointerCapture(e.pointerId); } catch {}
+  });
+  ttl.addEventListener("pointermove", (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x;
+    if (Math.abs(dx) > 6){ ttl.style.transition = ""; ttl.style.transform = `translateX(${RC.clamp(dx * 0.5, -60, 60)}px)`; }
+  });
+  const end = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x, dy = e.clientY - s.y;
+    s = null;
+    reset();
+    if (e.type === "pointerup" && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) seqGo(dx < 0 ? 1 : -1);
+  };
+  ttl.addEventListener("pointerup", end); ttl.addEventListener("pointercancel", end);
+}
+
+// ---- the sequence bar: a group's videos end to end under the timeline-----------------------------
+// As Sight's sequence bar: every video of the open review's group (in the group's order) as a segment, the
+// playhead running across all of them. A tap / drag on the bar, a scrub on the picture past a clip's start /
+// end, and the end of a clip while playing go on into the neighbouring clip — each clip is still its own
+// review (openReview with {replace, seq}); `seqPend` says where the clip being opened lands, and the last
+// frame stays on screen as a canvas (`seqHoldEl`) until the new clip shows its own.
+let seqInfo = null;   // {gid, items: [{key, name, dur, nomedia, marks}]}: video clips only, null below two
+let seqPend = null;   // {key, t, play, drag}: t < 0 counts from the end
+let seqDrag = null;   // {id, mode: "bar" | "pic", T, lx, lt, rect}: a drag through the sequence, on window listeners
+let seqHoldEl = null, seqHoldT = null, seqLoadN = 0, seqKeep = null;
+// Not while drawing or writing: a cut builds a new review and would drop the canvas / the unsent draft.
+const draftBusy = () => !!R && Object.values(R.drafts).some((d) => d && (d.text.trim() || d.shots.length || d.state || d.draw));
+const seqLocked = () => !R || !!R.drawS || !!document.querySelector(".draw") || composing() || draftBusy();
+function seqMarksOf(rows){
+  const out = [], same = (a, b) => Math.abs(a - b) < 5e-4;
+  M.notesSorted(rows, "video").forEach((n) => RC.noteTimes(n.data, M.noteFrameTimes(rows, n), same, true).forEach((t) => out.push({ t, cls: M.noteState(n) })));
+  M.drawings(rows).forEach((r) => { const t = r.data.ctx && r.data.ctx.t; if (typeof t === "number" && !out.some((m) => same(m.t, t))) out.push({ t, cls: "dr" }); });
+  return out;
+}
+async function seqLoad(key){
+  const n = ++seqLoadN, g = seqOf(key);
+  let info = null;
+  if (g){
+    const metas = await Promise.all(seqKeys(g, key).map((k) => DB.get("reviews", k).catch(() => null)));
+    const vids = metas.filter((m) => m && m.asset && m.asset.kind === "video");
+    if (vids.length >= 2 && vids.some((m) => m.key === key)){
+      const items = await Promise.all(vids.map(async (m) => {
+        const rr = m.key === key ? null : await DB.get("rows", m.key).catch(() => null);
+        return { key: m.key, name: m.asset.name, dur: m.asset.duration || 0, nomedia: !!m.nomedia, marks: rr ? seqMarksOf(rr.rows) : [] };
+      }));
+      info = { gid: g.id, items };
+    }
+  }
+  if (n !== seqLoadN) return;
+  seqInfo = info;
+  if (R && R.meta.key === key && els && els.sqb){
+    const was = !els.sqb.hidden;
+    renderSeqBar();
+    if (was !== !els.sqb.hidden) applyStageView();
+  }
+}
+// Durations (the open clip's own once known; unknown ones the mean of the rest), offsets, total.
+function seqGeom(){
+  const si = seqInfo;
+  if (!R || !si) return null;
+  const i = si.items.findIndex((x) => x.key === R.meta.key);
+  if (i < 0) return null;
+  const known = si.items.map((x, j) => (j === i ? durOf() || x.dur : x.dur) || 0), pos = known.filter((d) => d > 0);
+  const avg = pos.length ? pos.reduce((a, b) => a + b, 0) / pos.length : 1;
+  const durs = known.map((d) => d > 0 ? d : avg), offs = [];
+  let total = 0;
+  durs.forEach((d) => { offs.push(total); total += d; });
+  return { items: si.items, i, durs, offs, total };
+}
+function seqAt(G, T){
+  const n = G.items.length;
+  for (let j = 0; j < n; j++) if (T < G.offs[j] + G.durs[j] || j === n - 1) return { j, t: RC.clamp(T - G.offs[j], 0, G.durs[j]) };
+}
+const pct = (x, G) => (G.total ? Math.min(100, Math.max(0, x / G.total * 100)) : 0).toFixed(3) + "%";
+function renderSeqBar(){
+  const bar = els && els.sqb;
+  if (!bar) return;
+  const G = seqGeom();
+  bar.hidden = !G;
+  if (R.video) R.video.loop = loopOn && !G;  // in a sequence the loop is the whole sequence's (seqEnded)
+  const trk = bar.firstChild;
+  trk.textContent = "";
+  bar.ph = null;
+  if (!G) return;
+  G.items.forEach((it, j) => {
+    const s = el("div", "sqs" + (j % 2 ? " alt" : "") + (j === G.i ? " cur" : "") + (it.nomedia ? " nomedia" : ""));
+    s.style.left = pct(G.offs[j], G); s.style.width = pct(G.durs[j], G);
+    s.appendChild(el("span", "", it.name));
+    trk.appendChild(s);
+  });
+  G.items.forEach((it, j) => (j === G.i ? markerList() : it.marks).forEach((m) => {
+    if (m.cls === "mine") return;
+    const i = el("i", "mk " + m.cls);
+    i.style.left = pct(G.offs[j] + Math.min(m.t, G.durs[j]), G);
+    trk.appendChild(i);
+  }));
+  bar.ph = trk.appendChild(el("i", "ph"));
+  paintSeqPh();
+}
+function paintSeqPh(){
+  const bar = els && els.sqb, v = R && R.video;
+  if (!bar || !bar.ph || !v) return;
+  const G = seqGeom();
+  if (G) bar.ph.style.left = pct(G.offs[G.i] + Math.min(R.scrubT != null ? R.scrubT : v.currentTime, G.durs[G.i]), G);
+}
+function bindSeqBar(bar){
+  bar.addEventListener("pointerdown", (e) => {
+    if (!R || !R.video || (e.pointerType === "mouse" && e.button !== 0)) return;
+    const G = seqGeom(), r = bar.getBoundingClientRect();
+    if (!G || !r.width) return;
+    e.preventDefault();
+    try { bar.setPointerCapture(e.pointerId); } catch {}
+    seqDragBegin(e, "bar", RC.clamp((e.clientX - r.left) / r.width, 0, 1) * G.total, r);
+  });
+}
+// A drag through the sequence. Its moves are read on window: the bar / the stage holding the pointer is
+// replaced at each cut (renderReview), so their own listeners go with them.
+function seqDragBegin(e, mode, T, rect){
+  seqDragEnd();
+  // The geometry is frozen for the drag (a guessed length made real at a cut must not move the cut under the finger).
+  seqDrag = { id: e.pointerId, mode, T, lx: e.clientX, lt: e.timeStamp, rect, G: seqGeom(), el: e.target };
+  window.addEventListener("pointermove", seqMove, true);
+  window.addEventListener("pointerup", seqUp, true);
+  window.addEventListener("pointercancel", seqUp, true);
+  // Safety net: the touch is over (iOS can stop sending pointer events after a cut).
+  window.addEventListener("touchend", seqTouchEnd, true);
+  window.addEventListener("touchcancel", seqTouchEnd, true);
+  seqDragTo(T);
+}
+function seqMove(e){
+  const d = seqDrag;
+  if (!d || e.pointerId !== d.id || !R) return;
+  if (d.mode === "bar"){
+    if (d.G && d.rect.width) seqDragTo(RC.clamp((e.clientX - d.rect.left) / d.rect.width, 0, 1) * d.G.total);
+    return;
+  }
+  const dx = e.clientX - d.lx, dt = e.timeStamp - d.lt;
+  d.lx = e.clientX; d.lt = e.timeStamp;
+  if (dx) seqDragTo(d.T + scrubDelta(dx, dt, e.shiftKey));
+}
+function seqUp(e){ if (seqDrag && e.pointerId === seqDrag.id) seqDragEnd(); }
+function seqTouchEnd(e){ if (seqDrag && !(e.touches && e.touches.length)) seqDragEnd(); }
+function seqDragEnd(){
+  if (!seqDrag) return;
+  seqDrag = null;
+  window.removeEventListener("pointermove", seqMove, true);
+  window.removeEventListener("pointerup", seqUp, true);
+  window.removeEventListener("pointercancel", seqUp, true);
+  window.removeEventListener("touchend", seqTouchEnd, true);
+  window.removeEventListener("touchcancel", seqTouchEnd, true);
+  if (seqKeep){ seqKeep.remove(); seqKeep = null; }
+  if (seqPend) seqPend.drag = false;
+  if (R && R.video && R.dragging) dragEnd();
+}
+// The playhead to sequence time T: within the clip on screen a seek, else that clip is opened (or the one
+// being opened is told the new time).
+function seqDragTo(T){
+  const G = seqDrag && seqDrag.G;
+  if (!G || !R) return;
+  T = RC.clamp(T, 0, G.total);
+  let { j, t } = seqAt(G, T), k = G.items[j].key;
+  const here = openingKey || R.meta.key;
+  if (here !== k && seqLocked()){
+    // Drawing / writing: the drag stays in the clip on screen, held at its edge.
+    const h = G.items.findIndex((x) => x.key === here);
+    if (h < 0) return;
+    j = h; k = here; t = RC.clamp(T - G.offs[h], 0, G.durs[h]); T = G.offs[h] + t;
+  }
+  seqDrag.T = T;
+  if (here === k){
+    if (!openingKey && R.video && R.video.readyState >= 1){
+      seqPend = null; R.dragging = true; seekTo(t);
+      if (seqHoldEl) seqHoldWatch(R.video);
+    } else { seqPend = { key: k, t, play: false, drag: true }; seqHoldPic(k, t); }
+    return;
+  }
+  seqSwitch(k, t, false, true);
+}
+function seqSwitch(k, t, play, drag){
+  if (!R || document.querySelector(".busy") || seqLocked()) return false;
+
+  const si = seqInfo, it = si && si.items.find((x) => x.key === R.meta.key);
+  // The clip left behind keeps what the bar knew of it live (its marks, its real length).
+  if (it && R.video){ it.marks = markerList().filter((m) => m.cls !== "mine"); it.dur = durOf() || it.dur; }
+  const ks = si ? si.items.map((x) => x.key) : [];
+  seqHold();
+  seqHoldPic(k, t);
+  seqPend = { key: k, t, play, drag };
+  if (play) seqRun(seqPend, rateNow());
+  openReview(k, null, false, undefined, { replace: true, seq: true, dir: ks.indexOf(k) < ks.indexOf(R.meta.key) ? -1 : 1 });
+}
+// The clip played to its end: on into the next one; past the last, the first again when looping.
+function seqEnded(){
+  const G = seqGeom();
+  if (!G || seqLocked()) return;
+  const nx = G.items[G.i + 1] || (loopOn ? G.items[0] : null);
+  if (nx) seqSwitch(nx.key, 0, true, false);
+}
+// The clip just opened by the sequence: where it lands, and whether it plays on.
+function seqApply(v){
+  const p = seqPend;
+  if (!p || !R || R.video !== v || p.key !== R.meta.key) return;
+  seqPend = null;
+  if (p.drag && seqDrag) R.dragging = true;
+  // A play on across the cut whose cached frames have been running (seqRun): the bridge goes on with that clock — or
+  // from the frame the held picture stopped on, when its frames ran out; with no bridge, the player plays from that
+  // frame (never back to p.t: the picture would jump back by the time the clip took to open).
+  if (p.play && p.run && p.t >= 0){
+    const e = p.t + (performance.now() - p.run) / 1000 * p.rate, sh = p.shown != null ? p.shown : p.t;
+    if (e - sh < 0.1 ? bridgeStart(p.t, p.run) : bridgeStart(sh)) return;
+    if (sh > p.t) p.t = sh;
+  }
+  if (p.t) seekTo(p.t < 0 ? durOf() + p.t : p.t);
+  if (p.play) togglePlay();
+  seqHoldWatch(v);
+}
+// A play on into the next clip: while it opens, its cached frames (its cache, filled as the neighbour) run on in
+// the held picture at the clip's pace from p.t, so the cut does not stand still; the bridge takes the clock over
+// when the clip lands (seqApply). (No cached frames: the held picture stays, as before.)
+// p.shown: the time of the last frame it showed (it stops where the cached frames run out).
+function seqRun(p, rate){
+  p.run = performance.now(); p.rate = rate; p.shown = null;
+  const tick = () => {
+    if (seqPend !== p || !p.run || !seqHoldEl) return;  // landed, paused (a tap), or given up
+    const t = p.t + (performance.now() - p.run) / 1000 * rate;
+    if (seqHoldPic(p.key, t, true)) p.shown = t;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+// The last frame over the stage (a canvas, the picture fitted as the player fits it) until the next
+// clip's first frame is on screen — no black between clips. At most 1.5 s.
+function seqHold(){
+  const v = R && R.video, st = els && els.stage;
+  if (!v || !st) return;
+  const si = els.scrubImg, src = si && !si.hidden && si.naturalWidth ? si : v;
+  const w = src.naturalWidth || src.videoWidth, h = src.naturalHeight || src.videoHeight, W = st.clientWidth, H = st.clientHeight;
+  if (!w || !h || !W || !H) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1), c = el("canvas", "seqhold");
+  c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+  const g = c.getContext("2d"), s = Math.min(W / w, H / h) * dpr, dw = w * s, dh = h * s;
+  try {
+    if (viewOf().mirror){ g.translate(c.width, 0); g.scale(-1, 1); }
+    g.drawImage(src, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh);
+  } catch { return; }
+  seqDropHold();
+  seqHoldEl = c;
+  st.appendChild(c);
+  seqHoldT = setTimeout(seqDropHold, 1500);
+}
+// The clip being opened (a drag / play / tap through the sequence): its cached frame at t over the stage instead
+// of the last clip's (that picture stood still while the next clip's player opened and was sought, and read as
+// the last clip's frame stuck on the next one). Its cache is still in scrubPool (taken over at loadedmetadata), or
+// is the open clip's when the drag turns back. Updated on every move until the clip lands.
+// prev: the frame at or before t (a play running on, seqRun: as the bridge shows it), else the nearest.
+function seqHoldPic(k, t, prev){
+  const st = els && els.stage, c = scrubPool.get(k) || (R && R.meta.key === k ? R.scrub : null);
+  const tt = c && t < 0 ? (c.d || 0) + t : t;
+  let u = null;
+  if (st && c && prev){ const i = c.at(tt + 1e-4) - 1; if (i >= 0 && tt - c.mts[i] <= c.step() * 1.6) u = c.pic(i); }
+  if (!u) u = st && c && c.near(tt);
+  if (!u) return false;
+  let im = seqHoldEl;
+  if (!im || im.tagName !== "IMG"){
+    seqDropHold();
+    im = seqHoldEl = el("img", "seqhold");
+    im.alt = ""; im.draggable = false;
+    if (viewOf().mirror) im.style.transform = "scaleX(-1)";
+    st.appendChild(im);
+  }
+  if (im.getAttribute("src") !== u) im.src = u;
+  clearTimeout(seqHoldT);
+  seqHoldT = setTimeout(seqDropHold, 1500);
+  return true;
+}
+// The element a sequence drag's finger went down on must stay in the document through a cut: WebKit keeps
+// sending a touch's events to that node, and a detached one never reaches window. Moved out of the review
+// (into a hidden body-level holder) by renderReview just before it clears the screen — not earlier, so the
+// old picture and the held frame stay on screen while the next clip opens.
+function seqKeepTarget(){
+  const d = seqDrag;
+  if (!(d && d.el && d.el.isConnected && root.contains(d.el))) return;
+  if (!seqKeep){ seqKeep = el("div", "seqkeep"); document.body.appendChild(seqKeep); }
+  seqKeep.appendChild(d.el);
+}
+function seqDropHold(){ clearTimeout(seqHoldT); if (seqHoldEl) seqHoldEl.remove(); seqHoldEl = null; }
+function seqHoldWatch(v){
+  const go = () => {
+    if (!seqHoldEl || !R || R.video !== v) return;
+    if (v.readyState < 2 || v.seeking){ setTimeout(go, 30); return; }
+    let done = false;
+    const drop = () => { if (!done){ done = true; seqDropHold(); } };
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(drop);
+    else requestAnimationFrame(() => requestAnimationFrame(drop));
+    setTimeout(drop, 250);
+  };
+  go();
+}
+function seqStop(){ seqDragEnd(); seqPend = null; seqDropHold(); }
 function leaveReview(){
+  ++openSeq; openingKey = null;  // an open still loading (a › tapped just before) must not land after Back
+  seqStop();
   if (R && R.pushed) history.back();
   else { closeReview(); history.replaceState(null, "", location.pathname + location.search); renderHome(); }
 }
@@ -1303,6 +1981,7 @@ function setPanel(open){
   R.panel = !!open;
   // The player slides off the screen: a playing clip stops where it is (paused, not rewound — the
   // list then marks the note on that frame), it must not run on unseen.
+  if (R.panel && R.bridge) bridgeHalt();
   if (R.panel && R.video && !R.video.paused) R.video.pause();
   root.classList.toggle("open", R.panel);
   paintPanelBar();
@@ -1380,12 +2059,13 @@ function bindPanelPull(plist, pb){
   }, { passive: true });
 }
 
-function overlay(vb, list, cls){
+// href: the picture the overlay lies on (colour correction areas are then shown corrected, review-core gradeSvgMarkup).
+function overlay(vb, list, cls, href){
   const s = document.createElementNS(SVGNS, "svg");
   s.setAttribute("viewBox", vb.join(" "));
   // cover: a thumbnail cut to fill its box (the picture is object-fit: cover, cut the same way).
   s.setAttribute("preserveAspectRatio", cls === "stage" ? "xMidYMid meet" : cls === "cover" ? "xMidYMid slice" : "none");
-  s.innerHTML = RC.svgMarkup(list, numOf);
+  s.innerHTML = RC.svgMarkup(list, numOf, { media: href ? { href, vb } : null });
   return s;
 }
 // A draft's drawing: the frame it was made on, plus (video) more frames of the same note.
@@ -1416,7 +2096,73 @@ function paintOverlay(){
     if (vk !== R.curVk){ R.curVk = vk; paintCurrent(); if (els.where) els.where(); }
   }
   els.svg.setAttribute("viewBox", (is3d() ? vbOf(R.v3d ? R.v3d.aspect() : 1) : [0, 0, docW() || 1, docH() || 1]).join(" "));
-  els.svg.innerHTML = RC.svgMarkup(stageDrawings(), numOf);
+  refShots(R);
+  const list = stageDrawings(), vid = kindNow() === "video" && !!R.video;
+  // Colour correction areas: a picture shows them corrected in the SVG (its own URL, review-core); a video through
+  // canvases that mirror its frame (gradeMirrors); a 3D view has no picture to correct: the dashed outline.
+  // (The correction has its own group, rebuilt only when the areas or the picture change: paintOverlay runs on every
+  // keystroke in the composer and every frame of a playing video.)
+  const pic = kindNow() === "image" && els.picUrl ? els.picUrl : null;
+  let gG = els.svg.firstChild, gD = gG && gG.nextSibling;
+  if (!gD || gG.getAttribute("class") !== "gg"){
+    els.svg.textContent = "";
+    gG = els.svg.appendChild(document.createElementNS(SVGNS, "g")); gG.setAttribute("class", "gg");
+    gD = els.svg.appendChild(document.createElementNS(SVGNS, "g"));
+    els.gradeSig = null;
+  }
+  const grades = pic ? list.filter((it) => RC.typeOf(it) === "grade") : [];
+  const sig = pic + "|" + docW() + "x" + docH() + "|" + JSON.stringify(grades.map((it) => [it.z, it.data]));
+  if (sig !== els.gradeSig){ els.gradeSig = sig; gG.innerHTML = grades.length ? RC.gradeSvgMarkup(grades, { href: pic, vb: [0, 0, docW() || 1, docH() || 1] }) : ""; }
+  gD.innerHTML = RC.svgMarkup(list, numOf, vid || pic ? { gradeLines: false } : {});
+  gradeMirrors(vid ? list : []);
+}
+// A video's colour correction areas: one canvas per area in .sv, under the drawings' SVG, showing the frame on screen
+// (the player's, or the cached scrub frame over it) through the area's CSS filter (RC.gradeFilter) and a CSS mask of
+// the area (RC.gradeMaskSvg, in doc units, the SVG fitted "meet"). The canvas has the picture's shape and object-fit:
+// contain, and turnEl turns it as the player — so frame, mask and drawings line up. Only the area's box is drawn;
+// paintOverlay runs on every frame while playing (loop) and on every seek / pause, so this keeps up. Overlapping
+// areas each correct the plain frame here (Sight and exports apply one over the other).
+function gradeMirrors(list){
+  const sv = els && els.sv, v = R && R.video;
+  if (!sv) return;
+  const map = sv.__grm || (sv.__grm = new Map()), W = docW(), H = docH();
+  const areas = v && W > 0 && H > 0 ? list.filter((it) => RC.typeOf(it) === "grade" && !RC.gradeIdentity(it.data) && RC.gradeShapeOk(it.data)) : [];
+  const keep = new Set();
+  areas.forEach((it, i) => {
+    const key = `${it.id || "#" + i}|${W}x${H}|${JSON.stringify(it.data)}`;
+    if (keep.has(key)) return;
+    keep.add(key);
+    let c = map.get(key);
+    if (!c){
+      c = el("canvas", "grm");
+      const box = RC.gradePadBox(it), sc = Math.min(1, 1600 / Math.max(W, H));
+      c.width = Math.max(1, Math.round(W * sc)); c.height = Math.max(1, Math.round(H * sc));
+      c.__box = box; c.__sc = sc;
+      const svg = `<svg xmlns="${SVGNS}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${RC.gradeMaskSvg(it.data, box, "")}</svg>`;
+      c.style.maskImage = c.style.webkitMaskImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+      c.style.filter = RC.gradeFilter(it.data);
+      map.set(key, c);
+      sv.insertBefore(c, els.svg.parentNode === sv ? els.svg : null);
+      const st = els.stage;
+      turnEl(c, st.clientWidth, st.clientHeight, viewOf());
+    }
+    drawMirror(c);
+  });
+  for (const [key, c] of map) if (!keep.has(key)){ c.remove(); map.delete(key); }
+}
+// Every mirror again (the frame on screen changed without a paintOverlay: the cached frame went, a seek landed).
+function redrawMirrors(){ const sv = els && els.sv; if (sv && sv.__grm) sv.__grm.forEach(drawMirror); }
+function drawMirror(c){
+  const v = R && R.video, si = els && els.scrubImg;
+  const src = si && !si.hidden && si.complete && si.naturalWidth ? si : v;
+  const sw = src && (src.naturalWidth || src.videoWidth), sh = src && (src.naturalHeight || src.videoHeight);
+  if (!sw || !sh || (src === v && v.readyState < 2)) return;
+  const g = c.getContext("2d"), b = c.__box, W = docW(), H = docH();
+  // (Doc units → this frame's pixels: the cached frame may be smaller than the clip.)
+  const x0 = Math.max(0, b[0]), y0 = Math.max(0, b[1]), x1 = Math.min(W, b[0] + b[2]), y1 = Math.min(H, b[1] + b[3]);
+  g.clearRect(0, 0, c.width, c.height);
+  if (x1 <= x0 || y1 <= y0) return;
+  try { g.drawImage(src, x0 * sw / W, y0 * sh / H, (x1 - x0) * sw / W, (y1 - y0) * sh / H, x0 * c.__sc, y0 * c.__sc, (x1 - x0) * c.__sc, (y1 - y0) * c.__sc); } catch {}
 }
 // The view's turn (0 / 90 / 180 / 270°) and mirror, kept with the review (R.meta.view): the stage,
 // the full-screen viewer and the drawing canvas show the picture that way. View only — drawings
@@ -1433,7 +2179,7 @@ function turnEl(n, W, H, vw){
 function applyStageView(){
   if (!els || !els.stage) return;
   const st = els.stage, W = st.clientWidth, H = st.clientHeight, vw = viewOf();
-  st.querySelectorAll(":scope > .sv > img, :scope > .sv > video, :scope > .sv > svg").forEach((n) => turnEl(n, W, H, vw));
+  st.querySelectorAll(":scope > .sv > img, :scope > .sv > video, :scope > .sv > svg, :scope > .sv > canvas.grm").forEach((n) => turnEl(n, W, H, vw));
   if (is3d()) paintOverlay();  // the host's units follow its shape
   if (els.penB) els.penB.style.bottom = ((els.tp && !els.tp.hidden ? els.tp.offsetHeight + 8 : 0) + 14) + "px";
   applyPlayerView();
@@ -1885,11 +2631,12 @@ function buildStage(){
     d.appendChild(l); n.appendChild(d); stage.appendChild(n);
   };
   if (a.kind !== "model3d") bindStage(stage);  // (3D: the model takes the fingers, model3d.js)
-  els.m3d = null; els.animUi = null;
+  els.m3d = null; els.animUi = null; els.sqb = null; els.picUrl = null;
+  if (!(a.kind === "video" && R.url)){ seqDropHold(); seqPend = null; }  // nothing here to land on
   if (els.sel3d){ els.sel3d.remove(); els.sel3d = null; }
   if (a.kind === "model3d") buildStage3d(stage, missing);
   else if (a.kind === "image"){
-    const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; sv.appendChild(img); sv.appendChild(svg); stage.appendChild(sv); paintOverlay(); applyStageView(); };
+    const show = (url) => { const img = el("img"); img.src = url; img.alt = ""; img.draggable = false; stage.textContent = ""; sv.appendChild(img); sv.appendChild(svg); stage.appendChild(sv); els.picUrl = url; paintOverlay(); applyStageView(); };
     if (R.url) show(R.url);
     else {
       getPicture().then((p) => { if (!els || els.stage !== stage) return; if (p) show(p.url); else missing("The picture is not on this device."); });
@@ -1904,26 +2651,55 @@ function buildStage(){
       // A cached frame shown over the player while a seek is on its way (ScrubCache).
       const si = el("img", "scrubimg"); si.alt = ""; si.draggable = false; si.hidden = true;
       els.scrubImg = si;
+      // (A cached frame lands after its src was set: the correction mirrors draw it once it has.)
+      si.addEventListener("load", () => { if (sv.__grm) sv.__grm.forEach(drawMirror); });
+      // (A seek's frame is painted after "seeked" — Safari above all: draw again once it is on screen.)
+      v.addEventListener("seeked", () => {
+        if (!R || R.video !== v) return;
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => { if (R && R.video === v) redrawMirrors(); });
+        requestAnimationFrame(() => requestAnimationFrame(() => { if (R && R.video === v) redrawMirrors(); }));
+      });
       sv.appendChild(v); sv.appendChild(si); sv.appendChild(svg); stage.appendChild(sv);
+      if (seqHoldEl) stage.appendChild(seqHoldEl);  // the last clip's frame, until this one shows its own
       const big = btn("playbig", null, () => togglePlay(), "Play"); big.innerHTML = ico("play", 30);
-      stage.appendChild(big);
+      // Not on a clip reached through the sequence (a drag / play across a cut): it would flash over the picture.
+      if (!(seqPend && seqPend.key === R.meta.key)) stage.appendChild(big);
       v.addEventListener("loadedmetadata", () => {
         if (!R || R.video !== v) return;
         const aa = R.meta.asset;
+        // The scrub cache first: a clip reached by a drag through the sequence lands (seqApply) on its cached frame,
+        // not on the last clip's held one until the player has sought.
+        const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
+        let sc = null;
+        if (!rv.scrub && d && rv.url && v.src === rv.url && rv.file){  // not a player whose file was just swapped (rebind)
+          // A clip reached through the sequence takes its cache over from scrubPool (filled as a neighbour).
+          // A neighbour's cache that gave up (its player never opened) is not taken over: a fresh one tries again.
+          sc = scrubPool.get(rv.meta.key);
+          scrubPool.delete(rv.meta.key);
+          if (sc && sc.broken){ sc.close(); sc = null; }
+          if (!sc) sc = new ScrubCache(URL.createObjectURL(rv.file), d, () => rv.fps, null, { own: true, tag: rv.meta.asset.name, blob: rv.file });
+          sc.prio = 0; sc.fps = () => rv.fps;
+          // The player's length is the clip's (a neighbour's came from the bar, a decoded track's from its last frame).
+          if (Math.abs((sc.d || 0) - d) > 1e-3){ sc.d = d; sc.resolve(); }
+          sc.onProgress = () => { if (R === rv) TPS.forEach(paintCache); };
+          rv.scrub = sc;
+          TPS.forEach(paintCache);
+          // After the player's own first frame, so the two do not race for the decoder (an adopted cache at once).
+          rv.scrubAt = performance.now() + (sc.spec ? 0 : 600);
+        }
+        seqApply(v);
+        // (After seqApply: the window is planned around where the clip lands, not its first frame.)
+        if (sc){ if (sc.spec) cacheFocus(); else setTimeout(() => { if (R === rv && rv.scrub === sc) cacheFocus(); }, 650); }
         if (!aa.width && v.videoWidth){ aa.width = v.videoWidth; aa.height = v.videoHeight; }
         if (!aa.duration && Number.isFinite(v.duration)) aa.duration = v.duration;
         // Sound: Safari lists the tracks, Firefox says; Chrome only once it has decoded some (timeupdate).
         if (v.audioTracks && typeof v.audioTracks.length === "number") setAudio(v.audioTracks.length > 0);
         else if (typeof v.mozHasAudio === "boolean") setAudio(v.mozHasAudio);
         paintTime(); paintMarkers(); paintOverlay(); applyStageView();
-        const rv = R, d = Number.isFinite(v.duration) ? v.duration : aa.duration;
-        if (!rv.scrub && d && rv.url && v.src === rv.url){  // not a player whose file was just swapped (rebind)
-          rv.scrub = new ScrubCache(rv.url, d, rv.fps, (f) => { if (R === rv){ rv.cacheF = f; TPS.forEach(paintCache); } });
-          // After the player's own first frame, so the two do not race for the decoder.
-          setTimeout(() => { if (R === rv && rv.scrub) rv.scrub.start(); }, 600);
-        }
       });
-      v.addEventListener("error", () => toast("This device cannot play this video (format or codec).", 5000));
+      v.addEventListener("error", () => { if (R && R.video === v){ seqDropHold(); scrubPoolClear(); } toast("This device cannot play this video (format or codec).", 5000); });
+      // Only a clip played to its end goes on (a seek to the very end fires "ended" too, paused).
+      v.addEventListener("ended", () => { if (R && R.video === v && R.playOn && !seqDrag){ if (R.bridge) bridgeEnd(R, "ended"); seqEnded(); } });
       ["timeupdate", "pause"].forEach((ev) => v.addEventListener(ev, () => { paintTime(); paintOverlay(); paintCurrent(); if (composing() && els.where) els.where(); }));
       // Chrome: no sound decoded after a quarter second of (unmuted) play = the clip has none — a
       // guess, taken back as soon as some sound is decoded after all (the container's word, from
@@ -1939,7 +2715,7 @@ function buildStage(){
         if (R.playedFor > 0.25 && R.hasAudio == null) setAudio(false, true);
       });
       v.addEventListener("seeked", () => {
-        if (!R || R.video !== v) return;
+        if (!R || R.video !== v || R.bridge) return;  // (the bridge's own seek: it watches the player itself)
         pumpSeek(v);
         if (R.want == null && !R.dragging && !v.seeking) settle(v);
         else if (R.want == null && R.scrubT != null && Math.abs(v.currentTime - R.scrubT) < frameDur()) hideWhenShown(v);  // the player has caught up
@@ -1947,10 +2723,57 @@ function buildStage(){
       });
       // The big play button only until the clip is first played or moved: it would cover the frame.
       // (A seek still landing keeps the cached picture until its frame is shown: settle on "seeked".)
-      v.addEventListener("play", () => { big.remove(); R.scrubT = null; R.want = null; if (!v.seeking) hideCached(); paintTime(); loop(); });
+      v.addEventListener("play", () => { playPend = performance.now() + 4000; ScrubCache.poke(); R.playOn = true; big.remove(); R.want = null; if (!R.bridge && !R.keepPic){ R.scrubT = null; if (!v.seeking) hideCached(); } paintTime(); loop(); });
+      // The scrub caches keep off the decoder until the play has started (ScrubCache.busy).
+      v.addEventListener("playing", () => { playPend = performance.now() + 300; if (R && R.video === v && R.keepPic){ R.keepPic = false; R.scrubT = null; hideWhenShown(v); } });
+      v.addEventListener("seeking", () => ScrubCache.poke());
+      // What each seek costs the player (bridgePlan): the last one asked for, to "seeked".
+      // (Not before the player has shown its first frame: those seeks include its decoder's start.)
+      // (A clip's first, and one sent over a seek still on its way, cost more: noteSeek's extra.)
+      let seekAt = 0, seekX = 0, seekO = false, had = false;
+      v.addEventListener("loadeddata", () => { had = true; });
+      v.addEventListener("seeking", () => {
+        const over = seekAt > 0, mine = R && R.video === v;
+        seekAt = had ? performance.now() : 0; seekX = v.currentTime; seekO = over || !(mine && R.seekN);
+        if (mine){ R.seekFrom = seekAt; R.seekX = seekX; R.seekO = seekO; }  // (bridgePlan: a seek on its way may be let finish)
+      });
+      v.addEventListener("seeked", () => {
+        if (seekAt && R && R.video === v){ if (!document.hidden) noteSeek(seekX, (performance.now() - seekAt) / 1000, seekO); R.seekN = (R.seekN || 0) + 1; }
+        if (R && R.video === v){ R.seekFrom = 0; R.seekX = null; }
+        seekAt = 0;
+      });
+      v.addEventListener("pause", () => {
+        playPend = 0;
+        // Paused after a play with sound on Android: ~0.2 s more sound is already in its audio output, which it plays
+        // out, and the next play() goes on from past it (padJ). Noted here; that play bridges the gap with the cached
+        // frames (togglePlay: R.padT; any seek before it clears the note).
+        if (R && R.video === v) R.padT = androidAudio && !v.ended && !v.seeking && !v.muted && R.hasAudio !== false ? v.currentTime : null;
+      });
+      v.addEventListener("seeking", () => { if (R && R.video === v) R.padT = null; });
+      // Its start lag from every plain play too (a codec that starts fast plays without the bridge: a slower start
+      // later, an idle player's decoder suspended, still shows up).
+      v.addEventListener("play", () => {
+        if (!R || R.video !== v || R.bridge || v.seeking || v.readyState < 2 || !v.requestVideoFrameCallback) return;
+        const p0 = performance.now(), m0 = v.currentTime, r = v.playbackRate, fd = frameDur(), mu = v.muted;
+        const f = (now, m) => {
+          if (!R || R.video !== v || v.paused || R.bridge) return;
+          if (m.mediaTime > m0 + fd * 0.25) noteLag(((m.presentationTime || now) - p0) / 1000 - (m.mediaTime - m0) / r, mu);
+          else v.requestVideoFrameCallback(f);
+        };
+        v.requestVideoFrameCallback(f);
+      });
       v.addEventListener("seeking", () => big.remove());
+      dbgPlayer(v);  // (logs only while the debug log is on)
       els.T = makeTransport();
-      tp.appendChild(els.T.el); tp.hidden = false;
+      // Under the clip's own timeline: the group's videos end to end (renderSeqBar; hidden outside a sequence).
+      const sqb = el("div", "sqb");
+      sqb.appendChild(el("div", "sqt"));
+      els.sqb = sqb;
+      bindSeqBar(sqb);
+      tp.appendChild(els.T.el);
+      tp.appendChild(sqb); tp.hidden = false;
+      renderSeqBar();
+      seqLoad(R.meta.key);
     }
   }
   // The pencil floats at the bottom right of the picture, as in the full-screen viewer (on a
@@ -2013,11 +2836,13 @@ async function rebind(file, extras){
     if (!await ask({ title: "A different file?", text: `This review is for “${a.name}” (${fmtBytes(a.size)}); you picked “${file.name}” (${fmtBytes(file.size)}). Drawings land in the wrong place if the picture differs. Use it anyway?`, ok: "Use it" })) return;
   }
   const rv = R;
+  if (rv.bridge) bridgeEnd(rv, "rebind", true);  // (its player is replaced: rate and sound back on the old one)
   if (rv.url) URL.revokeObjectURL(rv.url);
   rv.url = null;
   if (rv.grab) rv.grab.close();
   if (rv.scrub) rv.scrub.close();
-  rv.grab = null; rv.scrub = null; rv.cacheF = 0; rv.want = null; rv.scrubT = null;
+  rv.grab = null; rv.scrub = null; rv.want = null; rv.scrubT = null;
+  scrubPoolClear();
   if (rv.v3d) rv.v3d.dispose();
   rv.v3d = null; rv.v3dReady = null; rv.v3dError = null; rv.curVk = null; rv.extras = extras || [];
   // Another file: whether it has sound is learnt again.
@@ -2027,6 +2852,7 @@ async function rebind(file, extras){
   await DB.del("frames", rv.meta.key + "|img").catch(() => {});
   await bindFile(rv, file);
   if (R !== rv) return;
+  if (rv.file) delete rv.meta.nomedia;
   DB.put("reviews", rv.meta).catch(() => {});
   buildStage(); paintReview();
   autoKeep(rv, true);  // the file picked now is the one to open with next time
@@ -2044,8 +2870,32 @@ const durOf = () => { const v = R && R.video; return (v && Number.isFinite(v.dur
 function togglePlay(){
   const v = R && R.video;
   if (!v) return;
-  if (!v.paused){ v.pause(); return; }
-  const t = R.want != null ? R.want : R.scrubT;
+  if (R.bridge){ dbg.log("tap.pause", { t: +posNow().toFixed(3), bridge: true }); bridgeHalt(); return; }
+  // A tap while a play on across the cut is opening the next clip (its frames running, seqRun): it lands paused on
+  // the frame shown. (Not once the clip has failed to open: the tap is the player's again.)
+  const sp = seqPend;
+  if (sp && sp.play && !(sp.key === R.meta.key && v.error)){
+    sp.play = false; sp.run = 0;
+    if (sp.shown != null) sp.t = sp.shown;
+    dbg.log("tap.pause", { t: +sp.t.toFixed(3), seq: true });
+    return;
+  }
+  if (!v.paused){ dbg.log("tap.pause", { t: +v.currentTime.toFixed(3) }); v.pause(); return; }
+  // (Played to its end: from the start again, as the player itself would.)
+  const t = R.want != null ? R.want : R.scrubT != null ? R.scrubT : v.ended ? 0 : null;
+  // Paused with sound on Android (R.padT): the player will go on padJ past the frame shown (the sound the device played
+  // out after the pause) — the bridge plays the cached frames from the frame shown and the player takes over from
+  // there, ahead of them (no seek: a seek back costs up to ~1 s on a phone clip). With no cached frames, a plain play
+  // skips the padJ.
+  const jump = t == null && R.padT != null && !v.seeking && Math.abs(v.currentTime - R.padT) < 1e-6 ? padJ : 0;
+  R.padT = null;
+  dbg.log("tap.play", { t: +v.currentTime.toFixed(3), want: t, seeking: v.seeking, rs: v.readyState, busy: !!(ScrubCache.busy && ScrubCache.busy()) });
+  dbgPlayAt = performance.now();
+  // The scrub cache plays at once while the player gets going (bridgeStart): it is not standing on that frame yet (a
+  // seek to make or still on its way, a clip just opened), or is but slow to start (with sound on Android: ~0.25 s).
+  const there = !v.seeking && v.readyState >= 2 && (t == null || (R.fpsKnown ? frameIdx(v.currentTime) === frameIdx(t) : Math.abs(v.currentTime - t) < 1e-3));
+  const slow = lagNow(silentNow()) > Math.max(0.07, 1.5 * frameDur());
+  if ((!there || slow || jump) && bridgeStart(t != null ? t : v.currentTime, 0, jump)) return;
   if (t != null){
     R.want = null;
     if (R.dragging) dragEnd();
@@ -2053,7 +2903,13 @@ function togglePlay(){
     const there = R.fpsKnown ? frameIdx(v.currentTime) === frameIdx(t) : Math.abs(v.currentTime - t) < 1e-3;
     if (!there) v.currentTime = R.fpsKnown ? Math.min((frameIdx(t) + 0.25) * frameDur(), durOf() || Infinity) : t;
   }
-  v.play().catch(() => {});
+  playTapped(v);
+}
+// WebKit lets an element play with sound only once a play() of it has run inside a tap: until then no bridge (its
+// play may come later, outside the tap — after a seek, or once the clock gets to its frame). v.sightTap.
+function playTapped(v){
+  const tap = !navigator.userActivation || navigator.userActivation.isActive;
+  v.play().then(() => { if (tap) v.sightTap = true; }).catch(() => {});
 }
 // The frame on screen at time t is the one that started at or before t; a time inside it is kept as
 // that frame's start + a hair (as Sight's stepping lands), so a note made there shows on exactly
@@ -2082,7 +2938,10 @@ function snapT(t){
 function seekTo(t){
   const v = R && R.video;
   if (!v) return;
+  if (R.bridge) bridgeEnd(R, "seek", true);
+  R.keepPic = false;
   if (!v.paused) v.pause();
+  R.playOn = false;
   t = snapT(t);
   R.scrubT = t; R.want = t;
   if (R.drawS) R.drawS.moved(t);  // first: a seek that lands at once (same frame) settles the canvas
@@ -2090,8 +2949,19 @@ function seekTo(t){
   pumpSeek(v);
   paintTime(); paintOverlay(); paintCurrent();
 }
-function pumpSeek(v){
+let restT = 0;
+function pumpSeek(v, rest){
   if (R.want == null || v.seeking) return;
+  // Dragging over cached frames: the picture is the cache's, the player is not sought (each seek decodes from
+  // the keyframe and keeps the scrub caches off the decoder); it seeks once, to the last time, when the drag ends
+  // (as Sight's scrub proxy: the full file is sought on release).
+  // A finger resting on one frame for a moment: the player seeks there after all (its full picture replaces the
+  // 640 px cached one; the next move goes on from the cache).
+  clearTimeout(restT);
+  if (R.dragging && !rest && cachedAt(R.want)){
+    restT = setTimeout(() => { if (R && R.video === v && R.dragging && R.want != null) pumpSeek(v, true); }, 250);
+    return;
+  }
   const t = R.want;
   R.want = null;
   // The player is sent a quarter into the frame (well inside it, whatever the container's stamps)
@@ -2101,11 +2971,13 @@ function pumpSeek(v){
     const d = durOf();
     v.currentTime = R.fpsKnown ? Math.min((frameIdx(t) + 0.25) * frameDur(), d || Infinity) : t;
   } else if (!R.dragging) settle(v);
+  else if (rest) hideWhenShown(v);  // a rest on the frame the player stands on: its own picture at once
 }
 // The last seek has landed and nothing is being dragged: the player's own frame is the truth again.
 function settle(v){
   if (!R || R.video !== v) return;
-  R.scrubT = null;
+  R.scrubT = null; R.keepPic = false;
+  settleWait.forEach((f) => f());  // (a drag let go on the frame the player stands on settles with no seek)
   hideWhenShown(v);
   paintTime(); paintOverlay(); paintCurrent();
   if (R.drawS) R.drawS.settled();
@@ -2113,7 +2985,265 @@ function settle(v){
 function dragEnd(){
   R.dragging = false;
   const v = R.video;
-  if (v && R.want == null && !v.seeking) settle(v);
+  if (!v) return;
+  if (R.want != null) pumpSeek(v);  // a drag over cached frames: the player's one seek (it settles on "seeked")
+  else if (!v.seeking) settle(v);
+}
+// ---- play start from the scrub cache -------------------------------------------------------------
+// The player is slow to start on a phone: a seek decodes from the keyframe before the frame (0.5-1 s far into a long
+// group of pictures — a phone clip may have one keyframe in seconds, or only the first), and even standing on its
+// frame a clip with sound takes ~0.25 s from play() to its first moving frame on Android (the device's audio output
+// latency: the picture waits for the sound to be heard; muted or with no sound ~0.05 s). Instead the scrub cache plays
+// at once (its frames in the cached-picture layer, from the tap) and the player catches it up unseen:
+// - it plays from where it stands (no seek: a settled frame, a clip just opened at its start) or is sought to a frame
+//   — the one on screen, or one ahead it can reach in time (a keyframe costs one frame's decode) — whichever plan
+//   hands over soonest (bridgePlan: the learnt seek cost and start lag);
+// - behind the cached picture, a silent player (muted, or a clip with no sound) runs at catchRate (2x) until its frame
+//   is the picture's; one with sound plays at its own rate, with its sound, from its start (the soonest sound there can
+//   be), and the cached picture slows to BRIDGE_SLOW until the player has caught it up — no rate change with sound
+//   playing (Android plays the ~0.2 s already in its audio output at the old rate: the picture overshot) and no mute
+//   (un-muting a playing video stalls it ~0.2 s on Android). Ahead of the picture, the player waits for it;
+// - its own picture from there (the cached picture hidden, its rate put back).
+// Where it could not catch up before the clip's end, the cache plays the tail alone (no sound) and the clip ends as
+// if played (bridgeTailEnd: on into the next clip of a sequence).
+const strictPlay = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Android/.test(navigator.userAgent);
+let androidAudio = /Android/.test(navigator.userAgent);  // (its audio output plays on ~0.2 s past a pause: R.padT)
+let padJ = 0.2;  // s a play after a pause with sound goes on past the paused frame (learnt; the phone log: 0.21-0.22)
+// s per seek + s per frame decoded from the keyframe; s per seek with no track; o: more for a seek that starts the
+// decoder (a clip's first) or replaces one still on its way.
+const seekCost = { a: 0.08, b: 0.006, s: 0.6, o: 0.1 };
+// s from play() until the player runs from its frame, by codec and by whether it plays sound (m: muted, or a clip
+// with none — ":m"): on Android a play with sound waits for its audio output (~0.25 s), a silent one starts at once.
+// "*" / "*:m": the last learnt, for a codec not seen yet.
+const lagBy = new Map();
+const lagKey = (m) => { const tr = R && R.scrub && R.scrub.wc; return ((tr && tr.codec ? tr.codec.slice(0, 4) : extOf(R.meta.asset.name)) || "?") + (m || R.hasAudio === false ? ":m" : ""); };
+const lagNow = (m) => { const k = lagKey(m), x = lagBy.get(k); return x != null ? x : (lagBy.get(k.endsWith(":m") ? "*:m" : "*") ?? 0.12); };
+function noteLag(s, m){
+  if (!(s >= 0 && s < 2)) return;
+  const k = lagKey(m), x = lagBy.get(k), y = RC.clamp(x == null ? s : x + (s - x) * 0.5, 0.01, 0.6);
+  lagBy.set(k, y); lagBy.set(k.endsWith(":m") ? "*:m" : "*", y);
+}
+// Whether the player plays without sound (muted at level 0, or a clip known to have none): it may then catch the
+// picture up at 2x; with sound the picture slows instead, to BRIDGE_SLOW of the rate.
+const silentNow = () => volLevel < 0.02 || !!(R && R.hasAudio === false);
+const BRIDGE_SLOW = 0.5;
+// The rate the player catches the clock up at (faster drops frames: the decoder starves and the player stalls).
+const catchRate = (rate) => Math.min(rate * 2, Math.max(rate, 4));
+// The clip's keyframe times (the scrub cache's parsed track: an MP4 decoded with WebCodecs), or null.
+function keyTimes(){
+  const tr = R && R.scrub && R.scrub.wc;
+  if (!tr || !tr.gops) return null;
+  if (!tr.keyT) tr.keyT = tr.gops.map((g) => tr.pts[g.i0]).sort((a, b) => a - b);
+  return tr.keyT;
+}
+// What a seek to time x costs the player, s (frames decoded from the keyframe before it).
+function costAt(x){
+  const ks = keyTimes();
+  if (!ks) return seekCost.s;
+  let k = 0;
+  for (const y of ks){ if (y <= x + 1e-4) k = y; else break; }
+  return seekCost.a + seekCost.b * Math.max(0, Math.round((x - k) / frameDur()));
+}
+// Each seek the player makes teaches the model (bridgePlan): its whole time, and per frame decoded; a first one /
+// one over a seek in flight only its extra (o).
+function noteSeek(x, s, extra){
+  if (!(s > 0 && s < 5)) return;
+  if (extra){ seekCost.o = RC.clamp(seekCost.o + (s - costAt(x) - seekCost.o) * 0.5, 0, 0.8); return; }
+  seekCost.s += (s - seekCost.s) * 0.3;
+  const ks = keyTimes();
+  if (!ks) return;
+  let k = 0;
+  for (const y of ks){ if (y <= x + 1e-4) k = y; else break; }
+  const n = Math.round((x - k) / frameDur());
+  if (n < 4) seekCost.a = RC.clamp(seekCost.a + (s - seekCost.b * n - seekCost.a) * 0.3, 0.02, 0.5);  // (a keyframe's: the fixed part)
+  if (n >= 12) seekCost.b = RC.clamp(seekCost.b + ((s - seekCost.a) / n - seekCost.b) * 0.3, 0.001, 0.05);
+}
+// How a cached play from time tn hands over to the player, or null (no cached frames there, no plan):
+// {x: the frame it runs from, seek: the time it is sent to (null: plays from where it stands), key, h: s from now to
+// the handover} — or {tail: true} near the end, with the cached frames to it.
+function bridgePlan(tn, c, rate, v, m, jump){
+  const fd = frameDur(), d = durOf(), sp = c.span(tn);
+  if (!sp || !d || !c.near(tn)) return null;
+  const cend = Math.min(sp[1] - fd, d - 2 * fd);  // handed over by here: within the cached frames, before the end
+  // pr: the picture's rate while the player is behind it; close: how fast the player gains on it.
+  const lag = lagNow(m), cr = catchRate(rate), pr = m ? rate : rate * BRIDGE_SLOW, close = m ? cr - rate : rate - pr, opening = v.readyState < 2 && !v.seeking ? 0.25 : 0;
+  const extra = opening + (v.seeking || !R.seekN ? seekCost.o : 0);
+  let best = null;
+  // ready: s until the player runs from frame x.
+  const consider = (x, ready, seek, key) => {
+    let h;
+    if (tn + ready * rate <= x) h = (x - tn) / rate;  // ahead: it waits for the picture
+    else if (close > rate * 0.05){
+      // Behind: the picture runs at the rate until it is past x (the player waits ahead), then at pr; it gains on it.
+      const gap = x >= tn ? pr * (ready - (x - tn) / rate) : tn + ready * pr - x;
+      h = ready + Math.max(0, gap) / close;
+    }
+    else return;
+    if (tn + h * rate <= cend && (!best || h < best.h)) best = { x, seek, key, h };
+  };
+  // Standing (not seeking) on a frame at or a little before the one on screen: played from there.
+  // Or let a seek on its way there finish (sent again it would decode from the keyframe once more).
+  // (jump: a play from here goes on that far past it — R.padT.)
+  const y = v.currentTime, near = y <= tn + fd * 0.5 && tn - y < 2;
+  if (!v.seeking && near) consider(y + (jump || 0), lag + opening, null, false);
+  if (v.seeking && near){
+    // ("seeking" comes as a task: a seek just sent has no record yet — all its cost ahead.)
+    const rec = R.seekFrom && R.seekX === y, left = costAt(y) + (!rec || R.seekO ? seekCost.o : 0) - (rec ? (performance.now() - R.seekFrom) / 1000 : 0);
+    consider(y, Math.max(0, left) * 1.1 + lag, null, false);
+  }
+  const stay = best;
+  // Sought to the frame on screen or one ahead (a frame further from its keyframe costs more, a keyframe itself next
+  // to nothing).
+  const ks = keyTimes() || [];
+  for (let i = Math.floor(tn / fd + 1e-6); i * fd <= Math.min(cend, tn + 3); i++){
+    if (v.seeking && Math.abs(i * fd - y) < fd * 0.5) continue;  // (the frame already on its way: above)
+    const k = ks.find((q) => Math.abs(q - i * fd) < fd * 0.5), x = k != null ? k : i * fd;
+    consider(x, (costAt(x) + extra) * 1.1 + lag, Math.min(x + 0.25 * fd, d), k != null);
+  }
+  // (A seek's cost is a guess, the start lag from where it stands is known: a seek only when clearly sooner.)
+  if (stay && best !== stay && best.h > stay.h - 0.15) best = stay;
+  if (best) return best;
+  return sp[1] >= d - fd * 1.5 && d - tn <= 3 && d - tn >= fd ? { tail: true, x: tn, seek: null, key: false, h: (d - tn) / rate } : null;
+}
+let bridgeLast = null;
+function bridgeStart(t0, at, jump){
+  const rv = R, v = rv && rv.video, c = rv && rv.scrub, si = els && els.scrubImg;
+  if (!v || !c || !si || rv.drawS || !(v.playbackRate > 0) || (strictPlay && !v.sightTap)) return false;
+  const rate = v.playbackRate, now = performance.now();
+  at = at || now;
+  const silent = silentNow(), tn = t0 + (now - at) / 1000 * rate, p = bridgePlan(tn, c, rate, v, silent, jump);
+  if (!p) return false;
+  const fd = frameDur(), d = durOf();
+  // The picture's clock: t0 at `at`, running at sp (the rate; BRIDGE_SLOW of it while a player with sound is behind).
+  const B = { t0, at, sp: rate, rate, cr: catchRate(rate), x: p.x, stay: p.seek == null, tail: !!p.tail, h: p.h, start: now,
+    raf: 0, played: 0, ran: false, pmu: false, u: null, silent, pausedAt: 0, pad: jump > 0 && p.seek == null && !p.tail ? v.currentTime : null };
+  B.padded = B.pad != null;
+  rv.bridge = B;
+  B.last = bridgeLast = { name: rv.meta.asset.name, mode: B.tail ? "tail" : B.stay ? "stay" : "seek", t: tn, h: p.h, x: p.x, pad: B.pad };  // (tests)
+  rv.want = null; clearTimeout(restT);
+  if (rv.dragging) dragEnd();
+  rv.playOn = true;
+  seqDropHold();  // (a play on across a cut: the bridge shows the next clip's frames from here)
+  dbg.log("bridge", { t: +tn.toFixed(3), x: +p.x.toFixed(3), h: +p.h.toFixed(3), mode: B.tail ? "tail" : B.stay ? "stay" : "seek",
+    key: p.key, cost: B.stay ? 0 : +costAt(p.x).toFixed(3), o: +seekCost.o.toFixed(3), lag: +lagNow(silent).toFixed(3), silent, jump: jump ? +jump.toFixed(3) : 0, rs: v.readyState, seeking: v.seeking });
+  if (!B.tail){
+    playPend = now + 4000;  // the caches keep off the decoder: the player's seek and start come first
+    if (!B.stay) v.currentTime = p.seek;
+  }
+  const clock = (ms) => B.t0 + (ms - B.at) / 1000 * B.sp;
+  // The player at media time mt when the clock reads T: its own picture once it shows the clock's frame; behind, a
+  // silent one catches up at 2x (one with sound gains on the slowed picture at its own rate).
+  const follow = (mt, T) => {
+    T = Math.min(T, d - fd);  // (a player late near the end still hands over on the last frame)
+    if (mt >= T - fd * 0.5){ bridgeEnd(rv, "player"); return true; }
+    if (B.silent && v.playbackRate < B.cr && T - mt > fd) v.playbackRate = B.cr;
+    return false;
+  };
+  const watch = (now2, m) => {
+    if (R !== rv || rv.bridge !== B) return;
+    if (v.paused){ v.requestVideoFrameCallback(watch); return; }  // (a frame before its play has started: watch on)
+    const mt = m.mediaTime;
+    // Its start lag: play() to the first frame past the one it stood on, less the frames it ran meanwhile.
+    // After a pause with sound: how far past the paused frame it went on (padJ) — its first frame off that one.
+    // (Not from a sample that cannot be one: past 0.45 s — a late first callback —, a hidden page, a player not ready.)
+    if (B.pad != null && mt > B.pad + fd * 0.25){
+      const j = mt - B.pad;
+      if (j <= 0.45 && !document.hidden && B.prs >= 2) padJ = RC.clamp(padJ + (j - padJ) * 0.3, 0, 0.4);
+      B.pad = null;
+    }
+    // (Its start lag: not from a play that jumps — its x is a guess.)
+    if (!B.ran && mt > B.x + fd * 0.25){ B.ran = true; if (B.prs >= 2 && !B.padded) noteLag(((m.presentationTime || now2) - B.played) / 1000 - (mt - B.x) / B.prate, B.pmu); }
+    if (!follow(mt, clock(m.expectedDisplayTime || now2))) v.requestVideoFrameCallback(watch);
+  };
+  // The cached frame on screen at s: the one starting at or before it (as the player shows, and the timecode says).
+  const pic = (s) => { const i = c.at(s + 1e-4) - 1; return i >= 0 && s - c.mts[i] <= fd * 1.6 ? c.pic(i) : c.near(s); };
+  const tick = () => {
+    if (R !== rv || rv.bridge !== B) return;
+    const t = performance.now();
+    // With sound: the picture slows once it is past the frame the player stands on, and stays slow from the player's
+    // first moving frame until the handover (follow) — a speed picked from an estimate of where the player is would
+    // stall short of the handover. Silent (or switched to it: setVol), at the rate.
+    if (!B.tail){
+      const T0 = clock(t), sp = !B.silent && (B.ran || B.x < T0 - fd * 0.5) ? B.rate * BRIDGE_SLOW : B.rate;
+      if (sp !== B.sp){ B.t0 = T0; B.at = t; B.sp = sp; }
+    }
+    const T = clock(t);
+    if (B.tail){
+      if (T >= d - fd * 0.5){ bridgeTailEnd(rv); return; }
+    } else {
+      // Played once the clock is a start lag from its frame (at once when behind: then it catches up).
+      // (lagNow(B.silent): the same sound as a plain play — the bridge mutes nothing.)
+      if (!B.played && !v.seeking && (v.readyState >= 2 || B.stay)){
+        const lead = T + lagNow(B.silent) * B.rate - B.x;
+        if (lead >= -fd * 0.5){
+          B.played = t; B.prate = B.silent && lead > fd ? B.cr : B.rate; B.prs = v.readyState; B.pmu = v.muted;
+          v.playbackRate = B.prate;
+          v.play().catch(() => { if (R === rv && rv.bridge === B) bridgeHalt(); });
+          if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(watch);
+        }
+      }
+      if (B.played && !v.requestVideoFrameCallback && !v.paused && follow(v.currentTime, T)) return;
+      // (A watch that missed its frames: the player moved on and a frame past the clock hands over all the same — not
+      // one still standing on the frame ahead it was sought to, waiting to start.)
+      // (After a pause the jump is a guess: `currentTime` may read past it before a frame is shown — not until the watch
+      // has seen the player's first frame off the paused one.)
+      if (B.played && !v.paused && !(B.pad != null && v.requestVideoFrameCallback) && v.currentTime >= Math.max(B.x + fd, Math.min(T, d - fd) + fd)){ bridgeEnd(rv, "player"); return; }
+      // Paused from outside (an audio interruption): stopped on the frame shown. (play() itself unpauses at once.)
+      if (B.played && v.paused){ if (!B.pausedAt) B.pausedAt = t; else if (t - B.pausedAt > 500){ bridgeHalt(); return; } } else B.pausedAt = 0;
+      // Never seen to catch up: its own picture anyway (its rate back) — still loading: the cached frame stays
+      // until it plays ("playing" takes R.keepPic off).
+      if (B.played && t - B.played > Math.max(2000, B.h * 1000 + 1000)){ bridgeEnd(rv, "late", true); rv.scrubT = null; if (v.readyState < 3) rv.keepPic = true; else hideWhenShown(v); return; }
+      // Its seek never landed (a stalled load): its own play, as without the bridge. (The cached frame stays until
+      // the player shows its own: R.keepPic, the "playing" / "seeked" handlers.)
+      if (!B.played && t - B.start > (B.h + 1.5) * 1000){ bridgeEnd(rv, "stuck", true); rv.keepPic = true; v.play().catch(() => {}); return; }
+    }
+    const s = Math.min(T, d), u = pic(s);
+    hideSeq++;  // (no older hideWhenShown takes the picture away)
+    if (u){ B.u = u; if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
+    rv.scrubT = snapT(s);
+    paintTime(); paintOverlay(); paintCurrent();
+    B.raf = requestAnimationFrame(tick);
+  };
+  tick();
+  return true;
+}
+// The bridge over, the player's rate back (quiet: a seek takes the picture over itself).
+function bridgeEnd(rv, why, quiet){
+  const B = rv && rv.bridge, v = rv && rv.video;
+  if (!B) return;
+  cancelAnimationFrame(B.raf);
+  rv.bridge = null;
+  if (v && v.playbackRate !== B.rate) v.playbackRate = B.rate;
+  if (!B.played) playPend = 0;  // (no play to come: the caches may go on)
+  if (B.last){ B.last.why = why; B.last.ms = performance.now() - B.start; }
+  dbg.log("bridge.end", { why, x: +B.x.toFixed(3), ms: Math.round(performance.now() - B.start), lag: +lagNow(B.silent).toFixed(3) });
+  if (quiet || R !== rv) return;
+  rv.scrubT = null;
+  hideCached();
+  paintTime(); paintOverlay(); paintCurrent();
+}
+// The cache played the clip's tail: the clip ended as if the player had played it (seqEnded: on into the next clip;
+// else on its last frame, or from the start again when looping).
+function bridgeTailEnd(rv){
+  bridgeEnd(rv, "tail", true);
+  if (R !== rv) return;
+  const G = seqGeom();
+  if (G && !seqLocked() && (G.items[G.i + 1] || (loopOn && G.items.length > 1))){
+    seqEnded();
+    if (seqPend && seqPend.play) return;  // (else the switch was refused: the clip's end, below)
+  }
+  seekTo(durOf());
+  if (loopOn){ seekTo(0); togglePlay(); }
+}
+// A pause during the bridge: on the frame the cache shows (the player is sought there).
+function bridgeHalt(){
+  const rv = R, B = rv && rv.bridge;
+  if (!B) return;
+  const T = rv.scrubT, si = els && els.scrubImg;
+  bridgeEnd(rv, "halt", true);
+  if (T != null) seekTo(T);
+  // The frame shown stays until the player has sought there (seekTo has no cached frame for it with the rate unknown).
+  if (si && si.hidden && B.u){ si.src = B.u; si.hidden = false; }
 }
 // ±n frames from the frame on screen (or the one already on its way: quick taps add up).
 function step(n){
@@ -2181,7 +3311,7 @@ function makeTransport(){
   [ibtn("prev", "Previous marker", () => jumpNote(-1)), ibtn("stepb", "Previous frame", () => step(-1)), T.fps, T.tc, T.snd, T.loop,
     ibtn("stepf", "Next frame", () => step(1)), ibtn("next", "Next marker", () => jumpNote(1))].forEach((b) => row.appendChild(b));
   const tl = el("div", "tl"), trk = el("div", "trk");
-  T.cache = el("i", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
+  T.cache = el("div", "cache"); T.marks = el("div"); T.ph = el("i", "ph");
   trk.appendChild(T.cache); trk.appendChild(T.marks); trk.appendChild(T.ph);
   tl.appendChild(trk);
   T.trk = trk;
@@ -2260,11 +3390,21 @@ function vdrag(b, o){
 }
 // Speed: the video's playbackRate (0.1…4), shown as the frame rate it plays at.
 const COMMON_FPS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 12.5, 15, 20, 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 72, 90, 100, 120];
-const rateNow = () => (R && R.video ? R.video.playbackRate : 1) || 1;
+// (While the player catches the cache up, bridgeStart, it runs faster: the clip's rate is the bridge's.)
+const rateNow = () => (R && R.bridge ? R.bridge.rate : R && R.video ? R.video.playbackRate : 1) || 1;
 function setRate(r){
   if (!R || !R.video) return;
   r = RC.clamp(r, 0.1, 4);
   if (Math.abs(r - 1) < 0.004) r = 1;
+  // A play still starting from the cache: its clock goes on at the new rate (the player catches it up as before).
+  if (R.bridge){
+    const B = R.bridge, n = performance.now();
+    B.t0 += (n - B.at) / 1000 * B.sp; B.at = n; B.sp = r; B.rate = r; B.cr = catchRate(r);  // (tick slows it again)
+    R.rate = r; R.video.defaultPlaybackRate = r;
+    if (B.played && !B.tail) R.video.playbackRate = r;
+    TPS.forEach(paintRate);
+    return;
+  }
   R.rate = r;
   R.video.playbackRate = R.video.defaultPlaybackRate = r;
   TPS.forEach(paintRate);
@@ -2305,6 +3445,10 @@ function setVol(x){
   volLevel = Math.round(x * 100) / 100;
   try { localStorage.setItem(VOL_KEY, String(volLevel)); } catch {}
   if (R && R.video) applyVol(R.video);
+  // A bridge running: its mode follows (sound now: the player back to its own rate, the picture slows; silent now: the
+  // player may catch up at 2x).
+  const B = R && R.bridge;
+  if (B && !B.tail){ B.silent = silentNow(); if (!B.silent && B.played && R.video.playbackRate !== B.rate) R.video.playbackRate = B.rate; }
   showVolBar();
   TPS.forEach(paintSnd);
 }
@@ -2325,7 +3469,7 @@ try { loopOn = localStorage.getItem(LOOP_KEY) === "1"; } catch {}
 function setLoop(on){
   loopOn = on;
   try { localStorage.setItem(LOOP_KEY, on ? "1" : "0"); } catch {}
-  if (R && R.video) R.video.loop = on;
+  if (R && R.video) R.video.loop = on && !seqGeom();
   TPS.forEach(paintLoop);
   toast(on ? "Loop: plays on from the start" : "Once: stops at the end", 1400);
 }
@@ -2368,9 +3512,127 @@ function paintMarks(T){
     T.marks.appendChild(i);
   });
 }
-function paintCache(T){ T.cache.style.width = ((R && R.cacheF || 0) * 100).toFixed(1) + "%"; }
-function paintTime(){ if (R && R.video) TPS.forEach(paintTransport); }
-function paintMarkers(){ if (R && R.video) TPS.forEach(paintMarks); }
+// The cache strip: every run of cached frames of the open clip (up to 3 dropped frames, still to be sought,
+// and gaps under 0.3 % of the track do not break it).
+function paintCache(T){
+  const d = durOf(), rs = R && R.video && R.scrub && d ? R.scrub.runs(3) : [], m = [];
+  for (const [a, b] of rs){
+    const l = m[m.length - 1];
+    if (l && a - l[1] < d * 0.003) l[1] = Math.max(l[1], b); else m.push([a, b]);
+  }
+  const html = m.map(([a, b]) => '<i style="left:' + (a / d * 100).toFixed(2) + "%;width:" + (Math.max(0, b - a) / d * 100).toFixed(2) + '%"></i>').join("");
+  if (T.cacheHtml !== html){ T.cacheHtml = html; T.cache.innerHTML = html; }
+}
+function paintTime(){ if (R && R.video){ TPS.forEach(paintTransport); TPS.forEach(paintCache); paintSeqPh(); cacheFocus(); } }
+// The scrub caches follow the playhead (as Sight's RAM window): ScrubCache.MAX frames, ScrubCache.AHEAD ahead of it
+// and the rest behind (Settings: 70 / 30 by default), filled outwards from it, behind weighted. Past the clip's end / start the rest goes to the next /
+// previous clip of the sequence (loop on: the first after the last) — its own cache in scrubPool, taken
+// over at the cut, so a play or scrub across the cut finds frames both ways; with no neighbour there, the
+// rest goes to the other side of the playhead.
+const scrubPool = new Map();   // review key → ScrubCache of a neighbouring clip
+let playPend = 0;              // a play started, not yet playing (until then + 300 ms): the caches wait
+// Debug log (Settings → Debug log, debug.js): the visible player's events with their latency, and every second
+// the playhead and each scrub cache's state.
+let dbgPlayAt = 0;             // when the last tap asked to play
+function dbgPlayer(v){
+  let seekAt = 0, waitAt = 0;
+  // x: a function building the data, called only while logging and while this is the open clip's player.
+  const L = (ev, x) => { if (dbg.on && R && R.video === v) dbg.log(ev, Object.assign({ t: +v.currentTime.toFixed(3) }, x ? x() : null)); };
+  const since = () => dbgPlayAt ? Math.round(performance.now() - dbgPlayAt) : null;
+  v.addEventListener("loadedmetadata", () => L("v.meta", () => ({ name: R.meta.asset.name, d: v.duration, w: v.videoWidth, h: v.videoHeight, size: R.file ? R.file.size : null, type: R.file ? R.file.type : null })));
+  v.addEventListener("play", () => {
+    L("v.play", () => ({ sinceTap: since() }));
+    // The first frame after the one it stood on: when the picture really moves (not "playing").
+    if (!dbg.on || !v.requestVideoFrameCallback) return;
+    const p0 = performance.now(), m0 = v.currentTime, tap = dbgPlayAt, fd = 1 / ((R && R.fps) || 25);
+    const f = (_, m) => {
+      if (!R || R.video !== v || v.paused) return;
+      if (m.mediaTime > m0 + fd * 0.5) L("v.moved", () => ({ ms: Math.round(performance.now() - p0), sinceTap: tap ? Math.round(performance.now() - tap) : null }));
+      else v.requestVideoFrameCallback(f);
+    };
+    v.requestVideoFrameCallback(f);
+  });
+  v.addEventListener("playing", () => { L("v.playing", () => ({ sinceTap: since(), rs: v.readyState })); dbgPlayAt = 0; });
+  v.addEventListener("waiting", () => { waitAt = performance.now(); L("v.waiting", () => ({ rs: v.readyState })); });
+  v.addEventListener("canplay", () => { if (waitAt){ const ms = Math.round(performance.now() - waitAt); L("v.canplay", () => ({ ms })); waitAt = 0; } });
+  v.addEventListener("stalled", () => L("v.stalled"));
+  v.addEventListener("seeking", () => { seekAt = performance.now(); L("v.seeking", () => ({ dragging: !!R.dragging })); });
+  v.addEventListener("seeked", () => { const ms = seekAt ? Math.round(performance.now() - seekAt) : null; L("v.seeked", () => ({ ms })); seekAt = 0; });
+  v.addEventListener("pause", () => { L("v.pause"); dbgPlayAt = 0; });  // a play that never started: the next one is not timed from that tap
+  v.addEventListener("ended", () => L("v.ended"));
+  v.addEventListener("error", () => { L("v.error", () => ({ code: v.error && v.error.code, msg: v.error && v.error.message })); dbg.flush(); });
+}
+dbg.info({ version: VERSION });
+dbg.sample(() => {
+  const v = R && R.video;
+  if (!v) return null;
+  const cs = [];
+  const one = (c, role) => {
+    const rs = c.runs(3), m = c.mts;
+    cs.push({ c: c.tag, role, n: m.length, runs: rs.length > 8 ? rs.length : rs.map(([a, b]) => [+a.toFixed(2), +b.toFixed(2)]),
+      v: !!(c.v || c.dec), wc: c.wc ? true : c.wc === null ? false : null, running: c.running, broken: c.broken, prio: c.prio });
+  };
+  if (R.scrub) one(R.scrub, "open");
+  scrubPool.forEach((c) => one(c, "pool"));
+  const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
+  return { t: +v.currentTime.toFixed(3), pos: +posNow().toFixed(3), paused: v.paused, rs: v.readyState, seeking: v.seeking, rate: v.playbackRate,
+    fps: R.fps, ahead: ScrubCache.AHEAD, busy: !!(ScrubCache.busy && ScrubCache.busy()), drag: !!R.dragging, caches: cs, heapMB: mem };
+});
+ScrubCache.busy = () => { const v = R && R.video; return !!v && (performance.now() < playPend || v.seeking || (!v.paused && v.readyState < 3)); };
+const scrubPoolPend = new Set(), scrubPoolMiss = new Set();  // a file being read / not kept on the device
+function scrubPoolClear(){ scrubPool.forEach((sc) => sc.close()); scrubPool.clear(); scrubPoolPend.clear(); scrubPoolMiss.clear(); }
+function cacheFocus(){
+  const rv = R, sc = rv && rv.scrub, v = rv && rv.video;
+  if (!sc || !v || openingKey || performance.now() < (rv.scrubAt || 0)) return;
+  const d = durOf();
+  if (!d) return;
+  const W = sc.winLen(), t = RC.clamp(posNow(), 0, d), G = seqGeom(), n = G ? G.items.length : 0;
+  const nb = (j) => { const it = G && G.items[j]; return it && !it.nomedia && it.key !== rv.meta.key ? it : null; };
+  const prev = G ? nb(G.i > 0 ? G.i - 1 : loopOn ? n - 1 : -1) : null, next = G ? nb(G.i + 1 < n ? G.i + 1 : loopOn ? 0 : -1) : null;
+  let lo = t - W * (1 - ScrubCache.AHEAD), hi = t + W * ScrubCache.AHEAD;
+  // A neighbour holds at most its own length (unknown: no limit); a 2-clip loop shares one clip for both ends.
+  // What it cannot hold goes to the other side of the playhead, then to the neighbours' spare room.
+  const same = next && prev && next.key === prev.key;
+  const capN = next ? next.dur || Infinity : 0, capP = prev ? prev.dur || Infinity : 0;
+  const o0 = Math.max(0, hi - d), u0 = Math.max(0, -lo);
+  let over = Math.min(o0, capN), under = Math.min(u0, same ? capP - over : capP);
+  let leftO = o0 - over, leftU = u0 - under, g;
+  lo = Math.max(0, lo); hi = Math.min(d, hi);
+  g = Math.min(leftO, lo); lo -= g; leftO -= g;
+  g = Math.min(leftU, d - hi); hi += g; leftU -= g;
+  let left = leftO + leftU;
+  g = Math.min(left, lo); lo -= g; left -= g;
+  g = Math.min(left, d - hi); hi += g; left -= g;
+  g = Math.max(0, Math.min(left, capN - over - (same ? under : 0))); over += g; left -= g;
+  g = Math.max(0, Math.min(left, capP - under - (same ? over : 0))); under += g;
+  // base: how far each neighbour's range starts from the playhead (behind weighted), so all the caches fill
+  // outwards from the playhead as one window, across the cut (ScrubCache's turns go to the cheapest part).
+  sc.want([{ lo, hi, from: t, base: 0 }]);
+  const wants = new Map();
+  if (over) wants.set(next.key, { it: next, ranges: [{ lo: 0, hi: over, from: 0, base: d - t }] });
+  if (under){
+    const w = wants.get(prev.key) || { it: prev, ranges: [] };
+    w.ranges.push({ lo: -under, hi: 0, from: 0, end: true, base: t * ScrubCache.wb() });
+    wants.set(prev.key, w);
+  }
+  scrubPool.forEach((c, k) => { if (!wants.has(k)){ c.close(); scrubPool.delete(k); } });
+  wants.forEach((w, k) => {
+    const c = scrubPool.get(k);
+    if (c){ c.want(w.ranges); return; }
+    if (scrubPoolPend.has(k) || scrubPoolMiss.has(k)) return;
+    scrubPoolPend.add(k);
+    DB.get("files", k).catch(() => null).then((kept) => {
+      if (!scrubPoolPend.delete(k)) return;
+      if (!kept || !kept.blob){ scrubPoolMiss.add(k); return; }
+      if (R !== rv){ if (R) cacheFocus(); return; }  // a cut meanwhile: the new clip asks again
+      if (scrubPool.has(k)) return;
+      const c2 = new ScrubCache(URL.createObjectURL(kept.blob), w.it.dur || 0, () => rv.fps, null, { own: true, prio: 1, tag: (w.it.name || k), blob: kept.blob });
+      scrubPool.set(k, c2);
+      cacheFocus();
+    });
+  });
+}
+function paintMarkers(){ if (R && R.video){ TPS.forEach(paintMarks); renderSeqBar(); } }
 // The scrub cache (ScrubCache) puts the frame wanted up at once; the player's own picture takes
 // over when its last seek has landed.
 function cachedAt(t){
@@ -2387,7 +3649,7 @@ function showCached(t){
   if (u){ if (si.getAttribute("src") !== u) si.src = u; si.hidden = false; }
   else si.hidden = true;
 }
-function hideCached(){ if (els && els.scrubImg) els.scrubImg.hidden = true; }
+function hideCached(){ if (els && els.scrubImg && !els.scrubImg.hidden){ els.scrubImg.hidden = true; redrawMirrors(); } }
 // The player says "seeked" before it has painted the new frame (Safari above all): the cached
 // picture goes only once a frame of the new position is on screen (rVFC; at most 250 ms), or the
 // old frame flashes up in between.
@@ -2405,11 +3667,12 @@ let hideSeq = 0;
 // 4 px when slow, faster the faster the finger moves; Shift a quarter of that) — not the screen's
 // width for the whole clip. Nothing happens until the finger has moved sideways a few px, so a tap
 // still plays / pauses.
-function scrubStep(t, dx, dt, fine){
+function scrubDelta(dx, dt, fine){
   const speed = Math.abs(dx) / Math.max(1, dt);  // px per ms
   const gain = 0.25 * Math.min(12, 1 + Math.max(0, speed - 0.25) * 5) * (fine ? 0.25 : 1);
-  return RC.clamp(t + dx * gain * frameDur(), 0, durOf() || 0);
+  return dx * gain * frameDur();
 }
+const scrubStep = (t, dx, dt, fine) => RC.clamp(t + scrubDelta(dx, dt, fine), 0, durOf() || 0);
 // The player's picture. One finger: a drag sideways scrubs the video, a swipe up opens the Notes
 // Panel, a swipe down goes back to the reviews, a tap plays / pauses (a picture: opens it full
 // screen). Two fingers pan, zoom and turn it (the drawing canvas' rules, SightReviewDraw.pinch);
@@ -2444,9 +3707,11 @@ function bindStage(stage){
     pin(g.q, mid(p));
     applyPlayerView();
   };
+  stage.addEventListener("pointerdown", (e) => { if (dbg.on) dbg.log("ptr.down", { type: e.pointerType, on: e.target.tagName }); }, true);
   stage.addEventListener("pointerdown", (e) => {
     if (!R || e.target.closest("button, label, input") || (e.pointerType === "mouse" && e.button !== 0)) return;
     if (e.pointerType === "mouse" && pts.size) return;
+    if (seqDrag) return;  // a drag through the sequence goes on (its stage may be a cut behind): no new gesture
     const p = rel(e);
     pts.set(e.pointerId, { x: p[0], y: p[1] });
     if (pts.size === 1 && !g){
@@ -2455,7 +3720,7 @@ function bindStage(stage){
       return;
     }
     // A second finger: the picture is moved by two; a scrub under way stops where it is.
-    if (one){ if (one.mode === "scrub") dragEnd(); one = null; }
+    if (one){ if (one.mode === "scrub") dragEnd(); else if (one.mode === "seq") seqDragEnd(); one = null; }
     eatUntil = Infinity;
     try { stage.setPointerCapture(e.pointerId); } catch {}
     gestStart();
@@ -2473,6 +3738,7 @@ function bindStage(stage){
       const dx = e.clientX - one.x, dy = e.clientY - one.y;
       // Sideways a few px (video): the scrub. Nothing happens before, so a tap still plays / pauses.
       if (v && Math.abs(dx) >= 6 && Math.abs(dx) >= Math.abs(dy)){
+        if (R.bridge) bridgeHalt();  // (a play starting from the cache stops on the frame shown)
         one.mode = "scrub"; one.lx = e.clientX; one.lt = e.timeStamp; one.t = posNow();
         R.dragging = true;
         v.pause();
@@ -2485,12 +3751,19 @@ function bindStage(stage){
       else if (dy > 60 && dy > Math.abs(dx) * 1.5){ one.mode = "none"; swipeLeave(); }
       return;
     }
-    // The clip runs on from where it is, at a fixed pace (scrubStep), not the screen's width for the whole clip.
+    // The clip runs on from where it is, at a fixed pace (scrubDelta), not the screen's width for the whole clip.
     if (one.mode !== "scrub" || !v) return;
     const dx = e.clientX - one.lx, dt = e.timeStamp - one.lt;
     one.lx = e.clientX; one.lt = e.timeStamp;
     if (!dx || !durOf()) return;  // a recorder's WebM may have no duration
-    one.t = scrubStep(one.t, dx, dt, e.shiftKey);
+    const raw = one.t + scrubDelta(dx, dt, e.shiftKey), G = seqGeom();
+    // Past the clip's start / end in a sequence: on into the neighbouring clip (the drag is handed to window).
+    if (G && !seqLocked() && ((raw < 0 && G.i > 0) || (raw > durOf() && G.i < G.items.length - 1))){
+      one.mode = "seq";
+      seqDragBegin(e, "pic", G.offs[G.i] + raw);
+      return;
+    }
+    one.t = RC.clamp(raw, 0, durOf());
     seekTo(one.t);
   });
   function up(e){
@@ -2518,6 +3791,7 @@ function bindStage(stage){
   stage.addEventListener("pointercancel", up);
   stage.addEventListener("lostpointercapture", (e) => { if (e.pointerType === "mouse") up(e); });
   stage.addEventListener("click", (e) => {
+    if (dbg.on) dbg.log("click", { on: e.target.tagName, eaten: performance.now() < eatUntil });
     if (!R || !els || performance.now() < eatUntil || e.target.closest("button, label, input")) return;
     const v = R.video;
     if (v){ if (e.target === v || e.target === els.scrubImg) togglePlay(); }
@@ -2600,7 +3874,7 @@ function paintReview(){
   NUM = numMap();
   if (is3d()){ R.views = M.views3d(R.rows); updateCurVk(); }
   const c = M.counts(R.rows), a = R.meta.asset;
-  els.sub.textContent = [c.notes ? `${c.notes} note${c.notes > 1 ? "s" : ""}` : "No notes yet", a.kind === "video" && a.duration ? fmtTime(a.duration, R.fps) : a.kind === "model3d" ? (R.views.size ? `${R.views.size} view${R.views.size > 1 ? "s" : ""}` : "3D model") : a.width ? `${a.width} × ${a.height}` : ""].filter(Boolean).join(" · ");
+  els.sub.textContent = [els.seq, c.notes ? `${c.notes} note${c.notes > 1 ? "s" : ""}` : "No notes yet", a.kind === "video" && a.duration ? fmtTime(a.duration, R.fps) : a.kind === "model3d" ? (R.views.size ? `${R.views.size} view${R.views.size > 1 ? "s" : ""}` : "3D model") : a.width ? `${a.width} × ${a.height}` : ""].filter(Boolean).join(" · ");
   paintKeep();
   paintPanelBar();
   renderNotes();
@@ -2712,7 +3986,7 @@ function markCap(box, n, pic){
 function picBox(f, list, cls){
   const w = el("div", "fw" + (cls ? " " + cls : "")), i = el("img");
   i.src = f.url; i.alt = ""; i.draggable = false; w.appendChild(i);
-  if (list.length) w.appendChild(overlay(f.vb, list, "cover"));
+  if (list.length) w.appendChild(overlay(f.vb, list, "cover", f.url));
   return w;
 }
 // Fills a placeholder with a note's picture once it is there (cached, or taken from the video).
@@ -3059,11 +4333,13 @@ function painted(v){
   });
 }
 // Resolves once the player stands still on the last time asked for.
+const settleWait = new Set();
 function whenSettled(rv){
   return new Promise((ok) => {
     const v = rv.video;
-    const check = () => { if (R !== rv || !v || (rv.want == null && !v.seeking)){ if (v) v.removeEventListener("seeked", check); ok(); } };
+    const check = () => { if (R !== rv || !v || (rv.want == null && !v.seeking)){ if (v) v.removeEventListener("seeked", check); settleWait.delete(check); ok(); } };
     if (v) v.addEventListener("seeked", check);
+    settleWait.add(check);
     check();
   });
 }
@@ -3305,6 +4581,7 @@ function replyBar(nb, n){
 }
 // The picture on screen as a frame to draw a new note on: the picture, or the paused video frame.
 async function currentFrame(){
+  if (R && R.bridge) bridgeHalt();  // (a play still starting from the cache: the frame shown, the player sought there)
   const rv = R, vb = [0, 0, docW(), docH()];
   if (is3d()){
     const fr = await frame3dNow(rv);
@@ -3412,6 +4689,7 @@ async function drawVideo({ frames = [], onDone, noPlace }){
   try { await openDrawVideo(rv, v, frames, onDone, noPlace); } finally { rv.drawOpening = false; }
 }
 async function openDrawVideo(rv, v, frames, onDone, noPlace){
+  if (rv.bridge) bridgeHalt();  // (a play still starting from the cache stops on the frame shown)
   let ownPause = !v.paused;  // this pause's event (queued) is not the user's: no second grab
   v.pause();
   // Opens at once on the frame on screen: its picture from the frame cache, else the scrub
@@ -3604,7 +4882,7 @@ function viewer(o){
   async function show(no, slide){
     const nb = el("div", "vb");
     const img = el("img"); img.src = no.url; img.alt = ""; img.draggable = false; nb.appendChild(img);
-    if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows));
+    if (no.rows && no.rows.length) nb.appendChild(overlay(no.vb, no.rows, null, no.url));
     if (slide){
       await Promise.race([img.decode ? img.decode().catch(() => {}) : Promise.resolve(), new Promise((r) => setTimeout(r, SLIDE_WAIT))]);
       if (!v.isConnected) return;
@@ -3904,6 +5182,7 @@ function reviewActions(){
     { label: "PDF report", note: "share / save", fn: () => exportReport("pdf") },
     { label: "Web page (HTML)", note: "opens anywhere", fn: () => exportReport("html") },
     { label: "Review file for Sight (.srev)", fn: exportSrev },
+    ...trackers().map((t, i, tl) => ({ label: trackerLabel(t, tl) + "…", note: reviewLinkLabel(R.meta, t) || "link & sync", fn: () => trackerSheet(trkCtx(), t) })),
     { label: "Merge a review file…", fn: () => { const p = picker("", false, (fs) => importReviewFile(fs[0], R.meta.key)); document.body.appendChild(p); p.click(); setTimeout(() => p.remove(), 60000); } },
     R.file && !R.meta.kept ? { label: "Remember the file on this device", note: fmtBytes(R.file.size), fn: keepCopy } : null,
     R.meta.kept ? { label: "Forget the file on this device", note: "frees " + fmtBytes(R.meta.asset.size), fn: dropCopy } : null,
@@ -3915,7 +5194,10 @@ function reviewActions(){
   menu(R.meta.asset.name, items);
 }
 // A finished file: Share (Save to Files, messengers…) needs a fresh tap, so it is offered here.
-function offerFile(blob, name, what){
+// onSent: called once the file was downloaded or shared (a send: the reply's reviews stop counting as changed).
+function offerFile(blob, name, what, onSent){
+  let sent = false;
+  const done = () => { if (!sent && onSent){ sent = true; onSent(); } };
   const file = new File([blob], name, { type: blob.type || "application/octet-stream" });
   const canShare = !!(navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [file] }); } catch { return false; } })());
   sheet((sh, close) => {
@@ -3927,13 +5209,29 @@ function offerFile(blob, name, what){
       const u = URL.createObjectURL(blob), l = el("a");
       l.href = u; l.download = name; document.body.appendChild(l); l.click(); l.remove();
       setTimeout(() => URL.revokeObjectURL(u), 30000);
+      done();
     }));
     if (canShare) a.appendChild(btn("btn primary", "Share…", async () => {
-      try { await navigator.share({ files: [file], title: name }); close(); }
+      try { await navigator.share({ files: [file], title: name }); done(); close(); }
       catch (e){ if (e && e.name !== "AbortError") toast("Sharing failed: " + (e.message || e)); }
     }));
     sh.appendChild(a);
   });
+}
+// What the trackers module (trackers.js) needs from the app: its sheets, the open review, the merge, the pictures.
+function trkCtx(){
+  return { sheet, el, btn, toast, busy, R: () => R, flush, mergeInto, save: () => { if (R) dirty(false); }, pictures: trkPictures };
+}
+// The notes' pictures for a tracker: the report's frames / views with the drawings burned in, then attached pictures.
+async function trkPictures(ids, opt){
+  const want = new Set(ids), out = new Map(), skip = (opt && opt.skipShots) || new Set();
+  await refShots(R);
+  // (report pictures carry no shot id: pictures pulled from ShotGrid are left out by id before the report is made)
+  const rows = skip.size ? R.rows.map((r) => r.kind === "note" && want.has(r.id) && (r.data.shots || []).some((s) => skip.has(s))
+    ? Object.assign({}, r, { data: Object.assign({}, r.data, { shots: r.data.shots.filter((s) => !skip.has(s)) }) }) : r) : R.rows;
+  const p = await gatherReport({ asset: Object.assign({}, R.meta.asset), rows, fps: R.fps, author: who, appLabel: APP_LABEL, src: reportSrc() });
+  p.notes.forEach((n) => { if (want.has(n.id)) out.set(n.id, [n.frame].concat(n.shots || []).filter((x) => x && x.blob).map((x, i) => ({ blob: x.blob, name: "pic" + (i + 1) }))); });
+  return out;
 }
 function reportSrc(){
   return {
@@ -3948,6 +5246,7 @@ async function exportReport(type){
   const b = busy(type === "pdf" ? "Making the PDF…" : "Making the web page…");
   try {
     const a = Object.assign({}, R.meta.asset);
+    await refShots(R);  // reference images' pictures known before they are burned into the report
     const payload = await gatherReport({ asset: a, rows: R.rows, fps: R.fps, author: who, appLabel: APP_LABEL, src: reportSrc(), progress: (i, n) => b.set(`Frames ${i + 1} / ${n}…`) });
     if (a.kind === "video" && payload.notes.some((n) => !n.frame) && !R.grab) toast("Some frames are not on this device: pick the video again to include them", 5000);
     if (a.kind === "model3d" && payload.notes.some((n) => !n.frame) && !R.v3d) toast("Some views are not on this device: pick the model again to include them", 5000);
@@ -3962,17 +5261,67 @@ async function exportReport(type){
     toast("Export failed: " + (e.message || e), 5000);
   } finally { b.done(); }
 }
-async function exportSrev(){
+// A review's package from what is stored (the open review: its rows in memory, saved first). `mark` is its
+// changed mark as packed (markSent clears it only if no edit came after).
+async function packageOf(key){
   await flush();
-  if (!await ensureName()) return;
+  const open = R && R.meta.key === key;
+  const meta = open ? R.meta : await DB.get("reviews", key);
+  if (!meta) return null;
+  const rows = open ? R.rows : ((await DB.get("rows", key)) || { rows: [] }).rows;
   const shots = {};
-  for (const id of M.shotIds(R.rows)){
+  for (const id of M.shotIds(rows)){
     const s = await DB.get("shots", id).catch(() => null);
     if (s) shots[id] = await blobToDataUrl(s.blob);
   }
-  const pkg = M.buildPackage({ asset: R.meta.asset, rows: R.rows, shots, author: who, app: APP_LABEL + " (phone)" });
+  return { key, meta, mark: meta.changed, pkg: M.buildPackage({ asset: meta.asset, rows, shots, author: who, app: APP_LABEL + " (phone)" }) };
+}
+// Never sent (no mark: made here, or before 0.77) counts as changed; sending more than needed is harmless.
+const isChanged = (m) => m.changed !== false;
+// After a send: the sent reviews are not changed any more — unless edited since they were packed.
+async function markSent(sent){
+  for (const { key, mark } of sent){
+    try {
+      if (R && R.meta.key === key){ if (R.meta.changed === mark){ R.meta.changed = false; await DB.put("reviews", R.meta); } continue; }
+      const m = await DB.get("reviews", key);
+      if (m && m.changed === mark){ m.changed = false; await DB.put("reviews", m); }
+    } catch (e){ console.warn(e); }
+  }
+}
+async function exportSrev(){
+  if (!await ensureName()) return;
+  const p = await packageOf(R.meta.key);
+  if (!p) return;
   const name = safeName(stemOf(R.meta.asset.name) + " review" + (who ? " - " + who : "")) + ".srev";
-  offerFile(new Blob([JSON.stringify(pkg)], { type: "application/json" }), name, "Review file");
+  offerFile(new Blob([JSON.stringify(p.pkg)], { type: "application/json" }), name, "Review file", () => markSent([p]));
+}
+// A group's reply for Sight: one bundle (FORMAT.md "Bundle") of its reviews changed since the last send —
+// the group's reviews and every review that came in the bundle this group answers (meta.groups), so a clip
+// the user moved to another group still goes back. The bundle keeps the id of the bundle it answers
+// (a group made here: its own id).
+async function exportBundle(g){
+  if (!await ensureName()) return;
+  await flush();
+  const cur = loadGroups().find((x) => x.id === g.id) || g, bid = cur.bundle || cur.id;
+  const all = await DB.all("reviews").catch(() => []), byKey = new Map(all.map((m) => [m.key, m]));
+  const keys = cur.keys.filter((k) => byKey.has(k));
+  if (cur.bundle) all.forEach((m) => { if ((m.groups || []).includes(cur.bundle) && !keys.includes(m.key)) keys.push(m.key); });
+  if (R && byKey.has(R.meta.key)) byKey.set(R.meta.key, R.meta);
+  let pick = keys.filter((k) => isChanged(byKey.get(k)));
+  if (!pick.length){
+    if (!keys.length || !await ask({ title: "Nothing changed", text: `No review in “${cur.name}” changed since the last send. Send all ${keys.length} anyway?`, ok: "Send all" })) return;
+    pick = keys;
+  }
+  const b = busy("Packing the reviews…");
+  try {
+    const out = [];
+    for (const k of pick){ const p = await packageOf(k); if (p) out.push(p); }
+    if (!out.length) return;
+    const bundle = M.buildBundle({ packages: out.map((p) => p.pkg), id: bid, title: cur.name, author: who, app: APP_LABEL + " (phone)" });
+    const name = safeName(cur.name + " review" + (who ? " - " + who : "")) + ".srev";
+    offerFile(new Blob([JSON.stringify(bundle)], { type: "application/json" }), name, `Review file (${out.length} clip${out.length > 1 ? "s" : ""})`, () => markSent(out));
+  } catch (e){ console.error(e); toast("Export failed: " + (e.message || e), 5000); }
+  finally { b.done(); }
 }
 
 // ---- keys (desktop / iPad keyboard), through Sight's one shortcut rule -----------------------
@@ -3981,6 +5330,7 @@ document.addEventListener("keydown", (e) => {
   if (sheets.length){ runHotkeys(e, [["Escape", () => { sheets[sheets.length - 1](); }]]); return; }
   if (e.target.closest && e.target.closest("input, textarea, select")) return;
   if (e.code === "Space" && e.target.closest && e.target.closest("button")) return;
+  if (R && runHotkeys(e, [["PageUp", () => seqGo(-1)], ["PageDown", () => seqGo(1)]])) return;
   if (!R || !R.video) return;
   runHotkeys(e, [
     ["Space", () => togglePlay()], ["Comma", () => step(-1)], ["Period", () => step(1)],
@@ -4030,4 +5380,4 @@ root.addEventListener("scroll", () => { if (root.scrollTop || root.scrollLeft){ 
 initSW();
 route();
 // For tests and debugging only.
-window.__sightReview = { get R(){ return R; }, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote };
+window.__sightReview = { get R(){ return R; }, scrubPool, seekCost, setLag: (x) => { if (R){ lagBy.set(lagKey(false), x); lagBy.set(lagKey(true), x); } lagBy.set("*", x); lagBy.set("*:m", x); }, get bridgeLast(){ return bridgeLast; }, set androidAudio(x){ androidAudio = !!x; }, setVol, togglePlay, seekTo, DB, M, flush, openMedia, importReviewFile, drawingsOn, setPanel, goView, showNote, exportBundle, loadGroups };
