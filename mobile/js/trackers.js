@@ -175,7 +175,7 @@ export function trackerSettings(kind, ui, key){
     a.appendChild(btn("btn", "Test", async () => {
       const n = read();
       if (!ready(A, n)){ msg.textContent = cap1(needs) + " are needed."; return; }
-      msg.textContent = "Connecting…";
+      msg.textContent = ""; msg.appendChild(el("span", "ld", "Connecting…"));
       try { const ps = await A.projects(clientOf(A, n)); msg.textContent = `Connected — ${ps.length} project${ps.length === 1 ? "" : "s"}.`; }
       catch (e){ msg.textContent = errText(e) + hintOf(A, e, n); }
     }));
@@ -280,7 +280,7 @@ function pick(ctx, t){
     const find = async () => {
       list.innerHTML = "";
       if (!proj.value) return;
-      list.appendChild(el("p", "", "Searching…"));
+      list.appendChild(el("p")).appendChild(el("span", "ld", "Searching…"));
       try {
         const cl = clientOf(A, c);
         let vs = await A.findMedia(cl, proj.value, q.value.trim());
@@ -547,7 +547,7 @@ export function trackerBrowser(ctx, box, t){
     const my = ++seq;
     loading = true;
     if (!append){ gridGen++; page = 0; grid.textContent = ""; urls.splice(0).forEach((u) => URL.revokeObjectURL(u)); }
-    msg.textContent = "Loading…";
+    msg.textContent = ""; msg.appendChild(el("span", "ld", "Loading…"));
     try {
       // (a condition needs its field's type; the schema not readable: the page loads without the conditions, says so,
       // and Filter offers to clear them)

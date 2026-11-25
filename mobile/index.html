@@ -421,6 +421,16 @@ input:focus, textarea:focus { border-color: var(--accent); }
 .player .fab.pencil { z-index: 4; right: 14px; bottom: 14px; width: 54px; height: 54px; border-radius: 27px; }
 .busy { position: fixed; inset: 0; z-index: 45; background: rgb(0 0 0 / .4); display: grid; place-items: center; }
 .busy div { background: var(--card); border-radius: 14px; padding: 16px 20px; font-size: 14px; min-width: 200px; text-align: center; }
+/* Loading mark (.ld): the Sight logo turning (ring + blue focus dot; the ring is round, so it reads as the dot
+   orbiting). Drawn by ::before, so textContent changes keep it. .ld-col: a bigger mark above the text. An empty .ld
+   is the mark alone (picture placeholders). Same rule as app/static/index.html — keep the two alike. */
+.ld::before { content: ""; display: inline-block; vertical-align: middle; margin: -.2em .5em 0 0; width: 1.15em; height: 1.15em; box-sizing: border-box; border-radius: 50%; border: .138em solid currentColor; background: radial-gradient(circle at 65.8% 36.8%, #5b8cff 0 .2em, transparent .215em); animation: ld-spin 1.1s linear var(--ld-d, 0s) infinite; }
+.ld:empty::before { margin: 0; }
+.ld.ld-col { display: inline-flex; flex-direction: column; align-items: center; gap: .7em; }
+.ld.ld-col::before { font-size: 2em; margin: 0; }
+.busy .ld.ld-col { display: flex; }
+@keyframes ld-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ld::before { animation-duration: 4s; } }
 </style>
 </head>
 <body>

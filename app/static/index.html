@@ -364,6 +364,17 @@ html.ctrl-down .card { cursor: default; }
 .empty { display: grid; place-items: center; min-height: 50vh; color: var(--subtle); font-size: 15px; text-align: center; padding: 24px; }
 .shimmer { background: linear-gradient(90deg, var(--subtle), var(--fg), var(--subtle)); background-size: 180% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sh 1.6s linear infinite; }
 @keyframes sh { to { background-position: -80% 0; } }
+/* Loading mark (.ld): the Sight logo — the ring and its blue focus dot — turning. The ring is round, so turning
+   the whole mark reads as the dot orbiting inside it. Drawn by ::before (inline, so it also sits in one-line toasts
+   that ellipsize), so a textContent change keeps it: put the class on the element whose text says what loads, or
+   on a span inside one whose content is later replaced. .ld-col stacks a bigger mark above the text (empty grids).
+   Proportions: favicon.svg (64 grid: ring r 22 / stroke 6, dot r 9 at +6,-5). Same rule in mobile/index.html. */
+.ld::before { content: ""; display: inline-block; vertical-align: middle; margin: -.2em .5em 0 0; width: 1.15em; height: 1.15em; box-sizing: border-box; border-radius: 50%; border: .138em solid currentColor; background: radial-gradient(circle at 65.8% 36.8%, #5b8cff 0 .2em, transparent .215em); animation: ld-spin 1.1s linear var(--ld-d, 0s) infinite; }
+.ld.ld-col { display: inline-flex; flex-direction: column; align-items: center; gap: .7em; }
+.ld.ld-col::before { font-size: 2em; margin: 0; }
+@keyframes ld-spin { to { transform: rotate(360deg); } }
+/* A mark rebuilt by innerHTML many times a second (scan counter, progress toasts) would restart at 0° each time and
+   stall: ldPhase() gives it style="--ld-d:-Nms", the page clock's place in the turn, so the new one carries on. */
 .menu { display: none; width: var(--ctl-h); height: var(--ctl-h); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 /* Square, like the library thumbnails; the picture is fitted whole inside the frame (never cropped or left
    small in a corner) on the same background a card thumbnail has, so transparency reads the same. */
@@ -807,6 +818,7 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
 }
 @media (prefers-reduced-motion: reduce) {
   .shimmer { animation: none; color: var(--muted); background: none; }
+  .ld::before { animation-duration: 4s; } /* still says "working", without the quick spin */
   .thumb img.fade { opacity: 1; transition: none; }
   .model-loading { transition: none; }
   .light { transition: none; transform: none; }
@@ -1361,7 +1373,7 @@ function makeTrackerBlock(K, key, slot){
   };
   q("[data-act=cancel]").onclick = () => { trkOpen.delete(B); clearSecret(); show(saved); paintTrackerSettings(); };
   q("[data-act=test]").onclick = async () => {
-    msg.textContent = "Connecting…";
+    msg.innerHTML = `<span class="ld">Connecting…</span>`;
     try {
       const b = form.read();
       if ((sec && b[sec.name]) || !saved || saved.site !== b.site){ const st = await put(b); show(st); clearSecret(); await settle(st); }
@@ -1865,7 +1877,7 @@ const annot = createAnnotator({
   trackerOn: (id) => trackerOn(id),  // a tracker's controls (its link ▾) only while it is connected; "sight-trackers" on a change
   trackers: () => trackers.slice(),  // the connected trackers [{id, kind, key, name, site, host, note}] (annotate.js: a link ▾ each)
   // (no lightbox, e.g. a review file dropped on the grid: the page's own toast, plain text)
-  toast: (text, ms) => { if (light) flashV3DToast(text); else flash(htmlToText(text), ms); },
+  toast: (text, ms) => { if (light) flashV3DToast(htmlToText(text)); else flash(htmlToText(text), ms); },
   appVersion: () => state.meta?.version || "",
   // The lightbox panels' shared middle-drag scroll (attachPanScroll), so the review panel scrolls the same way.
   panScroll: (el) => attachPanScroll(el),
@@ -1916,7 +1928,7 @@ const boardAnnot = createAnnotator({
   paintUserBtns: (root) => paintUserBtns(root),
   trackerOn: (id) => trackerOn(id),  // a tracker's controls (its link ▾) only while it is connected; "sight-trackers" on a change
   trackers: () => trackers.slice(),  // the connected trackers [{id, kind, key, name, site, host, note}] (annotate.js: a link ▾ each)
-  toast: (text) => flashV3DToast(text),
+  toast: (text) => flashV3DToast(htmlToText(text)),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
   frameRect: (x0, y0, x1, y1, opts) => canvasCtl?.frameRect(x0, y0, x1, y1, opts),
@@ -1943,7 +1955,7 @@ const cmpAnnot = createAnnotator({
   paintUserBtns: (root) => paintUserBtns(root),
   trackerOn: (id) => trackerOn(id),  // a tracker's controls (its link ▾) only while it is connected; "sight-trackers" on a change
   trackers: () => trackers.slice(),  // the connected trackers [{id, kind, key, name, site, host, note}] (annotate.js: a link ▾ each)
-  toast: (text) => flash(text),
+  toast: (text) => flash(htmlToText(text)),
   appVersion: () => state.meta?.version || "",
   panScroll: (el) => attachPanScroll(el),
   // The compare runs every clip on one clock: the annotator stops / moves that clock, not the element.
@@ -2945,7 +2957,7 @@ function renderGrid(){
   if (!state.items.length){
     cardPool.clear();
     sliceEl = spaceEl = null;
-    grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.loading || trkList.more ? `Loading ${esc(trkMedia().many)}…` : `No ${esc(trkMedia().one)} matches.`}</div>`
+    grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.loading || trkList.more ? `<span class="ld ld-col">Loading ${esc(trkMedia().many)}…</span>` : `No ${esc(trkMedia().one)} matches.`}</div>`
       : `<div class="empty">Empty. Add a folder or drop one here — files stay where they are. Drop a file on the window to open it.</div>`;
     renderInsp();
     return;
@@ -4502,10 +4514,12 @@ function bindTagHold(el, name){
 
 // The file counter ("N files" / the shimmering "scanning · N") lives in the Sources header; renderNav
 // builds it with statusHtml(), renderStatus() repaints it in place when only the numbers change.
+// (see .ld in the stylesheet)
+const ldPhase = () => `--ld-d:${-Math.round(performance.now())}ms`;  // (no modulus: right for any duration, reduced motion too)
 function statusHtml(){
   if (trkListOn()) return `${state.items.length}${trkList.more ? "+" : ""} ${esc(state.items.length === 1 ? trkMedia().one : trkMedia().many)}`;
   const n = state.total || state.meta.counts?.all || 0;
-  return state.meta.scanning ? `<span class="shimmer">scanning · ${n}</span>` : n + " files";
+  return state.meta.scanning ? `<span class="ld" style="${ldPhase()}"><span class="shimmer">scanning · ${n}</span></span>` : n + " files";
 }
 function renderStatus(){
   const el = $("srcCount");
@@ -4517,8 +4531,10 @@ function renderFfmpeg(){
   if (state.meta.ffmpeg){ el.innerHTML = ""; return; }
   el.innerHTML = `<div class="banner">ffmpeg not found <button class="btn ghost" id="instff">Install</button></div>`;
   $("instff")?.addEventListener("click", async () => {
-    $("instff").textContent = "Installing…";
-    const r = await api("/api/install-ffmpeg", { method: "POST" });
+    $("instff").innerHTML = `<span class="ld">Installing…</span>`;
+    let r;
+    try { r = await api("/api/install-ffmpeg", { method: "POST" }); }
+    catch (e){ if ($("instff")) $("instff").textContent = "Install"; alert(e.message || "Install failed"); return; }
     await refreshMeta();
     alert(r.message);
   });
@@ -4644,7 +4660,7 @@ function metaSectionsHtml(a){
   const key = assetInfoKey(a);
   if (assetInfoErr.has(key)) return inspSec("Details", "inspErr", `<div class="wait">Details unavailable: ${esc(assetInfoErr.get(key))}</div>`);
   const cached = assetInfoCache.get(key);
-  if (!cached) return inspSec("Details", "inspWait", `<div class="wait">Reading file…</div>`);
+  if (!cached) return inspSec("Details", "inspWait", `<div class="wait"><span class="ld">Reading file…</span></div>`);
   if (!cached.length) return "";
   return cached.map((sec, i) => inspSec(sec.title, "insp:" + sec.title + ":" + i, infoRows(sec.rows))).join("");
 }
@@ -5677,7 +5693,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
   // behind it so the backdrop matches what the canvas will show once the model is up.
   loadingEl.style.backgroundColor = elId === "light3d" ? state.v3d.bg : "#0a0a0b";
   if (thumbUrl) loadingEl.style.backgroundImage = `url("${thumbUrl}")`;
-  if (!cached) loadingEl.innerHTML = `<div class="plate"><div class="mprog-label">Loading model…</div><div class="mprog indeterminate"><i></i></div></div>`;
+  if (!cached) loadingEl.innerHTML = `<div class="plate"><div class="mprog-label ld">Loading model…</div><div class="mprog indeterminate"><i></i></div></div>`;
   el.appendChild(loadingEl);
   // Real download progress where the loader reports it (byte counts — our own /api/file/ always
   // sends Content-Length, so this is almost always computable) instead of a plate that just sits
@@ -6383,7 +6399,7 @@ async function mountFontStage(stage, a){
   // A stage can be re-mounted for another asset while a font is still loading, so keep a direct
   // element reference (and check isConnected) rather than looking the host up by id.
   const family = "sight-font-" + a.id;
-  stage.innerHTML = `<div class="font-view"><div class="font-loading">Loading font…</div></div>`;
+  stage.innerHTML = `<div class="font-view"><div class="font-loading ld">Loading font…</div></div>`;
   const host = stage.querySelector(".font-view");
   try {
     const face = new FontFace(family, `url("/api/file/${a.id}")`);
@@ -6410,7 +6426,7 @@ async function mountDocStage(stage, a){
   if (TEXT_EXT.has(a.ext)){
     // Same simultaneous inspector+lightbox mount concern as mountFontStage above — use a
     // direct element reference rather than an id lookup.
-    stage.innerHTML = `<div class="doc-text-wrap"><pre class="doc-text">Loading…</pre><div class="view-hud"></div></div>`;
+    stage.innerHTML = `<div class="doc-text-wrap"><pre class="doc-text"><span class="ld">Loading…</span></pre><div class="view-hud"></div></div>`;
     const wrap = stage.querySelector(".doc-text-wrap");
     const pre = stage.querySelector(".doc-text");
     const hud = stage.querySelector(".view-hud");
@@ -6494,7 +6510,7 @@ async function mountWave(hostId, aid, src, autoplay){
   if (stale){ try { stale.pause(); } catch {} } // a still-playing previous track would keep going in the background otherwise
   host.innerHTML = `
     <div class="wave-body">
-      <div class="wave-bars"><span class="wave-loading">decoding…</span></div>
+      <div class="wave-bars"><span class="wave-loading ld">decoding…</span></div>
       <div class="wave-time"><span data-cur>0:00</span><span data-dur>0:00</span></div>
     </div>
     <button type="button" class="wave-play" aria-label="Play">▶</button>
@@ -6700,9 +6716,10 @@ function watchPlayable(el, a){
     if (asked || !light || light.video !== el) return;
     asked = true;
     const hud = el.parentElement?.querySelector(".view-hud");
-    const show = (text) => { if (hud) hud.textContent = text; };
-    show("Converting for playback…");
-    const res = await convertForPlayback(a.id, (p) => show(`Converting for playback… ${Math.round(p * 100)}%`),
+    // (the loading mark only while converting: show("") and the error take it off)
+    const show = (text, busy) => { if (hud){ hud.textContent = text; hud.classList.toggle("ld", !!busy); } };
+    show("Converting for playback…", true);
+    const res = await convertForPlayback(a.id, (p) => show(`Converting for playback… ${Math.round(p * 100)}%`, true),
       () => !!light && light.video === el);
     if (!light || light.video !== el) return;
     // A sequence jump waiting to land on this clip never will: let frame / marker keys move on again.
@@ -7917,13 +7934,13 @@ async function seqExportAll(kind){
   try {
     await annot.flush();
     if (kind === "pkg"){   // one bundle, straight from the stored rows; the server picks the clips (notes or tombstones)
-      say("Saving the review file…", 60000);
+      say(`<span class="ld">Saving the review file…</span>`, 60000);
       const r = await api("/api/review/export/package-all", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ asset_ids: s.list.map((a) => a.id), author: reviewerName(), reveal: true }) });
       say(r?.clips ? `Saved <b>${esc(r.name || "")}</b> · ${plural(r.clips, "clip")}` : "No clip in the sequence has notes", r?.clips ? 4500 : 2500);
       return;
     }
-    say("Looking for clips with notes…", 60000);
+    say(`<span class="ld">Looking for clips with notes…</span>`, 60000);
     const has = await Promise.all(s.list.map((a) => api(`/api/annotations?asset_id=${encodeURIComponent(a.id)}`)
       .then((rows) => (rows || []).some((r) => r.kind === "note" && !r.data?.deleted)).catch(() => false)));
     if (light?.seq !== s) throw new Error("the sequence was closed");
@@ -7936,7 +7953,7 @@ async function seqExportAll(kind){
     const reports = [], skipped = [];
     for (const [j, k] of ks.entries()){
       if (light?.seq !== s) throw new Error("the sequence was closed");
-      say(`Clip ${j + 1} of ${ks.length}: ${esc(s.list[k].name)}…`, 120000);
+      say(`<span class="ld" style="${ldPhase()}">Clip ${j + 1} of ${ks.length}: ${esc(s.list[k].name)}…</span>`, 120000);
       if (s.i !== k || !light.video){ moved = true; seqGo(k, 0, false); }
       if (!(await seqWaitClip(s, k, 45000))){ skipped.push(s.list[k].name); continue; }
       const rep = await annot.report(kind);
@@ -7948,7 +7965,7 @@ async function seqExportAll(kind){
     }
     let msg = "";
     if (reports.length){
-      say({ html: "Building the web page…", pdf: "Building the PDF…" }[kind] || "Building the ZIP…", 120000);
+      say(`<span class="ld">${{ html: "Building the web page…", pdf: "Building the PDF…" }[kind] || "Building the ZIP…"}</span>`, 120000);
       // One web page for all the clips (multi-clip page; one clip → a plain one-clip page).
       const r = await post(`/api/review/export/${kind}-all`, { reports, author: reviewerName(), reveal: true });
       msg = kind === "html" ? `Saved <b>${esc(r.name)}</b> · ${plural(r.clips || reports.length, "clip")} — opens in any browser; replies come back as one .srev file`
@@ -8833,7 +8850,7 @@ function renderLightInfo(){
   ]);
   if (cached) html += cached.map((sec) => `<h4>${esc(sec.title)}</h4>` + infoRows(sec.rows)).join("");
   else if (assetInfoErr.has(key)) html += `<div class="err">Details unavailable: ${esc(assetInfoErr.get(key))}</div>`;
-  else html += `<div class="wait">Reading file…</div>`;
+  else html += `<div class="wait"><span class="ld">Reading file…</span></div>`;
   const scene = light.sceneInfo;
   if (scene && scene.id === a.id) html += `<h4>${esc(scene.title)}</h4>` + infoRows(scene.rows);
   const ins = v3dInspect && v3dInspect.aid === a.id ? v3dInspect : null;
@@ -8986,7 +9003,7 @@ async function refreshUv(){
   const pane = $("uvPane");
   if (!pane || !v3dInspect) return;
   const ins = v3dInspect, token = ++uvToken;
-  if (!pane.querySelector(".view")) pane.innerHTML = `<div class="uv-wait">Rendering UVs…</div>`;
+  if (!pane.querySelector(".view")) pane.innerHTML = `<div class="uv-wait"><span class="ld">Rendering UVs…</span></div>`;
   await new Promise((r) => requestAnimationFrame(r));
   if (token !== uvToken || v3dInspect !== ins) return;
   let res = null;
@@ -9283,7 +9300,7 @@ function togglePsdPanel(){
 async function loadPsdLayers(id){
   const panel = $("psdPanel");
   if (!panel) return;
-  panel.innerHTML = `<div class="v3d-help">Loading layers…</div>`;
+  panel.innerHTML = `<div class="v3d-help"><span class="ld">Loading layers…</span></div>`;
   let layers = [];
   try { layers = await api("/api/psd/" + id + "/layers"); } catch { layers = []; }
   if (!light || light.id !== id) return; // moved on to another asset meanwhile
@@ -10144,7 +10161,7 @@ async function dfOpen(){
 function dfClose(){ $("dfOverlay").hidden = true; }
 async function dfSend(method, body){
   const msg = $("scanIgnoreMsg");
-  $("dfMsg").textContent = "Saving…";
+  $("dfMsg").innerHTML = `<span class="ld">Saving…</span>`;
   try {
     const r = await api("/api/scan/defaults", body === undefined ? { method } : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     dfClose();
@@ -11415,7 +11432,7 @@ function renderFilterPop(){
     paintFilterFoot(foot, c, fields, c.tree);
   };
   if (c.fields){ mount(c.fields); return; }
-  pop.innerHTML = `<div class="flt-none">Loading the ${esc(trkMedia().one)} fields…</div>`;
+  pop.innerHTML = `<div class="flt-none"><span class="ld">Loading the ${esc(trkMedia().one)} fields…</span></div>`;
   fltBuilder = null;
   trkSrc.loadFilterFields().then((f) => { if (my === fltSeq && topPopOpen === "filterPop" && trkListOn()){ mount(f); renderFilterBtn(); } })
     .catch((e) => { if (my === fltSeq) pop.innerHTML = `<div class="flt-none">${esc(e.message)}</div>`; });
@@ -11661,7 +11678,7 @@ async function aboutOpen(){
   $("aboutTitle").textContent = "About Sight" + (state.meta.version ? " " + state.meta.version : "");
   const list = $("aboutList");
   list.textContent = "";
-  $("aboutMsg").textContent = "Loading…";
+  $("aboutMsg").innerHTML = `<span class="ld">Loading…</span>`;
   $("aboutCopy").disabled = true;
   let a;
   try {

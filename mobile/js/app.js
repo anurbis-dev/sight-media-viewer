@@ -87,7 +87,7 @@ function toast(msg, ms = 2600){
   clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, ms);
 }
 function busy(msg){
-  const b = el("div", "busy"), d = el("div", "", msg); b.appendChild(d); document.body.appendChild(b);
+  const b = el("div", "busy"), d = el("div", "ld ld-col", msg); b.appendChild(d); document.body.appendChild(b);
   return { set(m){ d.textContent = m; }, done(){ b.remove(); } };
 }
 // A sheet over the page: from the bottom (menus, settings) or centred (questions). Returns close().
@@ -2343,7 +2343,7 @@ function threadVks(n){
 function vnoTag(box, vk){ box.appendChild(el("span", "fno", "V" + (viewNo(vk) || "+"))); return box; }
 // One view of a 3D note (or of a reply: rid, its drawings only), filled in once its picture is there.
 function asyncViewAt(n, vk, rid, cls = "sm"){
-  const rv = R, ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
+  const rv = R, ph = el("div", "fw wait" + (cls ? " " + cls : "")); ph.appendChild(el("span", "ld"));
   viewPic(vk, rv, picExplode(n, vk, rid)).then((fr) => {
     if (R !== rv || !fr){ ph.remove(); return; }
     const f = { url: fr.url, vb: fr.vb, at: { vk } };
@@ -2351,7 +2351,7 @@ function asyncViewAt(n, vk, rid, cls = "sm"){
     if (!rid) markCap(box, n, { vk });
     box.onclick = () => openThread(n, rid ? { kind: "frame", vk, rid } : { kind: "frame", vk });
     ph.replaceWith(box);
-  });
+  }).catch(() => ph.remove());  // (a failed picture: no mark spinning forever)
   return ph;
 }
 // Drawing on the model: the view on screen as a picture, the canvas over it. frames: the draft's
@@ -2596,7 +2596,7 @@ function buildStage3d(stage, missing){
   els.m3d = host;
   if (rv.v3d){ rv.v3d.attach(host); paintOverlay(); paint3dTools(); return; }
   if (!rv.file){ missing("Pick the model again (with its texture files, if it has any) to turn it and draw on new views. Notes and their views stay readable."); return; }
-  const wait = el("div", "none", "Loading the model…");
+  const wait = el("div", "none"); wait.appendChild(el("span", "ld ld-col", "Loading the model…"));
   stage.appendChild(wait);
   if (!rv.v3dReady){
     // Only the latest load counts: a file picked again meanwhile (rebind) starts another one.
@@ -4003,20 +4003,20 @@ function picBox(f, list, cls){
 }
 // Fills a placeholder with a note's picture once it is there (cached, or taken from the video).
 function asyncPic(n, list, cls, onTap){
-  const ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
+  const ph = el("div", "fw wait" + (cls ? " " + cls : "")); ph.appendChild(el("span", "ld"));
   noteFrame(n).then((f) => {
     if (!f){ ph.remove(); return; }
     const box = markCap(picBox(f, list(f), cls), n, f.at ? { t: f.at.t } : {});
     box.onclick = () => onTap(f);
     ph.replaceWith(box);
-  });
+  }).catch(() => ph.remove());  // (a failed picture: no mark spinning forever)
   return ph;
 }
 // A frame's number in its thumbnail's top-left corner.
 function fnoTag(box, t){ box.appendChild(el("span", "fno", "f" + Math.round(t * R.fps))); return box; }
 // One frame of a video note (or of a reply: rid, its drawings only), filled in once it is there.
 function asyncFrameAt(n, t, rid, cls = "sm"){
-  const rv = R, ph = el("div", "fw wait" + (cls ? " " + cls : ""), "…");
+  const rv = R, ph = el("div", "fw wait" + (cls ? " " + cls : "")); ph.appendChild(el("span", "ld"));
   getFrame(t).then((fr) => {
     if (R !== rv || !fr){ ph.remove(); return; }
     const f = { url: fr.url, vb: [0, 0, docW(), docH()], ctx: { t, hold: 0 }, at: { t, fps: R.fps } };
@@ -4024,7 +4024,7 @@ function asyncFrameAt(n, t, rid, cls = "sm"){
     if (!rid) markCap(box, n, { t });
     box.onclick = () => openThread(n, rid ? { kind: "frame", t, rid } : { kind: "frame", t });
     ph.replaceWith(box);
-  });
+  }).catch(() => ph.remove());  // (a failed picture: no mark spinning forever)
   return ph;
 }
 // Attached pictures, into a picture grid; a tap opens them in note n's thread (rid: a reply's).

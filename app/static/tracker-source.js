@@ -94,7 +94,7 @@ export function createTrackerSource(opts){
   async function openFields(){
     if (!fpop.hidden){ fpop.hidden = true; return; }
     fpop.hidden = false;
-    fpop.innerHTML = `<div class="trkb-fhint">Loading fields…</div>`;
+    fpop.innerHTML = `<div class="trkb-fhint"><span class="ld">Loading fields…</span></div>`;
     const e = opts.registerAutoClose?.(fpop, () => { fpop.hidden = true; }, fbtn);
     if (e){ e.anchor = fbtn; e.armed = false; }
     try { await loadFields(); }

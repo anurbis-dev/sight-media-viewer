@@ -72,6 +72,12 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   `runHotkeys(e, [[combo, handler], …])` runs the first match (handler returning `false` = not
   applicable, keep looking). Keys are `KeyboardEvent.code`, so layout independent. Never test
   `e.key`/`e.code` alone.
+- **Loading mark `.ld`** (index.html, copy in mobile/index.html — keep both alike): the Sight logo turning,
+  drawn by `::before` (ring = border in currentColor, blue dot = radial-gradient; the ring is round, so turning
+  the whole box reads as the dot orbiting). Every "loading / working…" text uses it: put the class on the element
+  whose text names the wait (a later `textContent` change keeps the mark) or on a `<span>` inside an element whose
+  content is replaced when the wait ends — never on an element that later shows the result. `.ld-col` = bigger
+  mark above the text; an empty `.ld` = the mark alone. Toasts that take HTML get `<span class="ld">…</span>`.
 - CSS gotcha: a plain `.foo { display:flex }` beats the UA `[hidden]` rule by source order; write
   `.foo:not([hidden]) { display:flex }` (canvas.js injects its own `<style>` this way).
 - Reused controls: right-drag / wheel zoom formula and `zoomAxis/zoomSpeed/zoomInvert` theme settings

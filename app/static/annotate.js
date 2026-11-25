@@ -3492,7 +3492,7 @@ export function createAnnotator(host){
     if (L && !trkState.picking){
       const last = cur.state?.last ? fmtDate(cur.state.last) : "never";
       box.innerHTML = `<div class="an-mlbl">Linked to <b>${esc(A.linkLabel(L))}</b>${A.linkProject(L) ? " · " + esc(A.linkProject(L)) : ""}<br>Last sync: ${esc(last)}</div>
-        <button type="button" data-trk="sync" ${trkState.busy ? "disabled" : ""}>${busy ? "Syncing…" : "Sync now"}</button>
+        <button type="button" data-trk="sync" ${trkState.busy ? "disabled" : ""}>${busy ? `<span class="ld">Syncing…</span>` : "Sync now"}</button>
         <button type="button" data-trk="pick">Link to another ${esc(A.media.one)}…</button>
         <button type="button" data-trk="unlink">Unlink</button>${msg}`;
     } else {
@@ -3512,7 +3512,7 @@ export function createAnnotator(host){
       sel.onchange = () => { try { host.putSetting(trkStoreName(A, key, "project"), sel.value); } catch {} find(); };
       async function find(){
         if (!sel.value){ list.innerHTML = ""; return; }
-        list.innerHTML = `<div class="an-mlbl">Searching…</div>`;
+        list.innerHTML = `<div class="an-mlbl"><span class="ld">Searching…</span></div>`;
         try {
           const { client } = await trkClient(key);
           let vs = await A.findMedia(client, sel.value, q.value.trim());
@@ -3583,7 +3583,7 @@ export function createAnnotator(host){
         getRows: () => trkApi(`/api/annotations?asset_id=${aid}&deleted=1`),  // tombstones: a note deleted here stays deleted
         importPackage: (pkg) => trkApi("/api/review/import", { method: "POST", body: JSON.stringify(pkg) }),
         pictures: (ids, opt) => S.asset?.id === aid ? trkPictures(ids, opt) : new Map(),
-        progress: (t) => toast(esc(t), 60000),
+        progress: (t) => toast(`<span class="ld" style="--ld-d:${-Math.round(performance.now())}ms">${esc(t)}</span>`, 60000),  // (the phase: .ld in index.html)
       });
       await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
       const p = res.pulled, q = res.pushed, from = A.name;
@@ -5229,7 +5229,7 @@ export function createAnnotator(host){
   async function exportPdf(){
     if (!S.asset || exportBusy()) return;
     await flush();
-    toast("Building PDF…", 60000);
+    toast(`<span class="ld">Building PDF…</span>`, 60000);
     try {
       const payload = await gatherReport(false);
       const r = await host.api("/api/review/export/pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
@@ -5242,7 +5242,7 @@ export function createAnnotator(host){
   async function exportHtml(){
     if (!S.asset || exportBusy()) return;
     await flush();
-    toast("Building the web page…", 60000);
+    toast(`<span class="ld">Building the web page…</span>`, 60000);
     try {
       const payload = await gatherReport(true);
       const r = await host.api("/api/review/export/html", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
@@ -5255,7 +5255,7 @@ export function createAnnotator(host){
   async function exportZip(){
     if (!S.asset || exportBusy()) return;
     await flush();
-    toast("Building the ZIP…", 60000);
+    toast(`<span class="ld">Building the ZIP…</span>`, 60000);
     try {
       const payload = await gatherReport(false, true);
       const r = await host.api("/api/review/export/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });

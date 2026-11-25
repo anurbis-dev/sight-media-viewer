@@ -14,6 +14,37 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.134.0 — 2026-11-25 — Loading mark: the Sight "eye" turning, wherever something loads
+- **What:** every "loading / working…" text now has the Sight logo beside it (ring + blue focus dot) turning, so
+  the dot orbits — desktop and phone. A bigger mark above the text in the tracker grid's "Loading…" and the phone's
+  busy overlay / "Loading the model…"; the mark alone in the phone's note-picture placeholders (were "…").
+- **Where:** CSS `.ld` / `.ld-col` / `@keyframes ld-spin` in `app/static/index.html` and `mobile/index.html` (keep
+  them alike); `ldPhase()` in index.html. Used in index.html (scan counter, Reading file…, Loading model… label,
+  font / text / waveform / UVs / layers / tracker fields / About, review export `say()`s, playback-conversion HUD,
+  tracker "Connecting…", scan defaults "Saving…", ffmpeg "Installing…"), `annotate.js` (sync progress and
+  Building… toasts, Searching…, Syncing… button), `tracker-source.js` (fields), `mobile/js/app.js` (`busy()`,
+  model wait, picture placeholders), `mobile/js/trackers.js` (Searching… / Loading… / Connecting…). ARCHITECTURE
+  (Frontend conventions) has the rule.
+- **Notes:**
+  - Pure CSS, `::before` on the element: a border circle in `currentColor` + a radial-gradient dot at the favicon's
+    proportions, the whole box rotating (the ring is round, so only the dot seems to move). Inline-block, so it
+    also sits in one-line ellipsized toasts. `textContent` changes keep it (the model % label relies on that).
+  - Put `.ld` only where the wait's content is later *replaced* (a span inside) or the element removed — never on
+    an element that then shows the result. `<option>` texts ("Loading projects…") are left: `::before` does not
+    render there. Plain-text toasts (`flash()`, `flashV3DToast`) get no mark.
+  - Marks rebuilt by innerHTML several times a second (scan counter per batch, progress toasts) would restart at 0°
+    and stall: they carry `style="--ld-d:-<performance.now()>ms"` (no modulus, so it fits the 4 s reduced-motion
+    duration too). Reduced motion: a slow 4 s turn, not none.
+  - Side fixes: the annotator's host toasts (lightbox 3D, board, compare) now pass `htmlToText(text)` — HTML from
+    annotate.js used to show as raw text there; phone picture placeholders drop on a failed picture (`.catch`); the
+    ffmpeg Install button comes back if the request fails.
+  - Not done: the Windows launch splash (`app/splash_win.py`, a static PNG in a native layered window) stays still.
+    Pre-existing: a UV / PSD layers pane left after its inspection is cleared (not replaced) keeps its wait text.
+  - Review (fresh agent): found raw markup in the board / compare host toasts, the restart-at-0° stall, forever-
+    spinning phone placeholders, and missed spots (HUD, Connecting, Saving, Installing, Syncing) — all fixed; the
+    second pass confirmed them and caught the phase modulus breaking reduced motion (fixed) and the Install button
+    stuck on a failed request (fixed). `test_pwa`: same 3 failures with and without the change (pre-existing here).
+
 ## 0.133.1 — 2026-11-25 — Phone app: a pinch never zooms the page
 - **What:** pinching a splat / model / picture on the phone sometimes became browser page zoom: the whole UI grew
   past the screen edges. The phone app now turns page zoom off: a pinch only reaches the app's own zoom.
@@ -169,9 +200,3 @@ Add new entries directly below this line.
 - **Where:** app/static/index.html — theme keys `uiScale` / `iconScale` (DEFAULT_THEME, sliders), `applyUi` sets `--ui-k` / `--icon-k`; CSS zoom rule (comment there); `uiK()`, `uiPx()`, `placeMenu()` (8 menus + the video menu), user / colour / select / theme-save / filter pops, `resizePanel`; vw / vh inside zoomed parts divided by `--ui-k`; `trackBarH()` sets `--bar-h` (the zoomed bar's height) on the lightbox and compare, used by the info button, frame pop, 3D toast and annotate.js `.an-top`; `initSlider.beginEdit` (`closed` flag, `hotkey()`); MANUAL.
 - **Notes:** CSS `zoom` (Chromium's standardized zoom): rects and clientX are screen px, but a zoomed element's style px, vw / vh and offsetWidth are its own — so any JS that places a zoomed element from screen coordinates must divide by `uiK()` (`uiPx`), and CSS calc with vw / vh inside it must divide by `--ui-k`. `--side-w` / `--insp-w` are the panels' own px (screen width = ×k). Not scaled on purpose: pictures, tiles (own size), boards, viewer overlays and bars (video bar, notes panel, 3D panel, compare's layer chips — their drags move transformed elements by screen deltas), the touch selection bar, modals. At 1× everything measures as before (light bar 47 px, info at 69 px).
 - **Review:** a fresh reviewer agent found: `--bar-h` went stale when Scale changed with the lightbox open (the bar's own height does not change under zoom, so no ResizeObserver call → `applyUi` re-measures every tracked bar, `barHosts`); the notes panel's `--an-pw` (screen px) used inside the zoomed `.an-top` put the toolbar under the panel at 0.75× (→ divided by `--ui-k`, also the board's 54 px / 100 px); nits fixed too: `.an-offer` under a taller bar (→ the host's `--bar-h`), the inspector's 3D preview blurry at >1× (→ pixel ratio × uiK), a colour preset reset Scale / Icon buttons to 1× (→ kept). The same reviewer then found the board's default `--an-pw: min(320px, 62%)` still wrong under zoom and the offer's `--bar-h` unreachable on `<body>` (→ `--an-pwk`, set with `--an-pw` by `applyPanelW`, the board's default `min(320px ÷ k, 62%)`; the offer reads the host's `--bar-h`); it confirmed all fixes and found nothing new.
-
-## 0.123.0 — 2026-11-24 — Library beside the lightbox: its top bar ends at the divider and shrinks
-- **What:** with the library beside the lightbox (Tab) the library's top bar (search, Filter, Sort, view options, Sequence / Compare) now ends at the divider instead of running on under the lightbox (Filter and Sort were hidden there). When it runs out of room the search box narrows, then the labels shorten (Sort: Date modified → *DM*, Filter → *Flt*, Sequence → *Seq*, Compare → *Cmp*), then icons only (funnel, sort lines; a filter count stays next to the funnel). The same steps apply in any narrow window.
-- **Where:** app/static/index.html — CSS `.tl-l / .tl-s / .tl-i`, `.top.tl1 / .tl2`, `body.light-split .main > .top, .trkbar` (margin-right from `--light-l`), `.search` min-width 48; `fitTop()` (ResizeObserver on the top bar; also after `renderSortBtn`, `renderFilterBtn`, `paintSelection`); `SORT_OPTIONS` got a 3rd field (short code); `SORT_ICON` / `FILTER_ICON`; MANUAL.
-- **Notes:** the level is chosen by measuring: full labels unless the search box would go under 160 px or the bar overflows, then short, then icons (at the narrowest split the last buttons can still slide under the lightbox). The sort button's tooltip carries the full label. Backlog 19's other half ("Tab browser = the main browser shrunk by a splitter, not a separate window") was already so: the grid + sidebar are the library itself (0.12x); only the top bar ran on under the lightbox. Browser: 1400 px window, divider at 1100 / 800 → full, 650 → short, 520 → icons.
-- **Review:** a fresh reviewer agent found: tests/sg_view_e2e.cjs read the Filter button's whole text, now "FilterFlt" (→ reads `#filterBtn .tl-l`; `tests.test_shotgrid` passes, browser test included); the Filter pop (right-aligned to its button, inside `.main`'s overflow clip) lost its left part in the split (→ `renderFilterPop` makes it `.flt-fixed` there: fixed, from the library's left edge, over the lightbox). The same reviewer confirmed both fixes and found nothing new (left: Tab while the pop is open keeps its placement until it reopens).
