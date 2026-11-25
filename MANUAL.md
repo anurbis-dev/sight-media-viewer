@@ -488,6 +488,8 @@
   cut finds frames both ways. Settings → *Debug log* (On / Off) records what the player and the frame cache do
   on this device (taps, play and seek delays, every part of the clip the cache reads, a sample each second);
   reproduce the problem, then *Send debug log…* shares or downloads it as a `.txt` file to send to the developer.
+  The app never zooms the page itself: a pinch only zooms the picture or the model (the page stays at its size, so
+  the bars cannot grow past the screen edges).
   Tap the picture to play / pause
   (keyboard: Space, `,` / `.` or ← / →, Shift+← / → for markers); play starts from the frame on
   screen, also right after a scrub. Notes are listed and numbered in

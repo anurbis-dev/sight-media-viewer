@@ -14,6 +14,26 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.133.1 — 2026-11-25 — Phone app: a pinch never zooms the page
+- **What:** pinching a splat / model / picture on the phone sometimes became browser page zoom: the whole UI grew
+  past the screen edges. The phone app now turns page zoom off: a pinch only reaches the app's own zoom.
+- **Where:** `mobile/index.html` (viewport meta `maximum-scale=1, user-scalable=no`), `mobile/js/app.js` ("no page
+  zoom" block before "full screen": cancels iOS `gesture*` events and any `touchmove` with more than one touch,
+  non-passive on `document`); MANUAL (phone section).
+- **Notes:**
+  - Android Chrome honours `user-scalable=no`; iOS Safari ignores it, hence the JS block. All the app's pinches run on
+    pointer events, which a cancelled touchmove does not stop (it only stops the browser's gesture and the
+    pointercancel that came with it). Likely origin: `.stage` is `touch-action: manipulation`, which lets the browser
+    take a pinch that does not start on the 3D canvas (`touch-action: none`). Left as is: the JS block covers it.
+  - Left open: on iOS a second finger landing while one is already scrolling a list sends non-cancelable touchmoves;
+    page zoom can still start there (rare, not fixable from JS). The document-level non-passive touchmove makes
+    Chrome wait on the main thread before a scroll starts; accepted (it must cover bars too).
+  - Not changed: Sight's HTML review page (`app/review.py`) keeps page zoom (text to read; it has no splat viewer).
+  - Checked in mobile Chromium: a two-finger touchmove is cancelled, a one-finger one is not. `test_touch` and
+    `test_model3d` fail with and without this change (pre-existing, unrelated).
+  - Review (fresh agent): no correctness bugs; the notes above (iOS non-cancelable case, scroll latency, version bump
+    for the service-worker cache) came from it. No fixes, so no second pass was needed.
+
 ## 0.133.0 — 2026-11-25 — Gaussian splats turn a quarter about X, like meshes (lightbox and phone)
 - **What:** splats often arrive upside down or Z-up. The lightbox's ↻ button (`Shift+7`, the only button of the shade
   bar on a splat) and the phone's ⟳ *Turn the model a quarter* now turn a splat as they turn a mesh: a quarter turn
@@ -155,9 +175,3 @@ Add new entries directly below this line.
 - **Where:** app/static/index.html — CSS `.tl-l / .tl-s / .tl-i`, `.top.tl1 / .tl2`, `body.light-split .main > .top, .trkbar` (margin-right from `--light-l`), `.search` min-width 48; `fitTop()` (ResizeObserver on the top bar; also after `renderSortBtn`, `renderFilterBtn`, `paintSelection`); `SORT_OPTIONS` got a 3rd field (short code); `SORT_ICON` / `FILTER_ICON`; MANUAL.
 - **Notes:** the level is chosen by measuring: full labels unless the search box would go under 160 px or the bar overflows, then short, then icons (at the narrowest split the last buttons can still slide under the lightbox). The sort button's tooltip carries the full label. Backlog 19's other half ("Tab browser = the main browser shrunk by a splitter, not a separate window") was already so: the grid + sidebar are the library itself (0.12x); only the top bar ran on under the lightbox. Browser: 1400 px window, divider at 1100 / 800 → full, 650 → short, 520 → icons.
 - **Review:** a fresh reviewer agent found: tests/sg_view_e2e.cjs read the Filter button's whole text, now "FilterFlt" (→ reads `#filterBtn .tl-l`; `tests.test_shotgrid` passes, browser test included); the Filter pop (right-aligned to its button, inside `.main`'s overflow clip) lost its left part in the split (→ `renderFilterPop` makes it `.flt-fixed` there: fixed, from the library's left edge, over the lightbox). The same reviewer confirmed both fixes and found nothing new (left: Tab while the pop is open keeps its placement until it reopens).
-
-## 0.122.14 — 2026-11-24 — Compare with pictures only: the top bar's hint fits
-- **What:** a comparison of still images (no video) already worked — layouts, Swipe, Difference, See-through, zoom / pan, annotate, opened from a grid selection or by dropping pictures onto the lightbox (backlog 18, checked in the browser). Its top-bar hint still said "Click play · drag scrub · [ ] shift layer"; with pictures only it now reads "Drag / middle-drag pan · wheel / right-drag zoom …", and with a video "[ ] shift clip".
-- **Where:** app/static/compare.js — `HINT_VIDEO` / `HINT_PICS` / `HINT_KEYS`, set in `build()` (runs on every layer change).
-- **Notes:** backlog 18 is closed on that check; if the owner meant something else (e.g. the lightbox's own compare of one picture with no versions — `K` then flashes "select 2 or more"), it is item 21's merge into the lightbox.
-- **Review:** a fresh reviewer agent found no bugs (checked: `build()` reruns on every layer add / remove; Space / click / `[` `]` do nothing with pictures only); its nit (middle-drag missing from the pictures hint) is added.

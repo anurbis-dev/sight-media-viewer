@@ -543,6 +543,18 @@ window.addEventListener("popstate", route);
 function isStandalone(){ return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
 const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+// ---- no page zoom ---------------------------------------------------------------------------------
+// The app does its own zoom (pictures, the 3D / splat viewer). A pinch that the browser took as page
+// zoom (a second finger on a bar, a slip between pointer handlers) blew the whole UI up past the screen
+// edges. The viewport meta says user-scalable=no (Android Chrome); iOS Safari ignores that, so its
+// gesture events and any multi-touch move are cancelled here too. The app's own pinches run on pointer
+// events and are unaffected. A double-tap page zoom is already off (touch-action: manipulation / none).
+{
+  const stop = (e) => { if (e.cancelable) e.preventDefault(); };
+  for (const t of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(t, stop, { passive: false });
+  document.addEventListener("touchmove", (e) => { if (e.touches.length > 1) stop(e); }, { passive: false });
+}
+
 // ---- full screen ---------------------------------------------------------------------------------
 // Auto (Settings, on by default): the first tap goes full screen in a browser tab that can (Android
 // Chrome, desktop browsers). Not on iOS: iPhone Safari has no page full screen, iPad Safari limits

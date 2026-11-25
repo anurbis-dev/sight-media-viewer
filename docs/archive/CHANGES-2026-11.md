@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.14 — 2026-11-24 — Compare with pictures only: the top bar's hint fits
+- **What:** a comparison of still images (no video) already worked — layouts, Swipe, Difference, See-through, zoom / pan, annotate, opened from a grid selection or by dropping pictures onto the lightbox (backlog 18, checked in the browser). Its top-bar hint still said "Click play · drag scrub · [ ] shift layer"; with pictures only it now reads "Drag / middle-drag pan · wheel / right-drag zoom …", and with a video "[ ] shift clip".
+- **Where:** app/static/compare.js — `HINT_VIDEO` / `HINT_PICS` / `HINT_KEYS`, set in `build()` (runs on every layer change).
+- **Notes:** backlog 18 is closed on that check; if the owner meant something else (e.g. the lightbox's own compare of one picture with no versions — `K` then flashes "select 2 or more"), it is item 21's merge into the lightbox.
+- **Review:** a fresh reviewer agent found no bugs (checked: `build()` reruns on every layer add / remove; Space / click / `[` `]` do nothing with pictures only); its nit (middle-drag missing from the pictures hint) is added.
+
 ## 0.122.13 — 2026-11-24 — Lightbox: Tab right after opening refits the picture
 - **What:** pressing Tab (library beside the viewer) right after the lightbox opened could leave the picture fitted to the old, wider window. Now it refits to the narrower viewer.
 - **Where:** app/static/index.html `attachViewer` — the `.view` ResizeObserver, `openMode`.
