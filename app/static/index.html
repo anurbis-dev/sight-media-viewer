@@ -300,7 +300,11 @@ body.touch-sel-on .insp.open { bottom: 84px; }
 .card.miss { opacity: .5; }
 /* Ctrl held = box-select mode (same arrow cursor as on a canvas board); see the ctrl-down toggle in the key handlers. */
 html.ctrl-down .card { cursor: default; }
-.card .rv { position: absolute; left: 8px; top: 8px; z-index: 3; max-width: calc(100% - 16px); padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 15px; color: #fff; background: rgb(208 52 44 / .92); box-shadow: 0 1px 4px rgb(0 0 0 / .4); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .badges { position: absolute; left: 8px; top: 8px; z-index: 3; display: flex; align-items: center; gap: 4px; max-width: calc(100% - 16px); pointer-events: none; }
+.card .badges[hidden] { display: none; }
+.card .loose { flex: none; width: 12px; height: 12px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 2px rgb(0 0 0 / .35), 0 1px 3px rgb(0 0 0 / .45); }
+.card .loose[hidden] { display: none; }
+.card .rv { min-width: 0; max-width: 100%; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 15px; color: #fff; background: rgb(208 52 44 / .92); box-shadow: 0 1px 4px rgb(0 0 0 / .4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .rv[hidden] { display: none; }
 .card .rv.review { background: rgb(255 159 10 / .95); color: #1d1300; }
 .card .rv.changes { background: rgb(208 52 44 / .95); }
@@ -325,18 +329,18 @@ html.ctrl-down .card { cursor: default; }
 /* The name/info block is laid over the bottom of the thumbnail instead of sitting under it, so it takes
    no layout space (the thumbnail always fills the card's frame) and needs only a slim margin of its own.
    Compact rows keep their inline text. */
-.card:not(.compact) .meta { position: absolute; left: var(--card-pad); right: var(--card-pad); bottom: var(--card-pad); z-index: 2; padding: 14px 8px 5px; border-radius: 0 0 var(--thumb-radius) var(--thumb-radius); background: linear-gradient(to top, rgb(0 0 0 / .72), rgb(0 0 0 / .4) 62%, transparent); color: #fff; pointer-events: none; text-shadow: 0 1px 2px rgb(0 0 0 / .5); }
+.card:not(.compact) .meta { position: absolute; left: var(--card-pad); right: var(--card-pad); bottom: var(--card-pad); z-index: 2; padding: 14px 8px 5px; border-radius: 0 0 var(--thumb-radius) var(--thumb-radius); background: linear-gradient(to top, rgb(0 0 0 / .72), rgb(0 0 0 / .4) 62%, transparent); color: var(--thumb-fg, #fff); pointer-events: none; text-shadow: 0 1px 2px rgb(0 0 0 / .5); }
 .meta .n, .meta .k, .meta .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta .n { font-size: calc(var(--text-size) - 2px); }
 .meta .k, .meta .x { font-size: calc(var(--text-size) - 4px); color: var(--subtle); margin-top: 2px; }
-.card:not(.compact) .meta .k, .card:not(.compact) .meta .x { color: rgb(255 255 255 / .72); }
+.card:not(.compact) .meta .k, .card:not(.compact) .meta .x { color: color-mix(in srgb, var(--thumb-fg, #fff) 72%, transparent); }
 /* A thumbnail too short for the stacked info lines (a wide image in masonry, a small tile) packs them:
    "pack2" keeps the name line and joins the other fields into one line (.j); "pack1" puts that joined
    line on the name's row, where the name gives way (ellipsis) so the fields stay readable. */
 .meta .j { display: none; }
 .card.pack1 .meta, .card.pack2 .meta { padding-top: 8px; }
 .card.pack1 .meta .k, .card.pack1 .meta .x, .card.pack2 .meta .k, .card.pack2 .meta .x { display: none; }
-.card.pack1 .meta .j, .card.pack2 .meta .j { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--text-size) - 4px); color: rgb(255 255 255 / .72); }
+.card.pack1 .meta .j, .card.pack2 .meta .j { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--text-size) - 4px); color: color-mix(in srgb, var(--thumb-fg, #fff) 72%, transparent); }
 .card.pack2 .meta .j { margin-top: 2px; }
 .card.pack1 .meta { display: flex; align-items: baseline; gap: 8px; }
 .card.pack1 .meta .n { flex: 1 1 auto; min-width: 24px; }
@@ -347,12 +351,15 @@ html.ctrl-down .card { cursor: default; }
    --cap-n-lh / --cap-j-lh, and layout() reserves exactly that height (L.meta) in both grid and masonry
    — keep the CSS and capMetrics() in step or rows overlap / leave gaps. */
 .card.capb .thumb { flex: none; }
-.card.capb .meta { position: static; flex: none; padding: 4px 2px 0; background: none; color: var(--fg); text-shadow: none; border-radius: 0; }
+.card.capb .meta { position: static; flex: none; padding: 4px 2px 0; background: none; color: var(--thumb-fg, var(--fg)); text-shadow: none; border-radius: 0; }
 .card.capb .meta .k, .card.capb .meta .x { display: none; }
 .card.capb .meta .n { font-size: calc(var(--text-size) - 1px); line-height: var(--cap-n-lh); height: var(--cap-n-lh); }
-.card.capb .meta .j { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--text-size) - 2px); line-height: var(--cap-j-lh); height: var(--cap-j-lh); color: var(--subtle); }
+.card.capb .meta .j { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--text-size) - 2px); line-height: var(--cap-j-lh); height: var(--cap-j-lh); color: var(--thumb-fg-dim, var(--subtle)); }
 .card.capb .meta .j:empty { display: none; }
-.card.capb.on .meta .n { color: var(--accent-fg); }
+.card.capb.on .meta .n { color: var(--thumb-fg, var(--accent-fg)); }
+.card.compact .meta { color: var(--thumb-fg, var(--fg)); }
+.insp .sec-body { margin: 2px 2px 8px; }
+.insp .sec-body .wait { color: var(--subtle); font-size: calc(var(--text-size) - 3px); }
 .empty { display: grid; place-items: center; min-height: 50vh; color: var(--subtle); font-size: 15px; text-align: center; padding: 24px; }
 .shimmer { background: linear-gradient(90deg, var(--subtle), var(--fg), var(--subtle)); background-size: 180% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sh 1.6s linear infinite; }
 @keyframes sh { to { background-position: -80% 0; } }
@@ -936,6 +943,7 @@ const SORT_OPTIONS = [
 // must be defined before `state` below, since state.theme = loadTheme() reads DEFAULT_THEME.
 const DEFAULT_THEME = {
   name: true, kind: true, created: false, res: false, size: false, videoCache: 128, videoAhead: 70,
+  snapPx: 22, // Ctrl-scrub snap to an annotated frame, in pointer px (was a fixed 10)
   // Graphite (0.54.0): Inter 13 px, compact rows, one blue accent, frameless cards captioned underneath.
   bg: "#17181b", fg: "#e9eaec", border: "#e9eaec", button: "#5b8cff", accent: "#5b8cff",
   font: "Inter", textSize: 13,
@@ -2197,6 +2205,8 @@ function clampTile(n){ return Math.min(TILE_MAX, Math.max(TILE_MIN, n)); }
 function clampCache(n){ return Math.min(2048, Math.max(32, Math.round(Number(n) || 128))); }
 // Percent of the video RAM window kept ahead of the playhead (the rest behind it), Settings → Video.
 function clampAhead(n){ return Math.min(90, Math.max(50, Math.round(Number(n) || 70))); }
+// How close the pointer must be (px on the scrub control) before Ctrl snaps to an annotated frame.
+function clampSnap(n){ const x = Math.round(Number(n)); return Math.min(64, Math.max(6, Number.isFinite(x) ? x : 22)); }
 
 function loadTheme(){
   let saved = {};
@@ -2208,6 +2218,7 @@ function loadTheme(){
   if (Object.keys(mig).length && (mig.secColor === undefined || mig.secSize === undefined)) Object.assign(t, secFallback({ ...t, secColor: mig.secColor, secSize: mig.secSize }));
   t.videoCache = clampCache(t.videoCache);
   t.videoAhead = clampAhead(t.videoAhead);
+  t.snapPx = clampSnap(t.snapPx);
   return t;
 }
 // 0.54.0 changed the default look (Graphite). A theme saved before it holds every key, so the new
@@ -2284,6 +2295,14 @@ function applyUi(){
   document.documentElement.classList.toggle("canvas-no-names", !t.name);
   r.setProperty("--card-pad", t.cardPad + "px");
   r.setProperty("--card-bg", t.cardBg);
+  // Thumbnail captions. Unset: white on the picture, the interface text colour under it.
+  if (t.thumbFg){
+    r.setProperty("--thumb-fg", t.thumbFg);
+    r.setProperty("--thumb-fg-dim", `color-mix(in srgb, ${t.thumbFg} 68%, transparent)`);
+  } else {
+    r.removeProperty("--thumb-fg");
+    r.removeProperty("--thumb-fg-dim");
+  }
   r.setProperty("--menu-row-h", t.menuRowH + "px");
   r.setProperty("--menu-gap", t.menuGap + "px");
   r.setProperty("--wave-color", t.waveColor);
@@ -2746,7 +2765,7 @@ function ensureCard(a, i, L, pos){
     el = document.createElement("button");
     el.type = "button";
     el.dataset.id = a.id;
-    el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div><div class="rv" hidden></div>`;
+    el.innerHTML = `<div class="thumb"></div><div class="meta"><div class="n"></div><div class="k"></div><div class="x c"></div><div class="x r"></div><div class="x s"></div><div class="j"></div></div><div class="badges" hidden><span class="loose" hidden></span><div class="rv" hidden></div></div>`;
     el.draggable = false;
     // A native drag always starts after ~4px and cannot be armed later (Blink gives the press up once the
     // tile was not draggable at that move), so the 4px start is kept and what follows is deferred instead:
@@ -2887,13 +2906,18 @@ function ensureCard(a, i, L, pos){
     el.querySelector(".meta").hidden = !!L.compact;
     el.classList.toggle("trk-video", !!a.trkVideo);
   }
-  // Review state / open notes from the lightbox review panel.
+  // Review state / open notes from the lightbox review panel, and a red dot when the file
+  // still has drawings that were never added to a note (same corner).
+  const loose = el.querySelector(".loose");
+  loose.hidden = !(a.loose_draw > 0);
+  loose.title = a.loose_draw > 0 ? `${a.loose_draw} drawing${a.loose_draw > 1 ? "s" : ""} not in a note` : "";
   const rv = el.querySelector(".rv");
   const rvText = [a.review ? REVIEW_LABEL[a.review] || "" : "", a.open_notes ? `${a.open_notes} open` : ""].filter(Boolean).join(" · ");
   rv.hidden = !rvText;
   rv.textContent = rvText;
   rv.className = "rv" + (a.review ? " " + a.review : "");
   rv.title = a.open_notes ? `${a.open_notes} open review note${a.open_notes > 1 ? "s" : ""}` : "";
+  el.querySelector(".badges").hidden = loose.hidden && rv.hidden;
   fillThumb(el, a, false, pos);
   return el;
 }
@@ -4473,6 +4497,62 @@ insp.addEventListener("click", (e) => {
   saveLayout();
   renderInsp();
 });
+// Same collapsible band as the sidebar sections (sectionHeader): a .sec.toggle header, the body
+// under it, open unless state.navCollapse[key] (saved with the layout).
+function inspSec(title, key, body){
+  const open = !state.navCollapse[key];
+  return `<div class="sec toggle${open ? " open" : ""}" data-insp-sec="${esc(key)}"><span class="sec-title">${esc(title)}</span><span class="chev">›</span></div>${open ? `<div class="sec-body">${body}</div>` : ""}`;
+}
+function assetFactRows(a){
+  const folder = (a.path || "").replace(/[\\/][^\\/]*$/, "");
+  const dim = a.width && a.height ? `${a.width} × ${a.height}` : "";
+  const mp = dim && (a.kind === "image" || a.ext === ".psd") ? `${dim} · ${(a.width * a.height / 1e6).toFixed(1)} MP` : dim;
+  return [
+    ["Type", `${KIND[a.kind] || a.kind}${a.ext ? " · " + String(a.ext).replace(/^\./, "").toUpperCase() : ""}`],
+    ["Size", a.size != null ? `${bytes(a.size)} (${Number(a.size).toLocaleString("en-US")} bytes)` : null],
+    ["Dimensions", mp || null],
+    ["Duration", a.duration ? fmtTime(a.duration) : null],
+    ["Animated", a.animated ? "Yes" : null],
+    ["Modified", fmtDate(a.mtime) || null],
+    ["Added", fmtDate(a.added_at) || null],
+    ["Status", a.status === "missing" ? "Missing" : "On disk"],
+    ["Review", a.review ? (REVIEW_LABEL[a.review] || a.review) : null],
+    ["Open notes", a.open_notes ? String(a.open_notes) : null],
+    ["Loose drawings", a.loose_draw ? String(a.loose_draw) : null],
+    ["Folder", folder || null],
+  ];
+}
+// File metadata (EXIF, codecs, font tables, …) shared with the lightbox info overlay.
+const assetInfoCache = new Map();
+const assetInfoErr = new Map();
+const assetInfoWait = new Map();
+function assetInfoKey(a){ return a.id + ":" + a.mtime + ":" + a.size; }
+function ensureAssetInfo(a){
+  const key = assetInfoKey(a);
+  if (assetInfoCache.has(key) || assetInfoErr.has(key)) return Promise.resolve();
+  const pending = assetInfoWait.get(key);
+  if (pending) return pending;
+  const p = api("/api/assets/" + a.id + "/info").then((r) => {
+    assetInfoCache.set(key, (r && r.sections) || []);
+    if (assetInfoCache.size > 200) assetInfoCache.delete(assetInfoCache.keys().next().value);
+  }).catch((err) => {
+    let msg = String(err && err.message || err);
+    if (/Not Found/.test(msg)) msg = "restart Sight to load the new server code";
+    assetInfoErr.set(key, msg.slice(0, 160));
+    setTimeout(() => assetInfoErr.delete(key), 5000);
+  }).finally(() => { if (assetInfoWait.get(key) === p) assetInfoWait.delete(key); });
+  assetInfoWait.set(key, p);
+  return p;
+}
+function metaSectionsHtml(a){
+  const key = assetInfoKey(a);
+  if (assetInfoErr.has(key)) return inspSec("Details", "inspErr", `<div class="wait">Details unavailable: ${esc(assetInfoErr.get(key))}</div>`);
+  const cached = assetInfoCache.get(key);
+  if (!cached) return inspSec("Details", "inspWait", `<div class="wait">Reading file…</div>`);
+  if (!cached.length) return "";
+  return cached.map((sec, i) => inspSec(sec.title, "insp:" + sec.title + ":" + i, infoRows(sec.rows))).join("");
+}
+let inspInfoSeq = 0;
 function renderInsp(){
   const sel = selectedAssets();
   if (!sel.length){
@@ -4486,25 +4566,20 @@ function renderInsp(){
   }
   const a = sel[0];
   if (a.trk) return renderTrkInsp(a);
+  const keepNote = document.activeElement?.id === "note" && insp.contains(document.activeElement) ? document.activeElement.value : null;
   const thumb = thumbSrc(a);
   // The inspector preview is only the thumbnail, for every kind: players, waveforms, font/text
   // stages, PSD layers and the live 3D viewer (all full-file downloads) live in the lightbox alone.
   // applyThumb() fills the slot in place when a thumbnail that wasn't ready yet lands.
   let preview = `<div class="insp-thumb" data-thumb="${a.id}">${thumb ? `<img src="${thumb}" alt="" />` : `<div class="ph">${KIND[a.kind]||a.kind}</div>`}</div>`;
   if (a.status === "missing") preview = `<div style="color:var(--danger)">File not found</div>`;
-  const st = a.status === "missing" ? "missing" : "on disk";
-  const fileOpen = !state.navCollapse.inspFile;
+  const noteVal = keepNote != null ? keepNote : (a.note || "");
   insp.innerHTML = `
-    <div class="sec toggle${fileOpen ? " open" : ""}" data-insp-sec="inspFile"><span class="sec-title">File</span><span class="chev">›</span></div>
-    ${fileOpen ? `<div class="preview">${preview}</div>
-    <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:10px 0 2px;overflow-wrap:anywhere">${esc(a.name)}</h2>
-    <div class="sub" style="word-break:break-all">${esc(a.path)}</div>
-    <dl>
-      <dt>Type</dt><dd>${KIND[a.kind]||a.kind} ${a.ext}</dd>
-      <dt>Size</dt><dd>${bytes(a.size)}</dd>
-      <dt>Frame</dt><dd>${a.width && a.height ? a.width+"×"+a.height : "—"}</dd>
-      <dt>Status</dt><dd>${st}</dd>
-    </dl>` : `<h2 class="insp-name">${esc(a.name)}</h2>`}
+    <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:2px 0 2px;overflow-wrap:anywhere">${esc(a.name)}</h2>
+    <div class="sub" style="word-break:break-all;margin-bottom:8px">${esc(a.path)}</div>
+    ${inspSec("File", "inspFile", `<div class="preview">${preview}</div>${infoRows(assetFactRows(a))}`)}
+    ${metaSectionsHtml(a)}
+    ${inspSec("Library", "inspLib", `
     <label class="field">Rating
       <select id="rating">${[0,1,2,3,4,5].map(n => `<option value="${n}" ${a.rating===n?"selected":""}>${n ? n : "—"}</option>`).join("")}</select>
     </label>
@@ -4514,16 +4589,30 @@ function renderInsp(){
       <div class="suggest" id="tagSuggest" hidden></div>
     </label>
     <label class="field">Note
-      <textarea id="note">${esc(a.note||"")}</textarea>
-    </label>
+      <textarea id="note">${esc(noteVal)}</textarea>
+    </label>`)}
     ${actionButtons()}
   `;
   insp.querySelectorAll(".preview img").forEach(watchPixelation);
   paintTagChips(sel);
-  $("rating").onchange = () => patchMany(sel.map(x => x.id), { rating: Number($("rating").value) });
-  bindTagInput(sel);
-  $("note").onblur = () => patchMany(sel.map(x => x.id), { note: $("note").value });
+  const rating = $("rating");
+  if (rating) rating.onchange = () => patchMany(sel.map(x => x.id), { rating: Number(rating.value) });
+  if ($("tags")) bindTagInput(sel);
+  const note = $("note");
+  if (note){
+    note.onblur = () => patchMany(sel.map(x => x.id), { note: note.value });
+    if (keepNote != null) note.focus();
+  }
   bindActions(sel);
+  const seq = ++inspInfoSeq;
+  const infoKey = assetInfoKey(a);
+  if (!assetInfoCache.has(infoKey) && !assetInfoErr.has(infoKey)){
+    ensureAssetInfo(a).then(() => {
+      if (seq !== inspInfoSeq) return;
+      const now = selectedAssets();
+      if (now.length === 1 && now[0].id === a.id && !now[0].trk) renderInsp();
+    });
+  }
 }
 
 // A fanned pile of up to five thumbnails (the last one on top) with a "N files" note past that —
@@ -4554,14 +4643,15 @@ function renderInspMany(sel){
   const note = shared(sel.map(a => a.note || ""));
   const dd = (s) => s.multi ? `<dd class="dd-multi">Multiple values</dd>` : `<dd>${esc(s.value)}</dd>`;
   insp.innerHTML = `
-    <div class="preview"><div class="stack">${stack}</div></div>
-    <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:10px 0 2px;overflow-wrap:anywhere">${sel.length} selected</h2>
+    <h2 style="font-weight:600;font-size:calc(var(--text-size) + 2px);line-height:1.25;margin:2px 0 8px;overflow-wrap:anywhere">${sel.length} selected</h2>
+    ${inspSec("File", "inspFile", `<div class="preview"><div class="stack">${stack}</div></div>
     <dl>
       <dt>Type</dt>${dd(type)}
       <dt>Size</dt>${dd(size)}
       <dt>Frame</dt>${dd(frame)}
       <dt>Status</dt>${dd(status)}
-    </dl>
+    </dl>`)}
+    ${inspSec("Library", "inspLib", `
     <label class="field">Rating
       <select id="rating">
         ${rating.multi ? `<option value="" selected>Multiple values</option>` : ""}
@@ -4575,7 +4665,7 @@ function renderInspMany(sel){
     </label>
     <label class="field">Note
       <textarea id="note" placeholder="${note.multi ? "Multiple values" : ""}">${note.multi ? "" : esc(note.value)}</textarea>
-    </label>
+    </label>`)}
     ${actionButtons()}
   `;
   for (const img of insp.querySelectorAll(".stack i img")){
@@ -4584,14 +4674,16 @@ function renderInspMany(sel){
     else img.addEventListener("load", sync, { once: true });
   }
   paintTagChips(sel);
-  $("rating").onchange = () => {
-    const v = $("rating").value;
+  const ratingEl = $("rating");
+  if (ratingEl) ratingEl.onchange = () => {
+    const v = ratingEl.value;
     if (v === "") return;
     patchMany(sel.map(x => x.id), { rating: Number(v) });
   };
-  bindTagInput(sel);
-  $("note").onblur = () => {
-    const v = $("note").value;
+  if ($("tags")) bindTagInput(sel);
+  const noteEl = $("note");
+  if (noteEl) noteEl.onblur = () => {
+    const v = noteEl.value;
     if (note.multi && !v) return;
     patchMany(sel.map(x => x.id), { note: v });
   };
@@ -6902,7 +6994,7 @@ function attachViewer(stage, a, src, opts = {}){
       to: (frac, ev) => {
         if (handed) return;
         const dur = el.duration || 0, t = scrubT0 + frac * dur;
-        seekVideo(scrubSnapped(ev) ? scrubSnap(t, SNAP_PX / Math.max(1, wrap.clientWidth) * dur * (ev.shiftKey ? FINE_SCRUB : 1)) : t);
+        seekVideo(scrubSnapped(ev) ? scrubSnap(t, snapPx() / Math.max(1, wrap.clientWidth) * dur * (ev.shiftKey ? FINE_SCRUB : 1)) : t);
       },
       end: () => { if (!handed) endScrub(); handed = false; },
     } : null,
@@ -7445,7 +7537,7 @@ function bindVBar(el, seekVideo, beginScrub, endScrub){
     const r = track.getBoundingClientRect();
     const dur = el.duration || 0, w = Math.max(r.width, 1);
     const t = Math.min(dur, Math.max(0, ((e.clientX - r.left) / w) * dur));
-    return scrubSnapped(e) ? scrubSnap(t, SNAP_PX / w * dur) : t; // Ctrl: the nearest annotated frame
+    return scrubSnapped(e) ? scrubSnap(t, snapPx() / w * dur) : t; // Ctrl: the nearest annotated frame
   };
   const onMove = (e) => seekVideo(tAt(e));
   const onUp = (e) => {
@@ -7843,9 +7935,10 @@ let rotDown = false, rotTool = null; // R held; the annotator's tool before that
 const rotHeld = () => rotDown;
 function seqTotal(){ return seqDurs().reduce((a, x) => a + x, 0); }
 // Ctrl held while scrubbing (the picture, the video bar, the sequence bar): the playhead snaps to the nearest
-// annotated frame — a timeline mark, annotate.js marks() — within SNAP_PX of the pointer (tolS: those px in seconds
-// on that control). Nothing that near: the pointer's own time. Touch has no Ctrl: a tap on a mark goes there.
-const SNAP_PX = 10;
+// annotated frame — a timeline mark, annotate.js marks() — within snapPx of the pointer (Settings → Video →
+// Annotation snap; tolS: those px in seconds on that control). Nothing that near: the pointer's own time.
+// Touch has no Ctrl: a tap on a mark goes there.
+const snapPx = () => clampSnap(state.theme.snapPx);
 const scrubSnapped = (e) => !!(e && (e.ctrlKey || e.metaKey));
 function scrubSnap(t, tolS){ const x = annot.snapTime(t, tolS); return x == null ? t : x; }
 // The same over the whole sequence (T: sequence time): every clip's marks (s.marks), the clip on screen's
@@ -7892,7 +7985,7 @@ function seqScrubBegin(e, fine){
     drag.T = Math.max(0, Math.min(seqTotal() - 0.001, drag.T0 + (ev.clientX - drag.x) / drag.w * drag.scale * (drag.fine ? 0.1 : 1)));
     // Ctrl: the nearest annotated frame of any clip (drag.T itself stays unsnapped, so letting go of Ctrl
     // goes on from the pointer)
-    seqDragTo(drag, scrubSnapped(ev) ? seqSnap(drag.T, SNAP_PX / drag.w * drag.scale * (drag.fine ? 0.1 : 1)) : drag.T);
+    seqDragTo(drag, scrubSnapped(ev) ? seqSnap(drag.T, snapPx() / drag.w * drag.scale * (drag.fine ? 0.1 : 1)) : drag.T);
   };
   const up = (ev) => {
     if (ev.pointerId !== drag.pid) return;
@@ -8042,7 +8135,7 @@ function bindSeqBar(bar){
   const move = (e) => {
     if (!drag || !light?.seq) return;
     const r = track.getBoundingClientRect(), w = Math.max(r.width, 1), T = Math.max(0, Math.min(1, (e.clientX - r.left) / w)) * seqTotal();
-    seqDragTo(drag, scrubSnapped(e) ? seqSnap(T, SNAP_PX / w * seqTotal()) : T);
+    seqDragTo(drag, scrubSnapped(e) ? seqSnap(T, snapPx() / w * seqTotal()) : T);
   };
   track.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !light?.seq) return;
@@ -8559,8 +8652,6 @@ function toggleV3DPanel(){
 // Clicking an entry highlights its polygons (and redraws the UV pane if it is open).
 // Stays open across assets and sessions (sight.lightInfo); only fetched while it is visible,
 // cached per file version. A failed request is shown, not cached (e.g. a server not restarted yet).
-const lightInfoCache = new Map();
-const lightInfoErr = new Map();
 function lightInfoOn(){
   try { return localStorage.getItem("sight.lightInfo") === "1"; } catch { return false; }
 }
@@ -8599,8 +8690,8 @@ function renderLightInfo(){
   if (!on) return;
   const a = assetById(light.id);
   if (!a){ el.innerHTML = ""; return; }
-  const key = a.id + ":" + a.mtime + ":" + a.size;
-  const cached = lightInfoCache.get(key);
+  const key = assetInfoKey(a);
+  const cached = assetInfoCache.get(key);
   const folder = (a.path || "").replace(/[\\/][^\\/]*$/, "");
   let html = `<h4>File</h4>` + infoRows([
     ["Name", a.name],
@@ -8613,7 +8704,7 @@ function renderLightInfo(){
     ["Folder", folder],
   ]);
   if (cached) html += cached.map((sec) => `<h4>${esc(sec.title)}</h4>` + infoRows(sec.rows)).join("");
-  else if (lightInfoErr.has(key)) html += `<div class="err">Details unavailable: ${esc(lightInfoErr.get(key))}</div>`;
+  else if (assetInfoErr.has(key)) html += `<div class="err">Details unavailable: ${esc(assetInfoErr.get(key))}</div>`;
   else html += `<div class="wait">Reading file…</div>`;
   const scene = light.sceneInfo;
   if (scene && scene.id === a.id) html += `<h4>${esc(scene.title)}</h4>` + infoRows(scene.rows);
@@ -8638,21 +8729,9 @@ function renderLightInfo(){
     img.alt = "";
     slot.replaceWith(img);
   });
-  if (cached || lightInfoErr.has(key) || light.infoLoading === key) return;
+  if (cached || assetInfoErr.has(key)) return;
   const id = a.id;
-  light.infoLoading = key;
-  api("/api/assets/" + id + "/info").then((r) => {
-    lightInfoCache.set(key, (r && r.sections) || []);
-    if (lightInfoCache.size > 200) lightInfoCache.delete(lightInfoCache.keys().next().value);
-  }).catch((err) => {
-    let msg = String(err && err.message || err);
-    if (/Not Found/.test(msg)) msg = "restart Sight to load the new server code";
-    lightInfoErr.set(key, msg.slice(0, 160));
-    setTimeout(() => lightInfoErr.delete(key), 5000); // retried on the next render after that
-  }).finally(() => {
-    if (light && light.infoLoading === key) light.infoLoading = null;
-    if (light && light.id === id) renderLightInfo();
-  });
+  ensureAssetInfo(a).then(() => { if (light && light.id === id) renderLightInfo(); });
 }
 function onLightInfoClick(e){
   const head = e.target.closest(".sec[data-sec]");
@@ -10564,11 +10643,11 @@ function bindThemeSliders(root){
   });
 }
 
-function sliderRow(label, key, min, max, step, unit){
+function sliderRow(label, key, min, max, step, unit, title){
   // A plain div, not a <label> — wrapping the custom .bslider widget in a <label> made the
   // browser forward a synthetic click to its first labelable descendant (the "‹" nudge
   // button) on every click anywhere in the row, corrupting single-click-to-edit.
-  return `<div class="opt"><span>${esc(label)}</span><div class="bslider" data-slider="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-unit="${unit || ""}"></div></div>`;
+  return `<div class="opt"${title ? ` title="${esc(title)}"` : ""}><span>${esc(label)}</span><div class="bslider" data-slider="${key}" data-min="${min}" data-max="${max}" data-step="${step}" data-unit="${unit || ""}"></div></div>`;
 }
 
 const THEME_SAVE_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"/><rect x="8" y="3" width="7" height="5"/><rect x="8" y="13" width="8" height="8"/></svg>`;
@@ -10706,6 +10785,7 @@ function renderOptions(){
       <div class="settings-sub">Video</div>
       ${sliderRow("RAM cache", "videoCache", 32, 2048, 32, " MB")}
       ${sliderRow("Cache ahead", "videoAhead", 50, 90, 5, " %")}
+      ${sliderRow("Annotation snap", "snapPx", 6, 64, 1, " px", "Ctrl (Cmd) while scrubbing a video snaps the playhead to an annotated frame within this many pixels of the pointer")}
 
       <div class="settings-sub">Dictation</div>
       <label class="field" title="Browser: built in, nothing to set up, words appear as you speak. The chip next to the mic (RU / EN…) switches the language in one tap; right-click or long-press it for all languages.&#10;My service: any speech-to-text service you like that speaks the OpenAI-compatible /audio/transcriptions API — a local whisper server, OpenAI, Groq and others. The audio of each phrase goes there; the text comes after each pause.">Engine
@@ -10736,6 +10816,7 @@ function renderOptions(){
       <label class="opt">Text <input type="color" data-color="fg" value="${t.fg}"></label>
       <label class="opt">Section titles <input type="color" data-color="secColor" value="${t.secColor || t.fg}"></label>
       <label class="opt">Thumb block <input type="color" data-color="cardBg" value="${t.cardBg}"></label>
+      <label class="opt" title="Name and info on library thumbnails. Until you pick one, text on the picture stays white and text under the picture follows Text.">Thumbnail text <input type="color" id="thumbFg" value="${t.thumbFg || (t.captions === "over" ? "#ffffff" : t.fg)}"></label>
 
       <div class="settings-sub">Typography</div>
       <label class="opt">Font <select id="fontSel">${FONT_CHOICES.map(([n]) => `<option value="${esc(n)}" ${fontKnown && t.font === n ? "selected" : (!fontKnown && n === "Custom…" ? "selected" : "")}>${esc(n)}</option>`).join("")}</select></label>
@@ -10798,6 +10879,7 @@ function renderOptions(){
   $("viewModeSel").onchange = () => { setViewMode($("viewModeSel").value); };
   $("waveModeSel").onchange = () => { state.theme.waveMode = $("waveModeSel").value; saveTheme(); };
   $("captionsSel").onchange = () => { state.theme.captions = $("captionsSel").value; masonryCache = null; saveTheme(); };
+  $("thumbFg").oninput = () => { state.theme.thumbFg = $("thumbFg").value; saveTheme(); };
   $("zoomAxisSel").onchange = () => { state.theme.zoomAxis = $("zoomAxisSel").value; saveTheme(); };
   $("scanIgnoreApply").onclick = applyScanIgnore;
   bindDictationSettings();

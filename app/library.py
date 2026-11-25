@@ -114,6 +114,14 @@ _OPEN_NOTES_SQL = (
     "AND an.target_asset_id=assets.id AND an.deleted_at IS NULL "
     "AND COALESCE(json_extract(an.data, '$.status'), 'open') != 'done')"
 )
+# Drawings left on the file and never added to a note (annotate.js pendingDrawings: a drawing
+# with no data.note). Notes and the review-state row are not drawings.
+_LOOSE_DRAW_SQL = (
+    "(SELECT COUNT(*) FROM annotations an WHERE an.scope='asset' "
+    "AND an.target_asset_id=assets.id AND an.deleted_at IS NULL "
+    "AND an.kind NOT IN ('note', 'status') "
+    "AND COALESCE(json_extract(an.data, '$.note'), '') = '')"
+)
 
 # The filter builder's conditions (docs/PLAN-trackers.md stage 3b): a tree {"op": "and"|"or", "c": [cond | group]},
 # cond {"f": field, "o": op, "v": value}, as app/static/filter-core.js sends it (`toLibWire`: dates already resolved
@@ -3914,7 +3922,7 @@ class Library:
     _LIST_COLS = (
         "id, source_id, path, name, ext, kind, size, mtime, width, height, "
         "duration, tags, note, rating, status, has_thumb, animated, added_at, "
-        f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes"
+        f"{_REVIEW_SQL} AS review, {_OPEN_NOTES_SQL} AS open_notes, {_LOOSE_DRAW_SQL} AS loose_draw"
     )
 
     def _list_item(self, r) -> dict:

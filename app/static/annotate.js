@@ -1464,6 +1464,7 @@ export function createAnnotator(host){
     let unsel = false;
     for (const id of S.sel){ const it = S.items.get(id); if (!it || !visibleNow(it)){ S.sel.delete(id); unsel = true; } }
     if (unsel && !S.drag){ renderSel(); renderProps(); }
+    if (!S.on) paintPlate();
   }
   const visibleDrawings = () => [...S.items.values()].filter((it) => isDrawing(it) && visibleNow(it));
   // "On screen" for Select all / Clear: a picture / frame / view shows all of its drawings; a board is bigger than
@@ -4491,17 +4492,48 @@ export function createAnnotator(host){
     S.plate = createPlate(el, { storeKey: "sight.annotate.plate" });
     return S.plate;
   }
-  // The plate over the picture while a note is picked and one of its pictures is on screen (runs every tick).
+  // The plate over the picture. While annotating, only the picked note's (its text and the picture's own).
+  // While just watching, the same text for every note that stands on the picture on screen — drawings
+  // already stay up with the mode off (shownOff); the words used to vanish with it. Read-only then.
   function paintPlate(){
-    const n = S.on && S.pinFocus ? S.items.get(S.pinFocus) : null;
-    const cur = n && n.kind === "note" ? platePic(n) : null;
-    if (!cur){ S.plate?.set(null); return; }
+    if (S.on){
+      const n = S.pinFocus ? S.items.get(S.pinFocus) : null;
+      const cur = n && n.kind === "note" ? platePic(n) : null;
+      if (!cur){ S.plate?.set(null); return; }
+      const P = ensurePlate();
+      if (!P) return;
+      const id = n.id, pic = cur.pic;
+      P.set({ key: id + "|" + RC.picKey(pic), num: numOfNote(id), cls: noteCls(n), label: cur.label,
+        theme: n.data.text || "", text: RC.captionOf(n.data, pic, sameFrame), placeholder: "No text for this picture yet",
+        onSave: (v) => setCaptionFor(id, pic, v) });
+      return;
+    }
+    if (!shownOff() || S.hidden){ S.plate?.set(null); return; }
+    const pinned = S.pinFocus ? S.items.get(S.pinFocus) : null;
+    const hits = [];
+    for (const n of notesSorted()){
+      if (pinned && pinned.kind === "note" && n.id !== pinned.id) continue;
+      const cur = platePic(n);
+      if (!cur) continue;
+      const text = RC.captionOf(n.data, cur.pic, sameFrame);
+      const theme = (n.data.text || "").trim();
+      if (!text && !theme) continue;
+      hits.push({ n, cur, text, theme });
+    }
+    if (!hits.length){ S.plate?.set(null); return; }
     const P = ensurePlate();
     if (!P) return;
-    const id = n.id, pic = cur.pic;
-    P.set({ key: id + "|" + RC.picKey(pic), num: numOfNote(id), cls: noteCls(n), label: cur.label,
-      theme: n.data.text || "", text: RC.captionOf(n.data, pic, sameFrame), placeholder: "No text for this picture yet",
-      onSave: (v) => setCaptionFor(id, pic, v) });
+    if (hits.length === 1){
+      const h = hits[0];
+      P.set({ key: "w|" + h.n.id + "|" + RC.picKey(h.cur.pic), num: numOfNote(h.n.id), cls: noteCls(h.n), label: h.cur.label, theme: h.theme, text: h.text });
+      return;
+    }
+    const text = hits.map((h) => {
+      const num = numOfNote(h.n.id);
+      const head = [num ? String(num) + "." : "", h.theme].filter(Boolean).join(" ");
+      return [head, h.text].filter(Boolean).join("\n");
+    }).join("\n\n");
+    P.set({ key: "w|" + hits.map((h) => h.n.id).join(",") + "|" + RC.picKey(hits[0].cur.pic), label: hits[0].cur.label, text });
   }
 
   async function addNote(){
