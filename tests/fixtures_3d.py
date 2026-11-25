@@ -170,10 +170,11 @@ def make_glb(path: Path, anim: bool = False) -> Path:
     return path
 
 
-def make_splat(path: Path) -> Path:
+def make_splat(path: Path, dy: float = 0.0) -> Path:
     """A Gaussian splat (.splat: 32 bytes per splat — position, scale as float32 ×3 each, RGBA and a rotation
     quaternion as uint8 ×4 each): two balls of 400 splats, red at x = -1 and blue at x = +1 (radius 0.5), in the
-    splat's own Y-down frame (both viewers turn it half round X)."""
+    splat's own Y-down frame (both viewers turn it half round X). `dy`: both balls moved by that along the file's
+    Y (so a quarter turn about X changes the bounds)."""
     import math
 
     out = bytearray()
@@ -185,7 +186,7 @@ def make_splat(path: Path) -> Path:
             y = 1 - 2 * (k + 0.5) / 133
             a = math.pi * (3 - math.sqrt(5)) * k
             rr = math.sqrt(max(0.0, 1 - y * y))
-            out += struct.pack("<3f3f4B4B", cx + r * rr * math.cos(a), r * y, r * rr * math.sin(a),
+            out += struct.pack("<3f3f4B4B", cx + r * rr * math.cos(a), dy + r * y, r * rr * math.sin(a),
                                0.06, 0.06, 0.06, *rgba, 255, 128, 128, 128)
     path.write_bytes(bytes(out))
     return path
@@ -207,6 +208,52 @@ def make_splat_ply(path: Path) -> Path:
         x, y, z, sx, sy, sz, r, g, b, a, *_ = struct.unpack_from("<3f3f4B4B", src, i * 32)
         out += struct.pack("<14f", x, y, z, (r / 255 - 0.5) / sh0, (g / 255 - 0.5) / sh0, (b / 255 - 0.5) / sh0,
                            8.0, math.log(sx), math.log(sy), math.log(sz), 1.0, 0.0, 0.0, 0.0)
+    path.write_bytes(bytes(out))
+    return path
+
+
+def make_splat_spz(path: Path, version: int = 2) -> Path:
+    """The same two balls as make_splat, as Niantic's SPZ (gzip of a 16-byte header — magic "NGSP", version,
+    count, SH degree, fractional bits, flags, reserved — then every attribute in its own block: 24-bit fixed-point
+    positions, alpha, colour (SH degree 0 scaled by 0.15), log scale, rotation). The rotation block differs by
+    version: v2 stores x, y, z as bytes (w >= 0 implied), v3 the "smallest three" packed in 32 bits."""
+    import gzip
+    import math
+
+    src = make_splat(path.with_suffix(".tmp.splat")).read_bytes()
+    path.with_suffix(".tmp.splat").unlink()
+    n, frac = len(src) // 32, 12
+    pos, alpha, col, scale, rot = bytearray(), bytearray(), bytearray(), bytearray(), bytearray()
+    sh0 = 0.28209479177387814
+    for i in range(n):
+        x, y, z, sx, sy, sz, r, g, b, a, *_ = struct.unpack_from("<3f3f4B4B", src, i * 32)
+        for v in (x, y, z):
+            pos += (round(v * (1 << frac)) & 0xFFFFFF).to_bytes(3, "little")
+        alpha.append(a)
+        for c in (r, g, b):  # (c/255 - 0.5)/sh0 is the SH dc term; SPZ stores dc * 0.15 + 0.5 as a byte
+            col.append(max(0, min(255, round(((c / 255 - 0.5) / sh0 * 0.15 + 0.5) * 255))))
+        for s_ in (sx, sy, sz):
+            scale.append(max(0, min(255, round((math.log(s_) + 10) * 16))))
+        rot += bytes((128, 128, 128)) if version < 3 else (3 << 30).to_bytes(4, "little")  # identity (w largest)
+    body = struct.pack("<3I4B", 0x5053474E, version, n, 0, frac, 0, 0) + pos + alpha + col + scale + rot
+    path.write_bytes(gzip.compress(body))
+    return path
+
+
+def make_big_splat(path: Path, n: int = 700_000) -> Path:
+    """A big .splat (generated, never committed): `n` small splats in two balls, red at x = -1 and blue at x = +1
+    (radius 0.5), like make_splat's — over the phone app's LoD budget (SPLAT_LOD_PHONE, 600k)."""
+    import math
+    import random
+
+    rnd = random.Random(1)
+    pack = struct.Struct("<3f3f4B4B").pack
+    out = bytearray()
+    for i in range(n):
+        cx, rgba = (-1.0, (230, 40, 40, 255)) if i < n // 2 else (1.0, (40, 80, 230, 255))
+        z, a, r = rnd.uniform(-1, 1), rnd.uniform(0, 2 * math.pi), 0.5 * rnd.random() ** (1 / 3)
+        q = math.sqrt(1 - z * z)
+        out += pack(cx + r * q * math.cos(a), r * z, r * q * math.sin(a), 0.012, 0.012, 0.012, *rgba, 255, 128, 128, 128)
     path.write_bytes(bytes(out))
     return path
 

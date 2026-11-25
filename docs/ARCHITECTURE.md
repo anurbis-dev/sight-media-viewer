@@ -24,7 +24,8 @@ app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: 
                          shading (applyBaseMaterial / applyXray / setWireOverlay), the selection highlight
                          (highlightMaterials / meshHighlight), the UV picture (createUvPainter, readbackCanvas,
                          textureQuad), the animation player (createAnimator), USD reading (parseUsd / usdAsSight) and
-                         splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome) (ES module)
+                         splat placement (SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, turnSplat, splatHome) and level of
+                         detail (SPLAT_LOD_PHONE, splatLodOptions, splatSource, splatBox) (ES module)
 app/static/compare.js    version compare overlay (swipe / tile / strips, over / difference, synced video)
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
 app/static/defaults.json shipped default theme / tile size
@@ -33,7 +34,8 @@ mobile/                  the phone app "Sight Review" (PWA, no build step) — s
 tests/                   test_merge_parity.py (python -m unittest tests.test_merge_parity; needs node);
                          test_pwa.py (phone app: build, pwa_unit.cjs, pwa_e2e.cjs round trip with Sight,
                          pwa_3d.cjs 3D on fixtures_3d.py's two-box GLB through SwiftShader, pwa_3d_formats.cjs
-                         every phone 3D format incl. animated USD and splats; fixtures/parts_v001.usdz + parts.usdc,
+                         every phone 3D format incl. animated USD and splats (.splat, .ply, SPZ v2 / v3; test_big_splat: a
+                         generated 700k-splat file over the phone's LoD budget); fixtures/parts_v001.usdz + parts.usdc,
                          anim.usda / anim_v001.usdz / skel.usda from fixtures/make_anim_usd.py);
                          test_usdz_convert.py (which .usdz the server leaves to the browser; needs usd-core)
 tools/                   archive_changes.py; build_pwa.py (phone app → dist/pwa, --serve PORT); bench_startup.py / bench_grid.py (benchlib.py: isolated SIGHT_HOME
@@ -781,15 +783,43 @@ import map: `three` → `./three/three.module.js`, `three/addons/` → `./three/
   **Gaussian splats (0.53)**: `isSplat` (core `SPLAT_EXT`, or a `.ply` whose header says so) → `createSplatViewer`:
   Spark (`spark.module.js` + `jsm/postprocessing/Pass.js` in the build, `@sparkjsdev/spark` in the import map), a
   SplatMesh from the file's bytes, placed / framed as the lightbox does (core `SPLAT_QUATERNION`, `splatHome`), the
-  same API with the mesh parts inert (`isSplat`, `meshCount` 0, `canExplode` false, `anim` null, `turns` 0 — no turn
-  button, no shading / grid / light icons). Spark sorts in a worker after a render, so the canvas renders a 90-frame
+  same API with the mesh parts inert (`isSplat`, `meshCount` 0, `canExplode` false, `anim` null — no shading / grid /
+  light icons). **Turns (0.56)**: a splat turns as a mesh does — core `turnSplat(THREE, mesh, n)` = `applyTurns` with
+  base `SPLAT_QUATERNION` (the quarter turns about X go on top of the half turn), then `splatBox` / `splatHome` again
+  (the turned bounds; a quarter turn keeps the size, moves the centre). Phone: `o.turns` / `R.meta.turns`, the same
+  turn button, `setView` sets `v.turns`, `turn()` re-frames; `still(cam)` turns the splat to `cam.turns` for the
+  still and back (unseen: the live canvas does not render while `stilling`); `bounds()` is taken at the current turn.
+  Lightbox: `getModelTurns` / `setModelTurns` (`sight.v3dRot`), the camera rig gets `{get, set: turnTo}` as a mesh's
+  (a note's `cam.turns` turns it first), `onV3DRotate` (↻ / Shift+7); the shade bar shows only ↻ for a splat
+  (class `.splat` on `#v3dShade`); the card thumbnail (`renderSplatThumb`) is turned too. Spark sorts in a worker after a render, so the canvas renders a 90-frame
   tail after every change, the viewer warms up (render + `spark.update` until `activeSplats`) before it is handed out,
   and **`still()` returns a Promise** (one at a time): Spark's own sorting off (`autoUpdate = false` — its async
   depth readback leaves a pixel buffer bound, which empties a synchronous read, and a sort under way makes
   `update()` skip a camera), wait out a sort under way, `await spark.update` for the still's own camera, then a
   render into an sRGB render target, read back (rows flipped), `autoUpdate` back on — the live canvas does not
   render meanwhile; a closed viewer throws (never a blank picture that would be cached). Callers `await V.still(...)`
-  (a mesh viewer's still stays synchronous). **Note look (0.53)**: `views3d` keeps a view's newest note's `ctx.v3d`;
+  (a mesh viewer's still stays synchronous).
+  **Big splats (0.55)**: Spark's LoD, asked for only when core `splatCountHint(ext, first 64 KB, size)` says the file
+  is likely over the budget (`splatLodFor`; exact for .splat / .ply / .spz, 4 bytes per splat as an upper bound
+  otherwise) — asking at all switches Spark to another decoder. `splatLodOptions(budget)` = SplatMesh `{lod: true, lodAbove: budget + 1}`: a file
+  with more splats than the budget gets a tiny-LoD tree built in Spark's load worker and keeps **only** the tree
+  (`packedSplats.numSplats` 0, `packedSplats.lodSplats` = originals + merged nodes; `nonLod` off so a phone does not
+  hold both); a file at or under the budget loads exactly as before (no tree, same look). So use core
+  `splatSource(mesh)` for the splats and `splatBox(THREE, mesh)` for the world bounds — `SplatMesh.getBoundingBox`
+  reads only the plain splats (empty for a tree) and unpacks every field (seconds on a phone for millions); `splatBox`
+  reads the float16 centres through a table. Before the first LoD pick lands nothing is drawn (no fallback to the
+  originals). Phone: budget `SPLAT_LOD_PHONE` (600k) as SparkRenderer `lodSplatCount`, `maxStdDev` sqrt(5) only with a
+  tree, pixel ratio ≤ 1.5 and 1 while the camera moved in the last 250 ms (`moved`, set on the controls' change);
+  the render tail also runs while a sort or LoD pick is under way (`sparkBusy`: `spark.sorting`, `lodWorker.queue`)
+  and 30 frames after `spark.currentLod` changes (a pick lands asynchronously). A still sets `spark.renderSize` to its
+  own size (the LoD pixel limit), clears a deferred live update (`updateTimeoutId`), then loops (≤ 6): wait until idle, `update` for its camera, wait until idle, again
+  if `currentLod` changed — Spark's `driveLod` runs inside `update` for that update's camera but only starts a pick
+  when the LoD worker is free (`tryExclusive`) and the pick is only used by the *next* generate. Do not set
+  `minSortIntervalMs` (it defers `driveSort` to a timer, and `update` would return unsorted). `V.lod` = {on, budget,
+  drawn: `activeSplats`, ratio, hint}; `splatCount` with a tree = the hint's exact count, else the tree's. Lightbox (`boot3d`): budget = Spark's
+  per-device default (`spark.defaultSplatTarget()`, 2.5M on a desktop); the hint's head comes from `fetchHead` (a Range request); the
+  info row shows the hint's exact count (else the tree's + "(LoD tree)"); `stop()` disposes the mesh and the SparkRenderer (its workers);
+  the grid thumbnail (`renderSplatThumb`) loads without LoD (only `splatBox`). **Note look (0.53)**: `views3d` keeps a view's newest note's `ctx.v3d`;
   `goView(vk, look)` applies `look || view.v3d` (`applyNoteLook`: `M.lookOfV3d` → shading / light, shown but not
   saved — as Sight's `setV3D`; the device's own look comes back with the next model); every way of opening a note
   (card, Go to, reply, editing its drawing) passes the note's own `v3d` on its own view, view chips the view's; a new note gets

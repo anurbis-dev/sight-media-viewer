@@ -14,6 +14,76 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.56.0 — 2026-11-25 — Gaussian splats turn a quarter about X, like meshes (lightbox and phone)
+- **What:** splats often arrive upside down or Z-up. The lightbox's ↻ button (`Shift+7`, the only button of the shade
+  bar on a splat) and the phone's ⟳ *Turn the model a quarter* now turn a splat as they turn a mesh: a quarter turn
+  about X on top of the half turn every splat gets, re-framed from the turned bounds, remembered per file
+  (lightbox `sight.v3dRot`, its card thumbnail follows; phone `R.meta.turns`).
+- **Where:** `app/static/model3d-core.js` `turnSplat`; `mobile/js/model3d.js` `createSplatViewer` (`turns`, `setTurns`,
+  `getView` / `setView` / `turn`, `still` at `cam.turns`, `bounds()` per turn); `mobile/js/app.js` (turn button no
+  longer hidden for splats, `SPLAT_EXT` import dropped); `app/static/index.html` (`boot3d` splat branch `place` /
+  `turnTo` / camera rig turns / `onV3DRotate`, scene info bounds per turn; `#v3dShade.splat` CSS shows only ↻;
+  `renderSplatThumb` turned); tests (`fixtures_3d.make_splat(dy=)`, `pwa_3d_formats.cjs` `turned`,
+  `test_model_formats` balls_up.splat); ARCHITECTURE splat paragraph, MANUAL.
+- **Notes:**
+  - No new data-contract field: a splat view's `cam.turns` means what it means for a mesh, so a note written at one
+    turn turns the splat back to it when opened (phone `setView`, lightbox camera rig `turns.set` → `turnTo`, which
+    also stores the turn per file — as meshes do). A splat note from before 0.56 has `turns: 0` and still matches.
+  - Only about X (Sight's mesh turn). A splat whose up is another axis (e.g. X-up) cannot be put upright with it;
+    no other axis was added (it would need a new ctx field on both sides).
+  - Phone stills at another turn turn the splat for the still and back while `stilling` (the live canvas waits).
+    The lightbox's view capture is synchronous (as before): right after a turn Spark's sort may still be for the
+    previous pose for a frame.
+  - Review (fresh agent): pose composition, setView order, matrix freshness, persistence / thumbnail, teardown and
+    touch / keys confirmed. Found: on the phone a turn (or a setView with another turn) landing while a still was
+    awaited turned the mesh mid-still and the still's `finally` put back the *old* turn while `turns` / notes said the
+    new one → `stillTurns`: during a still `setTurns` measures the new turn's bounds and puts the mesh straight back
+    at the still's turn; the `finally` turns to the current `turns`. Second pass (same reviewer): fix confirmed, nothing new.
+
+## 0.55.0 — 2026-11-25 — Big Gaussian splats: level of detail (phone and lightbox), lighter phone viewer
+- **What:** a 32 MB .spz (millions of splats) froze a mid-range Android phone. Splats over a budget now load with
+  Spark's LoD tree and draw at most the budget, picked for the camera (coarser out of view / behind it): phone
+  600k, lightbox Spark's per-device default (2.5M on a desktop). The phone viewer also caps the pixel ratio at 1.5
+  (was 2), drops it to 1 while the camera moves, and uses smaller splat footprints (`maxStdDev` sqrt(5)) for big
+  files. Files at or under the budget load exactly as before: LoD is asked for only when a file is likely
+  over the budget (`splatCountHint`: .splat size / 32, a .ply's header, an .spz's gzipped header; .ksplat / .sog
+  4 bytes per splat as an upper bound), Spark's `lodAbove` then decides on the real count.
+- **Where:** `app/static/model3d-core.js` (`SPLAT_LOD_PHONE`, `splatLodOptions`, `splatCountHint`, `splatLodFor`,
+  `splatSource`, `splatBox`),
+  `mobile/js/model3d.js` `createSplatViewer` (LoD options, pixel ratio, render tail, `still()` LoD loop, `V.lod`),
+  `app/static/index.html` (`boot3d` splat branch — now disposes the SplatMesh / SparkRenderer on stop;
+  `fetchHead` (Range request for the hint); `renderSplatThumb` bounds; imports), tests (`fixtures_3d.py`
+  `make_big_splat` + the new `make_splat_spz` SPZ v2 / v3 fixtures; `test_pwa.py` `test_model_formats` now also
+  opens SPZ v2 / v3 and checks small files get no tree, new `test_big_splat`; `pwa_3d_formats.cjs` reports `lod`),
+  ARCHITECTURE (splat paragraph "Big splats").
+- **Notes:**
+  - A big file keeps **only** the LoD tree (`nonLod` off): `packedSplats.numSplats` is 0 and
+    `SplatMesh.getBoundingBox` is empty — use `splatSource` / `splatBox`. Spark does not report the original count
+    once the tree is built: the shown count (phone `splatCount`, lightbox info row) comes from the exact hint, else
+    the tree's (originals + merged nodes, e.g. 700k → 788k; lightbox label "(LoD tree)").
+  - Asking for `lod` at all sends a file through Spark's other decoder (csplatarray), even if `lodAbove` then
+    skips the tree: that is why the hint gates it. An inexact hint errs high (LoD asked, `lodAbove` guards).
+  - Stills (phone): Spark's LoD pick runs in a worker and is used only by the next generate, and is skipped while
+    the worker is busy — `still()` loops update / wait-idle until `currentLod` stops changing, at the still's own
+    render size. Do not add `minSortIntervalMs` (makes `update()` return before the sort).
+  - Nothing is drawn until the first LoD pick lands (no fallback to the originals); the phone warm-up waits up to
+    10 s for a tree (3 s otherwise). The tree is built in Spark's load worker (700k splats ≈ 1.3 s in desktop
+    Chromium); not measured on a phone.
+  - Not verified on a real Mali GPU (SwiftShader only). Desktop LoD checked in Playwright with a temporarily
+    lowered budget (700k-splat file, tree built, framed right); a 2.7M-splat file is too slow to draw in
+    SwiftShader to check at the real budget. Grid thumbnails still load without LoD.
+  - Review (fresh agent): (1) `still()` did not cancel a deferred live update (`spark.updateTimeoutId`, Spark's
+    non-preUpdate path) that could sort for the live camera during the still's `update` → cleared after
+    `autoUpdate = false` (the lightbox takes no Spark-sorted stills); (2) the lightbox never disposed the
+    SparkRenderer / SplatMesh, leaking an LoD worker with a tree copy per open → disposed in the viewer's `stop()`
+    (the thumbnail already did); (3) `lod: true` for every file changed the decoder for small ones (.ksplat / .sog
+    untested) → LoD only when `splatCountHint` says likely over budget; (4) info row showed the tree count → the
+    hint's exact count. Tests: small-splat hint asserted {800, exact} for .splat / .ply / SPZ v2 / v3; big
+    splat count 700000. Second pass (same reviewer): all four fixes confirmed; found a deferred Spark update
+    (`setTimeout(updateInternal)` from the last render) firing after `spark.dispose()` and re-creating its sort / LoD
+    workers → every dispose (lightbox, thumbnail, phone) now clears `spark.updateTimeoutId` first (confirmed by the same reviewer). Not covered by tests:
+    the hint of an .spz over 64 KB (truncated gzip slice; falls back to size/4 on any error).
+
 ## 0.54.0 — 2026-11-16 — Desktop: Graphite theme (compact, Inter), captions under thumbnails, resizable side panels
 - **What:** new default look *Graphite*, picked from five variants on a mock-up stand: Inter 13 px, 26 px menu rows,
   30 px controls, sidebar 208 / inspector 260 px, one blue accent, frameless cards with name + one info line
@@ -382,42 +452,3 @@ Add new entries directly below this line.
   another reviewer's file, if any) goes into whatever note is added next, under this reviewer's name.
   Review (fresh agent): no correctness bug; the empty-Add case and two stale comments were fixed. Checked in Playwright (video:
   stroke on one frame, reload, note on another frame took it, no loose rows left).
-
-## 0.46.2 — 2026-11-13 — 3D: view numbers show only while a note is made, above its field
-- **What:** the numbered 3D view chips are no longer a row at the top of the review panel. They show only while a
-  note is being made (drawing, or typing in its fields), right above the note field, titled *Views of this note*,
-  and list only the views the new note will hold: those of the drawings waiting for it and the camera on screen (a
-  dimmed dashed next number when that camera is no view yet — adding the note makes it). A chip still goes to its
-  view. Added notes show their views as their pictures in the card.
-- **Where:** `app/static/annotate.js` — `.an-views` moved into `.an-compose`, `renderViews` (rewritten; called from
-  `renderPending` too; markup signature on `el.dataset.sig`), CSS `.an-views`, `.an-vchip.new`. `MANUAL.md` (3D).
-- **Notes:** a chip's `mousedown` is prevented so the note field keeps the focus (compose mode stays on). Review
-  (fresh agent): found that a module-level signature left an empty block after the panel was rebuilt (fixed: the
-  signature lives on the element) and a CSS margin on the new span (fixed). Known, left: a click on a chip while the
-  camera is still easing off a view can be lost (the chips rebuild as the current view changes). Checked in
-  Playwright with a GLB (swiftshader): hidden at rest, shown while drawing / typing, gone after Add, next-number chip
-  after an orbit.
-
-## 0.46.1 — 2026-11-13 — Annotations: drawings added to a note are editable again (0.45.0 lock lifted)
-- **What:** the owner asked to roll back 0.45.0: a drawing added to a note (or a reply) can again be moved, scaled,
-  restyled, nudged, reordered, partly erased and retyped, as before 0.45.0. Undo again reaches back over adding a
-  note; drawings it takes off a note now go to the next note instead of hanging loose (below).
-- **Where:** `app/static/annotate.js` — `baked` now returns false (the `baked` / `editable` gate and every call site
-  of 0.45.0 / 0.45.1 stay), `addNote` no longer clears undo / redo; `S.adopt`, `applyStates`, `composerBack`. `MANUAL.md`. `app/version.py`.
-- **Notes:** supersedes 0.45.0 (archived) and the lock part of 0.45.1. Kept on purpose: the gate itself, so the
-  planned lock is one function (see `docs/PLAN.md` "Note locks": an artist may not edit a supervisor's original
-  notes, only answer with their own; a resolved note is locked entirely). 0.45.1's other fixes stay: Front / Back
-  put the selection above / below every drawing, copies of a reply's drawing clear `data.reply`, the Hold selector
-  shows for an editable selection (now any). Its dashed outline for a baked selection is unreachable until a lock
-  returns. Checked in Playwright (scratch library): a note's stroke moves with the select tool and Ctrl+Z puts it back.
-  Review (fresh agent): no lock path left outside the gate; it pointed out that undo across a note leaves drawings
-  hanging, fixed here: a drawing that an undo / redo takes off its note (`applyStates`: note set before, null after)
-  goes into `S.adopt`, and `pendingDrawings` / the compose mode take it whatever frame / view it is on, so the next
-  note picks it up instead of leaving it loose on its frame. Undoing "add note" (`step.added`, `composerBack`) also
-  puts its screenshots back into the pending row and its text / picture text back into the fields (a field already
-  typed in gets it on a new line); redo takes them out again when a field still holds exactly that text, and makes
-  the picture clean as adding did. A second fresh-agent review of this found no correctness bug (the tagged step is
-  always the addNote step; stale `S.adopt` ids are harmless — every use also needs `!data.note`). Checked in Playwright (video, two frames + a screenshot: undo, then a note on a third frame took
-  both drawings and the screenshot, no loose rows left). Not cleaned: loose drawings already left in libraries by
-  earlier sessions (older than the file's opening, not on screen) still wait on their frames.
-  Front / Back keep the 0.45.1 rule (z may go below 0; storage accepts it).

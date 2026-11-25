@@ -45,7 +45,18 @@ const [base, ...sets] = process.argv.slice(2);
         V.setView({ p: [1, 0, 1.2], t: [1, 0, 0], fov: 50 }); await new Promise(requestAnimationFrame);
         const onlyRed = await count({ p: [-1, 0, 1.2], t: [-1, 0, 0], fov: 50 });
         V.setView(v0);
-        return { count: V.splatCount, ...live, other, racing, onlyRed };
+        // Turned (a file whose balls sit off the X axis: bounds per turn; the live still after each turn; a still of a
+        // view written at turn 0 — close to the red ball — taken while the splat is turned once: only red).
+        let turned = null;
+        if (/_up\./.test(window.__sightReview.R.meta.asset.name)){
+          const b = [V.bounds()], pics = [], near = { p: [-1, -1, 1.2], t: [-1, -1, 0], fov: 50, turns: 0 };
+          for (let i = 1; i <= 2; i++){ V.turn(); b.push(V.bounds()); await new Promise(requestAnimationFrame); pics.push(await count(null)); }
+          V.setView(Object.assign({}, v0, { turns: 1 })); V.home();
+          const t1 = V.getView().turns, liveNear = await count({ ...near, turns: 1 }), atTurn0 = await count(near), after = V.getView().turns;
+          V.setView(v0);
+          turned = { bounds: b, pics, t1, liveNear, atTurn0, after, back: V.getView().turns };
+        }
+        return { count: V.splatCount, lod: V.lod, ...live, other, racing, onlyRed, turned };
       }
       function animOf(V){ const A = V && V.anim; if (!A) return null; A.seek(A.duration); const r = { clips: A.clips.length, duration: A.duration, bounds: V.bounds(), centres: V.meshCentres() }; A.seek(0);
         // (a skinned mesh's bounds are cached by three: the pictures of the two poses tell it moved)

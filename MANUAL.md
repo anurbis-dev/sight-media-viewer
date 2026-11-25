@@ -363,7 +363,8 @@
   pick them together with it (select several files in Files); they are kept with the model on the device,
   and a `.gltf` without its `.bin` says which file it needs. **Gaussian splats** (`.splat`, `.spz`, `.ksplat`,
   `.sog`, a splat `.ply`) open too, placed as Sight places them: notes and drawings go on views as on a model;
-  a splat has no meshes, shading, light, explode or turn, so those controls are not shown.
+  a splat has no meshes, shading, light or explode, so those controls are not shown; it does turn (the
+  ⟳ button below, for a splat that arrives upside down or Z-up), as a mesh does.
   One finger turns the camera round the model, two zoom and pan.
   The header has the eye (drawings), ⟳ *Turn the model a quarter* (which way is up, as Sight's turn
   button; kept with the review) and ⛶ *Frame the model*. **Tap a part** of the model to pick its mesh
@@ -538,4 +539,6 @@
     by name beside the model (or in the usual texture folders); other USD files it references are not loaded.
   - Gaussian splats (`.splat`, `.spz`, `.ksplat`, `.sog`, and splat-flavored `.ply`) get their
     own interactive viewer too (drag to orbit, same camera keys) — no shading controls, since a
-    splat's color is already baked in.
+    splat's color is already baked in. The toolbar keeps the 90° turn button (`Shift+7`): a splat that
+    arrives upside down or Z-up turns a quarter about X per click, framed again, remembered per file
+    (its card follows), exactly as a mesh turns — so views and notes match the phone app.

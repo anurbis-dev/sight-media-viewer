@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import build_pwa  # noqa: E402
-from tests.fixtures_3d import make_fbx, make_glb, make_gltf_with_bin, make_obj, make_splat, make_splat_ply, make_stl  # noqa: E402
+from tests.fixtures_3d import make_fbx, make_glb, make_gltf_with_bin, make_big_splat, make_obj, make_splat, make_splat_ply, make_splat_spz, make_stl  # noqa: E402
 from app import review  # noqa: E402
 from app.library import Library  # noqa: E402
 
@@ -358,8 +358,10 @@ class RoundTrip(unittest.TestCase):
         anim = [d / n for n in ("anim.usda", "anim_v001.usdz", "skel.usda")]
         for f in anim:
             shutil.copyfile(ROOT / "tests" / "fixtures" / f.name, f)
-        # Gaussian splats (Spark): a .splat and a 3DGS .ply (told from a mesh .ply by its header)
-        splats = [make_splat(d / "balls.splat"), make_splat_ply(d / "balls.ply")]
+        # Gaussian splats (Spark): a .splat, a 3DGS .ply (told from a mesh .ply by its header), SPZ v2 and v3
+        splats = [make_splat(d / "balls.splat"), make_splat_ply(d / "balls.ply"),
+                  make_splat_spz(d / "balls_v2.spz", 2), make_splat_spz(d / "balls_v3.spz", 3),
+                  make_splat(d / "balls_up.splat", dy=1.0)]  # (off the X axis: a quarter turn moves the bounds)
         args = [str(f) for f in files] + [str(gltf), f"{gltf},{gltf.with_suffix('.bin')}", str(usdz), str(usdc), str(mats)] + [str(f) for f in anim + splats]
         sight = {}
         try:  # Sight's own USDZ conversion (optional usd-core): the phone must lay the model out the same way
@@ -414,7 +416,7 @@ class RoundTrip(unittest.TestCase):
         self.assertIsNone(res["parts_v001.usdz"]["anim"])
         # Splats: no meshes, both balls in the still (it waits for Spark's sort), placed as Sight places them
         # (half a turn about X: the balls at x ±1, radius 0.5).
-        for name in ("balls.splat", "balls.ply"):
+        for name in ("balls.splat", "balls.ply", "balls_v2.spz", "balls_v3.spz"):
             u = res[name]
             self.assertEqual((u["err"], u["meshes"], u["explode"], u["anim"], u["log"]), (None, 0, False, None, []), name)
             self.assertEqual(u["splat"]["count"], 800, name)
@@ -427,12 +429,57 @@ class RoundTrip(unittest.TestCase):
             self.assertEqual(u["splat"]["onlyRed"]["blue"], 0, name)
             for a, b in zip(u["bounds"]["min"] + u["bounds"]["max"], [-1.5, -0.5, -0.5, 1.5, 0.5, 0.5]):
                 self.assertAlmostEqual(a, b, delta=0.01, msg=name)
+            self.assertFalse(u["splat"]["lod"]["on"], name)  # under the LoD budget: loaded as before, no tree
+            self.assertEqual(u["splat"]["lod"]["hint"], {"n": 800, "exact": True}, name)  # (header / size: no LoD asked)
+        # A splat turns as a mesh does (a quarter about X on top of the half turn), its bounds follow: file y = +1 is
+        # world y = -1 at turn 0, z = +1 after one turn, y = +1 after two; both balls in the still after each turn.
+        t = res["balls_up.splat"]["splat"]["turned"]
+        for got, want in zip(t["bounds"], ([-1.5, -1.5, -0.5, 1.5, -0.5, 0.5], [-1.5, -0.5, 0.5, 1.5, 0.5, 1.5],
+                                           [-1.5, 0.5, -0.5, 1.5, 1.5, 0.5])):
+            for a, b in zip(got["min"] + got["max"], want):
+                self.assertAlmostEqual(a, b, delta=0.01)
+        for pic in t["pics"]:
+            self.assertGreater(pic["red"], 50)
+            self.assertGreater(pic["blue"], 50)
+        # A still is taken at its camera's own turn: the red ball's turn-0 view shows it while the splat is turned
+        # once (that camera at turn 1 sees nothing), and the live turn is back afterwards.
+        self.assertEqual((t["t1"], t["after"], t["back"]), (1, 1, 0))
+        self.assertGreater(t["atTurn0"]["red"], 500)
+        self.assertEqual(t["atTurn0"]["blue"], 0)
+        self.assertEqual(t["liveNear"]["red"] + t["liveNear"]["blue"], 0)
         self.assertIsNone(res["boxes.obj"]["splat"])
         for name, glb in sight.items():  # Sight's converted GLB: the same meshes in the same order, at the same place
             u, s = res[name], res[glb.name]
             self.assertEqual((u["meshes"], u["textured"], pattern(u["colours"])), (s["meshes"], s["textured"], pattern(s["colours"])), name)
             for a, b in zip(sum(u["centres"], []) + u["bounds"]["min"] + u["bounds"]["max"], sum(s["centres"], []) + s["bounds"]["min"] + s["bounds"]["max"]):
                 self.assertAlmostEqual(a, b, places=4, msg=name)
+
+    def test_big_splat(self) -> None:
+        # Over the phone's LoD budget (700k splats, SPLAT_LOD_PHONE = 600k): Spark's LoD tree, at most the budget
+        # drawn, both balls in the stills (also of views that are not the live camera), bounds from the tree.
+        d = self.tmp / "big"
+        d.mkdir()
+        f = make_big_splat(d / "big.splat")
+        r = subprocess.run([NODE, str(ROOT / "tests" / "pwa_3d_formats.cjs"), self.base, str(f)],
+                           capture_output=True, text=True, timeout=600, cwd=ROOT / "tests")
+        self.assertEqual(r.returncode, 0, r.stderr[-4000:])
+        u = json.loads(r.stdout)["big.splat"]
+        self.assertEqual((u["err"], u["meshes"], u["log"]), (None, 0, []))
+        lod = u["splat"]["lod"]
+        self.assertTrue(lod["on"])
+        self.assertGreater(lod["drawn"], 0)
+        self.assertLessEqual(lod["drawn"], lod["budget"])
+        self.assertEqual(lod["budget"], 600_000)
+        self.assertEqual(u["splat"]["count"], 700_000)  # (from the file, not the tree's count)
+        self.assertEqual(lod["hint"], {"n": 700_000, "exact": True})
+        for k in ("live", "other", "racing"):
+            s = u["splat"] if k == "live" else u["splat"][k]
+            self.assertGreater(s["red"], 50, k)
+            self.assertGreater(s["blue"], 50, k)
+        self.assertGreater(u["splat"]["onlyRed"]["red"], 500)
+        self.assertEqual(u["splat"]["onlyRed"]["blue"], 0)
+        for a, b in zip(u["bounds"]["min"] + u["bounds"]["max"], [-1.5, -0.5, -0.5, 1.5, 0.5, 0.5]):
+            self.assertAlmostEqual(a, b, delta=0.02)
 
     def test_touch(self) -> None:
         if not self.video:

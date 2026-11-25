@@ -9,7 +9,7 @@
 import { applyTurns, frameObject3d, meshOrder, buildExplodeRig, applyExplode, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, FBX_TEXTURE_WAIT_MS, ENV_PRESETS,
   applyBaseMaterial, applyXray, setWireOverlay, createUvPainter, createAnimator, highlightMaterials, meshHighlight,
-  SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, modelGrid, tintGrid } from "../core/model3d-core.js";
+  SPLAT_EXT, SPLAT_FILE_TYPE_BY_EXT, turnSplat, splatHome, SPLAT_LOD_PHONE, splatCountHint, splatLodFor, splatSource, splatBox, modelGrid, tintGrid } from "../core/model3d-core.js";
 
 const BG = "#0a0a0b";  // Sight's lightbox 3D default background (setBg: this phone's choice; stills keep this one)
 const hexBg = (x) => (/^#[0-9a-f]{6}$/i.test(String(x || "")) ? String(x).toLowerCase() : BG);
@@ -458,41 +458,49 @@ export async function createViewer(host, blob, o = {}){
 }
 
 // A Gaussian splat (Spark's SplatMesh, the lightbox's splat viewer): placed and framed as Sight places it
-// (SPLAT_QUATERNION, splatHome), so a view's camera means the same. A splat has no meshes, materials, lights or
-// explode and is not turned (Sight's splat viewer has no turn either): those parts of the viewer's API do
-// nothing (meshCount 0, canExplode false, anim null; isSplat says which). Spark sorts the splats for the camera
+// (SPLAT_QUATERNION, splatHome) and turned as Sight turns one (turnSplat: the mesh viewers' quarter turn about X,
+// framed again from the turned bounds), so a view's camera + turns mean the same. A splat has no meshes, materials,
+// lights or explode: those parts of the viewer's API do nothing (meshCount 0, canExplode false, anim null; isSplat says which). Spark sorts the splats for the camera
 // in a worker after each render, so the canvas renders on for a while after every change, and still() waits
 // for the sort at its camera (it returns a Promise here).
+// A big splat (over SPLAT_LOD_PHONE splats) gets Spark's LoD tree: at most that many splats are drawn, picked
+// for the camera (coarser out of view and behind it). Pixel ratio at most 1.5, and 1 while the camera moves.
+const SPLAT_DPR = 1.5, SPLAT_DPR_MOVING = 1, SPLAT_SETTLE_MS = 250;
 async function createSplatViewer(host, blob, o = {}){
   let hostEl = host;
   const L = await load(), THREE = L.THREE;
   const { SparkRenderer, SplatMesh } = await import("@sparkjsdev/spark");
   const fileBytes = new Uint8Array(await blob.arrayBuffer());
+  // (LoD only for a file likely over the budget: see splatLodFor)
+  const hint = await splatCountHint(extOf(o.name), fileBytes.subarray(0, 65536), fileBytes.length);
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   const cv = renderer.domElement;
   let spark = null, mesh = null;
   const scrap = () => {
     try { if (mesh) mesh.dispose(); } catch {}
-    try { if (spark) spark.dispose(); } catch {}
+    try { if (spark){ clearTimeout(spark.updateTimeoutId); spark.updateTimeoutId = -1; spark.dispose(); } } catch {}  // (a deferred update would recreate its workers)
     try { renderer.dispose(); renderer.forceContextLoss(); } catch {}
     cv.remove();
   };
-  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const dpr = Math.min(devicePixelRatio || 1, SPLAT_DPR), dprMoving = Math.min(dpr, SPLAT_DPR_MOVING);
+  let ratio = dpr, moved = -Infinity, seenLod = null;
   renderer.setPixelRatio(dpr);
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
   const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 2000);
   try {
-    spark = new SparkRenderer({ renderer });
+    spark = new SparkRenderer({ renderer, lodSplatCount: SPLAT_LOD_PHONE });
     scene.add(spark);
-    mesh = new SplatMesh({ fileBytes, fileType: SPLAT_FILE_TYPE_BY_EXT[extOf(o.name)] || "ply" });
+    mesh = new SplatMesh({ fileBytes, fileType: SPLAT_FILE_TYPE_BY_EXT[extOf(o.name)] || "ply", ...splatLodFor(hint, SPLAT_LOD_PHONE) });
     scene.add(mesh);
     await mesh.initialized;
   } catch (e){ scrap(); throw e; }
-  mesh.quaternion.fromArray(SPLAT_QUATERNION);
-  mesh.updateMatrixWorld(true);
-  const box = mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld);
-  const home0 = splatHome(THREE, box);
+  let turns = (o.turns | 0) & 3;
+  turnSplat(THREE, mesh, turns);
+  const lod = !!(mesh.packedSplats && mesh.packedSplats.lodSplats);
+  // (a big one: smaller footprints — less overdraw, hardly visible at that density)
+  if (lod) spark.maxStdDev = Math.sqrt(5);
+  let home0 = splatHome(THREE, splatBox(THREE, mesh));
   camera.near = home0.near; camera.far = home0.far;
   camera.updateProjectionMatrix();
   cv.className = "c3d";
@@ -503,6 +511,7 @@ async function createSplatViewer(host, blob, o = {}){
   controls.dampingFactor = 0.12;
   controls.zoomToCursor = true;
   let live = true, w = 0, h = 0, explode = 0, busy = Promise.resolve(), stilling = false, bg = BG;
+  let stillTurns = null;  // the turn the mesh is at for a still under way (null: none)
   // Frames still to render (Spark's sort for the last camera lands a few frames after it moved).
   let warm = 90;
   const kick = () => { warm = 90; };
@@ -527,14 +536,23 @@ async function createSplatViewer(host, blob, o = {}){
     camera.updateProjectionMatrix();
     kick();
   };
-  controls.addEventListener("change", kick);
+  controls.addEventListener("change", () => { moved = performance.now(); kick(); });
+  // Spark is still at work: a sort under way, or its LoD worker picking splats for the last camera.
+  const sparkBusy = () => !!(spark.sorting || (spark.lodWorker && spark.lodWorker.queue != null));
   const tick = () => {
     if (!live) return;
     requestAnimationFrame(tick);
     if (stilling) return;
     size();
     controls.update();
-    if (warm <= 0 || !w) return;
+    if (!w) return;
+    // A lower pixel ratio while the camera moves, the full one once it has settled.
+    const r = performance.now() - moved < SPLAT_SETTLE_MS ? dprMoving : dpr;
+    if (r !== ratio){ ratio = r; renderer.setPixelRatio(r); renderer.setSize(w, h); warm = Math.max(warm, 90); }
+    // A new LoD pick lands asynchronously, maybe after the tail: render on until it is drawn and sorted.
+    if (spark.currentLod !== seenLod){ seenLod = spark.currentLod; warm = Math.max(warm, 30); }
+    else if (warm <= 0 && sparkBusy()) warm = 1;
+    if (warm <= 0) return;
     warm--;
     renderer.render(scene, camera);
     if (o.onMove) o.onMove();
@@ -550,18 +568,35 @@ async function createSplatViewer(host, blob, o = {}){
     kick();
   };
   const setFov = (f) => { if (f && Math.abs(camera.fov - f) > 1e-6){ camera.fov = f; camera.updateProjectionMatrix(); } };
+  // A quarter turn about X (as a mesh viewer's setTurns); the bounds and the opening camera follow it.
+  const setTurns = (n) => {
+    n = (n | 0) & 3;
+    if (n === turns) return false;
+    turns = n;
+    turnSplat(THREE, mesh, turns);
+    home0 = splatHome(THREE, splatBox(THREE, mesh));
+    // (during a still the mesh stays at the still's turn — measured at the new one, put back at once; the
+    // still's finally turns it to `turns`)
+    if (stillTurns !== null) turnSplat(THREE, mesh, stillTurns);
+    camera.near = home0.near; camera.far = home0.far;
+    camera.updateProjectionMatrix();
+    kick();
+    return true;
+  };
   const api = {
     THREE, canvas: cv, isSplat: true, meshCount: 0, canExplode: false, anim: null,
-    get turns(){ return 0; }, get explode(){ return explode; },
+    get turns(){ return turns; }, get explode(){ return explode; },
     aspect: () => { size(); return w && h ? w / h : (hostEl.clientWidth || 1) / (hostEl.clientHeight || 1); },
     attach(el){ hostEl = el; el.appendChild(cv); w = 0; h = 0; size(); kick(); },
-    getView: () => ({ p: camera.position.toArray(), t: controls.target.toArray(), fov: camera.fov, turns: 0 }),
+    getView: () => ({ p: camera.position.toArray(), t: controls.target.toArray(), fov: camera.fov, turns }),
     setView(v){
       if (!v || !v.p || !v.t) return;
+      setTurns(v.turns || 0);
       setFov(v.fov || 50);
       place(v.p, v.t);
     },
-    turn(){ return 0; },
+    // A quarter turn about X (Z-up → Y-up first), framed again — as Sight's turn button.
+    turn(){ setTurns(turns + 1); api.home(); return turns; },
     home(){ setFov(50); frame(); place(camera.position.toArray(), controls.target.toArray()); },
     getHidden: () => [], setHidden(){},
     // Kept (a view from a mesh-shaped review may carry one); nothing moves.
@@ -582,20 +617,36 @@ async function createSplatViewer(host, blob, o = {}){
         const out = document.createElement("canvas");
         out.width = W; out.height = H;
         const v = cam && cam.p && cam.t ? cam : api.getView();
+        // (at the camera's own turn: the splat turns for the still and back, unseen — the live canvas waits)
+        const vt = (v.turns | 0) & 3;
         const sc = new THREE.PerspectiveCamera(v.fov || 50, W / H, camera.near, camera.far);
         sc.position.fromArray(v.p);
         sc.lookAt(new THREE.Vector3().fromArray(v.t));
         sc.updateMatrixWorld();
         const rt = new THREE.WebGLRenderTarget(W, H, { colorSpace: THREE.SRGBColorSpace });
         stilling = true;
+        stillTurns = vt;
+        if (vt !== turns) turnSplat(THREE, mesh, vt);
         // Spark sorts on its own after every render (autoUpdate): that sort reads back asynchronously with a pixel
         // buffer bound, which makes the synchronous read below fail (an empty picture), and a sort under way makes
         // update() skip this camera. So: no sorting of its own meanwhile, wait for one under way, sort for this
         // camera, then render and read.
+        // A big splat's LoD pick (worker, asynchronous) is for the camera of the update that started it, at the
+        // render size of the last render: so the still's size first, then update until the pick for this camera has
+        // landed and been drawn and sorted (a pick under way would skip this camera: wait it out first).
         spark.autoUpdate = false;
+        // (a deferred live update — Spark's non-preUpdate path — would sort for the live camera meanwhile)
+        if (spark.updateTimeoutId !== -1 && spark.updateTimeoutId != null){ clearTimeout(spark.updateTimeoutId); spark.updateTimeoutId = -1; }
         try {
-          while (spark.sorting && live) await new Promise((r) => setTimeout(r, 10));
-          if (live) await spark.update({ scene, camera: sc });
+          const idle = async () => { while (sparkBusy() && live) await new Promise((r) => setTimeout(r, 10)); };
+          if (spark.renderSize) spark.renderSize.set(W, H);
+          for (let i = 0; i < 6 && live; i++){
+            await idle();
+            const lod0 = spark.currentLod;
+            if (live) await spark.update({ scene, camera: sc });
+            await idle();
+            if (spark.currentLod === lod0) break;
+          }
           if (!live) throw new Error("The viewer was closed");
           const prev = renderer.getRenderTarget();
           renderer.setRenderTarget(rt);
@@ -610,6 +661,9 @@ async function createSplatViewer(host, blob, o = {}){
           out.getContext("2d").putImageData(img, 0, 0);
         } finally {
           rt.dispose();
+          // (back to the live turn — the one now, should a turn have come in meanwhile)
+          stillTurns = null;
+          if (vt !== turns) turnSplat(THREE, mesh, turns);
           spark.autoUpdate = true;
           stilling = false;
           kick();
@@ -621,8 +675,15 @@ async function createSplatViewer(host, blob, o = {}){
     },
     refresh: kick,
     meshCentres: () => [], meshColours: () => [], texturedMeshes: () => 0,
-    get splatCount(){ return (mesh.packedSplats && mesh.packedSplats.numSplats) || mesh.numSplats || 0; },
-    bounds(){ return { min: box.min.toArray(), max: box.max.toArray() }; },
+    // Splats in the file (a big file's from its header; if unknown, its LoD tree's — originals and merged nodes);
+    // `lod`: whether it has the tree, the budget, how many Spark draws now (≤ budget), the pixel ratio, the count hint.
+    get splatCount(){
+      if (lod && hint.exact) return hint.n;
+      const s = splatSource(mesh); return (s && s.numSplats) || mesh.numSplats || 0;
+    },
+    get lod(){ return { on: lod, budget: SPLAT_LOD_PHONE, drawn: spark.activeSplats || 0, ratio, hint }; },
+    // The world bounds (splat centres) at the current turn.
+    bounds(){ const box = splatBox(THREE, mesh); return { min: box.min.toArray(), max: box.max.toArray() }; },
     dispose(){
       live = false;
       controls.dispose();
@@ -634,7 +695,7 @@ async function createSplatViewer(host, blob, o = {}){
   // Warm it up off screen at the opening camera (bounded) before the viewer is handed out.
   stilling = true;
   try {
-    const until = performance.now() + 3000;
+    const until = performance.now() + (lod ? 10000 : 3000);
     renderer.render(scene, camera);
     await spark.update({ scene, camera });
     while (!(spark.activeSplats > 0) && performance.now() < until && live){

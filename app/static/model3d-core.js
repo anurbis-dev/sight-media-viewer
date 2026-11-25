@@ -281,11 +281,85 @@ export const SPLAT_FILE_TYPE_BY_EXT = { ".ply": "ply", ".spz": "spz", ".splat": 
 // Most splat exporters (COLMAP / 3DGS) use a Y-down, Z-forward frame: a half turn about X makes it three's
 // Y-up, as Spark's own examples do. Both viewers place a splat this way, so a view's camera means the same.
 export const SPLAT_QUATERNION = [1, 0, 0, 0];
+// A splat turned `n` quarter turns about X on top of SPLAT_QUATERNION — the mesh viewers' turn (applyTurns), so a
+// view's camera + turns (FORMAT.md 3D ctx) mean the same for a splat on the phone and in the lightbox. Its bounds
+// change with the turn: take splatBox / splatHome again afterwards (a quarter turn keeps the size, moves the centre).
+export function turnSplat(THREE, mesh, n){
+  applyTurns(THREE, mesh, { q: new THREE.Quaternion().fromArray(SPLAT_QUATERNION), p: new THREE.Vector3() }, (n | 0) & 3);
+}
 // The opening camera of a splat (both viewers): from its bounds (Box3), off the corner, as the lightbox
 // frames one. {p, t, near, far}.
 export function splatHome(THREE, box){
   const size = box.getSize(new THREE.Vector3()).length() || 1, c = box.getCenter(new THREE.Vector3());
   return { p: c.clone().add(new THREE.Vector3(size * 0.7, size * 0.45, size * 0.7)), t: c, near: size / 100, far: size * 20, size };
+}
+// Level of detail for big splats (Spark's LoD tree): the phone app's budget of splats drawn per frame (Spark's
+// own default for Android is 1e6, too much for a mid-range Mali GPU); the lightbox uses Spark's per-device default.
+export const SPLAT_LOD_PHONE = 600000;
+// SplatMesh options: a file with more splats than `budget` gets an LoD tree, built in Spark's worker while it
+// loads (the original splats are not kept: `nonLod` off, so a phone does not hold both); a file at or under the
+// budget loads as before (no tree), so it looks exactly the same.
+export function splatLodOptions(budget){ return { lod: true, lodAbove: Math.max(1, Math.round(budget)) + 1 }; }
+// How many splats a file has, from its first bytes (`head`: 64 KB or the whole file) and its size, so LoD is asked
+// for only when the file is likely over the budget (asking sends any file, small ones too, through Spark's other
+// decoder). {n, exact}: exact for .splat (32 bytes each), a .ply (its header) and an .spz (count in the gzipped
+// header); otherwise a generous upper bound (4 bytes per splat — .ksplat, .sog, an unreadable header).
+export async function splatCountHint(ext, head, size){
+  ext = String(ext || "").toLowerCase();
+  if (ext === ".splat" && size > 0) return { n: Math.floor(size / 32), exact: true };
+  try {
+    if (ext === ".ply"){
+      const m = /element\s+vertex\s+(\d+)/.exec(new TextDecoder("latin1").decode(head).split("end_header")[0]);
+      if (m) return { n: Number(m[1]), exact: true };
+    }
+    if (ext === ".spz" && typeof DecompressionStream !== "undefined"){
+      const ds = new DecompressionStream("gzip"), w = ds.writable.getWriter(), r = ds.readable.getReader();
+      w.write(head).catch(() => {}); w.close().catch(() => {});  // (a truncated stream errors at its end, after the header)
+      let buf = new Uint8Array(0);
+      try {
+        while (buf.length < 16){
+          const { done, value } = await r.read();
+          if (done) break;
+          const nb = new Uint8Array(buf.length + value.length); nb.set(buf); nb.set(value, buf.length); buf = nb;
+        }
+      } finally { r.cancel().catch(() => {}); }
+      const dv = buf.length >= 16 ? new DataView(buf.buffer, 0, 16) : null;
+      if (dv && dv.getUint32(0, true) === 0x5053474E) return { n: dv.getUint32(8, true), exact: true };
+    }
+  } catch {}
+  return { n: Math.ceil((size || 0) / 4), exact: false };
+}
+// The SplatMesh options for a file of `hint` (splatCountHint) under `budget`: LoD only if it may be over it
+// (lodAbove then decides on the real count); none at all otherwise, so the file loads exactly as before.
+export function splatLodFor(hint, budget){ return hint && hint.n > budget ? splatLodOptions(budget) : {}; }
+// The mesh's splats as loaded: the plain ones, or the LoD tree's (originals and merged nodes) for a big file.
+export function splatSource(mesh){
+  const p = mesh.packedSplats || mesh.extSplats;
+  if (!p) return null;
+  return p.numSplats ? p : (p.lodSplats || p);
+}
+// Its world bounds (splat centres), as SplatMesh.getBoundingBox(true), which only reads the plain splats (empty
+// for an LoD-only mesh) and unpacks every field of every splat. Here only the centres (float16 in a packed
+// splat's words 1 and 2), through a lookup table. Anything else falls back to Spark's own.
+let halfTable = null;
+export function splatBox(THREE, mesh){
+  const s = splatSource(mesh), a = s && s.packedArray, n = s ? s.numSplats || 0 : 0;
+  if (!a || !n || !(a instanceof Uint32Array)) return mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld);
+  if (!halfTable){
+    halfTable = new Float32Array(65536);
+    for (let h = 0; h < 65536; h++){
+      const e = (h >> 10) & 31, m = h & 1023, sg = h & 32768 ? -1 : 1;
+      halfTable[h] = e === 0 ? sg * m * 2 ** -24 : e === 31 ? (m ? NaN : sg * Infinity) : sg * (1 + m / 1024) * 2 ** (e - 15);
+    }
+  }
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0, i4 = 0; i < n; i++, i4 += 4){
+    const w1 = a[i4 + 1], x = halfTable[w1 & 65535], y = halfTable[w1 >>> 16], z = halfTable[a[i4 + 2] & 65535];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  return new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)).applyMatrix4(mesh.matrixWorld);
 }
 
 // A .ply is a Gaussian splat (not a mesh) when its header has per-splat opacity and SH / scale /

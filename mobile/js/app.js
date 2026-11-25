@@ -9,7 +9,6 @@ import * as DB from "./store.js";
 import { kindOf, assetKey, extOf, probeImage, probeVideo, scaled, Grabber, ScrubCache, seek, fmtTime, fmtBytes, decode, hex16, dropCanvas, canvasBlob } from "./media.js";
 import { videoFps } from "./mp4.js";
 import { createViewer } from "./model3d.js";
-import { SPLAT_EXT } from "../core/model3d-core.js";
 import * as M from "./model.js";
 import { gatherReport, toHtml, toPdf, fmtDate } from "./report.js";
 import { runHotkeys } from "../core/keys.js";
@@ -1657,7 +1656,6 @@ function paint3dTools(){
   if (!els || !R || !is3d()) return;
   const V = R.v3d;
   paintSel3d(V);
-  if (els.turnB) els.turnB.hidden = !!(V && V.isSplat);
   const tp = els.tp;
   if (!tp) return;
   tp.textContent = "";
@@ -1966,9 +1964,8 @@ function buildStage(){
   eye.classList.toggle("on", R.hide);
   tools.appendChild(eye);
   if (a.kind === "model3d"){
-    // (no turn for a Gaussian splat — Sight's splat viewer has none: paint3dTools hides it)
+    // (a Gaussian splat turns too: it often arrives upside down or Z-up)
     els.turnB = tools.appendChild(ibtn("turn", "Turn the model a quarter (which way is up)", turnModel));
-    els.turnB.hidden = SPLAT_EXT.includes(extOf(a.name));  // (known before the viewer is: no flash)
     // The picked mesh's row, under the header's icons (paintSel3d).
     const sr = el("div", "row sel3d");
     sr.hidden = true;

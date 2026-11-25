@@ -403,6 +403,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .uv-pane { position: relative; min-width: 0; height: 100%; overflow: hidden; background: #1b1b1f; }
 /* With the UV split on, the 3D shading bar centres on the model's half (--uv-left = split edge). */
 #v3dShade, #v3dAnim { left: calc(50% + var(--uv-left, 0px) / 2); }
+#v3dShade.splat > :not([data-act=rotate]) { display: none !important; }
 /* The animation bar (a model with clips): above the shading bar. */
 #v3dAnim { bottom: calc(64px + var(--hud-in, 0px)); align-items: center; }
 .v3d-anim .v3d-explode { width: 260px; cursor: pointer; }
@@ -665,7 +666,7 @@ import { createCompare, comparable, flash } from "/static/compare.js";
 import { hotkey } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
-  dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, SPLAT_QUATERNION, splatHome, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
+  dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, turnSplat, splatHome, splatCountHint, splatLodFor, splatSource, splatBox, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
   setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 const TILE_KEY = "sight.tileSize";
@@ -1782,6 +1783,22 @@ async function renderModelThumb(a){
   }
 }
 
+// A file's first `n` bytes and its size (a Range request; a server that sends the whole file is read only that far).
+async function fetchHead(url, n = 65536){
+  const res = await fetch(url, { headers: { Range: `bytes=0-${n - 1}` } });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const cr = res.headers.get("Content-Range"), size = Number(cr ? cr.split("/")[1] : res.headers.get("Content-Length")) || 0;
+  const r = res.body.getReader(), parts = [];
+  let got = 0;
+  try {
+    while (got < n){ const { done, value } = await r.read(); if (done) break; parts.push(value); got += value.length; }
+  } finally { r.cancel().catch(() => {}); }
+  const head = new Uint8Array(Math.min(got, n));
+  let o = 0;
+  for (const p of parts){ if (o >= head.length) break; head.set(p.subarray(0, head.length - o), o); o += p.length; }
+  return { head, size };
+}
+
 // Splats have no mesh/material to plug into the thumbnail lighting — their color is baked in —
 // and depth-sorting runs in a background worker and is view-dependent, so the very first render
 // after load can catch it mid-sort. A few warm-up frames (rendered on real animation frames, so
@@ -1798,9 +1815,8 @@ async function renderSplatThumb(THREE, r, a){
   scene.add(mesh);
   try {
     await mesh.initialized;
-    mesh.quaternion.fromArray(SPLAT_QUATERNION); // same Y-down → Y-up correction boot3d applies
-    mesh.updateMatrixWorld(true);
-    const home = splatHome(THREE, mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld));
+    turnSplat(THREE, mesh, getModelTurns(a.id)); // same Y-down → Y-up correction and manual turn boot3d applies
+    const home = splatHome(THREE, splatBox(THREE, mesh));
     camera.position.copy(home.p);
     camera.near = home.near; camera.far = home.far; camera.updateProjectionMatrix();
     camera.lookAt(home.t);
@@ -1822,6 +1838,7 @@ async function renderSplatThumb(THREE, r, a){
     await fetch("/api/thumb/" + a.id, { method: "POST", body: blob });
   } finally {
     mesh.dispose();
+    clearTimeout(spark.updateTimeoutId); spark.updateTimeoutId = -1;
     spark.dispose();
   }
 }
@@ -3992,7 +4009,9 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
     // meshes — splats are pre-lit, baked spherical-harmonic color with no such controls. The
     // gear/settings panel stays available for both, with different content (see renderV3DPanel).
     if (isLightbox){
-      $("v3dShade").hidden = splat;
+      // (a splat keeps only the turn button: .splat hides the rest — splats arrive upside down / Z-up too)
+      $("v3dShade").hidden = false;
+      $("v3dShade").classList.toggle("splat", splat);
       if (currentAssetIsSplat !== splat){
         currentAssetIsSplat = splat; // corrects showInLight()'s extension-only guess for .ply
         renderV3DPanel();
@@ -4003,7 +4022,7 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.DOLLY };
       controls.zoomToCursor = true;
       bind3dZoom(renderer.domElement, controls);
-      let live = true, mesh = null, camRig = null;
+      let live = true, mesh = null, spark = null, camRig = null;
       const loop = () => {
         if (!live) return;
         requestAnimationFrame(loop);
@@ -4021,33 +4040,61 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
         renderer.render(scene, camera);
       };
       loop();
-      threeCtls.set(elId, { renderer, stop(){ live = false; } });
+      // Spark's workers (sort, LoD — with a copy of an LoD tree) and the splats live until disposed.
+      const freeSplat = () => { try { mesh?.dispose(); } catch {} try { if (spark){ clearTimeout(spark.updateTimeoutId); spark.updateTimeoutId = -1; spark.dispose(); } } catch {} mesh = null; spark = null; };
+      threeCtls.set(elId, { renderer, stop(){ live = false; freeSplat(); } });
       const { SparkRenderer, SplatMesh } = await import("@sparkjsdev/spark");
-      scene.add(new SparkRenderer({ renderer }));
-      mesh = new SplatMesh({ url, fileType: SPLAT_FILE_TYPE_BY_EXT[low], onProgress: onModelProgress });
-      scene.add(mesh);
-      await mesh.initialized;
-      if (!live) return; // viewer was torn down (asset switched / lightbox closed) mid-load
+      if (!live) return;
+      spark = new SparkRenderer({ renderer });
+      scene.add(spark);
+      // A file over Spark's per-device budget (2.5M splats on a desktop) gets an LoD tree (splatLodFor): at most
+      // that many drawn, picked for the camera; a file likely under it gets no LoD options (loads as before).
+      const budget = spark.lodSplatCount ?? spark.defaultSplatTarget();
+      const hint = await fetchHead(url).then((h) => splatCountHint(low, h.head, h.size)).catch(() => null);
+      if (!live) return;
+      const m = mesh = new SplatMesh({ url, fileType: SPLAT_FILE_TYPE_BY_EXT[low], onProgress: onModelProgress, ...splatLodFor(hint, budget) });
+      scene.add(m);
+      try { await m.initialized; } catch (e){ if (live && mesh === m) throw e; return; }
+      if (!live || mesh !== m) return; // viewer was torn down (asset switched / lightbox closed) mid-load
       // Most splat exporters (COLMAP/3DGS convention) use a Y-down, Z-forward frame — flip to
-      // three.js's Y-up (SPLAT_QUATERNION, shared with the phone app so a view means the same there).
-      mesh.quaternion.fromArray(SPLAT_QUATERNION);
-      mesh.updateMatrixWorld(true);
-      const box = mesh.getBoundingBox(true).applyMatrix4(mesh.matrixWorld);
-      const home = splatHome(THREE, box), size = home.size;
-      controls.target.copy(home.t);
-      camera.position.copy(home.p);
-      camera.near = home.near; camera.far = home.far; camera.updateProjectionMatrix();
+      // three.js's Y-up (SPLAT_QUATERNION, shared with the phone app so a view means the same there), then the
+      // manual quarter turns about X (as a mesh: turnSplat, getModelTurns), framed from the turned bounds.
+      const place = (n) => {
+        turnSplat(THREE, m, n);
+        const box = splatBox(THREE, m), home = splatHome(THREE, box);
+        controls.target.copy(home.t);
+        camera.position.copy(home.p);
+        camera.near = home.near; camera.far = home.far; camera.updateProjectionMatrix();
+        return { box, size: home.size };
+      };
+      const { box, size } = place(getModelTurns(aid));
       if (isLightbox){
-        camRig = makeCameraRig(THREE, camera, controls, aid);
+        const info = (b) => {
+          const dims = b.getSize(new THREE.Vector3());
+          const f = (x) => Number(x.toPrecision(4)).toString();
+          setSceneInfo({ id: aid, title: "Scene", rows: [
+            // (a big file: its LoD tree's count — the originals plus the merged nodes)
+            ["Splats", m.packedSplats?.lodSplats && hint?.exact ? hint.n.toLocaleString("en-US")
+              : (splatSource(m)?.numSplats ?? m.numSplats ?? 0).toLocaleString("en-US") + (m.packedSplats?.lodSplats ? " (LoD tree)" : "")],
+            ["Bounds", `${f(dims.x)} × ${f(dims.y)} × ${f(dims.z)}`],
+          ] });
+        };
+        // A turn re-frames the splat (as a mesh's turnTo): the rig's "frame all" home moves with it, and the card's
+        // thumbnail is made again (light.rotated, flushRotatedThumb).
+        const turnTo = (n) => {
+          if (!live || !light || mesh !== m) return;
+          setModelTurns(aid, n);
+          light.rotated = aid;
+          const r = place(n);
+          camRig.setHome(r.size);
+          info(r.box);
+        };
+        camRig = makeCameraRig(THREE, camera, controls, aid, { get: () => getModelTurns(aid), set: turnTo });
         camRig.setHome(size);
         v3dCam = camRig;
         bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved));
-        const dims = box.getSize(new THREE.Vector3());
-        const f = (x) => Number(x.toPrecision(4)).toString();
-        setSceneInfo({ id: aid, title: "Scene", rows: [
-          ["Splats", (mesh.packedSplats?.numSplats ?? mesh.numSplats ?? 0).toLocaleString("en-US")],
-          ["Bounds", `${f(dims.x)} × ${f(dims.y)} × ${f(dims.z)}`],
-        ] });
+        onV3DRotate = () => turnTo((getModelTurns(aid) + 1) & 3);
+        info(box);
       }
       endLoading();
       return;
@@ -5434,7 +5481,7 @@ function showInLight(a){
   $("psdPanel").hidden = true;
   $("psdBtn").classList.remove("on");
   if (a.ext === ".psd") loadPsdLayers(a.id);
-  if (currentAssetIsSplat) $("v3dShade").hidden = true; // wireframe/x-ray/base-material toggles are mesh-only
+  $("v3dShade").classList.toggle("splat", currentAssetIsSplat); // wireframe/x-ray/base-material toggles are mesh-only: a splat keeps only the turn
   state.v3dPanelOpen = false; // settings panel always starts closed on a fresh 3D asset (off by default)
   $("v3dGear").classList.remove("on");
   $("v3dPanel").hidden = true;
