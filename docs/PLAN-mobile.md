@@ -111,6 +111,9 @@ separate plan: `docs/PLAN-viewer.md`.
   animated) with the same USDLoader, USD animation in both (0.53).
 
 ### 5. Coreline — the owner's tracker (repository `anurbis-dev/CueTrack`)
+- **2026-11-25:** planned in **docs/PLAN-coreline.md**. Sight's desktop review (lightbox + notes panel, annotate.js)
+  is built into Coreline, with the shared code vendored from Sight. The phone app itself stays local for now (Coreline
+  has no CORS).
 - The first integration. It stores vectors natively like Sight (decision 6), so it speaks
   FORMAT.md directly; Sight (and the app) become its clients. Read the CueTrack repo first: its
   API, auth, data model; then map asset / version, notes, replies, states, drawings.

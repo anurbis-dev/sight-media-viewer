@@ -96,6 +96,10 @@ mark it done here, add the RECENT entry as usual.
   shotgrid-core.js implement; index.html, annotate.js and the phone talk to "the trackers" (a list), keyed by
   tracker id + site — sidebar rows, smart collections (`sg_site` → a tracker key), links per tracker.
 - **5c** a second adapter proves the interface. **Owner 2026-11-21:** it will be **Coreline**, but Coreline is not ready for integration yet — **deferred**; do not start 5c until the owner says so.
+  **Owner 2026-11-25:** superseded by **docs/PLAN-coreline.md**. Coreline first gets its own review layer: Sight's
+  desktop review (lightbox + notes panel) and FORMAT.md rows built into it. The Sight adapter is then its stage R4.
+  R4 answers only the first half of 5b-2 (2), the row key: rows are shared, so no per-tracker note id. Two ShotGrid
+  sites per note stay open.
 
 ## Open questions (ask when the stage comes)
 - Which Version fields the owner wants on the tiles (code + status + author by default?).

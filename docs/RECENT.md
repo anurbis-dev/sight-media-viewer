@@ -14,6 +14,71 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.134.0 (docs) — 2026-11-25 — Plan: Sight's desktop review built into Coreline
+- **What:** `docs/PLAN-coreline.md`. The owner chose: Coreline is not ready for a tracker adapter (no review layer,
+  pre-MVP). So Coreline gets its own player and commenting, built from **Sight's desktop review**: the lightbox on the
+  left, annotate.js's notes panel on the right; on the phone the notes go under the player. It is not built from the
+  phone app's screen; the owner preferred the desktop look. The owner also wants 3D in Coreline, so viewing is split
+  into viewer modules behind one interface (image, video, model3d). Documents (scripts) are deferred by the owner
+  (R5 keeps a sketch). Sight becomes an optional external reviewer. Linked from PLAN.md, CLAUDE.md and PLAN-mobile stage 5.
+  PLAN-trackers 5c is superseded: the adapter is now R4. No code yet.
+- **Where:** docs only. The Coreline repo was read at `ea411a7`. This session cannot push there (the GitHub App has no
+  write access), so the Coreline stages R1–R3 are for a session in that repository.
+- **Notes:**
+  - FORMAT.md v1 rows are stored as they are in Coreline, every column (incl. `shape_kind`, `rotation`, `locked`),
+    keyed by record + file field + id.
+  - The server merges with the same `mergeRows`. Coreline is ESM, so it uses a side-effect import + `globalThis`, not
+    `module.exports`. Sight's `merge_cases.json` runs in Coreline's tests.
+  - R0 (Sight side) comes first: annotate.js made host-neutral (`host.store`: its write queue, direct fetches, URLs
+    in templates, fps, author, settings, CSS tokens, `/static/` imports), viewer modules (2D first,
+    then 3D), a narrow layout, a labels hook for i18n.
+  - **No regressions** (owner: Sight desktop is in daily use). R0 starts with R0-0, Playwright regression tests of
+    today's lightbox / annotator behaviour passing on the current code. Refactor steps change no behaviour and do not
+    edit those tests. Each block ships as its own version with the whole suite green and benchmarks no worse.
+    Stored keys / the outbox format stay readable.
+  - R1: a row put is merged on the server, not replaced (replies live in `note.data`); ids are never re-derived.
+  - Gotchas for R2:
+    - drawings are in the original's pixels, while the `web` rendition is scaled (video ≤ 1920 wide, image WebP ≤ 2048),
+      and today's lightbox takes the decoded size as doc units;
+    - `/api/media` takes signed URLs only (from the record's file field), not Bearer;
+    - review rows need a new realtime subscription (Coreline's WS sends entity records).
+- **Review:** a fresh agent checked the first draft against both repos. It found 4 errors, 4 smaller inaccuracies, and
+  2 problems with this entry:
+  - review-draw.js is a full-screen sheet, not a mountable widget (moot now: the desktop look uses annotate.js);
+  - `module.exports` is dead under Coreline's ESM;
+  - the table lacked `shape_kind` / `rotation` / `locked` and an id scope;
+  - media needs signed URLs;
+  - renditions differ for images, and some files get none;
+  - the WS needs a new message kind;
+  - permissions must follow the file field;
+  - R4 settles only half of 5b-2 (2);
+  - this entry had a placeholder review line, and the archive step had not been run.
+
+  All are fixed in the rewrite. A second round on the desktop-based rewrite found:
+  - the write queue and many URLs bypass `host.api`;
+  - the doc-unit size comes from the decoded element;
+  - the lightbox core is `attachViewer` (wrong lines given);
+  - the id re-derive policy contradicted the key and would duplicate notes on a Sight round trip;
+  - lost replies if a put replaces the row;
+  - no "apply rows by id" entry point;
+  - the outbox is not per user;
+  - the author is a typed name;
+  - imports, settings, CSS tokens and note previews are tied to Sight.
+
+  A third round found:
+  - undo writes had to name their stamp (`edited_at` for notes);
+  - puts must carry the client's stamps, or a stale outbox wins;
+  - `mountStage` does not exist (it is `fillStage`);
+  - the 3D viewer is ~1400 lines tied to Sight's server (model-res, model-glb), so GLB first;
+  - the vendored list was incomplete.
+
+  Further rounds added two more fixes:
+  - the regression block clashed with R0a / R0d; it now names the only behaviour changes;
+  - fresh undo stamps are limited to server-merging stores, so Sight's undo keeps old stamps and `.srev` merges do
+    not change.
+
+  The same reviewer confirmed every fix.
+
 ## 0.134.0 — 2026-11-25 — Loading mark: the Sight "eye" turning, wherever something loads
 - **What:** every "loading / working…" text now has the Sight logo beside it (ring + blue focus dot) turning, so
   the dot orbits — desktop and phone. A bigger mark above the text in the tracker grid's "Loading…" and the phone's
@@ -194,9 +259,3 @@ Add new entries directly below this line.
 - **Where:** app/static/index.html — `VMODES`, `paintModes`, `paintLightModes` (from `paintCmpBtn`), `switchViewMode`, `lightShowSet`; `lightCompareIds` also counts a sequence's clips; `openSequence` / `endSequence` repaint (and restore the title); the Space handler seeds the set; CSS `.vmodes`, `body.light-split .cmp`; compare host `openInLight(a, ids)`, `paintModes`; app/static/compare.js — `.cmp-modes` slot painted in `build()`, ⤢ passes the layer ids, `.cmp-bar` wraps; MANUAL.
 - **Notes:** the set is `light.cmpStack` (+ the sequence's list); its order and its file objects are kept in `light.vset` (`lightSetAssets`) while it still matches — the switch passes files, not ids, since a compare can hold versions / downloads that are not in `state.items`; coming back from a compare with the same files keeps the lightbox's order. Moving the viewer to a file outside the set drops it (unchanged rule). K: with a set (also one from Space over a selection) it compares the set — versions / a note's stored comparison are reached from a single file, as before; in a sequence K still goes to versions (the switch's Compare compares the clips). A tile click beside an open compare only selects. Sequence from the switch starts (playing, at 0 — the compare's playhead is not carried) on the current file when it is a video, and keeps the set's pictures; going there reopens the lightbox (`openSequence`), so the position in a previous sequence is not kept. The lightbox bar now wraps on a narrow screen. *One* from a compare shows the selected layer. Not done: a sequence of pictures (stills with a duration), compare drawn inside the lightbox element itself (it is still the compare overlay, placed over the viewer). Backlog 18–21 are done with this.
 - **Review:** a fresh reviewer agent found: a tile click beside an open compare swapped the lightbox's file behind it (→ only selects); *One* / Sequence lost files that are not in `state.items` (versions, downloads) (→ the switch passes file objects); the set's order was scrambled on every switch (→ `light.vset`, sequence clips first); K in a sequence lost versions (→ `lightCompareIds` does not count the clips); Sequence from a later layer opened paused (→ plays); the lightbox bar pushed ✕ off a phone screen (→ wraps, 36 px touch buttons). Follow-up: ⤢ skipped the order check (→ goes through `switchViewMode`). The same reviewer confirmed every fix and found nothing new. Browser: set clip1, clip2, img1 — One → Sequence → Compare → One → K → Sequence → One; a sequence on clip 2 → One → Sequence stays on Clip 2/2 and plays; compare beside the library starts at the divider.
-
-## 0.124.0 — 2026-11-24 — Interface scale and icon-button size in Settings
-- **What:** Settings → Interface: *Scale* (0.75–1.75×) zooms the whole chrome in proportion on top of every per-element setting — sidebar, library top bar, tracker bar, inspector, lightbox and compare top bars, the drawing toolbar, context menus and pops; *Icon buttons* (0.75–2×) zooms the square icon buttons on top. Also: a typed slider value committed twice (a DOMException) and Escape saved the typed value anyway (pre-existing, fixed).
-- **Where:** app/static/index.html — theme keys `uiScale` / `iconScale` (DEFAULT_THEME, sliders), `applyUi` sets `--ui-k` / `--icon-k`; CSS zoom rule (comment there); `uiK()`, `uiPx()`, `placeMenu()` (8 menus + the video menu), user / colour / select / theme-save / filter pops, `resizePanel`; vw / vh inside zoomed parts divided by `--ui-k`; `trackBarH()` sets `--bar-h` (the zoomed bar's height) on the lightbox and compare, used by the info button, frame pop, 3D toast and annotate.js `.an-top`; `initSlider.beginEdit` (`closed` flag, `hotkey()`); MANUAL.
-- **Notes:** CSS `zoom` (Chromium's standardized zoom): rects and clientX are screen px, but a zoomed element's style px, vw / vh and offsetWidth are its own — so any JS that places a zoomed element from screen coordinates must divide by `uiK()` (`uiPx`), and CSS calc with vw / vh inside it must divide by `--ui-k`. `--side-w` / `--insp-w` are the panels' own px (screen width = ×k). Not scaled on purpose: pictures, tiles (own size), boards, viewer overlays and bars (video bar, notes panel, 3D panel, compare's layer chips — their drags move transformed elements by screen deltas), the touch selection bar, modals. At 1× everything measures as before (light bar 47 px, info at 69 px).
-- **Review:** a fresh reviewer agent found: `--bar-h` went stale when Scale changed with the lightbox open (the bar's own height does not change under zoom, so no ResizeObserver call → `applyUi` re-measures every tracked bar, `barHosts`); the notes panel's `--an-pw` (screen px) used inside the zoomed `.an-top` put the toolbar under the panel at 0.75× (→ divided by `--ui-k`, also the board's 54 px / 100 px); nits fixed too: `.an-offer` under a taller bar (→ the host's `--bar-h`), the inspector's 3D preview blurry at >1× (→ pixel ratio × uiK), a colour preset reset Scale / Icon buttons to 1× (→ kept). The same reviewer then found the board's default `--an-pw: min(320px, 62%)` still wrong under zoom and the offer's `--bar-h` unreachable on `<body>` (→ `--an-pwk`, set with `--an-pw` by `applyPanelW`, the board's default `min(320px ÷ k, 62%)`; the offer reads the host's `--bar-h`); it confirmed all fixes and found nothing new.

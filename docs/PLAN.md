@@ -6,7 +6,8 @@ otherwise. Take an item, do it, delete it from here, and add the RECENT entry as
 items with their numbers. Order inside a section is the suggested order.
 
 Bigger plans live in their own files: **`docs/PLAN-mobile.md`** (the review app for local files on
-the phone next, then the owner's tracker Coreline, ftrack / ShotGrid, clouds last) and
+the phone next, then the owner's tracker Coreline, ftrack / ShotGrid, clouds last), **`docs/PLAN-coreline.md`**
+(Sight's desktop review — lightbox + notes panel — built into Coreline; Sight as its optional external reviewer) and
 **`docs/PLAN-viewer.md`** (Sight as the tray quick viewer on Space, later), **`docs/PLAN-multiclip.md`** (one review page / `.srev`
 bundle for several clips — a sequence's review). **`docs/PLAN-viewer-input.md`** — one shared pointer / gesture module for
 every viewer (lightbox, compare, sequence, board, 3D zoom) — done (stages 1–4, 0.94.2 – 0.96.0); stage 5 (HTML page / phone parity) dropped.
