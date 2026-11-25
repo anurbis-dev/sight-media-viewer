@@ -81,6 +81,13 @@ files only); no auto sync (a button).
 - The upload flow: `GET …/_upload?filename=` → `PUT links.upload` → `POST links.complete_upload {upload_info, upload_data}`.
 - Attachment `this_file.url` (signed S3 link, or a site link that redirects — both handled).
 - The `annot*.<frame>` naming of ShotGrid's own review annotations.
+- `Reply.updated_at`: the sync asks for it (`shotgrid-core.js`, the Reply search) and the fake supplies it, but two
+  real `schema_read()` dumps (tk-core's and python-api's mockgun schema, read 2026-11-25) have no `updated_at` on
+  Reply (only id, content, user, entity, created_at). If a real site lacks it too, the sync falls back to
+  `created_at` (`stampOf(sr.updated_at) || stampOf(sr.created_at)`), so nothing breaks, but a reply edited on
+  ShotGrid is never seen as changed and not pulled again (the two copies stay different; the push does not overwrite
+  it). Check whether ShotGrid ignores an unknown field in `fields` or answers with an error — an error would fail the
+  whole Reply search, so the sync itself would fail: then drop `updated_at` from that list.
 - CORS: whether the site answers the phone app's origin; if not, deploy `tools/sg-proxy-worker.js`.
 - The filter builder's hash filters (0.103.0, the adapter's `toConditions`, was filter-core's `toSgConditions`): `Content-Type: application/vnd+shotgun.api3_hash+json`,
   `{filters: {logical_operator, conditions: [{path, relation, values}]}}`; `name_contains` / `name_is` /
