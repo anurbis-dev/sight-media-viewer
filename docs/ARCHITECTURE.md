@@ -156,6 +156,15 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   folders per drop. A `.srev` in the same drop still imports. Overlay `#srcDrop` (index.html) is the
   hint while a folder drag is over the window (window `drop` is capture-phase so a mixed drop on the
   lightbox still adds folders).
+- Dropping **files** (`POST /api/files/drop`, same path resolution via `drop_file_paths` / Explorer
+  `SelectedItems` files): `mode=library` indexes each file without adding its parent (`Library.add_dropped_file`
+  — already under a source → that source; else the **Dropped files** inbox source at `<SIGHT_HOME>/dropped`,
+  which is never walked or watched). `mode=view` returns an ephemeral asset (`Library.view_file`, same
+  path-hash id, served by `/api/file` through `resolve_asset`) and does not insert a row. Overlay two
+  zones while a file drag is over the window: left strip `calc(var(--side-w) * var(--ui-k))` in `--accent`
+  = library, the rest (white) = view. **A** on an ephemeral file promotes it (`mode=library`) then
+  annotates. At most 32 files; unsupported extensions are `missed.reason=unsupported`. An image drop
+  onto the annotator surface while drawing stays a reference picture.
 - `GET /api/app-info` feeds the About dialog (brand mark button `#aboutBtn`, overlay `#aboutOverlay` reusing `.fb-modal`): version, frozen, python, platform, starlette, three (parsed from `vendor/three.core.js` `REVISION`), usd, ffmpegPath/ffmpegVersion (tool facts probed once, cached in `static_info()`), home, dbPath/dbBytes, assets, sources, thumbnails (top-level files in `thumbs/`), port, dev, uptimeSec, logPath. `/api/health` is only `{ok,name}`, so nothing is duplicated.
 - Asset `status`: `ready` | `missing` (file gone) | `excluded` (hidden: inside an excluded folder,
   matched by the scan ignore list, or a compiled `.obj`). Excluded rows are kept so metadata survives;

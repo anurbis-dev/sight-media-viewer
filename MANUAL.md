@@ -2,6 +2,7 @@
 
 - **Sources** — add the folders you want browsed (sidebar → **+ Folder**, or drop a folder on the window).
   Sight watches them live; nothing is imported or duplicated.
+  Drop a media file on the window to open it: the left strip (the sidebar's width, in the accent colour) adds it to the library (**Dropped files** — the file stays where it is; notes and tags work). The rest of the window opens it only to view; **A** (the pencil) adds it if you then want to draw. A file already in a source just opens. A `.srev` in the same drop still imports.
 - **Search** — press `/` to jump to the search box (matches file names, tags and notes, ignoring
   letter case including Cyrillic). Moving the cursor onto a result takes focus off the search box, so Space previews it right away.
 - **About Sight** — click (or tap) the Sight icon at the top of the sidebar: version, Python / OS, library and ffmpeg paths, counts, uptime and log file. *Copy* puts the whole list on the clipboard (handy for bug reports); Esc, the x or a click outside closes it.

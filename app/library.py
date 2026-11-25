@@ -1257,6 +1257,9 @@ class Library:
         self._src_gen: dict[str, int] = {}
         self._scans_running: dict[str, int] = {}  # sid -> scans walking it now (under _scan_lock)
         self._stop = threading.Event()
+        # Files opened from a window drop without adding them to the library (POST /api/files/drop
+        # mode=view). Same path-hash ids as a real row, so adding later reuses the id. Not listed.
+        self._ephemeral: dict[str, dict] = {}
         self._heap: list[tuple[int, int, str]] = []
         self._heap_lock = threading.Lock()
         self._seq = 0
@@ -1695,7 +1698,9 @@ class Library:
         rows = [dict(r) for r in self.query("SELECT id, name, path FROM sources ORDER BY sort_order, added_at")]
         own = {r["source_id"]: r["c"] for r in self.query(
             "SELECT source_id, COUNT(*) c FROM assets WHERE status != 'excluded' GROUP BY source_id")}
+        dropped = self.dropped_source_id()
         for r in rows:
+            r["dropped"] = bool(dropped) and r["id"] == dropped
             # "own": what removing it forgets; "count" adds the files of sources nested inside it.
             r["own"] = own.get(r["id"], 0)
             if self._nested_ids(r["id"]):
@@ -1941,6 +1946,138 @@ class Library:
         self.bus.publish({"type": "source", "id": sid})
         return {"id": sid, "name": p.name or str(p), "path": str(p)}
 
+    def dropped_source_id(self) -> str | None:
+        row = self.query("SELECT value FROM meta WHERE key='dropped_source'")
+        if not row:
+            return None
+        sid = row[0]["value"]
+        if not self.query("SELECT 1 FROM sources WHERE id=?", (sid,)):
+            return None
+        return sid
+
+    def is_dropped_source(self, sid: str) -> bool:
+        return bool(sid) and sid == self.dropped_source_id()
+
+    def ensure_dropped_source(self) -> str:
+        """The inbox source for files dropped onto the sidebar. Not a scanned folder: each file
+        keeps its original path. Created on first use; removing it from the sidebar forgets those
+        files (as with any source) unless they already sit under another folder."""
+        have = self.dropped_source_id()
+        if have:
+            return have
+        p = disk_spelling((self.root / "dropped").expanduser())
+        p.mkdir(parents=True, exist_ok=True)
+        p = disk_spelling(p.resolve())
+        sid = asset_id(str(p))
+        now = int(time.time() * 1000)
+        with self.lock:
+            next_order = self.conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM sources").fetchone()[0]
+            self.conn.execute(
+                "INSERT OR IGNORE INTO sources(id, name, path, added_at, sort_order) VALUES (?,?,?,?,?)",
+                (sid, "Dropped files", str(p), now, next_order),
+            )
+            self.conn.execute("UPDATE sources SET name=? WHERE id=?", ("Dropped files", sid))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('dropped_source', ?)", (sid,),
+            )
+            self.conn.commit()
+        self.bus.publish({"type": "source", "id": sid})
+        return sid
+
+    def add_dropped_file(self, path: str) -> tuple[dict | None, str | None, bool]:
+        """Index one file without adding its parent folder. Returns (asset, error, new).
+
+        Already-indexed files are returned as-is. A file that already sits inside a source is
+        indexed there (the watcher would have anyway). Anything else goes in Dropped files."""
+        try:
+            fp = disk_spelling(Path(path).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError):
+            return None, "unknown", False
+        if not fp.is_file():
+            return None, "unknown", False
+        kind = kind_of(fp.name)
+        if not kind:
+            return None, "unsupported", False
+        real = str(fp)
+        aid = asset_id(real)
+        cur = self.get_asset(aid)
+        if cur:
+            self._ephemeral.pop(aid, None)
+            return cur, None, False
+        owner = self._owner(real)
+        if owner and not self._file_hidden_in(owner, real):
+            self._touch_one(owner, real, kind, force=True)
+            got = self.get_asset(aid)
+            if got:
+                self._ephemeral.pop(aid, None)
+                return got, None, True
+        sid = self.ensure_dropped_source()
+        self._touch_one(sid, real, kind, force=True)
+        got = self.get_asset(aid)
+        if not got:
+            return None, "rejected", False
+        self._ephemeral.pop(aid, None)
+        self.prioritize([aid])
+        return got, None, True
+
+    def _file_hidden_in(self, sid: str, fp: str) -> bool:
+        excluded_n = self.excluded_set(sid)
+        if excluded_n:
+            n = normpath(fp)
+            if any(n == e or n.startswith(e + os.sep) for e in excluded_n):
+                return True
+        root = self.source_root(sid)
+        return bool(root and self.hidden(root, fp))
+
+    def view_file(self, path: str) -> tuple[dict | None, str | None]:
+        """Open a file in the viewer without adding a library row. Same id as add_dropped_file
+        would use, so a later add keeps notes if any. Already-indexed files are the real row."""
+        try:
+            fp = disk_spelling(Path(path).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError):
+            return None, "unknown"
+        if not fp.is_file():
+            return None, "unknown"
+        kind = kind_of(fp.name)
+        if not kind:
+            return None, "unsupported"
+        real = str(fp)
+        aid = asset_id(real)
+        cur = self.get_asset(aid)
+        if cur:
+            return cur, None
+        try:
+            st = fp.stat()
+        except OSError:
+            return None, "unknown"
+        item = {
+            "id": aid,
+            "source_id": "",
+            "path": real,
+            "name": fp.name,
+            "ext": fp.suffix.lower(),
+            "kind": kind,
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "width": None,
+            "height": None,
+            "duration": None,
+            "tags": [],
+            "note": "",
+            "rating": 0,
+            "status": "ready",
+            "has_thumb": 0,
+            "animated": 0,
+            "added_at": int(time.time() * 1000),
+            "ephemeral": True,
+        }
+        self._ephemeral[aid] = item
+        return item, None
+
+    def resolve_asset(self, aid: str) -> dict | None:
+        """A library row, or a file opened to view without adding it."""
+        return self.get_asset(aid) or self._ephemeral.get(aid)
+
     def _reassign(self, rows: list, sid: str, root: str) -> None:
         """Moves asset rows to source `sid` (the caller holds self.lock). Their excluded status is
         decided again by that source's own excluded folders and the ignore list."""
@@ -2050,6 +2187,8 @@ class Library:
             self.conn.execute("DELETE FROM sources WHERE id=?", (sid,))
             self.conn.executemany("DELETE FROM collection_assets WHERE asset_id=?", [(a,) for a in gone])
             self.conn.execute("DELETE FROM assets WHERE source_id=?", (sid,))
+            if sid == (self.conn.execute("SELECT value FROM meta WHERE key='dropped_source'").fetchone() or [None])[0]:
+                self.conn.execute("DELETE FROM meta WHERE key='dropped_source'")
             self.conn.commit()
         for aid in gone:
             self._forget_thumb(aid)
@@ -2231,6 +2370,10 @@ class Library:
     def scan_source(self, sid: str) -> None:
         rows = self.query("SELECT path FROM sources WHERE id=?", (sid,))
         if not rows:
+            return
+        # Dropped files live at their original paths, outside this source's folder. Walking the
+        # empty inbox would mark every one of them missing.
+        if self.is_dropped_source(sid):
             return
         root = Path(rows[0]["path"])
         if not root.is_dir():
@@ -2640,7 +2783,7 @@ class Library:
         return self._heavy("psd", path, dest)
 
     def psd_layers(self, aid: str) -> list[dict] | None:
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".psd":
             return None
         path = Path(a["path"])
@@ -2663,7 +2806,7 @@ class Library:
         return out
 
     def psd_layer_image(self, aid: str, index: int) -> Path | None:
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".psd":
             return None
         cache = self.thumbs / "psd"
@@ -2694,7 +2837,7 @@ class Library:
         """Full-resolution flattened render for the lightbox, cached as thumbs/psd/<id>_full.png
         (the `<id>_*.png` cleanup globs cover it) and re-rendered when the PSD is newer. Falls back
         to the card thumbnail only if the full render fails."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".psd":
             return None
         path = Path(a["path"])
@@ -2775,7 +2918,7 @@ class Library:
             return None
 
     def read_text_preview(self, aid: str, limit: int = 200_000) -> dict | None:
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "document" or a.get("ext") not in TEXT_EXT:
             return None
         path = Path(a["path"])
@@ -2909,7 +3052,7 @@ class Library:
 
     def scrub_copy_path(self, aid: str) -> Path | None:
         """Asset ``aid``'s current scrub copy, or None."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video":
             return None
         return self._play_copy(aid, self._play_stamp(a["path"]), self.SCRUB_TAG)
@@ -2954,7 +3097,7 @@ class Library:
     def playback_status(self, aid: str, tag: str = "") -> dict:
         """{state, progress, error} of asset ``aid``'s playback copy (``tag`` SCRUB_TAG: its scrub
         copy): ready / working / failed / none."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return {"state": "missing", "progress": 0, "error": "not a video in the library"}
         stamp = self._play_stamp(a["path"])
@@ -3005,7 +3148,7 @@ class Library:
 
     def scrub_audio_path(self, aid: str) -> Path | None:
         """Asset ``aid``'s current scrub-audio PCM, or None."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video":
             return None
         p = self._scrub_audio_file(aid, self._play_stamp(a["path"]))
@@ -3027,7 +3170,7 @@ class Library:
     def scrub_audio_status(self, aid: str) -> dict:
         """{state, progress, error, sr, samples, duration, rev} of asset ``aid``'s scrub audio.
         state is ready / working / silent (no audio track) / failed / missing / none (not started)."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return self._scrub_audio_view("missing")
         stamp = self._play_stamp(a["path"]) or ""
@@ -3050,7 +3193,7 @@ class Library:
     def start_scrub_audio(self, aid: str) -> dict:
         """Starts extracting asset ``aid``'s scrub audio unless it is current, running, or already known
         silent. A failed attempt is tried again when asked."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return self._scrub_audio_view("missing")
         stamp = self._play_stamp(a["path"]) or ""
@@ -3161,7 +3304,7 @@ class Library:
         """Starts converting asset ``aid`` for playback (``tag`` SCRUB_TAG: its scrub copy) unless the
         copy is current or running. A failed attempt is tried again when asked; the caller polls
         playback_status for the outcome."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "video" or not Path(a["path"]).exists():
             return {"state": "missing", "progress": 0, "error": "not a video in the library"}
         stamp = self._play_stamp(a["path"])
@@ -3407,7 +3550,7 @@ class Library:
     def file_info(self, aid: str) -> list[dict] | None:
         """Per-type details for the lightbox info overlay (see app/fileinfo.py). Cached per file
         version, since some readers (ffmpeg, PSD, OBJ line counts) take a moment."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a:
             return None
         path = Path(a["path"])
@@ -3461,7 +3604,7 @@ class Library:
         loaders' relative lookups all land here instead. Looks beside the model and in the
         usual texture folders first, then falls back to any indexed image with that name,
         preferring the one nearest the model."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "model3d":
             return None
         parts = [p for p in re.split(r"[\\/]+", name or "") if p and p != "."]
@@ -3530,7 +3673,7 @@ class Library:
 
     def usdz_is_animated(self, aid: str) -> bool:
         """make_usdz_glb found the .usdz animated (and did not convert it) — the viewer reads it itself."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         p = self.thumbs / "usdz" / f"{aid}.anim"
         try:
             return bool(a) and p.exists() and p.stat().st_mtime >= Path(a["path"]).stat().st_mtime
@@ -3543,7 +3686,7 @@ class Library:
         of its own. Requires the optional `usd-core` dependency; returns
         None (caller falls back to the "open externally" placeholder) if
         that isn't installed or the conversion fails for any reason."""
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("ext") != ".usdz":
             return None
         path = Path(a["path"])
@@ -3598,7 +3741,7 @@ class Library:
         cached = self.waveform_path(aid)
         if cached:
             return cached
-        a = self.get_asset(aid)
+        a = self.resolve_asset(aid)
         if not a or a.get("kind") != "audio":
             return None
         path = Path(a["path"])
@@ -3617,6 +3760,8 @@ class Library:
         return dest
 
     def _watch(self, sid: str, path: str) -> None:
+        if self.is_dropped_source(sid):
+            return
         if sid in self._watchers:
             return
         try:
@@ -3699,11 +3844,12 @@ class Library:
                 best, best_n = r["id"], r_n
         return best
 
-    def _touch_one(self, sid: str, fp: str, kind: str) -> None:
+    def _touch_one(self, sid: str, fp: str, kind: str, force: bool = False) -> None:
         # The outer source's watcher sees a nested source's files too; that source's own watcher
         # handles them, with its own excluded folders and ignore root. A late event of a removed
-        # source finds no owner and adds nothing.
-        if self._owner(fp) != sid:
+        # source finds no owner and adds nothing. force: a file the user dropped, which may sit
+        # outside the source root (Dropped files inbox).
+        if not force and self._owner(fp) != sid:
             return
         excluded_n = self.excluded_set(sid)
         if excluded_n:
@@ -3804,6 +3950,8 @@ class Library:
             self._forget_thumb(aid)  # as remove_source does: a re-added folder renders them anew
         sids = []
         for row in self.query("SELECT id, path FROM sources"):
+            if self.is_dropped_source(row["id"]):
+                continue
             if Path(row["path"]).is_dir():
                 self._watch(row["id"], row["path"])
                 sids.append(row["id"])

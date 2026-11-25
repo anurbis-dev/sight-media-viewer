@@ -299,6 +299,51 @@ class DropFoldersE2E(unittest.TestCase):
         self.assertEqual(res["name"], self.folder.name)
 
 
+@unittest.skipUnless(has_playwright(), "node with Playwright not available")
+class DropFilesE2E(unittest.TestCase):
+    """Two-zone overlay + POST /api/files/drop (tests/drop_files_e2e.cjs)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import threading
+        import time
+        import uvicorn
+        from app.server import build_app
+
+        cls.NODE, cls.ROOT = NODE, ROOT
+        cls.tmp = Path(tempfile.mkdtemp(prefix="sight-drop-file-e2e-"))
+        cls.lib = Library(cls.tmp / "home")
+        cls.pic = png(cls.tmp / "clip.png")
+        cls.port = free_port()
+        cls.server = uvicorn.Server(uvicorn.Config(build_app(cls.lib), host="127.0.0.1", port=cls.port, log_level="warning"))
+        cls.thread = threading.Thread(target=cls.server.run, daemon=True)
+        cls.thread.start()
+        for _ in range(100):
+            if cls.server.started:
+                break
+            time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.should_exit = True
+        cls.thread.join(5)
+        for w in list(cls.lib._watchers.values()):
+            w.stop()
+        cls.lib.close()
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_overlay_and_dropped_source(self) -> None:
+        r = subprocess.run(
+            [self.NODE, str(self.ROOT / "tests" / "drop_files_e2e.cjs"),
+             f"http://127.0.0.1:{self.port}", str(self.pic)],
+            capture_output=True, text=True, timeout=120, cwd=self.ROOT / "tests",
+        )
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-4000:])
+        res = json.loads(r.stdout)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["name"], "clip.png")
+
+
 class DropFoldersTest(unittest.TestCase):
     """Folders dropped on the window (POST /api/sources/drop, app/server.py drop_folder_paths)."""
 
@@ -398,6 +443,107 @@ class DropFoldersTest(unittest.TestCase):
                 extra.append(str(d))
             capped = self._drop(lib, extra, [])
             self.assertEqual(len(capped["added"]), 32)
+            self.assertTrue(any(m["reason"] == "too many" for m in capped["missed"]))
+        finally:
+            sel.stop()
+            scan.stop()
+            watch.stop()
+            lib.close()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class DropFilesTest(unittest.TestCase):
+    """Files dropped on the window (POST /api/files/drop)."""
+
+    def _drop(self, lib: Library, paths: list[str], names: list[str], mode: str = "library") -> dict:
+        import asyncio
+        from starlette.requests import Request
+        from app.server import build_app
+
+        app = build_app(lib)
+        body = json.dumps({"paths": paths, "names": names, "mode": mode}).encode()
+        for r in app.routes:
+            if getattr(r, "path", "") == "/api/files/drop" and "POST" in (getattr(r, "methods", None) or ()):
+                async def receive():
+                    return {"type": "http.request", "body": body, "more_body": False}
+                scope = {"type": "http", "method": "POST", "path": "/api/files/drop", "path_params": {},
+                         "query_string": b"", "headers": [(b"content-type", b"application/json")]}
+                res = asyncio.run(r.endpoint(Request(scope, receive)))
+                return res if isinstance(res, dict) else json.loads(res.body)
+        self.fail("POST /api/files/drop not found")
+
+    def test_file_uri_and_name_match(self) -> None:
+        from app.server import drop_file_paths
+
+        tmp = Path(tempfile.mkdtemp(prefix="sight-dropf-"))
+        try:
+            a = png(tmp / "shot.png")
+            other = tmp / "other"
+            other.mkdir()
+            b = png(other / "shot.png")
+            paths, missed = drop_file_paths([str(a)], [], selected=[])
+            self.assertEqual({Path(p).resolve() for p in paths}, {a.resolve()})
+            paths, missed = drop_file_paths([], ["shot.png"], selected=[str(a)])
+            self.assertEqual({Path(p).resolve() for p in paths}, {a.resolve()})
+            paths, missed = drop_file_paths([], ["shot.png"], selected=[str(a), str(b)])
+            self.assertEqual(paths, [])
+            self.assertEqual(missed, [{"name": "shot.png", "reason": "ambiguous"}])
+            paths, missed = drop_file_paths([str(tmp)], [], selected=[])
+            self.assertEqual(paths, [])
+            cafe = png(tmp / unicodedata.normalize("NFC", "Café.png"))
+            paths, missed = drop_file_paths(
+                [], [unicodedata.normalize("NFD", "Café.png")], selected=[str(cafe)])
+            self.assertEqual({Path(p).resolve() for p in paths}, {cafe.resolve()})
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_drop_http_library_and_view(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="sight-drop-file-http-"))
+        lib = Library(tmp / "home")
+        watch = mock.patch.object(Library, "_watch", lambda *a, **k: None)
+        scan = mock.patch.object(Library, "scan_source", lambda *a, **k: None)
+        sel = mock.patch("app.server.os_manager_selected_files", lambda: [])
+        watch.start()
+        scan.start()
+        sel.start()
+        try:
+            pic = png(tmp / "clip.png")
+            viewed = self._drop(lib, [str(pic)], ["clip.png"], "view")
+            self.assertEqual(len(viewed["items"]), 1)
+            self.assertTrue(viewed["items"][0]["ephemeral"])
+            self.assertEqual(lib.query("SELECT COUNT(*) c FROM assets")[0]["c"], 0)
+            self.assertIsNotNone(lib.resolve_asset(viewed["items"][0]["id"]))
+            added = self._drop(lib, [str(pic)], [], "library")
+            self.assertEqual(len(added["items"]), 1)
+            self.assertTrue(added["items"][0]["new"])
+            self.assertFalse(added["items"][0].get("ephemeral"))
+            self.assertEqual(lib.query("SELECT COUNT(*) c FROM assets")[0]["c"], 1)
+            srcs = lib.sources()
+            self.assertTrue(any(s.get("dropped") for s in srcs))
+            self.assertEqual(srcs[0]["name"] if srcs[0].get("dropped") else next(s["name"] for s in srcs if s.get("dropped")), "Dropped files")
+            again = self._drop(lib, [str(pic)], [], "library")
+            self.assertFalse(again["items"][0]["new"])
+            folder = tmp / "shots"
+            folder.mkdir()
+            inside = png(folder / "in.png")
+            sid = lib.add_source(str(folder))["id"]
+            # add_source is mocked scan: index the file by dropping it
+            got = self._drop(lib, [str(inside)], [], "library")
+            self.assertEqual(got["items"][0]["source_id"], sid)
+            txt = tmp / "notes.txt"
+            txt.write_text("hi")
+            doc = self._drop(lib, [str(txt)], [], "view")
+            self.assertEqual(doc["items"][0]["kind"], "document")
+            nope = self._drop(lib, [str(tmp / "gone.png")], ["gone.png"], "view")
+            self.assertEqual(nope["items"], [])
+            self.assertEqual(nope["missed"][0]["reason"], "unknown")
+            bad = tmp / "x.xyz"
+            bad.write_bytes(b"x")
+            skip = self._drop(lib, [str(bad)], [], "view")
+            self.assertEqual(skip["missed"][0]["reason"], "unsupported")
+            extra = [str(png(tmp / f"cap{i:02d}.png")) for i in range(33)]
+            capped = self._drop(lib, extra, [], "view")
+            self.assertEqual(len(capped["items"]), 32)
             self.assertTrue(any(m["reason"] == "too many" for m in capped["missed"]))
         finally:
             sel.stop()

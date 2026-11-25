@@ -764,10 +764,24 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
 .fb-empty { padding: 24px; text-align: center; color: var(--subtle); font-size: 13px; }
 .fb-foot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); flex: none; }
 .fb-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--subtle); }
-/* Folders dragged from the OS file manager: a hint over the window. pointer-events none so the drop still lands on the page. */
-.src-drop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; pointer-events: none; background: color-mix(in oklab, var(--accent) 16%, transparent); }
+/* OS folders / files dragged onto the window. pointer-events none so the drop still lands on the page. */
+.src-drop { position: fixed; inset: 0; z-index: 90; pointer-events: none; }
 .src-drop[hidden] { display: none; }
-.src-drop-card { padding: 18px 28px; border-radius: var(--radius-lg); border: 1px dashed var(--accent); background: color-mix(in oklab, var(--surface) 88%, transparent); color: var(--fg); font-size: 16px; font-weight: 600; box-shadow: 0 16px 48px rgb(0 0 0 / .35); }
+.src-drop[data-kind="folder"]:not([hidden]) { display: grid; place-items: center; background: color-mix(in oklab, var(--accent) 16%, transparent); }
+.src-drop[data-kind="file"]:not([hidden]) { display: flex; background: transparent; }
+.src-drop[data-kind="folder"] .src-drop-lib,
+.src-drop[data-kind="folder"] .src-drop-view { display: none; }
+.src-drop[data-kind="file"] .src-drop-folder { display: none; }
+.src-drop-card { padding: 18px 28px; border-radius: var(--radius-lg); border: 1px dashed var(--accent); background: color-mix(in oklab, var(--surface) 88%, transparent); color: var(--fg); font-size: 16px; font-weight: 600; box-shadow: 0 16px 48px rgb(0 0 0 / .35); text-align: center; }
+.src-drop-card small { display: block; margin-top: 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.src-drop-lib, .src-drop-view { display: grid; place-items: center; min-width: 0; }
+.src-drop-lib { width: calc(var(--side-w) * var(--ui-k, 1)); background: color-mix(in oklab, var(--accent) 38%, transparent); }
+.src-drop-view { flex: 1; background: color-mix(in oklab, #fff 72%, transparent); }
+.src-drop-lib .src-drop-card { border-color: var(--accent); }
+.src-drop-view .src-drop-card { border-color: color-mix(in oklab, #111 35%, transparent); color: #111; background: color-mix(in oklab, #fff 90%, transparent); }
+.src-drop-view .src-drop-card small { color: #444; }
+.src-drop[data-hot="library"] .src-drop-lib { background: color-mix(in oklab, var(--accent) 58%, transparent); }
+.src-drop[data-hot="view"] .src-drop-view { background: color-mix(in oklab, #fff 88%, transparent); }
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { display: none; width: 0; height: 0; }
 @media (max-width: 1023px) {
@@ -867,7 +881,11 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
       </div>
     </div>
   </div>
-  <div id="srcDrop" class="src-drop" hidden><div class="src-drop-card">Drop folders to add them as sources</div></div>
+  <div id="srcDrop" class="src-drop" hidden data-kind="folder">
+    <div class="src-drop-card src-drop-folder">Drop folders to add them as sources</div>
+    <div class="src-drop-lib"><div class="src-drop-card">Add to library<small>Notes, tags, stays in Sight</small></div></div>
+    <div class="src-drop-view"><div class="src-drop-card">Open to view<small>Play now — not added</small></div></div>
+  </div>
   <section class="main">
     <div class="top">
       <button class="menu" id="menu" aria-label="Menu">☰</button>
@@ -1956,8 +1974,13 @@ function cmpBind(){
 }
 function cmpToggleAnnot(force){
   const want = force ?? !cmpAnnot.isOn();
-  if (want && !cmpBind()){ flash("Show the selected layer to annotate it"); return; }
-  cmpAnnot.toggle(want);
+  if (!want){ cmpAnnot.toggle(false); return; }
+  const layerId = cmp.selectedId?.();
+  ensureInLibrary((layerId && assetById(layerId)) || light?.asset).then((ok) => {
+    if (!ok) return;
+    if (!cmpBind()){ flash("Show the selected layer to annotate it"); return; }
+    cmpAnnot.toggle(true);
+  });
 }
 const cmp = createCompare({
   api: (path, opts) => api(path, opts),
@@ -2922,7 +2945,7 @@ function renderGrid(){
     cardPool.clear();
     sliceEl = spaceEl = null;
     grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.loading || trkList.more ? `Loading ${esc(trkMedia().many)}…` : `No ${esc(trkMedia().one)} matches.`}</div>`
-      : `<div class="empty">Empty. Add a folder or drop one here — files stay where they are.</div>`;
+      : `<div class="empty">Empty. Add a folder or drop one here — files stay where they are. Drop a file on the window to open it.</div>`;
     renderInsp();
     return;
   }
@@ -4075,12 +4098,14 @@ function renderSources(set){
     b.className = "row src-row" + (state.filter.source === s.id ? " on" : "");
     b.dataset.sid = s.id;
     const iconHtml = state.showIcons ? iconSpan("folder", "var(--subtle)", 15) : "";
-    b.innerHTML = `${iconHtml}<span>${esc(s.name)}</span><em class="badge">${s.count || 0}</em><button class="tiny tree-chev${open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand folders"}"><span class="chev">›</span></button><button class="tiny" data-act="remove" type="button" aria-label="Remove source">×</button>`;
+    const chev = s.dropped ? "" : `<button class="tiny tree-chev${open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand folders"}"><span class="chev">›</span></button>`;
+    b.innerHTML = `${iconHtml}<span>${esc(s.name)}</span><em class="badge">${s.count || 0}</em>${chev}<button class="tiny" data-act="remove" type="button" aria-label="Remove source">×</button>`;
     b.onclick = (e) => {
       if (e.target.closest("button")) return;
       set({ source: s.id });
     };
-    b.querySelector('[data-act="expand"]').onclick = async (e) => {
+    const expandBtn = b.querySelector('[data-act="expand"]');
+    if (expandBtn) expandBtn.onclick = async (e) => {
       e.stopPropagation();
       if (open){
         state.sourceTree.expandedSources.delete(s.id);
@@ -4482,7 +4507,12 @@ function renderFfmpeg(){
   });
 }
 
-function assetById(id){ return state.items.find(x => x.id === id); }
+const ephemeralAssets = new Map(); // files opened from a drop without adding them (id → asset)
+function assetById(id){
+  return state.items.find(x => x.id === id)
+    || ephemeralAssets.get(id)
+    || (light && light.asset && light.asset.id === id ? light.asset : null);
+}
 
 function selectedAssets(){
   return state.selectedIds.map(assetById).filter(Boolean);
@@ -8296,7 +8326,7 @@ function toggleLight(a){
   bindVBarUi(light.bar);
   applyViewDom();  // the library beside it, if that is how it was left (Tab)
   annot.mount(wrap);
-  wrap.querySelector("#annoBtn").onclick = () => annot.toggle();
+  wrap.querySelector("#annoBtn").onclick = () => { ensureLightInLibrary().then((ok) => { if (ok) annot.toggle(); }); };
   bindAnnoReset(wrap.querySelector("#annoBtn"), [annot, boardAnnot, cmpAnnot]);
   wrap.querySelector("#cmpBtn").onclick = () => compareFromContext();
   wrap.querySelector("#mirBtn").onclick = () => light?.mirror?.();
@@ -8368,7 +8398,7 @@ function lightGeneralRows(o){
     ...(o.seq ? [] : [[["↑", "↓"], "The file a row up / down in the library grid"]]),
     [["Tab", "◧"], "Library beside the viewer (drag pictures from it onto the frame: references, or a comparison)"],
     [["K"], "Compare: the set in the viewer, else this file's versions (also the compare button)"],
-    [[o.d3 ? "Shift+A" : "A"], "Draw and write notes — the pencil button (its own ? lists the drawing keys)"],
+    [[o.d3 ? "Shift+A" : "A"], light?.asset?.ephemeral ? "Add this file to the library and draw notes" : "Draw and write notes — the pencil button (its own ? lists the drawing keys)"],
     [["C"], "Read the notes — the speech-bubble button (click a picture to go there)"],
     [["Shift+H"], "Hide / show the drawings — the eye button"],
     [["I"], "File info overlay — the round i button"],
@@ -8453,6 +8483,7 @@ function browserHelpGroups(){
       [["▶▶ Sequence"], "Play the selected videos one after another (Space over one of them)"],
       [["Ctrl+K"], "Command palette"],
       [["+ Folder"], "Add a folder (or drop one on the window)"],
+      [["Drop a file"], "On the sidebar: add to the library. On the rest of the window: open to view"],
       [["?"], "Show / hide this list — the ? button"],
     ] },
     { group: "Selecting", rows: [
@@ -10411,15 +10442,33 @@ function dropHasFolders(e){
   if (typed.length && typed.every((it) => /^(image|video|audio)\//.test(it.type))) return false;
   return osFileDrag(e);
 }
+function dropHasFiles(e){
+  const items = [...(e.dataTransfer?.items || [])];
+  if (!items.length) return osFileDrag(e) && !dropHasFolders(e);
+  let known = false;
+  for (const it of items){
+    if (it.kind !== "file") continue;
+    const ent = it.webkitGetAsEntry?.();
+    if (ent){ known = true; if (ent.isFile) return true; continue; }
+  }
+  if (known) return false;
+  return osFileDrag(e);
+}
+function srcDropZone(e){
+  const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-w")) || 208;
+  return e.clientX < w * uiK() ? "library" : "view";
+}
 function hideSrcDrop(){ showSrcDrop(false); }
-let srcDropBusy = false, srcDropQueued = null, srcDropHideT = 0;
-function showSrcDrop(on){
+let srcDropBusy = false, srcDropQueued = null, srcDropHideT = 0, fileDropBusy = false, fileDropQueued = [];
+function showSrcDrop(on, kind){
   const el = $("srcDrop");
   if (!el) return;
   el.hidden = !on;
+  if (on && kind) el.dataset.kind = kind;
+  if (!on) delete el.dataset.hot;
   clearTimeout(srcDropHideT);
   // External drags never fire dragend on the page; if dragover stops, drop the overlay.
-  if (on) srcDropHideT = setTimeout(() => { el.hidden = true; }, 500);
+  if (on) srcDropHideT = setTimeout(() => { el.hidden = true; delete el.dataset.hot; }, 500);
 }
 window.addEventListener("dragleave", (e) => {
   if (!osFileDrag(e)) return;
@@ -10428,23 +10477,45 @@ window.addEventListener("dragleave", (e) => {
 window.addEventListener("dragover", (e) => {
   if (![...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) return;
   e.preventDefault();
-  if (osFileDrag(e) && dropHasFolders(e)){
+  if (!osFileDrag(e)){ showSrcDrop(false); return; }
+  if (dropHasFolders(e)){
     try { e.dataTransfer.dropEffect = "copy"; } catch {}
-    showSrcDrop(true);
-  } else {
-    showSrcDrop(false);
+    showSrcDrop(true, "folder");
+    return;
   }
+  if (dropHasFiles(e)){
+    try { e.dataTransfer.dropEffect = "copy"; } catch {}
+    showSrcDrop(true, "file");
+    const el = $("srcDrop");
+    if (el) el.dataset.hot = srcDropZone(e);
+    return;
+  }
+  showSrcDrop(false);
 });
+function dropOnAnnotatorSurface(e){
+  const drawing = (x) => { try { return !!x?.isOn?.(); } catch { return false; } };
+  if (!drawing(annot) && !drawing(boardAnnot) && !drawing(cmpAnnot)) return false;
+  return !!e.target?.closest?.(".light-frame, .cmp-stage, .canvas-viewport");
+}
 // Capture: the annotator / lightbox stopPropagation on image drops; folders still have to reach us.
 window.addEventListener("drop", (e) => {
   const items = [...(e.dataTransfer?.items || [])];
   const files = [...(e.dataTransfer?.files || [])];
   if (!items.length && !files.length) return;
   if (items.some((i) => i.kind === "file") || files.length) e.preventDefault(); // never let the browser navigate to a dropped file
+  const folderHint = osFileDrag(e) && dropHasFolders(e);
+  const fileHint = osFileDrag(e) && dropHasFiles(e);
+  const mode = srcDropZone(e);
   hideSrcDrop();
   const review = files.find((x) => /\.(srev|sightreview)$/i.test(x.name));
   if (review) annot.importFile(review);
-  if (osFileDrag(e)) takeDroppedFolders(e, items);
+  if (!osFileDrag(e)) return;
+  if (folderHint) takeDroppedFolders(e, items);
+  else if (fileHint){
+    if (dropOnAnnotatorSurface(e) && files.some((f) => /^image\//.test(f.type))) return;
+    if (review && files.every((x) => /\.(srev|sightreview)$/i.test(x.name))) return;
+    takeDroppedFiles(e, items, mode);
+  }
 }, true);
 async function takeDroppedFolders(e, items){
   const folderHint = dropHasFolders(e); // DataTransfer types/items die after the first await
@@ -10517,6 +10588,125 @@ async function addDroppedFolders(paths, names){
     if (q) addDroppedFolders(q.paths, q.names);
   }
 }
+async function takeDroppedFiles(e, items, mode){
+  const uris = dropUriList(e.dataTransfer);
+  const pending = [];
+  for (const it of items){
+    if (it.kind !== "file") continue;
+    pending.push({
+      entry: it.webkitGetAsEntry?.() || null,
+      file: it.getAsFile?.() || null,
+      handleP: typeof it.getAsFileSystemHandle === "function" ? it.getAsFileSystemHandle() : null,
+    });
+  }
+  const names = [], paths = [...uris];
+  let sawEntry = false, anyFile = false;
+  for (const p of pending){
+    let handle = null;
+    try { handle = p.handleP ? await p.handleP : null; } catch {}
+    if (p.entry) sawEntry = true;
+    const isDir = !!(p.entry?.isDirectory || (handle && handle.kind === "directory"));
+    if (isDir) continue;
+    const isFile = !!(p.entry?.isFile || (handle && handle.kind === "file") || p.file);
+    if (!isFile && sawEntry) continue;
+    anyFile = true;
+    const name = (handle && handle.name) || p.entry?.name || p.file?.name || "";
+    if (/\.(srev|sightreview)$/i.test(name)) continue;
+    if (name) names.push(name);
+    const path = typeof p.file?.path === "string" ? p.file.path : "";
+    if (path && !/\.(srev|sightreview)$/i.test(path)) paths.push(path);
+  }
+  const mediaUris = paths.filter((u) => !/\.(srev|sightreview)$/i.test(u));
+  if (!anyFile && sawEntry) return;
+  if (!names.length && !mediaUris.length){
+    if (!paths.length) flash("Could not open the file — drop a folder with + Folder, or copy its path", 4000);
+    return;
+  }
+  addDroppedFiles(mediaUris, names, mode === "library" ? "library" : "view");
+}
+async function addDroppedFiles(paths, names, mode){
+  if (fileDropBusy){
+    fileDropQueued.push({ paths: [...paths], names: [...names], mode });
+    return;
+  }
+  fileDropBusy = true;
+  try {
+    const data = await api("/api/files/drop", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paths, names, mode }),
+    });
+    const items = data.items || [], missed = data.missed || [];
+    for (const a of items){
+      if (a.ephemeral) ephemeralAssets.set(a.id, a);
+      else ephemeralAssets.delete(a.id);
+    }
+    if (mode === "library" && items.length){
+      await refreshMeta();
+      resetList();
+    }
+    if (items.length){
+      const first = assetById(items[0].id) || items[0];
+      if (light) showInLight(first);
+      else toggleLight(first);
+      if (light && items.length > 1){
+        light.cmpStack = items.slice(1).map((x) => x.id);
+        paintCmpBtn();
+      }
+    }
+    const bits = [];
+    if (mode === "library"){
+      const fresh = items.filter((a) => a.new);
+      const known = items.filter((a) => !a.new);
+      if (fresh.length) bits.push(fresh.length === 1 ? `Added ${fresh[0].name}` : `Added ${fresh.length} files`);
+      else if (known.length) bits.push(known.length === 1 ? `${known[0].name} is already in the library` : "Already in the library");
+    } else if (items.length === 1 && items[0].ephemeral){
+      bits.push(`${items[0].name} — not added. Drop on the sidebar to keep it`);
+    } else if (items.length > 1 && items.some((a) => a.ephemeral)){
+      bits.push("Opened to view — drop on the sidebar to keep them");
+    }
+    const lost = missed.filter((m) => m.reason === "unknown" || m.reason === "ambiguous" || m.reason === "rejected" || m.reason === "too many" || m.reason === "unsupported");
+    if (lost.some((m) => m.reason === "too many")) bits.push("only the first 32 files");
+    else if (lost.some((m) => m.reason === "unsupported") && !items.length) bits.push("Sight does not open that file type");
+    else if (lost.length && !items.length) bits.push("Could not open the file");
+    else if (lost.length) bits.push("some files were skipped");
+    if (bits.length) flash(bits.join(" · "), 4000);
+  } catch (err) {
+    let why = err.message;
+    try { why = JSON.parse(why).detail || why; } catch {}
+    flash("Could not open that file: " + why, 4000);
+  } finally {
+    fileDropBusy = false;
+    const q = fileDropQueued.shift();
+    if (q) addDroppedFiles(q.paths, q.names, q.mode);
+  }
+}
+async function ensureInLibrary(a){
+  if (!a?.ephemeral) return true;
+  try {
+    const data = await api("/api/files/drop", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paths: [a.path], names: [a.name], mode: "library" }),
+    });
+    const got = (data.items || [])[0];
+    if (!got){
+      flash("Could not add this file to the library", 4000);
+      return false;
+    }
+    ephemeralAssets.delete(got.id);
+    got.ephemeral = false;
+    if (light?.asset?.id === got.id) light.asset = got;
+    await refreshMeta();
+    resetList();
+    flash(`Added ${got.name} to the library`, 3000);
+    return true;
+  } catch (err) {
+    let why = err.message;
+    try { why = JSON.parse(why).detail || why; } catch {}
+    flash("Could not add this file: " + why, 4000);
+    return false;
+  }
+}
+async function ensureLightInLibrary(){ return ensureInLibrary(light?.asset); }
 function paletteKinds(){
   const items = [{ label: "All files", run: () => applyFilter({}) }];
   for (const k of Object.keys(KIND)) items.push({ label: KIND[k], run: () => applyFilter({ kind: k }) });
@@ -11624,7 +11814,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (lightKeys && !typing && !e.repeat && (hotkey(e, "Shift+KeyA") || (hotkey(e, "KeyA") && $("v3dGear").hidden))){
     e.preventDefault();
-    annot.toggle();
+    ensureLightInLibrary().then((ok) => { if (ok) annot.toggle(); });
     return;
   }
   // Annotating a board: Esc / Space belong to the annotator (canvas.js runs after this handler); placed after the palette /

@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.11 — 2026-11-24 — Compare: drawing / note marks on the shared timeline
+- **What:** compare's shared timeline shows a tick for every frame with a drawing or a note's picture, per clip, in the clip's colour (taller for a note), where that frame sits after the clip's offset. A click / tap on a tick goes to that frame.
+- **Where:** app/static/compare.js — `loadMarks` (rows → marks, the rule of index.html `seqLoadMarks`), `setMarks` (exported), marks in `paintTimeline`, a mark press in the track's pointerdown, CSS `.cmp-mk`; annotate.js `renderMarks` calls `host.marksChanged` also when the viewer has no `.vbar` (compare); index.html compare annotator host `marksChanged` → `cmp.setMarks`; MANUAL.
+- **Notes:** each video layer's marks are fetched once per compare (`l.marks`: undefined = not asked, null = asked); the annotated layer's are replaced live from `cmpAnnot.marks()` (skipped while its rows load). A layer removed and added again is a new object and fetches again. A press on a tick (11 px wide, full height) seeks and does not start a scrub. The lightbox's own `marksChanged` (`seqMarksFromAnnot`) now also runs when the lightbox has no bar (an image): guarded, harmless. Left: if the annotated layer's rows fail to load, its fetched marks are replaced by an empty list (network error only). Browser: two generated clips, a drawing at 2 s on clip B shows at 50 %; a pencil stroke on clip A appears at once; a click on B's tick lands on f 48.
+- **Review:** a fresh reviewer agent found no bugs (edge case and nits above; a comment added for the lanes' nth-child order).
+
 ## 0.122.10 — 2026-11-24 — HTML review page: pictures grow to drawings past the frame
 - **What:** on the exported HTML review page a note picture (and its thumbnail, the full-screen view and the downloaded picture) whose drawings reach past the frame's edge is enlarged to take them in, as Sight's own exports are; before, those drawings were cut off at the frame.
 - **Where:** app/review.py `_HTML_TEMPLATE` — `extOf` (the rule of annotate.js `exportExtent`: drawings' bounds + 3% of the longer side, at most 3 frames each way; null for 3D / nothing outside), `placeExt` (box `aspect-ratio`, picture absolutely placed in %), `overlay(f, list, ext)`, `pic(..., flat)`, the viewer's `show()` (box aspect from ext), `savePic` (grown canvas, ≤ 8000 px a side); CSS `.fw.ext`; MANUAL.

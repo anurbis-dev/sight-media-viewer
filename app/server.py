@@ -321,8 +321,15 @@ def path_is_dir(path: str) -> bool:
         return False
 
 
-def os_manager_selected_dirs() -> list[str]:
-    """Directories currently selected in Explorer (Windows) or Finder (macOS). Empty elsewhere."""
+def path_is_file(path: str) -> bool:
+    try:
+        return bool(path) and Path(path).expanduser().resolve().is_file()
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def os_manager_selected_paths() -> list[str]:
+    """Paths currently selected in Explorer (Windows) or Finder (macOS). Empty elsewhere."""
     import subprocess
 
     try:
@@ -366,24 +373,37 @@ def os_manager_selected_dirs() -> list[str]:
     out = []
     for line in text.splitlines():
         p = line.strip()
-        if p and path_is_dir(p) and p not in out:
+        if p and p not in out:
             out.append(p)
     return out
 
 
-def drop_folder_paths(
+def os_manager_selected_dirs() -> list[str]:
+    """Directories currently selected in Explorer (Windows) or Finder (macOS). Empty elsewhere."""
+    return [p for p in os_manager_selected_paths() if path_is_dir(p)]
+
+
+def os_manager_selected_files() -> list[str]:
+    """Files currently selected in Explorer (Windows) or Finder (macOS). Empty elsewhere."""
+    return [p for p in os_manager_selected_paths() if path_is_file(p)]
+
+
+def drop_item_paths(
     paths: list[str],
     names: list[str],
     selected: list[str] | None = None,
+    *,
+    files: bool = False,
 ) -> tuple[list[str], list[dict]]:
-    """Resolve dropped folders to directory paths.
+    """Resolve dropped folders (default) or files to OS paths.
 
     `paths` come from the page (``File.path``, ``file://`` URLs). `names` are the
-    dropped folder names (for Explorer / Finder selection when the browser hides
+    dropped item names (for Explorer / Finder selection when the browser hides
     the path). `selected` is that selection; ``None`` reads it from the OS.
 
     Returns (resolved paths, missed [{name, reason}]).
     """
+    check = path_is_file if files else path_is_dir
     resolved: list[str] = []
     seen: set[str] = set()
     have: set[str] = set()
@@ -393,7 +413,7 @@ def drop_folder_paths(
             real = str(Path(path).expanduser().resolve())
         except (OSError, ValueError, RuntimeError):
             return False
-        if not path_is_dir(real):
+        if not check(real):
             return False
         key = os.path.normcase(real)
         if key in seen:
@@ -421,10 +441,13 @@ def drop_folder_paths(
 
     missed: list[dict] = []
     if need:
-        sel = selected if selected is not None else os_manager_selected_dirs()
+        if selected is not None:
+            sel = selected
+        else:
+            sel = os_manager_selected_files() if files else os_manager_selected_dirs()
         by: dict[str, list[str]] = {}
         for p in sel:
-            if not path_is_dir(p):
+            if not check(p):
                 continue
             by.setdefault(drop_name_key(path_basename(p)), []).append(p)
         still = []
@@ -449,6 +472,24 @@ def drop_folder_paths(
         for name in still:
             missed.append({"name": name, "reason": "unknown"})
     return resolved, missed
+
+
+def drop_folder_paths(
+    paths: list[str],
+    names: list[str],
+    selected: list[str] | None = None,
+) -> tuple[list[str], list[dict]]:
+    """Resolve dropped folders to directory paths. See ``drop_item_paths``."""
+    return drop_item_paths(paths, names, selected, files=False)
+
+
+def drop_file_paths(
+    paths: list[str],
+    names: list[str],
+    selected: list[str] | None = None,
+) -> tuple[list[str], list[dict]]:
+    """Resolve dropped files to file paths. See ``drop_item_paths``."""
+    return drop_item_paths(paths, names, selected, files=True)
 
 
 def usdz_problem(a: dict | None) -> str:
@@ -710,7 +751,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
 
     @app.get("/api/assets/{aid}")
     def one(aid: str) -> dict:
-        a = lib.get_asset(aid)
+        a = lib.resolve_asset(aid)
         if not a:
             raise HTTPException(404)
         return a
@@ -832,7 +873,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
         if not p:
             # The reason goes to the viewer (index.html fetchBufferWithProgress): a missing USD library and
             # a file that does not convert look the same otherwise.
-            raise HTTPException(404, usdz_problem(lib.get_asset(aid)))
+            raise HTTPException(404, usdz_problem(lib.resolve_asset(aid)))
         return FileResponse(
             p,
             media_type="model/gltf-binary",
@@ -848,7 +889,7 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
 
     @app.get("/api/file/{aid}")
     def file(aid: str, request: Request):
-        a = lib.get_asset(aid)
+        a = lib.resolve_asset(aid)
         if not a or not Path(a["path"]).exists():
             raise HTTPException(404)
         mt = media_type_for(a["path"])
@@ -1647,6 +1688,36 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
             added.append({**got, "new": got["id"] not in have})
             have.add(got["id"])
         return {"added": added, "missed": missed}
+
+    @app.post("/api/files/drop")
+    async def drop_files(request: Request) -> dict:
+        # Files dropped on the window: same path resolution as folders (File.path / file:// /
+        # Explorer or Finder name match). mode=library indexes them (Dropped files source, or
+        # their existing source); mode=view opens them without a library row.
+        body = await json_body(request)
+        raw_paths = body.get("paths") if isinstance(body.get("paths"), list) else []
+        raw_names = body.get("names") if isinstance(body.get("names"), list) else []
+        paths = [p for p in raw_paths if isinstance(p, str)]
+        names = [n for n in raw_names if isinstance(n, str)]
+        mode = body.get("mode") if body.get("mode") in ("library", "view") else "view"
+        found, missed = await asyncio.to_thread(drop_file_paths, paths, names)
+        if len(found) > 32:
+            for p in found[32:]:
+                missed.append({"name": path_basename(p), "reason": "too many"})
+            found = found[:32]
+        items = []
+        for p in found:
+            if mode == "library":
+                got, err, new = lib.add_dropped_file(p)
+            else:
+                got, err = lib.view_file(p)
+                new = False
+            if err:
+                missed.append({"name": path_basename(p), "reason": err})
+                continue
+            if got:
+                items.append({**got, "new": new})
+        return {"items": items, "missed": missed, "mode": mode}
 
     @app.put("/api/scan/ignore")
     async def scan_ignore(request: Request) -> dict:
