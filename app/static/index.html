@@ -2141,7 +2141,7 @@ function compareIds(ids){
 }
 async function compareFromContext(){
   let ids = null, focus = null;
-  if (light){
+  if (light && !libPaneActive()){
     focus = light.id;
     ids = lightCompareIds();
   } else {
@@ -3831,6 +3831,13 @@ bindSplitDrag($("inspHandle"), {
 let activePane = "library";
 // The lightbox UV split works the same way: F / digits go to the UV pane or the 3D view under the cursor.
 let lightPane = "3d";
+// Library beside the lightbox (Tab): F / Space / ? / … follow the pane under the cursor the same way.
+let lightSplitPane = "lightbox";
+function noteLightSplitPane(t){
+  if (!lightSplitOn() || !t?.closest) return;
+  if (light?.el.contains(t) || t.closest(".cmp")) lightSplitPane = "lightbox";
+  else if (grid.contains(t) || t.closest(".main > .top, .main > .trkbar, #splitHandle, .touch-selbar")) lightSplitPane = "library";
+}
 document.addEventListener("pointerover", (e) => {
   // (The board's own buttons in the top bar — pen, notes — count as the board: its keys must follow them.)
   if (canvasView.contains(e.target) || e.target.closest?.("#boardAnnoBtn, #boardNotesBtn, #boardEyeBtn")) activePane = "canvas";
@@ -3838,9 +3845,23 @@ document.addEventListener("pointerover", (e) => {
   const t = e.target.closest ? e.target : null;
   if (t?.closest("#uvPane")) lightPane = "uv";
   else if (t?.closest("#light3d")) lightPane = "3d";
+  noteLightSplitPane(e.target);
 }, true);
 function canvasPaneActive(){
   return state.view === "canvas" && (!state.canvasSplit || activePane === "canvas");
+}
+// Library keys while the lightbox is beside it: the cursor is over the grid / its top bar (the ? button,
+// search, filters). Over the sidebar the last pane stays. Hit-tested on the key so a still cursor counts.
+function libPaneActive(){
+  if (!lightSplitOn()) return false;
+  if (lastPtr){
+    const hit = document.elementFromPoint(lastPtr.x, lastPtr.y);
+    if (hit){
+      if (light?.el.contains(hit) || hit.closest?.(".cmp")) return false;
+      if (grid.contains(hit) || hit.closest?.(".main > .top, .main > .trkbar, #splitHandle, .touch-selbar")) return true;
+    }
+  }
+  return lightSplitPane === "library";
 }
 function selectAllInActivePane(){
   if (canvasPaneActive()) canvasCtl?.selectAll();
@@ -8124,7 +8145,7 @@ function toggleLight(a){
       <span class="vtime vmem" data-mem title="Video RAM cache: filled / limit (Settings → RAM cache)"></span>
     </div>`;
   wrap.querySelector("#lightClose").onclick = () => closeLight();
-  wrap.querySelector("#lightHelpBtn").onclick = () => openModeHelp();
+  wrap.querySelector("#lightHelpBtn").onclick = () => openModeHelp("lightbox");
   wrap.querySelector("#libBtn").onclick = () => toggleLightSplit();
   document.body.append(wrap);
   trackBarH(wrap, wrap.querySelector(".light-bar"));
@@ -8324,26 +8345,29 @@ function browserHelpGroups(){
   return { title: board ? "Library and board — controls" : "Library — controls", groups };
 }
 // Opens the list for what is on screen. While annotating, the annotator's own list.
-function openModeHelp(){
-  if (cmp.isOpen()){
+// force: "library" / "lightbox" from that pane's ? button; the ? key follows the cursor (libPaneActive).
+function openModeHelp(force){
+  const lib = force === "library" || (force !== "lightbox" && libPaneActive());
+  const splitFoot = lightSplitOn() ? " With the library beside the viewer, shortcuts follow the pane under the cursor." : "";
+  if (!lib && cmp.isOpen()){
     if (cmpAnnot.isOn()){ cmpAnnot.toggleHelp(); return; }
     showKeyHelp({ title: "Compare — controls", groups: cmp.helpGroups(), wide: true,
-      foot: "Touch: tap plays / pauses, one finger scrubs (pictures only: pans), two fingers pinch-zoom and pan; every option has a button in the top bar." });
+      foot: "Touch: tap plays / pauses, one finger scrubs (pictures only: pans), two fingers pinch-zoom and pan; every option has a button in the top bar." + splitFoot });
     return;
   }
-  if (light){
+  if (!lib && light){
     if (annot.isOn()){ annot.toggleHelp(); return; }
     const { title, groups } = lightHelpGroups();
-    showKeyHelp({ title, groups, wide: true, foot: "On a touch screen the buttons in the top bar do what the keys do; tap, one-finger drag and pinch work on the picture." });
+    showKeyHelp({ title, groups, wide: true, foot: "On a touch screen the buttons in the top bar do what the keys do; tap, one-finger drag and pinch work on the picture." + splitFoot });
     return;
   }
   // A board being annotated: the annotator's own list (the board's help is already open: leave it be).
   if (canvasCtl?.annotModal()) return;
   if (canvasCtl?.annotating() && canvasPaneActive()){ canvasCtl.toggleAnnotHelp(); return; }
   const { title, groups } = browserHelpGroups();
-  showKeyHelp({ title, groups, wide: true, foot: "On a touch screen: hold a tile to start selecting, then tap to add or remove; the top bar's buttons do the rest." });
+  showKeyHelp({ title, groups, wide: true, foot: "On a touch screen: hold a tile to start selecting, then tap to add or remove; the top bar's buttons do the rest." + splitFoot });
 }
-$("helpBtn").onclick = () => openModeHelp();
+$("helpBtn").onclick = () => openModeHelp("library");
 
 // Each asset kind has its own toolbar in the lightbox (data-tools="<kind>" elements). Only the
 // one matching the open asset is shown, so a 3D model's shading bar never appears over an image
@@ -11261,6 +11285,7 @@ window.addEventListener("pointermove", (e) => {
   // Moving onto a thumbnail / board item takes focus off the search field, so Space previews the
   // hovered result instead of typing a space into the query.
   if (document.activeElement === $("q") && e.target.closest?.(".card[data-id], .citem[data-asset-id]")) $("q").blur();
+  noteLightSplitPane(e.target);
 }, { passive: true });
 document.documentElement.addEventListener("pointerleave", () => { lastPtr = null; });
 function assetUnderPointer(){
@@ -11315,7 +11340,9 @@ document.addEventListener("keydown", (e) => {
     if (!e.repeat){ if (light) toggleLightSplit(); else toggleCanvasSplit(); }
     return;
   }
-  if (cmp.isOpen()){
+  // Library beside the lightbox: keys of the pane under the cursor (F, Space, ?, arrows, …).
+  const lightKeys = !!light && !libPaneActive();
+  if (cmp.isOpen() && !libPaneActive()){
     // Annotating in the compare: the annotator's keys first (its help overlay owns the keyboard), A toggles.
     if (cmpAnnot.helpOpen()){ cmpAnnot.onKey(e); return; }
     if (cmpAnnot.isOn() && cmpAnnot.onKey(e)) return;
@@ -11328,15 +11355,15 @@ document.addEventListener("keydown", (e) => {
   if (hotkey(e, "KeyK") && !typing && !e.repeat){ e.preventDefault(); compareFromContext(); return; }
   // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles
   // the mode; in a 3D view A flies the camera, so there it is Shift+A.
-  if (light && annot.onKey(e)) return;
+  if (lightKeys && annot.onKey(e)) return;
   // ?: the controls of the lightbox / the library; annotating (the lightbox or a board), openModeHelp hands it to the annotator
   // (prevented here, so canvas.js does not toggle the board annotator's list a second time).
-  if (!typing && isHelpKey(e) && !(light && annot.modal())){
+  if (!typing && isHelpKey(e) && !(lightKeys && annot.modal())){
     e.preventDefault();
     if (!e.repeat) openModeHelp();
     return;
   }
-  if (light && !typing && !e.repeat && (hotkey(e, "Shift+KeyA") || (hotkey(e, "KeyA") && $("v3dGear").hidden))){
+  if (lightKeys && !typing && !e.repeat && (hotkey(e, "Shift+KeyA") || (hotkey(e, "KeyA") && $("v3dGear").hidden))){
     e.preventDefault();
     annot.toggle();
     return;
@@ -11349,21 +11376,21 @@ document.addEventListener("keydown", (e) => {
   // "/" may need Shift on some layouts, so it is matched by the character, not through hotkey().
   if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing){ e.preventDefault(); $("q").focus(); return; }
   // Ctrl+A selects items (of whichever pane was last used), not the interface text.
-  if (hotkey(e, "Ctrl+KeyA") && !typing && !light && !(canvasPaneActive() && canvasCtl?.annotating())){  // (annotating a board: Ctrl+A selects its drawings, canvas.js)
+  if (hotkey(e, "Ctrl+KeyA") && !typing && !lightKeys && !(canvasPaneActive() && canvasCtl?.annotating())){  // (annotating a board: Ctrl+A selects its drawings, canvas.js)
     e.preventDefault();
     selectAllInActivePane();
     return;
   }
   // X / Delete: remove the selection from the collection currently open (same as the inspector's
   // "Remove From Folder" button). On a canvas board, Delete belongs to the board's own handler.
-  if ((hotkey(e, "KeyX") || hotkey(e, "Delete")) && !typing && !light
+  if ((hotkey(e, "KeyX") || hotkey(e, "Delete")) && !typing && !lightKeys
       && !canvasPaneActive() && canRemoveFromFolder()){
     e.preventDefault();
     if (!e.repeat) removeFromFolder();
     return;
   }
   if (hotkey(e, "Escape")){
-    if (light){ closeLight(); return; }
+    if (lightKeys){ closeLight(); return; }
     // The open Settings panel covers the whole sidebar: Esc closes it, from one of its own fields first of all.
     // Only while it is on screen (a closed narrow-screen drawer hides it) and not from a field elsewhere.
     const opts = $("opts"), inOpts = !!opts?.contains(document.activeElement);
@@ -11380,13 +11407,13 @@ document.addEventListener("keydown", (e) => {
   if (hotkey(e, "Space") && !typing){
     e.preventDefault();
     if (e.repeat) return; // holding Space must not flip the lightbox 30 times a second
-    const media = light && (light.video || light.audio);
+    const media = lightKeys && (light.video || light.audio);
     if (media){
       if (media.paused) media.play();
       else media.pause();
       return;
     }
-    if (light){ closeLight(); return; }
+    if (lightKeys){ closeLight(); return; }
     // Space previews the thumbnail under the cursor; what is selected doesn't matter — except over one of
     // 2+ selected videos, where it plays the selected videos back to back (Sequence, in selection order).
     const a = assetUnderPointer();
@@ -11402,14 +11429,14 @@ document.addEventListener("keydown", (e) => {
   }
   // Shift+← / Shift+→ on a video: its first / last frame — the whole sequence's when a sequence plays.
   // (While annotating, the arrows stay the annotator's; plain ← / → are untouched.)
-  if (light?.video && !typing && !annot.isOn() && !cmp.isOpen() && (hotkey(e, "Shift+ArrowLeft") || hotkey(e, "Shift+ArrowRight"))){
+  if (lightKeys && light.video && !typing && !annot.isOn() && !cmp.isOpen() && (hotkey(e, "Shift+ArrowLeft") || hotkey(e, "Shift+ArrowRight"))){
     e.preventDefault();
     if (!e.repeat) lightEdgeJump(hotkey(e, "Shift+ArrowRight") ? 1 : -1);
     return;
   }
   // Sequence: ← / → go to the previous / next clip (never out to the grid's neighbours), ↑ / ↓ do nothing,
   // Home goes back to the first clip's start, Shift+L loops the whole sequence.
-  if (light?.seq && !typing){
+  if (lightKeys && light.seq && !typing){
     // While annotating, the arrows stay the annotator's (nudge) even with nothing selected to move. Arrows with
     // any other modifiers are swallowed too: the grid-stepping branch below would leave the sequence.
     const arrows = annot.isOn() ? [] : [["ArrowLeft", () => seqJump(-1)], ["ArrowRight", () => seqJump(1)]];
@@ -11422,12 +11449,12 @@ document.addEventListener("keydown", (e) => {
     ];
     if (runHotkeys(e, sq)){ e.preventDefault(); return; }
   }
-  if (light && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !typing){
+  if (lightKeys && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !typing){
     e.preventDefault();
     lightStep(e.key === "ArrowRight" ? 1 : -1, e);
     return;
   }
-  if (light && (e.key === "ArrowDown" || e.key === "ArrowUp") && !typing){
+  if (lightKeys && (e.key === "ArrowDown" || e.key === "ArrowUp") && !typing){
     e.preventDefault();
     lightStepRow(e.key === "ArrowDown" ? 1 : -1, e);
     return;
@@ -11443,21 +11470,21 @@ document.addEventListener("keydown", (e) => {
   //   G             view-settings panel (the gear button)
   // Shading moved to Shift+digit and the panel from D to G so the plain digits and WASD could be
   // used by the camera. The main inspector's D toggle below is skipped while a 3D model is open.
-  const in3d = light && !$("v3dGear").hidden;
+  const in3d = lightKeys && !$("v3dGear").hidden;
   // Only real text entry blocks these — a checkbox/slider/colour input keeps focus after a click in
   // the settings panel, and that shouldn't stop WASD from flying the camera.
   const typing3d = tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && !["checkbox", "radio", "range", "color", "button"].includes(e.target.type));
   // Digit keys 1–9 in the lightbox jump the open image/video/text to that multiple of its native
   // size (1 = 100%) — same digits the 3D viewer uses for camera views, so this only fires when
   // no 3D model is open (in3d) and the current stage actually exposes a zoom setter.
-  if (light && !in3d && !typing && light.setZoom && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+  if (lightKeys && !in3d && !typing && light.setZoom && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
     const zoomDigit = /^Digit([1-9])$/.exec(e.code);
     if (zoomDigit){ e.preventDefault(); light.setZoom(Number(zoomDigit[1])); return; }
   }
   // F: in the lightbox fit the picture / video to the frame (as a double-click does); over the thumbnail grid
   // scroll it to the selected files. (3D models use F above; canvas boards have their own F in canvas.js.)
   if (hotkey(e, "KeyF") && !typing && !in3d){
-    if (light){
+    if (lightKeys){
       if (light.fit){ e.preventDefault(); light.fit(); return; }
     }
   }
@@ -11508,13 +11535,13 @@ document.addEventListener("keydown", (e) => {
       if (hotkey(e, "KeyU") && !currentAssetIsSplat){ e.preventDefault(); toggleUV(); return; }
     }
   }
-  if (light && hotkey(e, "KeyI") && !typing3d){ e.preventDefault(); toggleLightInfo(); return; }
-  if (light && light.turn && !typing && hotkey(e, "Shift+KeyR")){ e.preventDefault(); if (!e.repeat) light.turn(); return; }
-  if (light && light.mirror && !typing && hotkey(e, "Shift+KeyM")){ e.preventDefault(); light.mirror(); return; }
-  if (light && light.mirrorV && !typing && hotkey(e, "Shift+KeyV")){ e.preventDefault(); light.mirrorV(); return; }
+  if (lightKeys && hotkey(e, "KeyI") && !typing3d){ e.preventDefault(); toggleLightInfo(); return; }
+  if (lightKeys && light.turn && !typing && hotkey(e, "Shift+KeyR")){ e.preventDefault(); if (!e.repeat) light.turn(); return; }
+  if (lightKeys && light.mirror && !typing && hotkey(e, "Shift+KeyM")){ e.preventDefault(); light.mirror(); return; }
+  if (lightKeys && light.mirrorV && !typing && hotkey(e, "Shift+KeyV")){ e.preventDefault(); light.mirrorV(); return; }
   // D in the lightbox of a PSD opens its layers panel; everywhere else it toggles Details.
   if (hotkey(e, "KeyD") && !typing && !in3d){
-    if (light && !$("psdBtn").hidden) togglePsdPanel(); else toggleDetails();
+    if (lightKeys && !$("psdBtn").hidden) togglePsdPanel(); else toggleDetails();
   }
 });
 // Held-key tracking for the WASD camera — released keys are dropped regardless of what else is
@@ -11522,12 +11549,17 @@ document.addEventListener("keydown", (e) => {
 // camera drifting).
 document.addEventListener("keyup", (e) => { camKeys.delete(e.code); });
 // F over the thumbnail grid scrolls it to the selection. Capture phase on window: in the split view the board's own
-// F (canvas.js, registered earlier on document) must not frame the board as well.
+// F (canvas.js, registered earlier on document) must not frame the board as well. Beside the lightbox, F on the
+// library pane does the same (the lightbox's F still fits the picture when the cursor is over the viewer).
 window.addEventListener("keydown", (e) => {
-  if (light || !hotkey(e, "KeyF")) return;
+  if (!hotkey(e, "KeyF")) return;
+  if (light && !libPaneActive()) return;
   const tag = e.target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || grid.hidden || !lastPtr) return;
-  if (!grid.contains(document.elementFromPoint(lastPtr.x, lastPtr.y))) return;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || grid.hidden) return;
+  if (!libPaneActive()){
+    if (!lastPtr) return;
+    if (!grid.contains(document.elementFromPoint(lastPtr.x, lastPtr.y))) return;
+  }
   const sel = new Set(state.selectedIds);
   const i = sel.size ? state.items.findIndex((a) => sel.has(a.id)) : -1;
   if (i < 0) return;
