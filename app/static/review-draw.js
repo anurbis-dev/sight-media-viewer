@@ -1554,7 +1554,7 @@ var SightReviewDraw = (function(){
     function roundItem(it){
       var d = it.data;
       if (Array.isArray(d.pts)) d.pts = d.pts.map(RC.r2);
-      ["x", "y", "w", "h", "size", "width", "rot", "bend", "bendA", "radius", "outline", "gap", "step", "len", "hatchWidth"].forEach(function(key){ if (typeof d[key] === "number") d[key] = RC.r2(d[key]); });
+      ["x", "y", "ax", "ay", "w", "h", "size", "width", "rot", "bend", "bendA", "radius", "outline", "gap", "step", "len", "hatchWidth"].forEach(function(key){ if (typeof d[key] === "number") d[key] = RC.r2(d[key]); });
     }
     function abort(){
       if (stroke && stroke.t === "eraser") items = stroke.before;

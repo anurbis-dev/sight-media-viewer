@@ -1255,6 +1255,17 @@ var SightReviewCore = (function(){
       else out.push(["mid", (d.pts[0] + d.pts[2]) / 2, (d.pts[1] + d.pts[3]) / 2]);
       return out;
     }
+    // One pin: "pa" = the point pinned (with no leader line yet: just outside the circle, lower left, to pull one
+    // out), "pc" = the circle (only with a leader: just outside the circle, on the side away from the line, so the
+    // circle itself still moves the whole pin and its number stays readable). Several pins: none.
+    if (list.length === 1 && typeOf(list[0]) === "pin"){
+      var pd = list[0].data, rr = pd.size / 2 + 9 * px;
+      if (pinLeader(pd)){
+        var pl = hyp(pd.x - pd.ax, pd.y - pd.ay);
+        return [["pa", pd.ax, pd.ay], ["pc", pd.x + (pd.x - pd.ax) / pl * rr, pd.y + (pd.y - pd.ay) / pl * rr]];
+      }
+      return [["pa", pd.x - rr * Math.SQRT1_2, pd.y + rr * Math.SQRT1_2]];
+    }
     if (!list.length || list.every(function(it){ return typeOf(it) === "pin"; })) return [];
     if (D && D.handle === "rot" && D.at) return [["rot", D.at[0], D.at[1]]];
     var b = xfBox(list), mx = (b[0] + b[2]) / 2, my = (b[1] + b[3]) / 2;
@@ -1322,6 +1333,19 @@ var SightReviewCore = (function(){
       }
       return;
     }
+    if (h === "pa" || h === "pc"){
+      // A pin's two points move apart: the point pinned (pa) or the circle (pc); Shift keeps the leader line
+      // horizontal / vertical. A point pinned that ends up inside the circle drops the leader.
+      // (pa: the pointer is the point; pc: the circle moves by the pointer's travel, its handle sits off-centre)
+      var pd2 = its[0].data, ps = src[0].data, lead = pinLeader(ps);
+      var ox0 = h === "pa" ? ps.x : ps.ax, oy0 = h === "pa" ? ps.y : ps.ay;
+      var tx = h === "pa" ? x : ps.x + x - D.x, ty = h === "pa" ? y : ps.y + y - D.y;
+      var pp = m.shift ? snapHV(ox0, oy0, tx, ty) : [tx, ty];
+      if (h === "pa"){ pd2.x = ps.x; pd2.y = ps.y; pd2.ax = pp[0]; pd2.ay = pp[1]; }
+      else if (lead){ pd2.ax = ps.ax; pd2.ay = ps.ay; pd2.x = pp[0]; pd2.y = pp[1]; }
+      if (!pinLeader(pd2)){ delete pd2.ax; delete pd2.ay; }
+      return;
+    }
     var bx0 = D.box[0], by0 = D.box[1], bx1 = D.box[2], by1 = D.box[3], cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
     if (h === "rot"){
       D.at = [x, y];
@@ -1376,13 +1400,13 @@ var SightReviewCore = (function(){
         out += '<line x1="' + r2(from[0]) + '" y1="' + r2(from[1]) + '" x2="' + r2(p[0]) + '" y2="' + r2(p[1]) + '" stroke="' + C + '" stroke-width="' + r2(u) + '"/>';
         if (rotating) out += '<circle cx="' + r2(from[0]) + '" cy="' + r2(from[1]) + '" r="' + r2(3 * z) + '" fill="#fff" stroke="' + C + '" stroke-width="' + r2(1.5 * u) + '"/>';
       }
-      if (id === "rot" || id === "bend" || id === "mid") out += '<circle cx="' + r2(p[0]) + '" cy="' + r2(p[1]) + '" r="' + r2(5 * z) + '" fill="' + C + '" stroke="#fff" stroke-width="' + r2(1.5 * u) + '"/>';
+      if (id === "rot" || id === "bend" || id === "mid" || id === "pc") out += '<circle cx="' + r2(p[0]) + '" cy="' + r2(p[1]) + '" r="' + r2(5 * z) + '" fill="' + C + '" stroke="#fff" stroke-width="' + r2(1.5 * u) + '"/>';
       else out += '<rect x="' + r2(p[0] - 4.5 * z) + '" y="' + r2(p[1] - 4.5 * z) + '" width="' + r2(9 * z) + '" height="' + r2(9 * z) + '" fill="#fff" stroke="' + C + '" stroke-width="' + r2(1.5 * u) + '"/>';
     });
     return out;
   }
   // The cursor for a handle (desktop).
-  var XF_CURSOR = { rot: "grab", p0: "move", p1: "move", bend: "move", mid: "move", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize" };
+  var XF_CURSOR = { rot: "grab", p0: "move", p1: "move", bend: "move", mid: "move", pa: "move", pc: "move", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize" };
 
   // Whether a row / item carries geometry a client can draw (notes always pass; status rows and
   // unknown kinds do not).

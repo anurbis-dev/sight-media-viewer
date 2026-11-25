@@ -2428,6 +2428,8 @@ export function createAnnotator(host){
     S.drag = { handle: h, xf: RC.xfStart(h, list, x, y), ids, src: new Map(ids.map((id) => [id, snap(S.items.get(id))])), moved: false };
   }
   function dragHandle(D, x, y, e){
+    // (as a move: under 2 screen px is a click, not a drag — a pin's handle would otherwise make a stub line)
+    if (!D.moved && hyp(x - D.xf.x, y - D.xf.y) / k() < 2) return;
     D.moved = true;
     RC.xfDrag(D.xf, x, y, { shift: e.shiftKey, alt: e.altKey });
     for (const it of D.xf.items) renderItem(it);
@@ -2580,7 +2582,7 @@ export function createAnnotator(host){
     const inp = document.createElement("input");
     inp.className = "an-pinedit";
     inp.type = "text";
-    inp.inputMode = "numeric";
+    inp.inputMode = isNew ? "numeric" : "text";  // a new pin: a number; an old one may get any short text
     inp.maxLength = 4;
     inp.spellcheck = false;
     inp.autocomplete = "off";
@@ -2903,6 +2905,10 @@ export function createAnnotator(host){
       if (S.tool === "grade") html += `<button type="button" class="an-tg${S.gradeOp === "add" ? " on" : ""}" data-cmd="gadd" title="Add to an area — a drag that starts inside an area adds to it (or hold Shift)">${ICON.gAdd}</button><button type="button" class="an-tg${S.gradeOp === "sub" ? " on" : ""}" data-cmd="gsub" title="Cut from an area — a drag that starts inside an area cuts it out of it, outside it erases (or hold Ctrl)">${ICON.gSub}</button>`;
       html += `<button type="button" class="an-tg" data-cmd="greset" title="Reset hue, saturation, brightness and contrast to 0">Reset</button><button type="button" class="an-tg${S.gradeLines ? " on" : ""}" data-cmd="glines" title="Show the areas' dashed outlines while drawing (off: judge the correction without them)">${ICON.gLines}</button>`;
     }
+    // One pin: its number (touch has no double-click; a double-click on the pin does the same).
+    if (tg.items && tg.type === "pin" && tg.items.length === 1 && editable(tg.items[0])){
+      html += `<span class="an-sep"></span><button type="button" class="an-tg" data-cmd="pinnum" title="Change the pin's number or text (double-click the pin)">Number…</button>`;
+    }
     if (tg.items && tg.type === "image" && tg.items.length === 1 && editable(tg.items[0])){
       html += `<span class="an-sep"></span><button type="button" class="an-tg${cropItem() ? " on" : ""}" data-cmd="crop" title="Crop — drag the edges, drag inside to move the picture (double-click the picture; Enter / Esc to finish)">Crop</button>`;
       if (tg.items[0].data.crop) html += `<button type="button" class="an-tg" data-cmd="uncrop" title="Show the whole picture again">Reset crop</button>`;
@@ -3006,6 +3012,7 @@ export function createAnnotator(host){
     el.querySelector("[data-cmd=reflib]")?.addEventListener("click", () => host.toggleLibrary?.());
     el.querySelector("[data-cmd=refsel]")?.addEventListener("click", () => addSelectedRefs());
     el.querySelector("[data-cmd=crop]")?.addEventListener("click", () => { if (!endCrop()) startCrop(); });
+    el.querySelector("[data-cmd=pinnum]")?.addEventListener("click", () => { const it = S.items.get(tg.items?.[0]?.id); if (it) editPin(it, false); });
     el.querySelector("[data-cmd=uncrop]")?.addEventListener("click", () => { resetCrop(); renderProps(); });
     el.querySelector("[data-cmd=greset]")?.addEventListener("click", () => resetGrade());
     for (const op of ["add", "sub"]) el.querySelector(`[data-cmd=g${op}]`)?.addEventListener("click", () => { S.gradeOp = S.gradeOp === op ? "" : op; renderProps(); if (S.hover) updateCursor(...S.hover); renderSel(); });
@@ -3733,11 +3740,56 @@ export function createAnnotator(host){
       if (at != null) pt = ` data-pt="${t}"`;
       const url = previewFrame(t);
       img = (url ? `<img src="${url}"${npAttr(url)} alt="">` : `<img data-ft="${Number(t).toFixed(3)}" alt="">`) + (at != null ? `<span class="an-fno">f${frameNo(t)}</span>` : "");
-    } else img = `<img src="${esc(S.b2.media.currentSrc || S.b2.media.src || "")}" alt="">`;
+    } else img = `<img src="${esc(stillPic())}" data-still alt="">`;
     // A note's own picture with a text of its own gets a mark (a reply's picture: list = its drawings, at = null).
     const tt = S.kind === "video" ? at ?? n.data.ctx?.t : null;
     const ct = list.some((it) => it.data.reply) ? "" : RC.captionOf(n.data, tt != null ? { t: tt } : {}, sameFrame);
     return `<div class="an-nprev${cls}${ct ? " an-hascap" : ""}"${pt} style="aspect-ratio:${g.nw} / ${g.nh}" title="${ct ? esc(ct) : pt ? "Go to this frame" : "Show this note's drawings"}">${img}<svg viewBox="0 0 ${g.nw} ${g.nh}" preserveAspectRatio="xMidYMid slice">${RC.svgMarkup(list, numOf)}</svg></div>`;
+  }
+  // A still picture's previews: one copy of the open picture, scaled down (short side STILL_SIDE, long side at most
+  // STILL_MAX), shared by every card. Before, each card's <img> was the full file, so a large picture (6 MB, 8K) was
+  // scaled down again for every card each time the panel was drawn — the panel took seconds. Made once per picture
+  // URL, from the lightbox's own decoded <img>, as a JPEG over black (the card's background); until it is ready the
+  // cards show the file itself and are switched over (img[data-still]) when it is.
+  const STILL_SIDE = 720, STILL_MAX = 2400;
+  const STILL = { src: "", url: "", blob: "", busy: false };
+  function stillPic(){
+    const m = S.b2?.media, src = m?.currentSrc || m?.src || "";
+    if (!src || S.b2?.isVid) return src;
+    if (STILL.src !== src){
+      if (STILL.blob) URL.revokeObjectURL(STILL.blob);
+      Object.assign(STILL, { src, url: "", blob: "", busy: false });
+      // Not decoded yet: made when it is (the cards drawn meanwhile are switched over then).
+      if (!(m.complete && m.naturalWidth > 0)) m.addEventListener("load", () => { if (STILL.src === src) stillPic(); }, { once: true });
+    }
+    if (STILL.url) return STILL.url;
+    if (!STILL.busy && m.complete && m.naturalWidth > 0){
+      STILL.busy = true;
+      // Off the current render (the panel's HTML is being built now).
+      setTimeout(() => makeStill(m, src), 0);
+    }
+    return src;
+  }
+  function makeStill(m, src){
+    if (STILL.src !== src) return;
+    const w0 = m.naturalWidth, h0 = m.naturalHeight;
+    const sc = Math.min(1, STILL_SIDE / Math.max(1, Math.min(w0, h0)), STILL_MAX / Math.max(1, w0, h0));
+    const done = (url, blob) => {
+      if (STILL.src !== src){ if (blob) URL.revokeObjectURL(blob); return; }
+      STILL.url = url; STILL.blob = blob || "";
+      if (url === src) return;
+      for (const im of S.ui?.querySelectorAll(".an-nprev img[data-still]") || []) if (im.getAttribute("src") === src) im.src = url;
+    };
+    if (sc > 0.8){ done(src); return; }  // small already: the file itself
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(w0 * sc)); cv.height = Math.max(1, Math.round(h0 * sc));
+      const cx = cv.getContext("2d");
+      cx.fillStyle = "#000"; cx.fillRect(0, 0, cv.width, cv.height);
+      cx.imageSmoothingQuality = "high";
+      cx.drawImage(m, 0, 0, cv.width, cv.height);
+      cv.toBlob((b) => { if (b){ const u = URL.createObjectURL(b); done(u, u); } else done(src); }, "image/jpeg", 0.86);
+    } catch { done(src); }  // (a canvas that cannot be read: keep the file)
   }
   // Video frames for the previews: a second, hidden player of the same file, one seek at a time,
   // kept per time for the open asset.

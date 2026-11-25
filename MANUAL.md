@@ -98,7 +98,10 @@
     `N` number pin: a click puts a numbered circle there, a drag draws a line from where you pressed and puts the
     circle where you let go (a callout). A small field then asks for the number — type it and Enter (or tap
     elsewhere); left empty it takes the next free number, Esc drops the new pin. A click on a pin with this tool
-    (or a double-click with another one) changes its number. Pins from before 0.84 keep showing their note's
+    (or a double-click with another one, or *Number…* in the styles bar of a selected pin) changes its number or
+    text. A selected pin (select tool) shows a handle on each of its points: drag the square to move the point
+    pinned, the ring to move the circle (Shift: the line horizontal / vertical); a pin with no line has the square
+    on its rim, drag it out for one, drop it back on the circle to remove the line. Pins from before 0.84 keep showing their note's
     number. The tool's keys stay live once the number is set. `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
     the brush. The drawing tools and the notes panel are independent: the ✎ button / `Shift+A` shows / hides
     the tools only, the speech-bubble button / `C` the panel only.

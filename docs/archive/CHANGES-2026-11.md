@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.4 — 2026-11-24 — Notes panel: draggable left edge; picture-size drag 2.8x more sensitive
+- **What:** the notes panel's left edge is a resize handle (mouse drag, touch drag, double-click / double-tap resets); the width is kept (`sight.annotate.panelw`). The right-drag that sizes the note pictures now moves 2.5 px per px (was 0.9).
+- **Where:** app/static/annotate.js — `bindPanelEdge`, `applyPanelW`, `panelRoom`, `THUMB_PER_PX`; CSS `--an-pw` replaces the hardcoded 320px / 160px / 336px (lightbox, compare, bar, toasts, v3d panels); MANUAL.
+- **Notes:** the width is the host's `--an-pw` inline px (capped at 80% of the window, 62% on a board); re-read from storage when the panel shows so lightbox / board / compare instances stay in step. Review (fresh agent) found: the compare view's hardcoded 320px, instances out of sync, no re-clamp on window resize, a dead zone when dragging past the cap, no touch reset: all fixed; the reviewer's re-confirmation of those fixes confirmed afterwards; its two nits (a resize listener leaked per lightbox open, a cancelled tap counting as a tap) are fixed. Browser: drag, persist, reset checked (mouse); touch and the right-drag sensitivity not exercised.
+
 ## 0.122.3 — 2026-11-24 — Tab: the library beside the lightbox opens on the current file
 - **What:** turning the library split on (Tab, or the ◧ button) scrolls the grid to the file open in the lightbox, centred.
 - **Where:** app/static/index.html — `toggleLightSplit`, new `scrollGridToLight` (uses `scrollGridToIndex`); MANUAL.
