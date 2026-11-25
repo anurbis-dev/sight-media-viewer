@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.5 — 2026-11-24 — app/version.py restored (app did not start since 0.122.2)
+- **What:** the 0.122.2 commit emptied `app/version.py`, so `from .version import APP_VERSION` failed and the app could not start on 0.122.2–0.122.4. The file is back.
+- **Where:** `app/version.py`.
+- **Notes:** after any agent edit, check `python -c "import app.version"` before committing — a truncated file passes review of the JS diff.
+
 ## 0.122.4 — 2026-11-24 — Notes panel: draggable left edge; picture-size drag 2.8x more sensitive
 - **What:** the notes panel's left edge is a resize handle (mouse drag, touch drag, double-click / double-tap resets); the width is kept (`sight.annotate.panelw`). The right-drag that sizes the note pictures now moves 2.5 px per px (was 0.9).
 - **Where:** app/static/annotate.js — `bindPanelEdge`, `applyPanelW`, `panelRoom`, `THUMB_PER_PX`; CSS `--an-pw` replaces the hardcoded 320px / 160px / 336px (lightbox, compare, bar, toasts, v3d panels); MANUAL.

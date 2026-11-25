@@ -40,6 +40,7 @@ app/static/viewer-input.js shared pointer / gesture layer for the viewers (attac
 app/static/cursors.js    one cursor system for view gestures (setCursor / during / zoomCursor, ROTATE_CURSOR, --cur-rot)
                          — see "Cursors" under Frontend conventions
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
+app/static/key-help.js   the "?" controls overlay (buildKeyHelp / showKeyHelp / helpKey / keyName): annotator, lightbox modes, compare, library
 app/static/defaults.json shipped default theme / tile size
 docs/                    RECENT.md (changelog, newest first), archive/, this file, FORMAT.md (review data contract)
 mobile/                  the phone app "Sight Review" (PWA, no build step) — see "Phone app" below
@@ -798,8 +799,12 @@ The hotkeys are one table, `keyTable()` in annotate.js: rows `[combo, handler, l
 runs it and the "?" help overlay (`openHelp`, toolbar button + Shift+/) is rendered from the same rows, so
 a new shortcut = a new row with a label (rows without one are not listed). While the overlay is open it owns
 the keyboard: index.html's keydown handler hands every key to `annot.onKey` first (`annot.helpOpen()`) and
-returns; only Esc / ? close it. The overlay is a `.an-help` backdrop inside `.light` that swallows pointer,
-wheel and touch events. `.light.an-panel-on` sets `--an-right: 320px`; bars centred on the lightbox width
+returns; only Esc / ? close it. The overlay is a key-help.js `.kh` backdrop (`buildKeyHelp`) inside `.light` that
+swallows pointer, wheel and touch events. The other modes' "?" lists (lightbox picture / PSD / video / sequence /
+3D, compare — `cmp.helpGroups()`, library and board) are written by hand in index.html (`lightHelpGroups`,
+`browserHelpGroups`, `openModeHelp`) and shown with `showKeyHelp` (one `.kh-fixed` overlay on `<body>`, modal via
+`keyHelpOpen()` / `onKeyHelpKey` at the top of the keydown handler): a new or changed lightbox / compare / library
+shortcut must be added to those rows too. The top bars show only `HELP_HINT`. `.light.an-panel-on` sets `--an-right: 320px`; bars centred on the lightbox width
 (`#v3dShade`, `#v3dAnim`) subtract it so they centre on the visible strip (left of the notes panel).
 
 **Host hooks** — `createAnnotator(host)` gets `api, putSetting, registerAutoClose, toast, getV3D,

@@ -1582,6 +1582,6 @@ export function createCanvasView({ mount, getZoomSettings, combineSelection, mar
   return {
     open, close, selectAll, assetOf, selectedAssetIds, refreshMissing,
     // For index.html and the annotator's host (see createAnnotator's `board` host): camera hook, mode state.
-    frameRect, viewRect, syncAnnotUi, annotating: () => !!annot?.isOn(), annotModal: () => !!annot?.modal(),
+    frameRect, viewRect, syncAnnotUi, annotating: () => !!annot?.isOn(), annotModal: () => !!annot?.modal(), toggleAnnotHelp: () => annot?.toggleHelp?.(),
   };
 }

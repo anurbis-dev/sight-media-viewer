@@ -6,6 +6,10 @@
   cursor onto a result takes focus off the search box, so Space previews it right away.
 - **About Sight** — click (or tap) the Sight icon at the top of the sidebar: version, Python / OS, library and ffmpeg paths, counts, uptime and log file. *Copy* puts the whole list on the clipboard (handy for bug reports); Esc, the x or a click outside closes it.
 - **Command palette** — `Ctrl/Cmd+K`: run actions, jump to a kind/collection/file.
+- **Controls list (`?`)** — `?` (or the **?** button in the top bar, for touch) lists every control and shortcut of what is
+  on screen: the library (and a board shown in it), the viewer of a picture / PSD, a video, a sequence, a 3D model, or the
+  comparison. While drawing, `?` is the drawing tools' own list. Esc, `?`, ✕ or a click outside closes it; nothing
+  underneath reacts while it is open. The viewer's and the comparison's top bars no longer spell out the shortcuts.
 - **Filters** — sidebar lists kinds (image, video, audio, PSD, font, document, 3D model),
   tags and collections; click to filter, and drag assets into a collection to group them.
   A click with a slightly shaky hand stays a click: a thumbnail is dragged only after the pointer has moved about 12 px.

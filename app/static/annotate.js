@@ -22,6 +22,7 @@
 // camera matches that view; images: none (always visible).
 
 import { hotkey, runHotkeys } from "/static/keys.js";
+import { buildKeyHelp, helpKey, keyName } from "/static/key-help.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { setCursor } from "/static/cursors.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
@@ -5417,7 +5418,7 @@ export function createAnnotator(host){
   function keyTable(){
     const G = { tool: "Drawing tools", edit: "Editing", notes: "Notes and panels", nav: "Moving the selection", video: "Video", d3: "3D models", gen: "General" };
     const rows = [
-      ["Shift+Slash", () => toggleHelp(), "Show / hide this list", G.gen],
+      ["Shift+Slash", (e) => e.repeat || toggleHelp(), "Show / hide this list", G.gen],
       ["Escape", () => { if (endCrop()) return; if (S.sel.size){ S.sel.clear(); renderSel(); renderProps(); return; } if (S.pinFocus){ S.pinFocus = null; paintVisibility(); renderPanel(); return; } toggle(false); }, "Deselect / clear pin focus, then leave annotation mode", G.gen],
       ["KeyA", () => toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen], ["Shift+KeyA", (e) => e.repeat || toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen],
       ["Ctrl+KeyZ", () => undo(), "Undo", G.edit], ["Ctrl+Shift+KeyZ", () => redo(), "Redo", G.edit], ["Ctrl+KeyY", () => redo(), "Redo", G.edit],
@@ -5448,8 +5449,7 @@ export function createAnnotator(host){
     return rows.filter((r) => !off.has(r[0])).map((r) => (r[0] === "Shift+KeyA" ? [r[0], r[1], "Enter / leave annotation mode", r[3]] : r));
   }
   // What a combo looks like to a person: KeyV -> V, Ctrl+Shift+KeyZ -> Ctrl+Shift+Z, BracketLeft -> [.
-  const KEY_NAMES = { BracketLeft: "[", BracketRight: "]", Comma: ",", Period: ".", Slash: "?", Delete: "Del", ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
-  const keyName = (c) => c.split("+").map((k) => KEY_NAMES[k] || k.replace(/^Key/, "")).join("+").replace("Shift+?", "?");
+  // (keyName: key-help.js — KeyV -> V, Ctrl+Shift+KeyZ -> Ctrl+Shift+Z, BracketLeft -> [)
   // [{ group, rows: [[keys[], label]] }] in table order.
   function helpGroups(){
     const groups = new Map();
@@ -5477,21 +5477,8 @@ export function createAnnotator(host){
   function openHelp(){
     if (help || !S.light) return;
     document.activeElement?.blur?.();
-    const el = document.createElement("div");
-    el.className = "an-help";
-    el.innerHTML = `<div class="an-hcard" role="dialog" aria-label="Annotation shortcuts">
-      <div class="an-hh"><b>Annotation shortcuts</b><button type="button" class="an-ib" data-act="hclose" title="Close (Esc)">${ICON.close}</button></div>
-      <div class="an-hbody">${helpGroups().map((g) => `<section><h4>${esc(g.group)}</h4>${g.rows.map(([keys, label]) => `<div class="an-hrow"><span class="an-hk">${keys.map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span><span>${esc(label)}</span></div>`).join("")}</section>`).join("")}</div>
-      <p class="an-hfoot">On a touch screen every tool, undo and the notes panel have a button in the toolbar (screenshots: the buttons by the note field).</p></div>`;
-    // A full-screen backdrop: nothing underneath sees the pointer, wheel or touch while this is open.
-    for (const t of ["pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "dblclick", "contextmenu", "touchstart", "touchend", "wheel", "touchmove"]){
-      el.addEventListener(t, (ev) => {
-        ev.stopPropagation();
-        const inBody = !!ev.target.closest?.(".an-hbody");
-        if (ev.cancelable && (t === "contextmenu" || ((t === "wheel" || t === "touchmove") && !inBody))) ev.preventDefault();
-      }, { passive: false });
-    }
-    el.addEventListener("click", (ev) => { ev.stopPropagation(); if (ev.target === el || ev.target.closest("[data-act=hclose]")) closeHelp(); });
+    const el = buildKeyHelp({ title: "Annotation shortcuts", groups: helpGroups(), onClose: closeHelp,
+      foot: "On a touch screen every tool, undo and the notes panel have a button in the toolbar (screenshots: the buttons by the note field)." });
     S.light.appendChild(el);
     help = el;
     el.querySelector("[data-act=hclose]").focus({ preventScroll: true });
@@ -5505,13 +5492,7 @@ export function createAnnotator(host){
     if (!S.light) return false;
     // The help overlay owns the keyboard: only Esc (and ?) get through, everything else is swallowed so
     // neither the annotator nor the lightbox behind it acts. Browser shortcuts (Ctrl/Alt, F-keys) are left alone.
-    if (help){
-      if (hotkey(e, "Escape") || hotkey(e, "Shift+Slash")){ e.preventDefault(); closeHelp(); }
-      // Enter / Space on the focused close button must still press it (keyboard-only users).
-      else if (e.target?.closest?.("[data-act=hclose]") && (hotkey(e, "Enter") || hotkey(e, "Space"))) { /* default: click */ }
-      else if (!e.ctrlKey && !e.metaKey && !e.altKey && !/^F\d+$/.test(e.code)) e.preventDefault();
-      return true;
-    }
+    if (help){ helpKey(e, closeHelp); return true; } // (Enter / Space still press the focused close button)
     // A Ctrl + right-drag in progress: Esc cancels it, other keys wait (Ctrl is already down: a stray Ctrl+Z / Ctrl+D
     // mid-drag would mix an undo or a copy into the drag's own step).
     if (S.drag?.sizeOp){ e.preventDefault(); if (hotkey(e, "Escape")) abortGesture(); return true; }
@@ -5763,7 +5744,7 @@ export function createAnnotator(host){
   window.addEventListener("pointermove", trackHover, true);
 
   return {
-    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, importFile, explodeChanged,
+    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, toggleHelp, importFile, explodeChanged,
     isOn: () => S.on, resetPrefs,
     supports: () => supported(),
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
@@ -5955,16 +5936,6 @@ function injectStyles(){
 .an-offer button { flex: none; display: inline-grid; place-items: center; min-height: 32px; border-radius: 8px; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
 .an-offer .an-offer-go { padding: 0 14px; color: var(--accent); }
 .an-offer .an-offer-x { width: 32px; padding: 0; color: var(--muted); }
-.an-help { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: rgb(0 0 0 / .62); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); cursor: default; touch-action: none; }
-.an-hcard { width: min(640px, 100%); max-height: 100%; display: flex; flex-direction: column; border-radius: 12px; background: var(--surface, #1b1c20); border: 1px solid var(--border-strong, var(--border)); box-shadow: 0 24px 70px rgb(0 0 0 / .6); color: var(--fg); font-size: 12px; overflow: hidden; }
-.an-hh { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px 16px; border-bottom: 1px solid var(--border); }
-.an-hh b { font-size: 14px; font-weight: 600; }
-.an-hbody { overflow: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 4px 16px 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); column-gap: 24px; }
-.an-hbody h4 { margin: 12px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--subtle); }
-.an-hrow { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; line-height: 1.4; }
-.an-hk { flex: 0 0 auto; min-width: 84px; display: inline-flex; flex-wrap: wrap; gap: 3px; }
-.an-hk kbd { font: 11px/1 ui-monospace, Consolas, monospace; padding: 3px 6px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--fg); }
-.an-hfoot { margin: 0; padding: 8px 16px 12px; color: var(--subtle); border-top: 1px solid var(--border); }
 .an-hint { color: var(--subtle); padding: 10px 8px; line-height: 1.5; }
 .an-hint p { margin: 0 0 8px; }
 .an-note { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; cursor: pointer; }

@@ -432,7 +432,7 @@ label.field textarea { min-height: 72px; resize: vertical; }
 .light-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
 .light-bar .btn.on { color: var(--accent); border-color: var(--accent); }
 .light-bar .t { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.light-hint { font-size: 11px; color: var(--subtle); }
+.light-hint { font-size: 11px; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .light-stage { flex: 1; min-height: 0; overflow: hidden; display: grid; place-items: center; background: var(--bg); container-type: size; box-sizing: border-box; }
 .light-stage .view3d { width: 100%; height: 100%; }
 /* The renderer sizes its canvas in px; in flow it would hold the frame's grid track at the old width
@@ -872,6 +872,7 @@ body.k-alt:not(.k-ctrl) .view.vid, body.k-alt:not(.k-ctrl) .view.vid .view-media
         <button class="btn ghost icon an-btn" id="boardNotesBtn" type="button" title="The board's notes — read them, click a picture to go there (C)" aria-label="Board notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost icon" id="boardEyeBtn" type="button" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost icon an-btn" id="boardAnnoBtn" type="button" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
+        <button class="btn ghost icon" id="helpBtn" type="button" title="Controls and shortcuts (?)" aria-label="Controls and shortcuts">?</button>
         <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
     </div>
@@ -895,6 +896,7 @@ import { createAnnotator } from "/static/annotate.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
+import { showKeyHelp, keyHelpOpen, onKeyHelpKey, isHelpKey, HELP_HINT } from "/static/key-help.js";
 import { setCursor, during as cursorDuring, zoomCursor } from "/static/cursors.js";
 import { createTrackerSource } from "/static/tracker-source.js";
 import "/static/trackers-core.js";  // globalThis.SightTrackers — the tracker registry (docs/ARCHITECTURE.md "Tracker adapters")
@@ -1952,6 +1954,7 @@ const cmp = createCompare({
   versionsOf: async (id) => (await api(`/api/assets/${id}/versions`)).items || [],
   openInLight: (a, files) => switchViewMode("one", files || [a], a.id), // ⤢ = One on that layer (the set's order kept)
   paintModes: (box, files) => paintModes(box, files, "cmp"), // the One / Sequence / Compare switch in its bar
+  showHelp: () => openModeHelp(),  // its "?" button
   onOpen: (el) => { cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); bindAnnoReset(el.querySelector(".cmp-annb"), [annot, boardAnnot, cmpAnnot]); },
   onView: (view) => {
     cmpView = view;
@@ -3863,7 +3866,7 @@ function ensureCanvasCtl(){
       // Shared with the library grid rather than re-implemented: the marquee modifier rules and the
       // nearest-neighbour switch for small (pixel-art) sources.
       combineSelection, markSmallSrc, syncPixelation,
-      keysEnabled: () => !light && !paletteOpen && $("fbOverlay").hidden && $("aboutOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
+      keysEnabled: () => !light && !paletteOpen && !keyHelpOpen() && $("fbOverlay").hidden && $("aboutOverlay").hidden && !cmp.isOpen() && canvasPaneActive(),
       onContextMenu: showCanvasCtx,
       annot: boardAnnot,
       annButton: $("boardAnnoBtn"),
@@ -8028,6 +8031,7 @@ function toggleLight(a){
       <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
       <button class="btn ghost" id="mirVBtn" type="button" style="width:40px;padding:0" title="Flip the view upside down (Shift+V)" aria-label="Flip upside down" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8 17 3v5z"/><path d="M7 16l10 5v-5z"/></svg></button>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
+      <button class="btn ghost" id="lightHelpBtn" type="button" style="width:40px;padding:0" title="Controls and shortcuts (?)" aria-label="Controls and shortcuts">?</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
     </div>
     <div class="light-stage"><div class="light-frame"></div></div>
@@ -8086,6 +8090,7 @@ function toggleLight(a){
       <span class="vtime vmem" data-mem title="Video RAM cache: filled / limit (Settings → RAM cache)"></span>
     </div>`;
   wrap.querySelector("#lightClose").onclick = () => closeLight();
+  wrap.querySelector("#lightHelpBtn").onclick = () => openModeHelp();
   wrap.querySelector("#libBtn").onclick = () => toggleLightSplit();
   document.body.append(wrap);
   trackBarH(wrap, wrap.querySelector(".light-bar"));
@@ -8147,18 +8152,163 @@ function toggleLight(a){
   requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("on")));
 }
 
-const LIGHT_HINT = "A annotate · Shift+R turn · Shift+M / Shift+V mirror / flip · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const LIGHT_HINT_VIDEO = "A annotate · Shift+R turn · Shift+M / Shift+V mirror / flip · Click/Space play/pause · Drag scrub (Shift fine) · , . frame · MMB pan · RMB zoom · 1–9 zoom · dbl Frame/100% · Esc";
-const ANNOT_HINT = "Annotating · ? = shortcuts · Esc leaves";
+// The lightbox's top bar carries one line; every control of the mode on screen is listed by "?" (openModeHelp).
 function syncLightHint(){
   const el = $("lightHint");
-  if (!el || !light) return;
-  const a = light.asset;
-  if (annot.isOn()){ el.textContent = ANNOT_HINT; return; }
-  if (!a) return;
-  el.textContent = a.kind === "model3d" ? LIGHT_HINT_3D : a.kind === "video" ? LIGHT_HINT_VIDEO : a.ext === ".psd" ? "D layers · " + LIGHT_HINT : LIGHT_HINT;
+  if (el && light) el.textContent = HELP_HINT;
 }
-const LIGHT_HINT_3D = "Shift+A annotate · Drag orbit · MMB pan · RMB zoom · WASD fly · F frame · Ctrl+click select · H / Ctrl+H / Alt+H hide · Ctrl+RMB drag explode · Alt+1–9 save view · 1–9 recall · Esc";
+
+// ---- "?" — the controls of the mode on screen (key-help.js) ----------------------------------------------------
+// One list per mode: the library browser (and a board shown in it), the lightbox of a picture / PSD / document,
+// a video (and a sequence), a 3D model; the compare's list is compare.js helpGroups(). While annotating, "?" is the
+// annotator's own list (annotate.js). The rows mirror the keydown handler below and the viewer's pointer code —
+// change them together.
+function lightGeneralRows(o){
+  return [
+    [["?"], "Show / hide this list"],
+    [["Esc"], "Close the viewer" + (o.still ? " (Space too)" : "")],
+    [["←", "→"], o.seq ? "Previous / next clip" : "Previous / next file in the library"],
+    ...(o.seq ? [] : [[["↑", "↓"], "The file a row up / down in the library grid"]]),
+    [["Tab", "◧"], "Library beside the viewer (drag pictures from it onto the frame: references, or a comparison)"],
+    [["K"], "Compare: the set in the viewer, else this file's versions (also the compare button)"],
+    [[o.d3 ? "Shift+A" : "A"], "Draw and write notes — the pencil button (its own ? lists the drawing keys)"],
+    [["C"], "Read the notes — the speech-bubble button (click a picture to go there)"],
+    [["Shift+H"], "Hide / show the drawings — the eye button"],
+    [["I"], "File info overlay — the round i button"],
+    [["◱"], "Mask and corner radius of the frame"],
+    [["One · Sequence · Compare"], "With several files in the viewer: one at a time, back to back, side by side"],
+    [["Ctrl+K"], "Command palette"],
+  ];
+}
+function lightHelpGroups(){
+  const a = light.asset || {};
+  const d3 = !$("v3dGear").hidden, vid = !!light.video, seq = !!light.seq, psd = a.ext === ".psd";
+  const groups = [];
+  if (d3){
+    const splat = currentAssetIsSplat;
+    groups.push({ group: "3D view", rows: [
+      [["Drag"], "Orbit (touch: one finger)"],
+      [["Middle-drag"], "Pan (touch: two fingers)"],
+      [["Wheel", "Right-drag"], "Zoom (touch: pinch)"],
+      [["W", "A", "S", "D"], "Fly the camera (speed: Camera in the settings panel)"],
+      [["F"], splat ? "Back to the opening view" : "Frame the selection, or the whole model as it is now"],
+      [["1–9"], "Recall a saved camera view"],
+      [["Alt+1–9"], "Save the camera view under that digit"],
+      ...(splat ? [] : [[["Shift+right-drag"], "Turn the lights"], [["Ctrl+right-drag"], "Explode: pull the parts apart (also the slider)"]]),
+      [["Shift (held)"], "Slower pan / zoom"],
+    ] });
+    groups.push({ group: "Model", rows: splat ? [[["G"], "View settings panel — the gear button"]] : [
+      [["Ctrl+click"], "Select a mesh (again: deselect; a click on empty space clears)"],
+      [["H"], "Hide the selected mesh"],
+      [["Ctrl+H"], "Hide everything else"],
+      [["Alt+H"], "Show all meshes"],
+      [["Shift+1–4"], "Shading: solid / vertex colours / textured / normals"],
+      [["Shift+5", "Shift+6"], "Wireframe / x-ray overlay"],
+      [["Shift+7"], "Turn the model 90°"],
+      [["G"], "View settings panel — the gear button"],
+      [["U"], "UV editor beside the model — the UV button (F fits the side under the cursor)"],
+    ] });
+  } else if (light.setZoom || light.fit){
+    groups.push({ group: vid ? "Picture" : "View", rows: [
+      [["Wheel", "Right-drag"], "Zoom around the cursor (touch: pinch)"],
+      [vid ? ["Middle-drag"] : ["Drag", "Middle-drag"], vid ? "Pan (touch: two fingers)" : "Pan (touch: one or two fingers)"],
+      [["Double-click"], "Fit to the frame / 100 %"],
+      [["F"], "Fit to the frame"],
+      [["1–9"], "Zoom to that multiple of the native size (1 = 100 %)"],
+      ...(light.turn ? [[["Shift+R"], "Turn 90°"], [[vid ? "Ctrl+Alt+drag" : "Alt+drag"], "Turn to any angle (Shift: 15° steps)"]] : []),
+      ...(light.mirror ? [[["Shift+M"], "Mirror — the mirror button"], [["Shift+V"], "Flip upside down — the flip button"]] : []),
+      [["Shift (held)"], "Slower pan / zoom" + (vid ? " / scrub" : "")],
+    ] });
+  }
+  if (psd) groups.push({ group: "PSD", rows: [[["D", "☰"], "Layers panel: view one layer alone, Composite for the whole image"]] });
+  if (vid) groups.push({ group: "Video", rows: [
+    [["Space", "Click"], "Play / pause (touch: tap)"],
+    [["Drag", "Alt+drag"], "Scrub: the window's width is the clip (Shift fine; touch: one finger; Alt+drag also while drawing)"],
+    [[",", "."], "Previous / next frame"],
+    [["Shift+←", "Shift+→"], seq ? "First / last frame of the whole sequence" : "First / last frame"],
+    [["Shift+,", "Shift+."], "Previous / next drawing or note on the timeline"],
+    [["Shift+F"], "Frame stamp on the video (drag it to a corner; the ▾ next to its icon: settings)"],
+    [["Click / drag the timeline"], "Seek / scrub"],
+  ] });
+  if (seq) groups.push({ group: "Sequence", rows: [
+    [["←", "→", "⏮", "⏭"], "Previous / next clip's start"],
+    [["Home"], "Back to the first clip"],
+    [["Shift+L", "⟲"], "Loop the whole sequence"],
+    [["Drag the sequence bar"], "Move through the whole sequence"],
+  ] });
+  groups.push({ group: "General", rows: lightGeneralRows({ d3, seq, still: !vid && !light.audio }) });
+  const title = d3 ? "3D viewer — controls" : seq ? "Sequence — controls" : vid ? "Video — controls" : psd ? "PSD — controls" : "Viewer — controls";
+  return { title, groups };
+}
+function browserHelpGroups(){
+  const board = state.view === "canvas";
+  const groups = [
+    { group: "Browsing", rows: [
+      [["Space"], "Preview the file under the cursor (over 2+ selected: view that set; videos: play them in sequence)"],
+      [["Double-click"], "Open the file in the viewer"],
+      [["/"], "Search names and tags"],
+      [["Esc"], "Clear the search, then the selection"],
+      [["F"], "Scroll the grid to the selection"],
+      [["Right-drag ↕"], "Thumbnail size (snaps to sizes that fill the row)"],
+      [["D"], "Details panel — the panel button at the right end of the top bar"],
+      [["K"], "Compare the selected files (one: its versions) — also Compare in the top bar"],
+      [["▶▶ Sequence"], "Play the selected videos one after another (Space over one of them)"],
+      [["Ctrl+K"], "Command palette"],
+      [["?"], "Show / hide this list — the ? button"],
+    ] },
+    { group: "Selecting", rows: [
+      [["Click"], "Select"],
+      [["Ctrl+click"], "Add / remove (the order is kept: the sequence order)"],
+      [["Shift+click"], "Select a range"],
+      [["Ctrl+A"], "Select all"],
+      [["X", "Del"], "Remove the selection from the open collection"],
+      [["Drag tiles"], "Into a collection, onto a board or onto the viewer"],
+      [["Right-click"], "Context menu: reveal, find in folder, refresh thumbnails …"],
+      [["Hold a tile"], "Touch: selection mode — taps add / remove, ✕ ends it"],
+    ] },
+  ];
+  if (board) groups.push({ group: "Board", rows: [
+    [["F"], "Frame the selection (nothing selected: everything)"],
+    [["A"], "Frame everything"],
+    [["Shift+A"], "Draw and write notes on the board"],
+    [["Tab", "◧"], "Library beside the board"],
+    [["Ctrl+Z", "Ctrl+Shift+Z"], "Undo / redo"],
+    [["Ctrl+D"], "Duplicate the selection"],
+    [["X", "Del"], "Remove the selection from the board"],
+    [["↑", "↓"], "Bring to front / send to back"],
+    [["]", "["], "One layer up / down"],
+    [["Alt+X", "Alt+V"], "Mirror / flip the selection"],
+    [["Ctrl+←→↑↓"], "Align left / right / top / bottom"],
+    [["Ctrl+Alt+←→↑↓"], "Same height / width / size / scale"],
+    [["Ctrl+Alt+Shift+↑↓"], "Distribute horizontally / vertically"],
+    [["Ctrl+P"], "Arrange optimally"],
+    [["Ctrl+Alt+N / A / O / D / R"], "Arrange by name / addition / order / path / at random"],
+    [["Ctrl+Alt+S"], "Stack"],
+    [["Esc"], "Deselect"],
+  ] });
+  return { title: board ? "Library and board — controls" : "Library — controls", groups };
+}
+// Opens the list for what is on screen. While annotating, the annotator's own list.
+function openModeHelp(){
+  if (cmp.isOpen()){
+    if (cmpAnnot.isOn()){ cmpAnnot.toggleHelp(); return; }
+    showKeyHelp({ title: "Compare — controls", groups: cmp.helpGroups(), wide: true,
+      foot: "Touch: tap plays / pauses, one finger scrubs (pictures only: pans), two fingers pinch-zoom and pan; every option has a button in the top bar." });
+    return;
+  }
+  if (light){
+    if (annot.isOn()){ annot.toggleHelp(); return; }
+    const { title, groups } = lightHelpGroups();
+    showKeyHelp({ title, groups, wide: true, foot: "On a touch screen the buttons in the top bar do what the keys do; tap, one-finger drag and pinch work on the picture." });
+    return;
+  }
+  // A board being annotated: the annotator's own list (the board's help is already open: leave it be).
+  if (canvasCtl?.annotModal()) return;
+  if (canvasCtl?.annotating() && canvasPaneActive()){ canvasCtl.toggleAnnotHelp(); return; }
+  const { title, groups } = browserHelpGroups();
+  showKeyHelp({ title, groups, wide: true, foot: "On a touch screen: hold a tile to start selecting, then tap to add or remove; the top bar's buttons do the rest." });
+}
+$("helpBtn").onclick = () => openModeHelp();
 
 // Each asset kind has its own toolbar in the lightbox (data-tools="<kind>" elements). Only the
 // one matching the open asset is shown, so a 3D model's shading bar never appears over an image
@@ -11105,6 +11255,8 @@ document.addEventListener("keydown", (e) => {
   // Shortcut rule (keys.js): a combo fires only with EXACTLY its modifiers — use hotkey(e, "KeyD"),
   // never a bare e.key/e.code test, so Shift+D / Ctrl+D / Alt+D can't trigger the plain-D command.
   // The annotation help overlay ("?") is modal: it sees every key first and lets nothing else act.
+  // The mode's own "?" list (openModeHelp) is modal the same way.
+  if (keyHelpOpen()){ onKeyHelpKey(e); return; }
   if (light && annot.helpOpen()){ annot.onKey(e); return; }
   // The board's annotation help / settings popup is modal the same way (canvas.js hands it the key).
   if (!light && canvasCtl?.annotModal()) return;
@@ -11134,6 +11286,7 @@ document.addEventListener("keydown", (e) => {
     if (cmpAnnot.isOn() && cmpAnnot.onKey(e)) return;
     if (!typing && !e.repeat && hotkey(e, "KeyA")){ e.preventDefault(); cmpToggleAnnot(); return; }
     if (!typing && !cmpAnnot.isOn() && hotkey(e, "KeyC")){ e.preventDefault(); cmpAnnot.onKey(e); return; } // the notes panel, as in the lightbox
+    if (!typing && isHelpKey(e)){ e.preventDefault(); if (!e.repeat) openModeHelp(); return; } // the compare's controls
     if (cmp.onKey(e)) return;
     if (hotkey(e, "Shift+KeyH") || hotkey(e, "KeyC")) return;   // never the lightbox's eye / notes panel behind the compare
   }
@@ -11141,6 +11294,13 @@ document.addEventListener("keydown", (e) => {
   // Lightbox annotations: while annotating, its tools / undo / delete / Esc come first. A toggles
   // the mode; in a 3D view A flies the camera, so there it is Shift+A.
   if (light && annot.onKey(e)) return;
+  // ?: the controls of the lightbox / the library; annotating (the lightbox or a board), openModeHelp hands it to the annotator
+  // (prevented here, so canvas.js does not toggle the board annotator's list a second time).
+  if (!typing && isHelpKey(e) && !(light && annot.modal())){
+    e.preventDefault();
+    if (!e.repeat) openModeHelp();
+    return;
+  }
   if (light && !typing && !e.repeat && (hotkey(e, "Shift+KeyA") || (hotkey(e, "KeyA") && $("v3dGear").hidden))){
     e.preventDefault();
     annot.toggle();

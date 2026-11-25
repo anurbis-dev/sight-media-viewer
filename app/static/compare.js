@@ -51,6 +51,7 @@ import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { attachViewerInput } from "/static/viewer-input.js";
 import { setCursor } from "/static/cursors.js";
+import { HELP_HINT } from "/static/key-help.js";
 
 const COLORS = ["#4c9aff", "#ff9f0a", "#34c759", "#ff453a", "#af52de", "#32ade6", "#ffd60a", "#ff6482"];
 const LAYOUTS = [["stack", "Stack", "Digit1"], ["grid", "Tile", "Digit2"], ["row", "Row", "Digit3"], ["col", "Column", "Digit4"]];
@@ -67,10 +68,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const isVideo = (a) => a.kind === "video";
 const mediaSrc = (a) => (a.ext === ".psd" ? `/api/psd/${a.id}/preview` : `/api/file/${a.id}`);
-// The top bar's hint: what the mouse does depends on whether any layer is a video (pictures only: a drag pans).
-const HINT_VIDEO = "Click play · drag scrub (Shift fine) · wheel / right-drag zoom · middle-drag pan · [ ] shift clip";
-const HINT_PICS = "Drag / middle-drag pan (Shift fine) · wheel / right-drag zoom";
-const HINT_KEYS = " · dbl-click / F fit · S swipe · D difference · T see-through · ↑↓ layer · H hide · Esc";
+// The top bar shows one line (HELP_HINT); the controls themselves are listed by helpGroups() in the "?" overlay.
 export const comparable = (a) => !!a && a.status !== "missing" && (a.kind === "image" || a.kind === "video" || a.ext === ".psd");
 
 function fmtT(t, fps){
@@ -146,6 +144,7 @@ export function createCompare(host){
         <button type="button" class="cmp-b" data-a="thru" title="See-through — a layer's alpha and the space past its picture show the layers below, and a clip past its end disappears; off: every layer covers the ones below it whole (T)">See-through</button>
         <div class="cmp-seg" data-g="blend"><button type="button" data-v="over" title="Layers as they are, the first chip on top (D toggles)">Over</button><button type="button" data-v="difference" title="Difference — each layer against all the layers below it: the difference of the whole visible stack (hide a layer to take it out) — equal pixels go black (D)">Difference</button></div>
         <span class="cmp-hint"></span>
+        <button class="btn ghost cmp-helpb" data-a="help" type="button" style="width:40px;padding:0" title="Controls and shortcuts (?)" aria-label="Controls and shortcuts">?</button>
         <div class="vmodes cmp-modes" hidden></div>
         <button class="btn ghost an-btn cmp-notesb" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
@@ -488,7 +487,7 @@ export function createCompare(host){
     // (prefixed: a bare "row" is the sidebar's menu-row class, whose fixed height flattened the Row layout to nothing)
     st.className = "cmp-stage lay-" + P.layout + curs.map((c) => " " + c).join(""); // (cursors.js keeps its classes)
     setCursor(st, "base", vids().length ? null : "grab"); // pictures only: a left drag pans
-    C.el.querySelector(".cmp-hint").textContent = (vids().length ? HINT_VIDEO : HINT_PICS) + HINT_KEYS;
+    C.el.querySelector(".cmp-hint").textContent = HELP_HINT;
     host.paintModes?.(C.el.querySelector(".cmp-modes"), C.layers.map((l) => l.a)); // (One / Sequence / Compare)
     setCursor(st, "hover", null); // (the splits are rebuilt: the next pointer move finds one again)
     const name = (l) => `<i style="background:${l.color}"></i>${esc(l.a.name)}`;
@@ -1414,6 +1413,7 @@ export function createCompare(host){
       const a = b.dataset.a;
       if (a === "close") close();
       else if (a === "annot") host.onAnnotButton?.();
+      else if (a === "help") host.showHelp?.();
       else if (a === "swipe") setPref("swipe", !P.swipe);
       else if (a === "thru") setPref("thru", !P.thru);
       else if (a === "dir") setPref("dir", P.dir === "x" ? "y" : "x");
@@ -1929,7 +1929,59 @@ export function createCompare(host){
     const W = C.viewWrap ? rel(C.viewWrap) : { x: 0, y: 0 };
     return { cv, ox: W.x, oy: W.y };
   }
-  return { open, close, isOpen: () => !!C, onKey, session, pause, seekLayer, relayout, setMarks, selectedId: () => C?.sel || null, wantsPress, captureView,
+  // The "?" overlay's list (index.html shows it with key-help.js): the compare's own keys from onKey above, its mouse
+  // and touch controls; with pictures only (no video) a left drag pans and the video rows are left out.
+  function helpGroups(){
+    const vid = !!C && vids().length > 0;
+    return [
+      { group: "Layout", rows: [
+        ...LAYOUTS.map(([, n, combo]) => [[combo.replace("Digit", "")], n]),
+        [["S"], "Swipe on / off (Stack): split lines cut the stack, one region per layer"],
+        [["V"], "Split direction: side by side / top and bottom (Swipe)"],
+        [["D"], "Over / Difference (Stack): equal pixels go black"],
+        [["T"], "See-through (Stack): alpha and the space past a picture show the layers below"],
+      ] },
+      { group: "Layers", rows: [
+        [["↑", "↓"], "Select the previous / next layer"],
+        [["H"], "Hide / show the selected layer"],
+        [["Click a chip"], "Hide / show that layer (while annotating: pick it to annotate)"],
+        [["Ctrl+click a chip"], "Solo that layer (again: every layer)"],
+        [["Middle-click a chip", "×"], "Remove the layer"],
+        [["Drag a chip"], "Reorder the layers (touch: hold, then drag)"],
+        [["⤢"], "Open the file in the viewer (the set is kept)"],
+        [["+ Add"], "Bring in another version"],
+      ] },
+      { group: "View", rows: [
+        [["Wheel", "Right-drag"], "Zoom around the cursor"],
+        [vid ? ["Middle-drag", "Alt+drag"] : ["Drag", "Middle-drag"], "Pan"],
+        [["Double-click", "F"], "Fit"],
+        [["0"], "First visible layer at 100 %"],
+        [["Drag a split line"], "Move that split (Swipe)"],
+        [["Shift (held)"], "Slower drags: scrub, zoom, pan, a split, a clip's offset"],
+        [["Pinch"], "Touch: zoom and pan with two fingers"],
+      ] },
+      ...(vid ? [{ group: "Video", rows: [
+        [["Space", "Click"], "Play / pause every clip in sync (touch: tap)"],
+        [["Drag"], "Scrub every clip (the view's width is the whole timeline; touch: one finger)"],
+        [[",", "."], "Previous / next frame (also ← / →)"],
+        [["Shift+,", "Shift+."], "10 frames back / on (also Shift+← / Shift+→)"],
+        [["Home", "End"], "Start / end of the timeline"],
+        [["L"], "Loop on / off"],
+        [["[", "]"], "Shift the selected clip's first frame 1 frame (Shift: 10)"],
+        [["Drag the offset"], "Slide a clip frame by frame on its chip (click it to type a number)"],
+        [["Click a tick"], "Go to a frame with a drawing / note on the timeline"],
+      ] }] : []),
+      { group: "General", rows: [
+        [["?"], "Show / hide this list"],
+        [["A"], "Annotate the selected layer (its own ? lists the drawing keys)"],
+        [["C"], "Notes of the selected layer"],
+        [["Esc", "K"], "Close the comparison"],
+        [["Ctrl+K"], "Command palette"],
+      ] },
+    ];
+  }
+
+  return { open, close, isOpen: () => !!C, onKey, helpGroups, session, pause, seekLayer, relayout, setMarks, selectedId: () => C?.sel || null, wantsPress, captureView,
     ready: () => C?.fpsReady || Promise.resolve() };
 }
 
