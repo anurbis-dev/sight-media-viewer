@@ -172,7 +172,9 @@
     you turn it the knob follows the pointer out from the centre, so pulling it further away turns
     more finely; arrows nudge (Shift ×10). Hold `Ctrl` with any drawing tool to erase for a moment;
     the bin in the toolbar (`Shift+Delete`) clears the drawings on screen in one step (undo brings
-    them back). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+X` / `Ctrl+V`
+    them back); `Ctrl`+click on it (touch: a long press; keys: `Ctrl+Delete`) deletes every drawing of the
+    file that is not in a note, on all frames of a video, also in one undo step — notes' and replies' drawings and reference pictures stay (the drawings of a note still
+    being written go too; on a board it is the plain clear). `Ctrl+Z` / `Ctrl+Shift+Z` undo / redo, `Ctrl+C` / `Ctrl+X` / `Ctrl+V`
     copy / cut / paste the selected drawings (a paste after a cut puts them back where they were, after
     a copy 20 px down-right), `Ctrl+D`, `Delete`, `Ctrl+A`, `Ctrl+[` / `Ctrl+]` back / front. Middle- and right-drag still pan and zoom.
     Drawings already added to a note stay editable like any other.

@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.8 — 2026-11-24 — Drawing marquee stays upright on screen when the picture is turned
+- **What:** the select tool's box (plain or Ctrl / Shift drag) is drawn and hit-tested as a box upright on screen; before, with a turned / mirrored lightbox picture it was a box in the picture's frame, turned with it.
+- **Where:** app/static/annotate.js — `rawLocal`, `boxQuad`, `boxMeetsQuad` (SAT), `inQuad`; marquee start (two places in onDown), the `D.marquee` branch of onMove, the marquee in `renderSel` (now a `<polygon>`); MANUAL.
+- **Notes:** `D.marquee` holds raw surface px (not unturned). It is drawn in the turned `.an-ui` layer as the unturned corners of the screen box, and tested in doc units as a convex quad: a drawing whose doc bbox touches the quad is in; a colour area only when all its bbox corners are inside. With no turn (boards, 3D, compare: no / identity `unturn`) it is the old axis-aligned test exactly. Browser: picture turned 90°, a screen box round a stroke selects it, the marquee's screen rect equals the dragged rect.
+- **Review:** a fresh reviewer agent found no bugs (nit: a comment said "world coordinates" — reworded).
+
 ## 0.122.7 — 2026-11-24 — Lightbox: a panned picture turns about its own centre
 - **What:** Shift+R, the turn button and Alt+drag turn the picture about its own centre, wherever it was panned to, instead of about the window centre (which swung a panned picture off screen). Mirror flips do the same.
 - **Where:** app/static/index.html `attachViewer` — `pivot()` (window centre + `vs.pan`), `turnCss`, `unturn`, `zoomAt`, the Alt-drag claim, `pan` (`unturnVec` removed); MANUAL; ARCHITECTURE.

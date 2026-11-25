@@ -2650,6 +2650,20 @@ export function createAnnotator(host){
     commit(ids, () => { for (const id of ids) S.items.delete(id); });
     toast(`Cleared ${ids.length} drawing${ids.length > 1 ? "s" : ""} · Ctrl+Z brings ${ids.length > 1 ? "them" : "it"} back`, 2600);
   }
+  // Ctrl+click on the bin (or a long press on it, for touch; Ctrl+Delete): removes every drawing of this file
+  // that is not attached to a note, on every frame of a video / every view of a model, in one undo step. A note's
+  // drawings and its replies' drawings (data.note set) stay, and so do reference pictures (not drawings to the user).
+  // A note being written loses its drawings too (they have no note yet). A board is all loose drawings, mostly off
+  // screen: there it is the plain clear of what is on screen.
+  function clearLoose(){
+    if (isBoard()) return clearShown();
+    if (S.hidden){ toast("Drawings are hidden (Shift+H)"); return; }
+    finishEdit();
+    const ids = [...S.items.values()].filter((it) => isDrawing(it) && !it.data.note && typeOf(it) !== "image").map((it) => it.id);
+    if (!ids.length){ toast("No drawings outside notes"); return; }
+    commit(ids, () => { for (const id of ids) S.items.delete(id); });
+    toast(`Deleted ${ids.length} drawing${ids.length > 1 ? "s" : ""} not in a note · Ctrl+Z brings ${ids.length > 1 ? "them" : "it"} back`, 2600);
+  }
   function deleteSelection(){
     const ids = [...S.sel].filter((id) => S.items.has(id));
     if (!ids.length) return false;
@@ -2748,7 +2762,7 @@ export function createAnnotator(host){
         <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="undo" title="Undo (Ctrl+Z)">${ICON.undo}</button>
         <button type="button" class="an-tool" data-act="redo" title="Redo (Ctrl+Shift+Z)">${ICON.redo}</button>
-        <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete)">${ICON.trash}</button>
+        <button type="button" class="an-tool" data-act="clear" title="Clear the drawings on screen (Shift+Delete) · Ctrl+click or long press: delete every drawing not in a note, on all frames (Ctrl+Delete)">${ICON.trash}</button>
         <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="stamp" title="Frame stamp on the video (Shift+F) — drag it to a corner or a side">${ICON.stamp}</button><button type="button" class="an-tool an-chev" data-act="stampset" title="Frame stamp settings">▾</button>
         <button type="button" class="an-tool" data-act="panel" title="Review notes panel (C)">${ICON.panel}</button>
@@ -2761,7 +2775,35 @@ export function createAnnotator(host){
     bar.querySelectorAll("[data-tool]").forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
     bar.querySelector("[data-act=undo]").onclick = () => undo();
     bar.querySelector("[data-act=redo]").onclick = () => redo();
-    bar.querySelector("[data-act=clear]").onclick = () => clearShown();
+    {
+      // Plain click: what is on screen; Ctrl (Cmd) + click: every loose drawing. Touch has no Ctrl: a long press
+      // does it — touch / pen only (as the eye's long press), so a slow mouse click stays a plain clear.
+      const bin = bar.querySelector("[data-act=clear]");
+      let lp = null, lpDone = false, macCtrl = false, menuDone = false;
+      const lpStop = () => { clearTimeout(lp); lp = null; };
+      bin.addEventListener("pointerdown", (e) => {
+        lpDone = false; menuDone = false; lpStop();
+        macCtrl = e.ctrlKey && e.button === 0 && e.pointerType === "mouse";
+        if (e.button || e.pointerType === "mouse") return;
+        lp = setTimeout(() => { lp = null; lpDone = true; clearLoose(); }, 600);
+      });
+      for (const ev of ["pointerup", "pointercancel", "pointerleave"]) bin.addEventListener(ev, lpStop);
+      // (not on pointerup: Windows sends the menu on release; a press dragged off leaves no stale Ctrl for the Menu key)
+      for (const ev of ["pointercancel", "pointerleave"]) bin.addEventListener(ev, () => { macCtrl = false; });
+      bin.addEventListener("contextmenu", (e) => {
+        // macOS turns Ctrl+click into a context menu (no click follows): take it as the Ctrl+click.
+        // (the press is what counts: some browsers report the menu event itself as button 2)
+        if (macCtrl){ macCtrl = false; menuDone = true; e.preventDefault(); clearLoose(); return; }
+        if (lp || lpDone) e.preventDefault();
+      });
+      bin.onclick = (e) => {
+        // (a click from the keyboard, detail 0, is never the tail of a long press)
+        macCtrl = false;
+        if (menuDone){ menuDone = false; if (e.detail) return; }   // (a browser that also clicks after that menu)
+        if (lpDone){ lpDone = false; if (e.detail) return; }
+        if (e.ctrlKey || e.metaKey) clearLoose(); else clearShown();
+      };
+    }
     bar.querySelector("[data-act=stamp]").onclick = () => toggleStamp();
     bar.querySelector("[data-act=stampset]").onclick = () => toggleStampPop();
     buildStampPop(lightEl, bar);
@@ -5423,7 +5465,8 @@ export function createAnnotator(host){
       ["KeyA", () => toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen], ["Shift+KeyA", (e) => e.repeat || toggle(false), "Leave annotation mode (in a 3D view: Shift+A)", G.gen],
       ["Ctrl+KeyZ", () => undo(), "Undo", G.edit], ["Ctrl+Shift+KeyZ", () => redo(), "Redo", G.edit], ["Ctrl+KeyY", () => redo(), "Redo", G.edit],
       ["Delete", () => deleteSelection(), "Delete the selection", G.edit], ["Backspace", () => deleteSelection(), "Delete the selection", G.edit], ["KeyX", () => deleteSelection(), "Delete the selection", G.edit],
-      ["Shift+Delete", () => clearShown(), "Clear the drawings on screen", G.edit],
+      ["Shift+Delete", (e) => e.repeat || clearShown(), "Clear the drawings on screen", G.edit],
+      ["Ctrl+Delete", (e) => e.repeat || clearLoose(), "Delete every drawing not in a note, on all frames (Ctrl+click / long press on the bin)", G.edit],
       ["Ctrl+KeyC", () => copySelection(), "Copy", G.edit], ["Ctrl+KeyX", () => cutSelection(), "Cut", G.edit], ["Ctrl+KeyV", () => paste(), "Paste", G.edit], ["Ctrl+KeyD", () => duplicateSelection(), "Duplicate", G.edit],
       ["Ctrl+KeyA", () => selectAll(), "Select all drawings on screen", G.edit],
       ["Ctrl+BracketRight", () => reorder(1), "Bring forward", G.edit], ["Ctrl+BracketLeft", () => reorder(-1), "Send backward", G.edit],
