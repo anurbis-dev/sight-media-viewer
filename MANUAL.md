@@ -106,7 +106,7 @@
     text. A selected pin (select tool) shows a handle on each of its points: drag the square to move the point
     pinned, the ring to move the circle (Shift: the line horizontal / vertical); a pin with no line has the square
     on its rim, drag it out for one, drop it back on the circle to remove the line. Pins from before 0.84 keep showing their note's
-    number. The tool's keys stay live once the number is set. `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
+    number. On a light pin colour (yellow, white, light green) the number turns dark, on a dark one it stays white. The tool's keys stay live once the number is set. `[` / `]` make the brush / width smaller / larger. Switching annotating on always starts with
     the brush. The drawing tools and the notes panel are independent: the ✎ button / `Shift+A` shows / hides
     the tools only, the speech-bubble button / `C` the panel only.
   - **Colour correction** (`G`, the half-filled circle in the toolbar): an area of the picture / frame shown with

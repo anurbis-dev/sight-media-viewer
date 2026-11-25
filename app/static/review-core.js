@@ -848,6 +848,22 @@ var SightReviewCore = (function(){
   // A pin's leader line: present when its start (ax, ay) lies outside the circle.
   function pinLeader(d){ return Number.isFinite(d.ax) && Number.isFinite(d.ay) && hyp(d.x - d.ax, d.y - d.ay) > d.size / 2 + 0.5; }
   function pinLineW(d){ return Math.max(1.5, d.size * 0.07); }
+  // The number's colour on a pin of fill `c`: near-black on a light fill (yellow, white, light green…), white otherwise.
+  // Luma of the sRGB values with Rec.709 weights — the same measure model3d-core.js gridColors uses for the 3D grid,
+  // but here a two-way pick at 0.6 (not WCAG's ~0.18 crossover, which would turn the red and blue pins' text black).
+  // Accepts #rgb / #rrggbb (#rrggbbaa: alpha ignored), rgb() (numbers or %) and a few light colour names; anything else keeps white.
+  function pinInk(c){
+    var s = String(c || "").trim(), m, rgb = null;
+    if ((m = /^#([0-9a-f]{3,8})$/i.exec(s))){
+      var h = m[1];
+      if (h.length === 3 || h.length === 4) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      if (h.length === 6 || h.length === 8) rgb = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    } else if ((m = /^rgba?\(\s*([\d.]+)(%?)[\s,]+([\d.]+)(%?)[\s,]+([\d.]+)(%?)/i.exec(s))){
+      rgb = [1, 3, 5].map(function(i){ return m[i + 1] ? +m[i] * 2.55 : +m[i]; });
+    } else if (/^(white|yellow|ivory|snow|lightyellow|beige)$/i.test(s)) return "#111111";
+    if (!rgb) return "#ffffff";
+    return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 > 0.6 ? "#111111" : "#ffffff";
+  }
 
   // Primitives of one drawing. `numOf(it)` gives a pin its number (the note's position), if known; a pin with
   // its own `label` shows that instead.
@@ -935,7 +951,7 @@ var SightReviewCore = (function(){
         out.push({ d: ellipsePath(d.ax, d.ay, lw * 1.3, lw * 1.3), fill: d.color, op: 1 });
       }
       out.push({ d: ellipsePath(d.x, d.y, r, r), fill: d.color, stroke: "#ffffff", sw: Math.max(1, r * 0.14), op: 1 });
-      out.push({ text: [lab], widths: null, x: d.x, y: d.y - fs * 0.59, w: 0, lh: fs * 1.18, font: "700 " + fs + "px " + fontStack("sans"), family: fontStack("sans"), size: fs, bold: true, align: "center", fill: "#ffffff", op: 1, center: true });
+      out.push({ text: [lab], widths: null, x: d.x, y: d.y - fs * 0.59, w: 0, lh: fs * 1.18, font: "700 " + fs + "px " + fontStack("sans"), family: fontStack("sans"), size: fs, bold: true, align: "center", fill: pinInk(d.color), op: 1, center: true });
       return out;
     }
     return [];
@@ -1723,7 +1739,7 @@ var SightReviewCore = (function(){
   return {
     FORMAT: FORMAT, FORMAT_VERSION: FORMAT_VERSION,
     STROKE_TOOLS: STROKE_TOOLS, PATTERNS: PATTERNS, PATTERN_LABELS: PATTERN_LABELS, patternIcon: patternIcon, TOOL_ICONS: TOOL_ICONS, SHAPE_TOOLS: SHAPE_TOOLS, FONTS: FONTS,
-    uid: uid, clamp: clamp, r2: r2, hyp: hyp, typeOf: typeOf, esc: esc, fontStack: fontStack, segDist: segDist, rotPt: rotPt,
+    pinInk: pinInk, uid: uid, clamp: clamp, r2: r2, hyp: hyp, typeOf: typeOf, esc: esc, fontStack: fontStack, segDist: segDist, rotPt: rotPt,
     smoothPath: smoothPath, strokeRadii: strokeRadii, strokeOutline: strokeOutline, dashArray: dashArray,
     rectPath: rectPath, ellipsePath: ellipsePath, linePoints: linePoints, bendCtrl: bendCtrl, bendHandle: bendHandle,
     headPrims: headPrims, trimPolyline: trimPolyline, textFont: textFont, textLayout: textLayout,

@@ -2,6 +2,11 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.122.6 — 2026-11-24 — Dragged tile pile disappears on release
+- **What:** the pile of dragged thumbnails no longer hangs at the drop spot while the drop target works; it hides the moment the drag is released.
+- **Where:** `index.html` tile `dragstart` → `dropped` (window capture `drop`) hides `d.g`; `finish` still removes it on `dragend`.
+- **Notes:** backlog item 4 (smart collection saved from Filter ▾ does not filter) did not reproduce: save from All / from Images, reload, click All then the row, name / kind / ext / path / Any-group rules all filter. Waiting for the owner's exact field / value. Review (fresh agent): no bugs found.
+
 ## 0.122.5 — 2026-11-24 — app/version.py restored (app did not start since 0.122.2)
 - **What:** the 0.122.2 commit emptied `app/version.py`, so `from .version import APP_VERSION` failed and the app could not start on 0.122.2–0.122.4. The file is back.
 - **Where:** `app/version.py`.
