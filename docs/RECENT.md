@@ -14,6 +14,82 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.135.3 — 2026-11-26 — R0-0 block 3: regression tests of the write queue, settings, shots, previews, dictation
+- **What:** the third block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator's plumbing does
+  now. No app code changed (only the version).
+- **Where:** `tests/test_r0_review.py` runs two page scripts on one temporary library:
+  - `tests/r0_queue_e2e.cjs`:
+    - offline → kept → online → saved: a create, a change and a create-then-delete wait in this window's
+      `sight-annot-outbox:v2:<window>` key (one entry per row), the badge counts them, the server has none; a reload
+      while offline keeps them (the pagehide beacon tried all three and failed; the new window adopts its own old key
+      and the layer shows the queued state); the badge's click sends them once each (no duplicate, the deleted one
+      never created, the outbox and badge gone);
+    - nothing revived, both paths pinned by the logged URL: a change of a row another window deleted goes in
+      `/api/annotations/batch` (skipped, no note); one queued offline until the batch failed twice goes alone as
+      `PATCH /api/annotations/<id>` (404: the refused note). The row stays a tombstone either way;
+    - a second window: a live window's outbox is left alone; a frozen one (a CDP debugger pause: its timers stop,
+      checked by its stamp staying stale) is adopted and sent by the next window; the frozen one, woken, drops its
+      copy and its next write of that row is a `POST` upsert (`OB.handed`), one row;
+    - **outboxes left by the old version**, written as literal 0.135.x JSON (frozen through R0): a closed window's v2
+      key with a create, a change, a delete and a create without `at`, plus the v1 key, are each sent once
+      (POST ×3, the batch, DELETE) and removed; a live window's v2 key is left alone;
+    - the pagehide keepalive beacon: a closed window's write goes as one keepalive POST; its key stays (ts 0) and the
+      next start sends it again as a POST upsert (still one row); closed while even the beacon fails, the next window
+      sends it at once. This pins `fetch(…, {keepalive: true})`: moving to `navigator.sendBeacon` would need the test
+      changed, in its own step;
+    - settings: `sight.annotate.styles` (a brush colour), `.filter`, `.stamp` (mode, position), `.stamp.videos` (off
+      for one clip) reach the server and come back in a fresh browser, shown in the UI; `hydrateSettings` drops a
+      `sight.*` key the server lacks and keeps one outside `sight.*`;
+    - touch: the badge's tap retries.
+  - `tests/r0_shots_e2e.cjs`:
+    - screenshots: S, Shift+S (an area, 240 × 120 → a 240 × 120 picture; Esc cancels), the composer's button, × drops
+      one, a click enlarges, the note's `data.shots`, its card;
+    - reference images (`kind: "image"`): the tool's click → the file picker; a card dragged from the library split
+      (Tab) lands where dropped; Shift+click + "add selected" (the range includes the open file: both are added);
+    - note previews: a picture note's card has the 720-px still (a blob) with its drawing in picture px; a video
+      note's frame is stored (`/api/review/nprev/<aid>`, key `f1.000`), loaded from there in a fresh browser, pruned
+      when the note goes;
+    - dictation with a stand-in `SpeechRecognition`: Alt+M on / off, words land in the note field, the mic button,
+      its right-click language list;
+    - touch: the screenshot button, the mic, the library button, a long press to select a card, "add selected".
+  - `docs/PLAN.md` "Found by the R0-0 regression tests", item 7: the picture jumps by a bar's height once a library
+    drag is under way (the `.vmodes` bar shows), so a drop lands off from where it was aimed before the jump.
+- **Notes:**
+  - Every write is logged by the wrapper (localStorage `__r0_writes`); storage is read from a same-origin page that is
+    not the app (`/api/settings`), and no other app page stays open in the beacon / old-outbox parts: an app page's
+    60 s re-adopt timer would take the keys being checked.
+  - "Offline" is a fetch wrapper per tab (sessionStorage `__r0_off`, kept across a reload), not `page.route`: a
+    keepalive request of a page being unloaded escapes the route, so the "reload while offline" case was sending
+    everything through the beacon. The wrapper fails writes as a network error does (the queue's "down" path).
+  - The app's pagehide pushes every `sight.*` key it holds (`settingsPushTimer` is never reset), so the
+    hydrateSettings case sets its keys from a same-origin page that is not the app (`/api/settings`).
+  - Opening the stamp's settings switches the stamp on for that clip; the checks allow for it.
+  - In the split a plain click shows the file in the lightbox; Ctrl+click and Shift+click only select (checked); on
+    touch a tap shows the file, a long press selects.
+  - Not done here: 3D (block 4), board / compare / sequences, exports, trackers, scale / theme (block 5). Queue
+    behaviour outside the R0-0 list is not pinned either: the `landedAt` guard (an adopted entry older than a write
+    this window landed), `obOverlay` (a GET racing a landed write), the pageshow / bfcache branch, the beacon's 60 KB
+    budget and in-flight skip, `obFlush` waiters.
+- **Review:** a fresh agent reviewed the block and mutated app code (obAdopt, OB_STALE, keepalive, PATCH revive,
+  hydrateSettings, writeJSON, storeRef, npPut, …) to test the checks. Caught at once: 9 of 13. It found:
+  - old-format outboxes never tested (a refactor dropping v1 / adding a required field stayed green);
+  - the beacon checks racing: other pages' 60 s re-adopt timer, and (on re-review) the closing page itself seeing the
+    keepalive answer and clearing its key; the wrapper now sends the keepalive write and never answers the page;
+  - the "freeze" not freezing (B refreshed its stamp; it passed only by timing);
+  - the hand-off upsert check vacuous (D had made the row);
+  - the revive case taking the batch or the single path by timing;
+  - × and Esc checks that could pass vacuously, a missing touch stop check;
+  - the `landedAt` guard uncovered (listed above as not done).
+
+  All but the last were fixed as described above. Re-review rounds found two more timing flakes, both fixed:
+  - the badge click racing the queue's own retry: the click may now time out quietly, and the checks after it stay strict;
+  - a fixed 300 ms wait racing the 300 ms debounce of a change: it is polled for now.
+
+  The same reviewer confirmed every fix. Every mutation it ran fails a named check, and 8 runs at once are green.
+- **Suite:** 9 failures, none from this block, which changes no app code:
+  - `test_pwa` ×4, `test_review_all.test_pdf_all`, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`, `test_sources.test_file_uri_to_path`: known;
+  - new on origin/master since 0.135.2: `test_sources.DropFilesE2E` fails on a clean checkout of it too (`dropKind is not defined` in `drop_files_e2e.cjs`).
+
 ## 0.135.2 — 2026-11-26 — File drop zones no longer give up on untyped files
 - **What:** dropping a file always gets the two zones (sidebar = add, the rest = view). A file whose drag carries no directory entry — empty MIME or `application/octet-stream`, which is how a lot of real files arrive — used to be treated as a folder, so the zones never came up and the drop did nothing.
 - **Where:** `app/static/index.html` — `dropKind`, `readDropped`, capture `dragenter`/`dragover`; `tests/drop_files_e2e.cjs`; `docs/ARCHITECTURE.md`.
@@ -426,9 +502,3 @@ Add new entries directly below this line.
 - **Where:** app/static/index.html — `SNAP_PX`, `scrubSnapped`, `scrubSnap`, `seqSnap` (next to `seqTotal`), `rotDown` / `rotHeld`; attachViewer's `claim` (R held, no Ctrl) and `scrub.to(frac, ev)`; `bindVBar` `tAt`; `seqScrubBegin` move; the seq-track move; the key tracker by the keyup handler (k-rot body class, R keydown / keyup / blur); cursor CSS (`.k-rot` rotate cursor, Alt / Shift scrub cursors skip it); the viewer "?" rows; imports `FINE_SCRUB`. app/static/annotate.js — `snapTime(t, tol)` on the instance (nearest `marks()` time → `landAt`), keyTable rows `Ctrl+ArrowLeft/Right` → `jumpMarker` (Video group, so they also run outside annotation mode; dropped on a board, where canvas.js's Ctrl+arrows align); labels of the marker rows. MANUAL, ARCHITECTURE (claim cursor example).
 - **Notes:** the snap tolerance is in pointer px turned into seconds per control (viewer drag: the window's width is the clip, ×0.1 with Shift; bars: their own width), so it feels the same everywhere. The snapped time is not fed back into the drag's own position (the sequence drag keeps `drag.T` unsnapped), so releasing Ctrl goes on from the pointer. Snapped landing: the clip on screen lands a quarter into the frame (annotate `landAt`); another clip of a sequence a hair after its stored time (as `seqMarker`). R hold: set on a bare R or Alt+R keydown outside text fields, cleared on any R keyup and window blur; a drag already turning keeps turning if R is let go. Ctrl+R-drag does not turn (Ctrl is the snap). Touch: no Ctrl — a tap on a timeline mark goes to it (unchanged); no touch turn added (Alt-turn had none either). The lightbox's plain arrows / sequence arrows are untouched: annotate.js `onKey` runs before them. Browser check (own port + temp library, 8 s MP4 with marks at 2 s / 5 s, a PNG): Ctrl+→/→/← land on 2.01 / 5.01 / 2.01 without leaving the file; a drag ending 0.06 s short of a mark stays put without Ctrl, lands on it with Ctrl (and Ctrl+Alt); the video bar the same; R+drag turns the video and the picture; Ctrl+Alt-drag on the video scrubs, Alt-drag on the picture pans; annotating, Alt+R+drag turns and draws nothing. Sequence snapping not driven in the browser.
 - **Review:** a fresh reviewer agent found no blocking bugs (snap math, seqSnap offsets / clamp, key order, R-hold lifecycle checked). It found: while annotating, R then Alt-drag turned the view but left the Rectangle tool picked (→ the R tracker keeps `annot.toolNow()` from a bare R and the claim puts it back with `annot.restoreTool`); Shift then R is Shift+R (90°), so Shift must come during the drag (→ said in the help row and MANUAL), and Shift+R had no repeat guard (→ `!e.repeat`); stale `k-alt` rotate-hint text in annotate.js / cursors.js / ARCHITECTURE (→ fixed). Accepted: Ctrl+←/→ on a video jumps marks instead of stepping files; compare with its annotator off swallows Ctrl+←/→ as it does , / .; with the select tool a bare R clears the selection (restoring the tool does not bring it back; Alt+R first avoids it). The same reviewer confirmed every fix and found nothing new.
-
-## 0.127.1 — 2026-11-25 — Number pins: dark number on a light pin colour
-- **What:** a number pin's number was always white, unreadable on a yellow / white pin. Now it is near-black (#111) on a light fill, white on a dark one. Of the palette, green, yellow and white get the dark number (green pins change too: white on that green was ~2.2:1, #111 ~8.5:1); red and blue stay white.
-- **Where:** app/static/review-core.js — new `pinInk(color)` (exported), used for the pin's text prim in `primsOf`; MANUAL.
-- **Notes:** one render path for the desktop, the HTML page and the phone (SVG and canvas both draw the prim's `fill`); nothing on the Python side draws pins. The measure is the Rec.709 luma of the sRGB values, as `gridColors` (model3d-core.js) uses for the 3D grid, but not shared code: the grid blends toward the opposite of the backdrop, here it is a two-way pick at 0.6 (WCAG's ~0.18 crossover would turn the red and blue pins' text black), and review-core.js must stay self-contained (no modules). Parses #rgb / #rgba / #rrggbb / #rrggbbaa, rgb() with numbers or %, a few light names; anything else keeps white. The white ring round the circle is unchanged (a white pin on a light picture still has no edge — not done).
-- **Review:** a fresh reviewer agent found no bugs; its two gaps (rgb() with %, named colours like "white") are covered. The same reviewer confirmed both and found nothing new.
