@@ -202,6 +202,11 @@ body.light-split .touch-selbar { left: calc(var(--light-l, 50vw) / 2); max-width
 .tiny.tree-chev.open .chev { transform: rotate(90deg); }
 .badge { font-size: 11px; color: var(--subtle); font-variant-numeric: tabular-nums; }
 .src-row.dragging, .col-row.dragging, .tag-row.dragging, .sec-row.dragging { opacity: .4; }
+/* A tracker source: shimmer while Sight is still connecting, red once the site does not answer.
+   The row stays until the user disconnects it. */
+.row.trk-src.trk-down, .row.trk-src.trk-down.on { color: #e5484d; }
+.row.trk-src.trk-down > span { color: inherit; }
+.row.trk-src.trk-wait > span.shimmer { background: linear-gradient(90deg, var(--subtle), var(--fg), var(--subtle)); background-size: 180% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sh 1.6s linear infinite; }
 .col-row.drop-into { outline: 1px solid var(--accent); outline-offset: -1px; }
 .col-row.drop-before { box-shadow: inset 0 1px 0 0 var(--accent); }
 .col-row.drop-after { box-shadow: inset 0 -1px 0 0 var(--accent); }
@@ -817,7 +822,7 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
   .mark::after { inset: -8px; } /* 24 px icon + 8 px halo = 40 px hit area; the look is unchanged */
 }
 @media (prefers-reduced-motion: reduce) {
-  .shimmer { animation: none; color: var(--muted); background: none; }
+  .shimmer, .row.trk-src.trk-wait > span.shimmer { animation: none; color: var(--muted); background: none; }
   .ld::before { animation-duration: 4s; } /* still says "working", without the quick spin */
   .thumb img.fade { opacity: 1; transition: none; }
   .model-loading { transition: none; }
@@ -1177,7 +1182,10 @@ async function refreshTrackers(changed){
   const srvKinds = Array.isArray(tl?.kinds) ? tl.kinds.map((k) => k && k.id).filter((x) => typeof x === "string") : [];
   const was = JSON.stringify(trackers), statWas = trkStat;
   if (!changed && trkRead && JSON.stringify(list) === was && JSON.stringify(stats) === JSON.stringify(trkStat)
-      && JSON.stringify(caches) === JSON.stringify(trkCacheIds)) return;
+      && JSON.stringify(caches) === JSON.stringify(trkCacheIds)){
+    for (const t of trackers) if (trkPhase.get(t.key) !== "live") ensureTrkLink(t);
+    return;
+  }
   trackers = list; trkStat = stats; trkCacheIds = caches; trkSrvKinds = new Set(srvKinds); trkRead = true;
   // the owner of a kind's pre-0.110 settings (fields, filter, where, project): recorded while unset and exactly one site
   // of the kind is connected — the one site of before, on the first launch after the upgrade (SightTrackers.claimLegacy)
@@ -1195,6 +1203,7 @@ async function refreshTrackers(changed){
   renderNav();
   paintTrackerSettings();
   paintUserTrackers();
+  for (const t of trackers) if (trkPhase.get(t.key) !== "live") ensureTrkLink(t);
   if (JSON.stringify(trackers) !== was) window.dispatchEvent(new CustomEvent("sight-trackers", { detail: trackers.slice() }));
 }
 // A change made in another window / tab (a disconnect there): re-checked when this one comes back to the front.
@@ -1469,6 +1478,45 @@ function paintUserTrackers(){
 // lightbox shows {item, asset} (arrows step through the records). trkSmartOn: the tracker smart collection whose rule
 // filters the project on screen (stage 3c; null: its own conditions).
 const trkTree = new Map(), trkSources = new Map();
+// tracker key → "connecting" | "live" | "down". A source stays listed until the user disconnects it.
+const trkPhase = new Map();
+const trkDown = (e) => {
+  const m = String(e && e.message || "");
+  return (e && e.name === "TypeError") || /failed to fetch|not reachable|unreachable|networkerror|timed out|timeout/i.test(m);
+};
+function setTrkPhase(key, phase){
+  trkPhase.set(key, phase);
+  document.querySelectorAll(".trk-src").forEach((row) => {
+    if (row.dataset.tracker !== key) return;
+    row.classList.toggle("trk-down", phase === "down");
+    row.classList.toggle("trk-wait", phase === "connecting");
+    row.querySelector(":scope > span")?.classList.toggle("shimmer", phase === "connecting");
+  });
+}
+// Talks to the site once and keeps the project list. While it is in flight the source shimmers;
+// if the site does not answer the source goes red and stays, for another try later.
+function ensureTrkLink(t, force){
+  const A = adapterOf(t);
+  if (!A) return Promise.resolve();
+  let node = trkTree.get(t.key);
+  if (!node){ node = { projects: null, open: false }; trkTree.set(t.key, node); }
+  if (node.loading) return node.loading;
+  if (!force && trkPhase.get(t.key) === "live" && node.projects) return Promise.resolve();
+  if (!force && node.tried && Date.now() - node.tried < 15000 && trkPhase.get(t.key) === "down") return Promise.resolve();
+  node.tried = Date.now();
+  setTrkPhase(t.key, "connecting");
+  node.loading = A.projects(A.serverClient(t.site, t.key)).then((ps) => {
+    if (!trackerByKey(t.key)) return;
+    node.projects = ps;
+    node.err = null;
+    setTrkPhase(t.key, "live");
+    if (node.open) renderNav();
+  }, (e) => {
+    node.err = e;
+    if (trackerByKey(t.key)) setTrkPhase(t.key, "down");
+  }).finally(() => { node.loading = null; });
+  return node.loading;
+}
 let trkSrc = null, trkProjectOn = null, trkList = null, trkLight = null, trkSmartOn = null;
 const trkListOn = () => !!trkList;
 const normFsPath = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -1482,19 +1530,19 @@ function renderTrackerSource(wrap, t){
   let node = trkTree.get(t.key);
   if (!node){ node = { projects: null, open: false }; trkTree.set(t.key, node); }
   const here = trkListOn() && trkSrc.tracker.key === t.key;
+  const phase = trkPhase.get(t.key) || "connecting";
   const b = document.createElement("div");
-  b.className = "row src-row trk-src" + (here ? " on" : "");
+  b.className = "row src-row trk-src" + (here ? " on" : "") + (phase === "down" ? " trk-down" : phase === "connecting" ? " trk-wait" : "");
   b.dataset.tracker = t.key;
-  b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span>${esc(t.name)} · ${esc(t.host)}</span><button class="tiny tree-chev${node.open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${node.open}" aria-label="${node.open ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
+  b.innerHTML = `${state.showIcons ? iconSpan("film", "var(--subtle)", 15) : ""}<span class="${phase === "connecting" ? "shimmer" : ""}">${esc(t.name)} · ${esc(t.host)}</span><button class="tiny tree-chev${node.open ? " open" : ""}" data-act="expand" type="button" aria-expanded="${node.open}" aria-label="${node.open ? "Collapse" : "Show projects"}"><span class="chev">›</span></button>`;
   const toggle = async () => {
     node.open = !node.open;
-    if (node.open && !node.projects){
-      let ps = null;
-      try { ps = await A.projects(A.serverClient(t.site, t.key)); }
-      catch (e){ if (trkTree.get(t.key) === node){ node.open = false; flash(`${t.name}: ${e.message}`, 4000); } }
+    renderNav();
+    if (!node.open) return;
+    if (!node.projects){
+      await ensureTrkLink(t, true);
       if (trkTree.get(t.key) !== node || !trackerByKey(t.key)) return;   // (disconnected / another connection meanwhile: refreshTrackers repainted)
-      node.projects = ps;
-      if (!ps) node.open = false;
+      if (!node.projects){ node.open = false; flash(`${t.name}: ${node.err?.message || "the server did not answer"}`, 4000); }
     }
     renderNav();
   };
@@ -1557,7 +1605,14 @@ function trackerSource(t){
       onChange: (what) => {
         if (!trkListOn() || trkSrc !== s) return;
         if (what === "labels"){ renderInsp(); renderFilterBtn(); return; }
-        if (what === "fields" && !s.needsReload(state.items)){ cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); return; }
+        if (what === "fields"){
+          scheduleRender();
+          if (s.needsReload(state.items)) s.fillFields().then((view) => { if (trkListOn() && trkSrc === s && view) adoptTrk(view); }, (e) => {
+            flash(`${s.tracker.name}: ${e.message}`, 4000);
+            if (trkDown(e)) setTrkPhase(s.tracker.key, "down");
+          });
+          return;
+        }
         trkReload();
       },
     });
@@ -1576,20 +1631,79 @@ function openTrkProject(t, p, smartId = null){
   const sc = smartCol(smartId);
   trkSmartOn = sc ? sc.id : null;
   trkSrc.setSmart(sc ? smartRule(sc) : null);
-  // loading until the project's entities are read: no page asked for meanwhile; the grid empty at once (a library
-  // page still on its way is dropped by pull)
-  const L = trkList = { page: 0, more: true, seq: 0, loading: true };
-  state.items = []; loadedIds = new Set(); state.total = null;
-  cardPool.forEach((el) => el.remove()); cardPool.clear();
+  const L = trkList = { page: 0, more: true, seq: 1, loading: true, failed: false };
   $("trkBar").hidden = false;
   $("sortBtn").hidden = true;
   fltSeq++; renderFilterBtn();
-  $("q").value = trkSrc.query;
   selectOnly(null);
-  renderNav(); scheduleRender(); renderStatus();
-  trkSrc.open(p).finally(() => { if (trkList === L){ L.loading = false; trkReload(); } });
+  // open() sets the project before its first await, so the cache key is this project, not the one we left
+  trkSrc.open(p);
+  showTrkCached(L);
+  $("q").value = trkSrc.query;
+  renderNav(); renderStatus();
+  const my = L.seq;
+  trkSrc.warm().then((w) => { if (trkList === L && my === L.seq && w && !state.items.length) adoptTrk(w); });
+  syncTrk(L, my);
 }
-function trkReload(){ if (!trkListOn()) return; grid.scrollTop = 0; pullTrk(true); }
+// The rows this view already has, or an empty grid that says it is loading. Never the previous view's rows.
+function showTrkCached(L){
+  const peek = trkSrc.peek();
+  if (peek){ adoptTrk(peek); L.loading = false; }
+  else {
+    state.items = []; loadedIds = new Set(); state.total = null;
+    L.page = 0; L.more = true; L.loading = true;
+    cardPool.forEach((el) => el.remove()); cardPool.clear();
+    scheduleRender();
+  }
+}
+// Put `view` on screen by id: a row already shown keeps its card and only its record changes.
+function adoptTrk(view){
+  const L = trkList;
+  if (!L || !view) return;
+  const prev = new Map(state.items.map((a) => [a.id, a]));
+  const out = [];
+  for (const a of view.items){
+    const old = prev.get(a.id);
+    if (!old){ out.push(a); continue; }
+    if (old.trk !== a.trk){ old.trk = a.trk; old.name = a.name; old.mtime = a.mtime; old.trkVideo = a.trkVideo; }
+    out.push(old);
+  }
+  state.items = out;
+  loadedIds = new Set(out.map((a) => a.id));
+  L.page = view.page; L.more = view.more; L.failed = false;
+  state.total = view.more ? null : out.length;
+  scheduleRender(); renderStatus();
+  if (state.selectedIds.length === 1 && out.some((a) => a.id === state.selectedIds[0])) renderInsp();
+}
+function trkReload(){
+  if (!trkListOn()) return;
+  grid.scrollTop = 0;
+  const L = trkList;
+  const my = ++L.seq;
+  L.failed = false;
+  showTrkCached(L);
+  trkSrc.warm().then((w) => { if (trkList === L && my === L.seq && w && !state.items.length) adoptTrk(w); });
+  syncTrk(L, my);
+}
+async function syncTrk(L, my){
+  if (!L || trkList !== L || my !== L.seq) return;
+  L.loading = true;
+  try {
+    const view = await trkSrc.sync();
+    if (trkList !== L || my !== L.seq) return;
+    adoptTrk(view);
+    setTrkPhase(trkSrc.tracker.key, "live");
+  } catch (e){
+    if (trkList !== L || my !== L.seq) return;
+    L.failed = true;
+    flash(`${trkSrc.tracker.name}: ${e.message}`, 4000);
+    if (trkDown(e)) setTrkPhase(trkSrc.tracker.key, "down");
+    renderStatus();
+    setTimeout(() => { if (trkList === L) L.failed = false; }, 4000);
+  } finally {
+    if (trkList === L && my === L.seq){ L.loading = false; scheduleRender(); }
+  }
+}
 // Back to the library (a sidebar row, a board): the library's own list and search again.
 function closeTrkList(reload){
   if (!trkList) return;
@@ -1608,31 +1722,34 @@ function closeTrkList(reload){
   renderNav();
   if (reload) resetList();
 }
-// One page of records past the loaded ones (fromStart: the list again from page 1). Further pages come as the grid
-// nears its end (trkMaybeMore), not eagerly like library rows.
+// The next page of a view, once the grid nears its end (trkMaybeMore). A view we already stored is not asked for again.
 async function pullTrk(fromStart){
   const L = trkList;
   if (!L) return;
-  if (fromStart){ L.seq++; L.page = 0; L.more = true; L.loading = false; state.items = []; loadedIds = new Set(); state.total = null; cardPool.forEach((el) => el.remove()); cardPool.clear(); scheduleRender(); }
-  if (L.loading || !L.more) return;
+  if (fromStart){ trkReload(); return; }
+  if (L.loading || !L.more || L.failed) return;
   const my = L.seq;
   L.loading = true;
   try {
-    const { items, more } = await trkSrc.page(L.page + 1);
+    const view = await trkSrc.more();
     if (trkList !== L || my !== L.seq) return;
-    L.page++; L.more = more;
-    for (const a of items) if (!loadedIds.has(a.id)){ state.items.push(a); loadedIds.add(a.id); }
-    if (!more) state.total = state.items.length;
-    scheduleRender(); renderStatus();
+    adoptTrk(view);
+    setTrkPhase(trkSrc.tracker.key, "live");
   } catch (e){
-    if (trkList === L && my === L.seq){ L.more = false; state.total = state.items.length; flash(`${trkSrc.tracker.name}: ${e.message}`, 4000); renderStatus(); }
+    if (trkList === L && my === L.seq){
+      L.failed = true;
+      flash(`${trkSrc.tracker.name}: ${e.message}`, 4000);
+      if (trkDown(e)) setTrkPhase(trkSrc.tracker.key, "down");
+      renderStatus();
+      setTimeout(() => { if (trkList === L) L.failed = false; }, 4000);
+    }
   } finally {
     if (trkList === L && my === L.seq){ L.loading = false; scheduleRender(); }
   }
 }
 function trkMaybeMore(W){
   const L = trkList;
-  if (!L || L.loading || !L.more || !grid.offsetParent) return;
+  if (!L || L.loading || !L.more || L.failed || !grid.offsetParent) return;
   const shownEnd = W.mode === "masonry" ? (W.lastShown ?? -1) : W.end;   // masonry: the highest index on screen
   if (shownEnd >= state.items.length - Math.max(20, (W.cols || 4) * 3)) pullTrk(false);
 }
@@ -2761,13 +2878,75 @@ function syncPixelation(img, host){
   img.classList.toggle("pixelated", img.naturalWidth < cw || img.naturalHeight < ch);
 }
 
+// Chromium allows 6 connections to one host, and the event stream holds one for good.
+// A tracker thumbnail holds its connection for the whole remote round trip, so only a few
+// run at once: the heartbeat and the list fetch keep a socket, and the local server is not
+// starved into looking closed.
+const TRK_THUMB_SLOTS = 3;
+let trkThumbRun = 0;
+const trkThumbQ = [];
+function pumpTrkThumbs(){
+  while (trkThumbRun < TRK_THUMB_SLOTS && trkThumbQ.length){
+    const job = trkThumbQ.shift();
+    if (!job.img.isConnected || job.img.dataset.tq !== job.url) continue;
+    trkThumbRun++;
+    const gen = (job.img._tg || 0) + 1;
+    job.img._tg = gen;
+    job.img.dataset.tqRun = "1";
+    const done = () => {
+      if (job.img._tg !== gen) return;
+      job.img.dataset.tqRun = "";
+      trkThumbRun--;
+      pumpTrkThumbs();
+    };
+    job.img.addEventListener("load", done, { once: true });
+    job.img.addEventListener("error", done, { once: true });
+    job.img.src = job.url;
+  }
+}
+function wantTrkThumb(img, url){
+  if (img.dataset.tq === url) return;
+  img.dataset.tq = url;
+  if (img.dataset.tqRun === "1"){
+    const gen = (img._tg || 0) + 1;
+    img._tg = gen;
+    const done = () => {
+      if (img._tg !== gen) return;
+      img.dataset.tqRun = "";
+      trkThumbRun--;
+      pumpTrkThumbs();
+    };
+    img.addEventListener("load", done, { once: true });
+    img.addEventListener("error", done, { once: true });
+    img.src = url;
+    return;
+  }
+  const queued = trkThumbQ.find((j) => j.img === img);
+  if (queued){ queued.url = url; return; }
+  trkThumbQ.push({ img, url });
+  pumpTrkThumbs();
+}
+
 function fillThumb(el, a, first, pos){
   const host = el.querySelector(".thumb");
   host.style.height = pos ? pos.imgH + "px" : "";
   const has = a.has_thumb || seenThumb.has(a.id);
   if (has){
     const existing = host.querySelector("img");
-    if (!existing){
+    if (a.trk){
+      let img = existing;
+      if (!img){
+        img = document.createElement("img");
+        img.alt = "";
+        img.decoding = "async";
+        img.className = first ? "fade" : "on";
+        if (first) img.addEventListener("load", () => img.classList.add("on"), { once: true });
+        img.addEventListener("load", () => { markSmallSrc(img); syncPixelation(img, host); });
+        host.replaceChildren(img);
+      }
+      wantTrkThumb(img, thumbUrl(a));
+      if (img.complete && img.naturalWidth) syncPixelation(img, host);
+    } else if (!existing){
       const img = document.createElement("img");
       img.alt = "";
       // async on purpose: a scroll or the first screen can bring dozens of new thumbnails at once,
@@ -2969,7 +3148,7 @@ function renderGrid(){
   if (!state.items.length){
     cardPool.clear();
     sliceEl = spaceEl = null;
-    grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.loading || trkList.more ? `<span class="ld ld-col">Loading ${esc(trkMedia().many)}…</span>` : `No ${esc(trkMedia().one)} matches.`}</div>`
+    grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.failed && !trkList.loading ? `Couldn't reach ${esc(trkSrc.tracker.name)}` : trkList.loading || trkList.more ? `<span class="ld ld-col">Loading ${esc(trkMedia().many)}…</span>` : `No ${esc(trkMedia().one)} matches.`}</div>`
       : `<div class="empty">Empty. Add a folder or drop one here — files stay where they are. Drop a file on the window to open it.</div>`;
     renderInsp();
     return;

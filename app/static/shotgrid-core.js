@@ -259,6 +259,9 @@ var SightShotGrid = (function(){
     else if (f.type) out.push(["entity", "type_is", f.type]);
     if (f.status) out.push(["sg_status_list", "is", f.status]);
     if (f.q) out.push(["code", "contains", f.q]);
+    // Point update (the grid's cache): only Versions touched after the newest stamp we already have.
+    if (f.since) out.push(["updated_at", "greater_than", f.since]);
+    if (f.ids && f.ids.length) out.push(["id", "in", f.ids.map(function(id){ return Number(id); })]);
     return out;
   }
   // A page of Versions (newest first) with the fields a tile needs.
@@ -273,7 +276,10 @@ var SightShotGrid = (function(){
       filters = { logical_operator: "and", conditions: base.map(function(x){ return { path: x[0], relation: x[1], values: [x[2]] }; }).concat([where]) };
       type = HASH_JSON;
     }
-    var j = await client.api("POST", "/entity/versions/_search", { filters: filters, fields: want, sort: "-created_at", page: { size: size || 60, number: page || 1 } }, { contentType: type });
+    // options[return_only]=retired is a query flag (REST OptionsParameter), not a filter.
+    // A site that ignores it echoes active rows; the grid drops a retired id only when the active read did not return it.
+    var path = "/entity/versions/_search" + (f.retired ? "?options[return_only]=retired" : "");
+    var j = await client.api("POST", path, { filters: filters, fields: want, sort: "-created_at", page: { size: size || 60, number: page || 1 } }, { contentType: type });
     return ((j && j.data) || []).map(flat);
   }
   // Filmstrip scrubbing (ShotGrid's video thumbnails: one picture of frames side by side, FILMSTRIP_W px each): the
@@ -753,6 +759,9 @@ var SightShotGrid = (function(){
     filterFields: filterFields,
     toConditions: toConditions,
     browse: browseVersions,
+    browseRetired: function(client, f, fields, page, size, where){
+      return browseVersions(client, Object.assign({}, f, { retired: true }), fields, page, size, where);
+    },
     recordId: function(v){ return v.id; },
     recordName: function(v){ return v.code || "#" + v.id; },
     recordStamp: function(v){ return v.updated_at || ""; },

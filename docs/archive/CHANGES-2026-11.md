@@ -2,6 +2,76 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.133.0 — 2026-11-25 — Gaussian splats turn a quarter about X, like meshes (lightbox and phone)
+- **What:** splats often arrive upside down or Z-up. The lightbox's ↻ button (`Shift+7`, the only button of the shade
+  bar on a splat) and the phone's ⟳ *Turn the model a quarter* now turn a splat as they turn a mesh: a quarter turn
+  about X on top of the half turn every splat gets, re-framed from the turned bounds, remembered per file
+  (lightbox `sight.v3dRot`, its card thumbnail follows; phone `R.meta.turns`).
+- **Where:** `app/static/model3d-core.js` `turnSplat`; `mobile/js/model3d.js` `createSplatViewer` (`turns`, `setTurns`,
+  `getView` / `setView` / `turn`, `still` at `cam.turns`, `bounds()` per turn); `mobile/js/app.js` (turn button no
+  longer hidden for splats, `SPLAT_EXT` import dropped); `app/static/index.html` (`boot3d` splat branch `place` /
+  `turnTo` / camera rig turns / `onV3DRotate`, scene info bounds per turn; `#v3dShade.splat` CSS shows only ↻;
+  `renderSplatThumb` turned); tests (`fixtures_3d.make_splat(dy=)`, `pwa_3d_formats.cjs` `turned`,
+  `test_model_formats` balls_up.splat); ARCHITECTURE splat paragraph, MANUAL.
+- **Notes:**
+  - No new data-contract field: a splat view's `cam.turns` means what it means for a mesh, so a note written at one
+    turn turns the splat back to it when opened (phone `setView`, lightbox camera rig `turns.set` → `turnTo`, which
+    also stores the turn per file — as meshes do). A splat note from before 0.133 has `turns: 0` and still matches.
+  - Only about X (Sight's mesh turn). A splat whose up is another axis (e.g. X-up) cannot be put upright with it;
+    no other axis was added (it would need a new ctx field on both sides).
+  - Phone stills at another turn turn the splat for the still and back while `stilling` (the live canvas waits).
+    The lightbox's view capture is synchronous (as before): right after a turn Spark's sort may still be for the
+    previous pose for a frame.
+  - Review (fresh agent): pose composition, setView order, matrix freshness, persistence / thumbnail, teardown and
+    touch / keys confirmed. Found: on the phone a turn (or a setView with another turn) landing while a still was
+    awaited turned the mesh mid-still and the still's `finally` put back the *old* turn while `turns` / notes said the
+    new one → `stillTurns`: during a still `setTurns` measures the new turn's bounds and puts the mesh straight back
+    at the still's turn; the `finally` turns to the current `turns`. Second pass (same reviewer): fix confirmed, nothing new.
+
+## 0.132.0 — 2026-11-25 — Big Gaussian splats: level of detail (phone and lightbox), lighter phone viewer
+- **What:** a 32 MB .spz (millions of splats) froze a mid-range Android phone. Splats over a budget now load with
+  Spark's LoD tree and draw at most the budget, picked for the camera (coarser out of view / behind it): phone
+  600k, lightbox Spark's per-device default (2.5M on a desktop). The phone viewer also caps the pixel ratio at 1.5
+  (was 2), drops it to 1 while the camera moves, and uses smaller splat footprints (`maxStdDev` sqrt(5)) for big
+  files. Files at or under the budget load exactly as before: LoD is asked for only when a file is likely
+  over the budget (`splatCountHint`: .splat size / 32, a .ply's header, an .spz's gzipped header; .ksplat / .sog
+  4 bytes per splat as an upper bound), Spark's `lodAbove` then decides on the real count.
+- **Where:** `app/static/model3d-core.js` (`SPLAT_LOD_PHONE`, `splatLodOptions`, `splatCountHint`, `splatLodFor`,
+  `splatSource`, `splatBox`),
+  `mobile/js/model3d.js` `createSplatViewer` (LoD options, pixel ratio, render tail, `still()` LoD loop, `V.lod`),
+  `app/static/index.html` (`boot3d` splat branch — now disposes the SplatMesh / SparkRenderer on stop;
+  `fetchHead` (Range request for the hint); `renderSplatThumb` bounds; imports), tests (`fixtures_3d.py`
+  `make_big_splat` + the new `make_splat_spz` SPZ v2 / v3 fixtures; `test_pwa.py` `test_model_formats` now also
+  opens SPZ v2 / v3 and checks small files get no tree, new `test_big_splat`; `pwa_3d_formats.cjs` reports `lod`),
+  ARCHITECTURE (splat paragraph "Big splats").
+- **Notes:**
+  - A big file keeps **only** the LoD tree (`nonLod` off): `packedSplats.numSplats` is 0 and
+    `SplatMesh.getBoundingBox` is empty — use `splatSource` / `splatBox`. Spark does not report the original count
+    once the tree is built: the shown count (phone `splatCount`, lightbox info row) comes from the exact hint, else
+    the tree's (originals + merged nodes, e.g. 700k → 788k; lightbox label "(LoD tree)").
+  - Asking for `lod` at all sends a file through Spark's other decoder (csplatarray), even if `lodAbove` then
+    skips the tree: that is why the hint gates it. An inexact hint errs high (LoD asked, `lodAbove` guards).
+  - Stills (phone): Spark's LoD pick runs in a worker and is used only by the next generate, and is skipped while
+    the worker is busy — `still()` loops update / wait-idle until `currentLod` stops changing, at the still's own
+    render size. Do not add `minSortIntervalMs` (makes `update()` return before the sort).
+  - Nothing is drawn until the first LoD pick lands (no fallback to the originals); the phone warm-up waits up to
+    10 s for a tree (3 s otherwise). The tree is built in Spark's load worker (700k splats ≈ 1.3 s in desktop
+    Chromium); not measured on a phone.
+  - Not verified on a real Mali GPU (SwiftShader only). Desktop LoD checked in Playwright with a temporarily
+    lowered budget (700k-splat file, tree built, framed right); a 2.7M-splat file is too slow to draw in
+    SwiftShader to check at the real budget. Grid thumbnails still load without LoD.
+  - Review (fresh agent): (1) `still()` did not cancel a deferred live update (`spark.updateTimeoutId`, Spark's
+    non-preUpdate path) that could sort for the live camera during the still's `update` → cleared after
+    `autoUpdate = false` (the lightbox takes no Spark-sorted stills); (2) the lightbox never disposed the
+    SparkRenderer / SplatMesh, leaking an LoD worker with a tree copy per open → disposed in the viewer's `stop()`
+    (the thumbnail already did); (3) `lod: true` for every file changed the decoder for small ones (.ksplat / .sog
+    untested) → LoD only when `splatCountHint` says likely over budget; (4) info row showed the tree count → the
+    hint's exact count. Tests: small-splat hint asserted {800, exact} for .splat / .ply / SPZ v2 / v3; big
+    splat count 700000. Second pass (same reviewer): all four fixes confirmed; found a deferred Spark update
+    (`setTimeout(updateInternal)` from the last render) firing after `spark.dispose()` and re-creating its sort / LoD
+    workers → every dispose (lightbox, thumbnail, phone) now clears `spark.updateTimeoutId` first (confirmed by the same reviewer). Not covered by tests:
+    the hint of an .spz over 64 KB (truncated gzip slice; falls back to size/4 on any error).
+
 ## 0.131.0 — 2026-11-25 — Drop a file: sidebar adds it, the rest of the window just opens it
 - **What:** dropping a supported media file on the window either adds it to the library (left strip, the sidebar's width, in the accent colour) or only opens it in the viewer (the rest of the window, a white veil). Folders still add as sources (the whole-window overlay). **A** on a file that was only opened adds it, then drawing works.
 - **Where:** app/library.py — `ensure_dropped_source`, `add_dropped_file`, `view_file`, `resolve_asset`; app/server.py — `drop_file_paths`, `POST /api/files/drop`; app/static/index.html — `#srcDrop` two zones, `takeDroppedFiles` / `addDroppedFiles` / `ensureLightInLibrary`; tests/test_sources.py `DropFilesTest`; tests/drop_files_e2e.cjs; MANUAL, ARCHITECTURE.

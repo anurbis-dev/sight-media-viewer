@@ -182,6 +182,10 @@ var SightCoreline = (function(){
     else if (f.type) and.push({ field: "entity:" + f.type + "." + S.dispOf(f.type), op: "is_not_null" });
     if (f.status) and.push({ field: S.statusField, op: "is", value: f.status });
     if (f.q) and.push({ field: S.disp, op: "contains", value: f.q });
+    // Point update: only records touched after the newest stamp the grid already shows.
+    if (f.since) and.push({ field: "updatedAt", op: "gt", value: f.since });
+    if (f.ids && f.ids.length) and.push({ field: "id", op: "in", value: f.ids.map(function(id){ return Number(id); }) });
+    if (f.retired) and.push({ field: "deleted", op: "is", value: true });
     return and;
   }
   // POST /api/query is cursor-paged; the grid asks for page n: the cursors are kept per query (and per server)
@@ -225,7 +229,7 @@ var SightCoreline = (function(){
     for (var guard = 0; guard < 50 && out.length < want; guard++){
       var b = Object.assign({}, body, { limit: want - out.length }); if (next) b.cursor = next;
       var j = await query(client, b);
-      (Array.isArray(j.records) ? j.records : []).forEach(function(r){ if (r && !r.deleted) out.push(flat(r, S)); });
+      (Array.isArray(j.records) ? j.records : []).forEach(function(r){ if (r && (f.retired ? r.deleted : !r.deleted)) out.push(flat(r, S)); });
       next = j.nextCursor || null;
       if (!next) break;
     }
@@ -565,6 +569,9 @@ var SightCoreline = (function(){
     filterFields: filterFields,
     toConditions: toConditions,
     browse: browseVersions,
+    browseRetired: function(client, f, fields, page, size, where){
+      return browseVersions(client, Object.assign({}, f, { retired: true }), fields, page, size, where);
+    },
     recordId: function(v){ return v.type + ":" + v.id + ":" + (v.$mf || "media"); },
     recordName: function(v){ return v.$name || "#" + v.id; },
     recordStamp: function(v){ return String(v.updatedAt || ""); },

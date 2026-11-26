@@ -68,6 +68,48 @@ L.run(async (cfg, t) => {
   t.eq("count 2: a line-count slider per point", dens, 2);
   await closeMenu(p);
 
+  // Default handles sit inside the picture. Their fans must meet there (a line of each point through the
+  // other, and crossings that are not the parallel star linesFromVp used to draw).
+  m = await L.mediaBox(p);
+  const fans = await p.evaluate(() => {
+    const svg = document.querySelector(".gd-svg");
+    const ctm = svg.getScreenCTM();
+    const pt = svg.createSVGPoint();
+    const map = (x, y) => { pt.x = +x; pt.y = +y; const q = pt.matrixTransform(ctm); return [q.x, q.y]; };
+    return [...svg.querySelectorAll("line.gd-mark")].filter((l) => !l.getAttribute("stroke-dasharray")).map((l) => ({
+      stroke: l.getAttribute("stroke"),
+      a: map(l.getAttribute("x1"), l.getAttribute("y1")),
+      b: map(l.getAttribute("x2"), l.getAttribute("y2")),
+    }));
+  });
+  const byStroke = new Map();
+  for (const ln of fans){
+    if (!byStroke.has(ln.stroke)) byStroke.set(ln.stroke, []);
+    byStroke.get(ln.stroke).push(ln);
+  }
+  const groups = [...byStroke.values()];
+  const crossAt = (A, B) => {
+    const [x1, y1] = A.a, [x2, y2] = A.b, [x3, y3] = B.a, [x4, y4] = B.b;
+    const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(den) < 1e-6) return null;
+    const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+    const u = ((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2)) / den;
+    if (t < -0.02 || t > 1.02 || u < -0.02 || u > 1.02) return null;
+    return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+  };
+  const inPic = (q) => q && q[0] > m.left + 4 && q[0] < m.left + m.width - 4 && q[1] > m.top + 4 && q[1] < m.top + m.height - 4;
+  const handles = await vps(p);
+  let joints = 0;
+  if (groups.length >= 2){
+    for (const A of groups[0]) for (const B of groups[1]){
+      const q = crossAt(A, B);
+      if (!inPic(q)) continue;
+      if (handles.some((h) => Math.hypot(q[0] - h.x, q[1] - h.y) < 16)) continue;
+      joints++;
+    }
+  }
+  t.ok("2-point inside the picture: the two fans meet (not two parallel stars)", groups.length >= 2 && joints >= 4, { strokes: groups.map((g) => g.length), joints });
+
   // ---- 2-point: one horizon ------------------------------------------------------------------------
   m = await L.mediaBox(p);
   v = await vps(p);
@@ -113,6 +155,21 @@ L.run(async (cfg, t) => {
   t.ok("3-point: point 3 is off the horizon", Math.abs(v[2].y - v[0].y) > 20, v);
   const lines3 = await p.$$eval(".gd-svg line.gd-mark", (ls) => ls.filter((l) => l.getAttribute("stroke") === "#3ec7b5").length);
   t.ok("3-point: lines run from point 3", lines3 >= 4, lines3);
+  const through = await p.evaluate(([x1, y1, x2, y2]) => {
+    const svg = document.querySelector(".gd-svg");
+    const ctm = svg.getScreenCTM();
+    const pt = svg.createSVGPoint();
+    const map = (x, y) => { pt.x = +x; pt.y = +y; const q = pt.matrixTransform(ctm); return [q.x, q.y]; };
+    const dist = (px, py, a, b) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+      return Math.abs((px - a[0]) * dy - (py - a[1]) * dx) / l;
+    };
+    const lines = [...svg.querySelectorAll("line.gd-mark")].filter((l) => l.getAttribute("stroke") === "#3ec7b5")
+      .map((l) => [map(l.getAttribute("x1"), l.getAttribute("y1")), map(l.getAttribute("x2"), l.getAttribute("y2"))]);
+    const near = (x, y) => lines.some(([a, b]) => dist(x, y, a, b) < 2.5);
+    return [near(x1, y1), near(x2, y2)];
+  }, [v[0].x, v[0].y, v[1].x, v[1].y]);
+  t.ok("3-point inside: point 3's lines pass through points 1 and 2", through[0] && through[1], through);
   await L.shot(cfg, p, "guides-persp-3.png");
   // point 3 dragged onto the horizon stays off it
   await drag(p, v[2].x, v[2].y, v[2].x, v[0].y);
@@ -158,6 +215,98 @@ L.run(async (cfg, t) => {
   await p.click('#guidesPop [data-mode="persp"]');
   t.eq("Perspective on again: the last count (2)", (await vps(p)).length, 2);
   await closeMenu(p);
+  await p.keyboard.press("Escape"); await L.lightGone(p);
+
+  // ---- handles outside the picture: lines join the points, not the file's corners -------------------
+  await L.openLight(p, id["a_small.png"]);
+  await L.waitMedia(p, "image");
+  await menu(p);
+  await p.click('#guidesPop [data-np="2"]');
+  await closeMenu(p);
+  m = await L.mediaBox(p);
+  v = await vps(p);
+  let h0 = v.find((q) => q.i === 0), h1 = v.find((q) => q.i === 1);
+  await drag(p, h0.x, h0.y, m.left - 110, h0.y);
+  v = await vps(p);
+  h1 = v.find((q) => q.i === 1);
+  await drag(p, h1.x, h1.y, m.left + m.width + 110, h1.y);
+  v = await vps(p);
+  h0 = v.find((q) => q.i === 0); h1 = v.find((q) => q.i === 1);
+  t.ok("2-point outside the file: both handles sit outside the picture",
+    h0 && h1 && h0.x < m.left - 30 && h1.x > m.left + m.width + 30, { h0, h1, m });
+  const segDist = (px, py, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1;
+    let u = ((px - a[0]) * dx + (py - a[1]) * dy) / l2;
+    u = Math.max(0, Math.min(1, u));
+    return Math.hypot(px - (a[0] + u * dx), py - (a[1] + u * dy));
+  };
+  const lineDist = (px, py, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    return Math.abs((px - a[0]) * dy - (py - a[1]) * dx) / l;
+  };
+  const solid = await p.evaluate(() => {
+    const svg = document.querySelector(".gd-svg");
+    const ctm = svg.getScreenCTM();
+    const pt = svg.createSVGPoint();
+    const map = (x, y) => { pt.x = +x; pt.y = +y; const q = pt.matrixTransform(ctm); return [q.x, q.y]; };
+    return [...svg.querySelectorAll("line.gd-mark")].filter((l) => !l.getAttribute("stroke-dasharray")).map((l) => ({
+      stroke: l.getAttribute("stroke"),
+      a: map(l.getAttribute("x1"), l.getAttribute("y1")),
+      b: map(l.getAttribute("x2"), l.getAttribute("y2")),
+    }));
+  });
+  const of = (color) => solid.filter((l) => l.stroke === color);
+  const blue = of("var(--accent)"), amber = of("#e2a33a");
+  t.ok("2-point outside: point 1's lines reach point 2", blue.some((l) => segDist(h1.x, h1.y, l.a, l.b) < 3), blue.length);
+  t.ok("2-point outside: point 2's lines reach point 1", amber.some((l) => segDist(h0.x, h0.y, l.a, l.b) < 3), amber.length);
+  const corners = [[m.left, m.top], [m.left + m.width, m.top], [m.left + m.width, m.top + m.height], [m.left, m.top + m.height]];
+  const cornerHits = corners.filter((c) => solid.some((l) => lineDist(c[0], c[1], l.a, l.b) < 2.5)).length;
+  t.ok("2-point outside: lines do not pass through the picture's corners", cornerHits === 0, { cornerHits, lines: solid.length });
+  let outJoints = 0;
+  const crossAt2 = (A, B) => {
+    const [x1, y1] = A.a, [x2, y2] = A.b, [x3, y3] = B.a, [x4, y4] = B.b;
+    const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(den) < 1e-6) return null;
+    const tt = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+    const uu = ((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2)) / den;
+    if (tt < -0.02 || tt > 1.02 || uu < -0.02 || uu > 1.02) return null;
+    return [x1 + tt * (x2 - x1), y1 + tt * (y2 - y1)];
+  };
+  for (const A of blue) for (const B of amber){
+    const qj = crossAt2(A, B);
+    if (!qj || qj[0] < m.left + 4 || qj[0] > m.left + m.width - 4 || qj[1] < m.top + 4 || qj[1] > m.top + m.height - 4) continue;
+    outJoints++;
+  }
+  t.ok("2-point outside: the fans meet inside the picture", outJoints >= 4, outJoints);
+
+  await menu(p);
+  await p.click('#guidesPop [data-np="3"]');
+  await closeMenu(p);
+  v = await vps(p);
+  h0 = v.find((q) => q.i === 0);
+  await drag(p, h0.x, h0.y, m.left - 90, h0.y);
+  v = await vps(p);
+  h1 = v.find((q) => q.i === 1);
+  await drag(p, h1.x, h1.y, m.left + m.width + 90, h1.y);
+  v = await vps(p);
+  const h2 = v.find((q) => q.i === 2);
+  await drag(p, h2.x, h2.y, m.left + m.width / 2, m.top + m.height + 130);
+  v = await vps(p);
+  h0 = v.find((q) => q.i === 0); h1 = v.find((q) => q.i === 1);
+  const h2b = v.find((q) => q.i === 2);
+  t.ok("3-point outside the file: point 3 sits below the picture", h2b && h2b.y > m.top + m.height + 40, h2b);
+  const solid3 = await p.evaluate(() => {
+    const svg = document.querySelector(".gd-svg");
+    const ctm = svg.getScreenCTM();
+    const pt = svg.createSVGPoint();
+    const map = (x, y) => { pt.x = +x; pt.y = +y; const q = pt.matrixTransform(ctm); return [q.x, q.y]; };
+    return [...svg.querySelectorAll("line.gd-mark")].filter((l) => l.getAttribute("stroke") === "#3ec7b5").map((l) => ({
+      a: map(l.getAttribute("x1"), l.getAttribute("y1")),
+      b: map(l.getAttribute("x2"), l.getAttribute("y2")),
+    }));
+  });
+  t.ok("3-point outside: point 3's lines reach points 1 and 2",
+    solid3.some((l) => segDist(h0.x, h0.y, l.a, l.b) < 3) && solid3.some((l) => segDist(h1.x, h1.y, l.a, l.b) < 3), solid3.length);
   await p.keyboard.press("Escape"); await L.lightGone(p);
 
   // ---- touch -----------------------------------------------------------------------------------------

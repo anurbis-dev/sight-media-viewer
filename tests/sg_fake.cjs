@@ -113,7 +113,10 @@ function createFakeShotGrid(opts){
       const hash = body.filters && !Array.isArray(body.filters);
       if (hash !== /hash/.test(h["content-type"] || "")) return json(400, { errors: [{ title: "filter format and content type disagree" }] });
       if (hash) log.push("hash " + JSON.stringify(body.filters));
-      let list = [...db[type].values()].filter((r) => hash ? matchHash(r, body.filters) : (body.filters || []).every((f) => match(r, f)));
+      // options[return_only]=retired (REST OptionsParameter). Default: active rows only.
+      const onlyRetired = qs.get("options[return_only]") === "retired";
+      let list = [...db[type].values()].filter((r) => onlyRetired ? !!r.retired : !r.retired);
+      list = list.filter((r) => hash ? matchHash(r, body.filters) : (body.filters || []).every((f) => match(r, f)));
       if (body.sort){ const desc = body.sort[0] === "-", k = body.sort.replace(/^-/, ""); list.sort((x, y) => (x[k] > y[k] ? 1 : x[k] < y[k] ? -1 : 0) * (desc ? -1 : 1)); }
       const size = (body.page && body.page.size) || 500, num = (body.page && body.page.number) || 1;
       const page = list.slice((num - 1) * size, num * size);

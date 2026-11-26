@@ -30,7 +30,9 @@
   `Ctrl`+click it, long-press it with a finger, or drag it back onto its ruler. `Shift+H` (or the eye button) hides
   and shows the guides together with the drawings; the eye shows whenever guides are on.
   Perspective places a handle for each vanishing point (drag it, including outside the picture) and draws lines
-  through the picture toward it; each point has its own line count (2–40, default 8). A dashed horizon runs through
+  through the picture toward it; each point has its own line count (2–40, default 8). With 2 or 3 points the lines run
+  between the vanishing points — through the other points, and through rows those points share — whether the handles
+  sit inside the picture or outside it. They are not aimed at the corners of the picture. A dashed horizon runs through
   point 1 (and 2). In 2- and 3-point perspective both points always sit on it, so moving either up or down, or
   dragging the small diamond on the horizon between them, moves both (verticals stay vertical). Point 3 is the zenith / nadir: the vertical
   lines run to it, and it is kept off the horizon. Guides stay stuck to
@@ -421,9 +423,11 @@
   of the sidebar, and the same button in the review panel's header: your reviewer name (stored with every note) and
   a row per connected tracker (ShotGrid: its site, *Settings…* opens it in Settings → Trackers); with none
   connected it holds only the name. On the phone it sits at the left of the home bar.
-- **ShotGrid in the sidebar** — once ShotGrid is connected, *ShotGrid · <site>* is the last row under Sources; open it
-  for the projects and click one: its Versions fill the library grid as tiles, newest first (more load as you
-  scroll), at the grid's own tile size and layout. A bar above the grid narrows them — All / Shots / Assets /
+- **ShotGrid in the sidebar** — once ShotGrid is connected, *ShotGrid · <site>* is the last row under Sources. The
+  name shimmers while Sight is connecting and turns red if the site does not answer; the row stays until you
+  disconnect it. Open it for the projects and click one: its Versions fill the library grid as tiles, newest first
+  (more load as you scroll). A project or a type you already opened comes back at once from this browser, and Sight
+  then updates only the Versions that changed on the site. The tiles use the grid's own size and layout. A bar above the grid narrows them — All / Shots / Assets /
   Sequences, an entity, a status — and the top search box finds part of a name; **Fields ▾** lists the site's Version
   fields: tick the ones the tiles show. Click a Version for its fields in the inspector. Move the pointer over a
   video's tile to play through its frames (on a touch screen: drag a finger sideways over its picture). Double-click

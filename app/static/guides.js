@@ -9,7 +9,9 @@
 // Perspective (one menu item, 1 / 2 / 3 points; stored as mode "1" / "2" / "3", as 0.138 did): one handle per
 // vanishing point, lines through the picture toward it. A horizon line runs through points 1 and 2, which always
 // share it (2- and 3-point): dragging either point up / down, or the horizon, moves both. Point 3 (3-point) is the
-// zenith / nadir: free, but kept off the horizon.
+// zenith / nadir: free, but kept off the horizon. 2- and 3-point lines are drawn between the vanishing
+// points (through each other and through station rows they share). They are not fanned across the
+// corners of the picture. 1-point still is: a star inside the picture, the picture's corner angle outside.
 // Guides hide with the drawings (the eye, Shift+H: hooks.hidden).
 
 const STORE_KEY = "sight.guides";
@@ -146,12 +148,202 @@ export function viewToImg(x, y, g){
   return [(ux - g.x0) / g.s, (uy - g.y0) / g.s];
 }
 
-// Lines from a vanishing point across the picture. Inside: `n` full lines. Outside: `n` lines
-// across the angle the picture occupies, each drawn from the point through the far edge.
+function pointInside(vp, w, h){
+  return vp.x >= -1e-6 && vp.x <= w + 1e-6 && vp.y >= -1e-6 && vp.y <= h + 1e-6;
+}
+// Undirected line angle in [0, π).
+function lineAng(dx, dy){
+  let a = Math.atan2(dy, dx) % Math.PI;
+  if (a < 0) a += Math.PI;
+  return a;
+}
+function takeEven(arr, k){
+  if (k <= 0 || !arr.length) return [];
+  if (k >= arr.length) return arr.slice();
+  if (k === 1) return [arr[Math.floor((arr.length - 1) / 2)]];
+  const out = [];
+  for (let i = 0; i < k; i++) out.push(arr[Math.round(i * (arr.length - 1) / (k - 1))]);
+  return out;
+}
+// Two horizontal station lines inside the picture, off the horizon and off every handle.
+// Every vanishing point of a 2- or 3-point guide draws through the same samples, so the fans meet
+// there. The picture's corners are not samples.
+function stationRows(points, w, h){
+  const hy = points[0].y;
+  let yA = h * 0.18, yB = h * 0.82;
+  const place = (y, side) => {
+    let v = y;
+    if (Math.abs(v - hy) < h * 0.07) v = hy + side * h * 0.14;
+    for (const p of points){
+      if (Math.abs(v - p.y) < h * 0.045) v = p.y + side * h * 0.1;
+    }
+    return Math.min(h * 0.94, Math.max(h * 0.06, v));
+  };
+  yA = place(yA, -1);
+  yB = place(yB, 1);
+  if (yB - yA < h * 0.16){
+    yA = Math.max(h * 0.06, hy - h * 0.28);
+    yB = Math.min(h * 0.94, hy + h * 0.28);
+  }
+  const master = 81;
+  // Inside the picture, clear of the corners. A ray that would still pass through a corner is skipped later.
+  const lo = w * 0.08, hi = w * 0.92;
+  const xs = [];
+  for (let i = 0; i < master; i++) xs.push(lo + (hi - lo) * i / (master - 1));
+  return {
+    upper: xs.map((x) => ({ x, y: yA })),
+    lower: xs.map((x) => ({ x, y: yB })),
+  };
+}
+// Push p onto an end of the chord only when p lies past that end (an outside handle). A point
+// already on the chord, or between the ends, stays where it is. The margin is half a pixel, so a
+// handle just outside the picture is still joined (a fraction of the chord length would miss it).
+function extendOut(seg, p){
+  const beyond = (ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    if (l2 < 1e-8) return false;
+    const t = ((p.x - ax) * dx + (p.y - ay) * dy) / l2;
+    if ((t - 1) * Math.sqrt(l2) <= 0.5) return false;
+    const cx = ax + t * dx, cy = ay + t * dy;
+    return Math.hypot(p.x - cx, p.y - cy) < 1.25;
+  };
+  if (beyond(seg[2], seg[3], seg[0], seg[1])) return [p.x, p.y, seg[2], seg[3]];
+  if (beyond(seg[0], seg[1], seg[2], seg[3])) return [seg[0], seg[1], p.x, p.y];
+  return seg;
+}
+// True when the line through vp and (x, y) is aimed at a corner of the picture (within about a degree).
+// Distance-to-the-line is not enough: a handle near a corner makes every line look close to it.
+function nearCorner(vp, x, y, w, h){
+  const dx = x - vp.x, dy = y - vp.y, l = Math.hypot(dx, dy);
+  if (l < 1e-6) return false;
+  for (const [cx, cy] of [[0, 0], [w, 0], [w, h], [0, h]]){
+    const cl = Math.hypot(cx - vp.x, cy - vp.y);
+    if (cl < 1e-6) continue;
+    const sin = Math.abs(dx * (cy - vp.y) - dy * (cx - vp.x)) / (l * cl);
+    if (sin < 0.015) return true;
+  }
+  return false;
+}
+// Same line already drawn (float noise, or a sample that lands on a vanishing-point line).
+function tooClose(a, angs){
+  for (const b of angs){
+    const d = Math.abs(a - b);
+    if (Math.min(d, Math.PI - d) < 5e-4) return true;
+  }
+  return false;
+}
+function stationOrder(rows, need){
+  const seq = [];
+  const m = Math.max(rows.upper.length, rows.lower.length);
+  for (let i = 0; i < m; i++){
+    if (i < rows.upper.length) seq.push(rows.upper[i]);
+    if (i < rows.lower.length) seq.push(rows.lower[i]);
+  }
+  const order = takeEven(seq, Math.min(Math.max(need, 1), seq.length));
+  const seen = new Set(order);
+  for (const s of seq) if (!seen.has(s)) order.push(s);
+  return order;
+}
+function sampleAngle(vp, s, angs, w, h){
+  if (nearCorner(vp, s.x, s.y, w, h)) return null;
+  const a = lineAng(s.x - vp.x, s.y - vp.y);
+  if (tooClose(a, angs)) return null;
+  return a;
+}
+// Shared samples first (every point that still needs a line can use them, so the fans meet), then
+// each point fills its own count from what it can use. One point running out of spread does not
+// shorten the others.
+function stationPicks(points, rows, spares, w, h){
+  const need = Math.max(0, ...spares);
+  const lists = points.map(() => []);
+  if (!need) return lists;
+  const angs = points.map((vp, i) => {
+    const list = [];
+    for (let j = 0; j < points.length; j++){
+      if (j === i) continue;
+      list.push(lineAng(points[j].x - vp.x, points[j].y - vp.y));
+    }
+    return list;
+  });
+  const order = stationOrder(rows, need);
+  const shared = [];
+  for (const s of order){
+    if (shared.length >= need) break;
+    const add = [];
+    let ok = true;
+    for (let i = 0; i < points.length; i++){
+      if (spares[i] <= shared.length) continue;
+      const a = sampleAngle(points[i], s, angs[i], w, h);
+      if (a == null){ ok = false; break; }
+      add[i] = a;
+    }
+    if (!ok) continue;
+    shared.push(s);
+    for (let i = 0; i < points.length; i++){
+      if (add[i] == null) continue;
+      angs[i].push(add[i]);
+      lists[i].push(s);
+    }
+  }
+  for (let i = 0; i < points.length; i++){
+    if (lists[i].length >= spares[i]) continue;
+    const have = new Set(lists[i]);
+    for (const s of order){
+      if (lists[i].length >= spares[i]) break;
+      if (have.has(s)) continue;
+      const a = sampleAngle(points[i], s, angs[i], w, h);
+      if (a == null) continue;
+      angs[i].push(a);
+      lists[i].push(s);
+      have.add(s);
+    }
+  }
+  return lists;
+}
+// Lines of one vanishing point in a 2- or 3-point guide. One line through each other vanishing point
+// (never merged, even when the two handles are almost in line), then the shared station samples.
+// A handle outside the picture is joined onto its own lines.
+function linkedLines(vp, others, samples, w, h, n){
+  const segs = [];
+  const add = (x, y, cornerOk) => {
+    if (segs.length >= n) return;
+    const dx = x - vp.x, dy = y - vp.y;
+    if (dx * dx + dy * dy < 1e-8) return;
+    let seg = chord(vp, lineAng(dx, dy), w, h, true);
+    if (seg){
+      seg = extendOut(seg, vp);
+      for (const o of others) seg = extendOut(seg, o);
+    } else if (cornerOk){
+      // The two handles' own line misses the picture (both above it, for example). Draw it anyway.
+      seg = [vp.x, vp.y, x, y];
+    } else return;
+    segs.push(seg);
+  };
+  for (const o of others) add(o.x, o.y, true);
+  for (const s of samples) add(s.x, s.y, false);
+  return segs;
+}
+// One segment list per vanishing point. 1-point keeps linesFromVp (a star inside the picture,
+// the picture's corner angle outside). 2- and 3-point are linkedLines, inside or outside.
+export function linesForPoints(points, w, h, counts){
+  const ns = points.map((_, i) => Math.max(2, Math.min(40, (counts && counts[i]) | 0 || 8)));
+  const rows = points.length >= 2 ? stationRows(points, w, h) : null;
+  if (!rows) return points.map((vp, i) => linesFromVp(vp, w, h, ns[i]));
+  const othersN = points.length - 1;
+  const spares = ns.map((n) => Math.max(0, n - othersN));
+  const picks = stationPicks(points, rows, spares, w, h);
+  return points.map((vp, i) => {
+    const others = [];
+    for (let j = 0; j < points.length; j++) if (j !== i) others.push(points[j]);
+    return linkedLines(vp, others, picks[i], w, h, ns[i]);
+  });
+}
+// 1-point only. Inside: `n` full lines. Outside: `n` lines across the angle the picture's
+// corners occupy, each drawn from the point through the far edge. 2- and 3-point use linesForPoints.
 export function linesFromVp(vp, w, h, n){
   n = Math.max(2, Math.min(40, n | 0));
   const angs = [];
-  const inside = vp.x >= -1e-6 && vp.x <= w + 1e-6 && vp.y >= -1e-6 && vp.y <= h + 1e-6;
+  const inside = pointInside(vp, w, h);
   if (inside){
     for (let i = 0; i < n; i++) angs.push((Math.PI * i) / n);
   } else {
@@ -951,10 +1143,11 @@ function drawPersp(g, W, H){
       }
     }
   }
+  const packs = linesForPoints(list, g.w, g.h, list.map((_, i) => rec.dens[i] || 8));
   for (let i = 0; i < n; i++){
     const vp = list[i];
     const col = VP_COLOR[i] || VP_COLOR[0];
-    for (const seg of linesFromVp(vp, g.w, g.h, rec.dens[i] || 8)){
+    for (const seg of packs[i]){
       const a = imgToView(seg[0], seg[1], g), b = imgToView(seg[2], seg[3], g);
       if (![...a, ...b].every(Number.isFinite)) continue;
       parts.push(`<line class="gd-mark" x1="${px(a[0])}" y1="${px(a[1])}" x2="${px(b[0])}" y2="${px(b[1])}" stroke="${col}" stroke-opacity=".72" stroke-width="1"/>`);
