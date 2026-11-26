@@ -942,6 +942,7 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
 <script type="module">
 import { createCanvasView } from "/static/canvas.js";
 import { createAnnotator } from "/static/annotate.js";
+import { createSightStore } from "/static/sight-store.js";
 import { createCompare, comparable, flash } from "/static/compare.js";
 import { FINE, FINE_SCRUB, attachViewerInput, pinchTracker, wheelDelta, zoomFactorDrag, zoomFactorWheel } from "/static/viewer-input.js";
 import { hotkey, runHotkeys } from "/static/keys.js";
@@ -1976,8 +1977,18 @@ const cardPool = new Map();
 let light = null;
 // Lightbox annotations / review notes (annotate.js). One instance; the lightbox mounts it on open,
 // points it at each asset (setAsset) and at the viewer that shows it (bind2d / bind3d).
+// The annotators' server (sight-store.js): one store for all three, as the write queue is one per page.
+const annotStore = createSightStore({ api: (path, opts) => api(path, opts) });
+// What every annotator host gets the same: the store, settings (read from the local copy, written through
+// putSetting, which also syncs settings.json) and the reviewer name (the You panel, `sight.reviewer`).
+const annotBase = {
+  store: annotStore,
+  getSetting: (k) => localStorage.getItem(k),
+  putSetting: (k, v) => putSetting(k, v),
+  author: () => localStorage.getItem("sight.reviewer") || "",
+};
 const annot = createAnnotator({
-  api: (path, opts) => api(path, opts),
+  ...annotBase,
   // Reference images from the library: Tab / the props bar's Library shows the grid beside the player; its files
   // are dragged onto the frame (pictureSources) or the selected ones added (selectedPictures, the touch way).
   toggleLibrary: () => toggleLightSplit(),
@@ -1993,7 +2004,6 @@ const annot = createAnnotator({
   seqClips: () => light?.seq?.list.length || 0,
   seqExport: (kind) => seqExportAll(kind),
   exportBusy: () => seqExporting,
-  putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
@@ -2044,13 +2054,12 @@ const annot = createAnnotator({
 // canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
 // `frameRect` moves the board camera to a picked note's drawings.
 const boardAnnot = createAnnotator({
+  ...annotBase,
   board: true,
   refImages: false,   // a board places pictures as its own items
   notesBtn: () => $("boardNotesBtn"),
   eyeBtn: () => $("boardEyeBtn"),
   notesBtnShown: () => state.view === "canvas",
-  api: (path, opts) => api(path, opts),
-  putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),
@@ -2071,13 +2080,12 @@ const boardAnnot = createAnnotator({
 let cmpAnnotUsed = new Set(); // files annotated in this compare (the lightbox reloads its notes if it shows one)
 let cmpView = null;           // the selected layer's viewer as compare last reported it (null: none visible)
 const cmpAnnot = createAnnotator({
-  api: (path, opts) => api(path, opts),
+  ...annotBase,
   showWhileWatching: false,   // drawings only while annotating here (its eye shows while drawing)
   // The compare's own top bar has the lightbox's notes button and eye (compare.js), so the notes read the same way.
   notesBtn: () => document.querySelector(".cmp .cmp-notesb"),
   eyeBtn: () => document.querySelector(".cmp .cmp-eyeb"),
   notesBtnShown: () => cmp.isOpen(),
-  putSetting: (k, v) => putSetting(k, v),
   registerAutoClose: (el, close, anchor) => registerAutoClose(el, close, anchor),
   userPanel: (anchor) => openUserPanel(anchor),  // the person icon in the review panel (You: name, trackers)
   paintUserBtns: (root) => paintUserBtns(root),

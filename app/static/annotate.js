@@ -21,17 +21,16 @@
 // Context (data.ctx): video {t, hold} — visible around time t; 3D {vk, cam} — visible while the
 // camera matches that view; images: none (always visible).
 
-import { hotkey, runHotkeys } from "/static/keys.js";
-import { buildKeyHelp, helpKey, keyName } from "/static/key-help.js";
-import { convertForPlayback } from "/static/video-playable.js";
-import { setCursor } from "/static/cursors.js";
+// Host-neutral (docs/ARCHITECTURE.md "Annotator store"): everything from the server goes through host.store
+// (Sight's: sight-store.js), settings through host.getSetting / putSetting, the author through host.author.
+// Imports are relative, so the module works from any URL prefix.
+import { hotkey, runHotkeys } from "./keys.js";
+import { buildKeyHelp, helpKey, keyName } from "./key-help.js";
+import { setCursor } from "./cursors.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
-import "/static/review-core.js";
-import "/static/trackers-core.js";  // globalThis.SightTrackers — the tracker registry (docs/ARCHITECTURE.md "Tracker adapters")
-import "/static/shotgrid-core.js";  // registers the ShotGrid adapter (docs/SHOTGRID.md), shared with the phone app
-import { createPlate } from "/static/caption-plate.js";
-import { createDictationUI } from "/static/dictation.js";
+import "./review-core.js";
+import { createPlate } from "./caption-plate.js";
 const RC = globalThis.SightReviewCore;
 const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, textLayout,
   primsOf, primSvg, boundsOf, hitTest, transformItem, validItem } = RC;
@@ -235,8 +234,7 @@ const isDrawing = (it) => it.kind !== "note";
 const propType = (it) => { const t = typeOf(it); return t === "brush" && it.data?.close ? "lasso" : t; };
 // Tools that draw a freehand stroke (the brush circle follows the pointer).
 const freehand = (t) => STROKE_TOOLS.has(t) || t === "lasso";
-// Reference images (kind "image") show Sight's stored shots.
-RC.setImageSource((id) => (/^[0-9a-f]{16}$/.test(String(id)) ? `/api/review/shots/${id}` : ""));
+// Reference images (kind "image") show the store's shots: RC.setImageSource(store.shotSrc), set with the first store.
 // Pictures a reference image is made from: anything the browser decodes. Kept at most REF_MAX px on the long side.
 const REF_MAX = 2048;
 const REF_RE = /\.(jpe?g|png|gif|webp|bmp|avif|svg)$/i;
@@ -288,6 +286,7 @@ const OB_PREFIX = "sight-annot-outbox:v2:";
 // OB_STALE: background tabs run timers about once a minute, so a live window may refresh its key late.
 const OB_STALE = 180000, OB_TIMEOUT = 20000, OB_RECENT = 30000;
 const OB = {
+  store: null, // the host's store (createAnnotator): the queue's transport (store.writeRow)
   map: new Map(), busy: false, gone: false, timer: 0, fails: 0, batchFails: 0, waiters: [], badge: null, note: "", noteTimer: 0,
   key: OB_PREFIX + Math.random().toString(16).slice(2) + Date.now().toString(16),
   // Writes that landed lately (id -> {e, at, sentAt}): a load() whose GET raced them still shows them (obOverlay).
@@ -398,21 +397,24 @@ function obOverlay(rows, key){
 function obForget(key){ for (const [id, r] of OB.recent) if (r.e.key === key) OB.recent.delete(id); }
 // 4xx (except 408 / 429) = the server refuses this row for good: retrying cannot help, keep the rest moving.
 class ObRefused extends Error {}
-async function obFetch(path, opts){
+// One write through the store (req: see obReq). Its error message is "<op> <id>: <status>" for an HTTP answer
+// (obDrain tells those from "no answer at all" by that shape).
+async function obFetch(req){
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), OB_TIMEOUT); // a hung request must not stall the queue for good
   try {
-    const r = await fetch(path, { ...opts, signal: ctl.signal });
+    const r = await OB.store.writeRow(req, { signal: ctl.signal });
     if (r.ok) return;
-    const msg = `${opts.method} ${path}: ${r.status}`;
+    const msg = `${req.op} ${req.id || "rows"}: ${r.status}`;
     if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw new ObRefused(msg);
     throw new Error(msg);
   } finally { clearTimeout(t); }
 }
-const JSON_HDR = { "content-type": "application/json" };
-const obReq = (id, e) => e.op === "del" ? [`/api/annotations/${encodeURIComponent(id)}`, { method: "DELETE" }]
-  : e.create ? ["/api/annotations", { method: "POST", headers: JSON_HDR, body: JSON.stringify(e.body) }]
-  : [`/api/annotations/${encodeURIComponent(id)}`, { method: "PATCH", headers: JSON_HDR, body: JSON.stringify(obFields(e.body)) }];
+// The store contract's row writes (docs/ARCHITECTURE.md "Annotator store"): a create (an upsert: the full row),
+// a patch of obFields (a row gone on the server is skipped, never revived), a delete, a batch of patches.
+const obReq = (id, e) => e.op === "del" ? { op: "delete", id }
+  : e.create ? { op: "create", id, body: e.body }
+  : { op: "patch", id, body: obFields(e.body) };
 function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind }; }
 // Removes `e` once sent, unless a newer write for the row came in meanwhile (that one is sent next).
 // `refused`: the server did not take it; it must not show (OB.recent) nor count as landed.
@@ -426,7 +428,7 @@ function obDone(id, e, sentAt, refused){
   obSave();
 }
 async function obDrain(){
-  if (OB.busy) return;
+  if (OB.busy || !OB.store) return;  // (no store yet: the first annotator's kicks the queue)
   obHandedOff();
   OB.busy = true;
   clearTimeout(OB.timer);
@@ -440,7 +442,7 @@ async function obDrain(){
         if (down){ failedNow.add(id); return; }
         const sentAt = Date.now();
         OB.inflight.add(id);
-        try { const [p, o] = obReq(id, e); await obFetch(p, o); obDone(id, e, sentAt); }
+        try { await obFetch(obReq(id, e)); obDone(id, e, sentAt); }
         catch (err){
           if (err instanceof ObRefused){ console.warn("annotation write refused", err); obDone(id, e, 0, true); obRefusedNote(); }
           else { failedNow.add(id); down = !/^\w+ \S+: \d+$/.test(err.message || ""); console.warn("annotation save failed, will retry", err); }
@@ -456,7 +458,7 @@ async function obDrain(){
         const sentAt = Date.now();
         for (const [id] of updates) OB.inflight.add(id);
         try {
-          await obFetch("/api/annotations/batch", { method: "POST", headers: JSON_HDR, body: JSON.stringify({ items: updates.map(([id, e]) => ({ id, ...obFields(e.body) })) }) });
+          await obFetch({ op: "batch", items: updates.map(([id, e]) => ({ id, ...obFields(e.body) })) });
           for (const [id, e] of updates) obDone(id, e, sentAt);
           OB.batchFails = 0;
         } catch (err){
@@ -492,16 +494,19 @@ function obFlush(){
 // The page is going away: every request at once (the page may not live to see one answer), keepalive, within
 // its 64 KB budget. Whatever does not fit or fails stays stored for the next start.
 function obBeacon(){
+  if (!OB.store) return;
   let budget = 60000;
   for (const [id, e] of OB.map){
     if (OB.inflight.has(id)) continue; // an older request for the row is on the way: never race it (stays stored)
-    const [p, o] = obReq(id, e.op === "put" && !e.create && !e.single ? { ...e, single: true } : e);
-    const size = (o.body || "").length + 200;
+    const req = obReq(id, e.op === "put" && !e.create && !e.single ? { ...e, single: true } : e);
+    const size = (req.body ? JSON.stringify(req.body) : "").length + 200;
     if (size > budget) continue;
     budget -= size;
     const sentAt = Date.now();
     OB.inflight.add(id);
-    fetch(p, { ...o, keepalive: true }).then((r) => { if (r.ok) obDone(id, e, sentAt); }).catch(() => {})
+    let sent;
+    try { sent = OB.store.writeRow(req, { keepalive: true }); } catch (err){ sent = Promise.reject(err); }  // (now: the page is going away)
+    Promise.resolve(sent).then((r) => { if (r.ok) obDone(id, e, sentAt); }).catch(() => {})
       .finally(() => OB.inflight.delete(id));
   }
 }
@@ -556,6 +561,14 @@ const styleWatchers = new Set();
 function pokeStyles(){ for (const fn of styleWatchers){ try { fn(); } catch {} } }
 
 export function createAnnotator(host){
+  // Every server call goes through the store (docs/ARCHITECTURE.md "Annotator store"; Sight's: sight-store.js).
+  const store = host.store;
+  if (!store) throw new Error("createAnnotator: host.store is required");
+  if (!OB.store){
+    OB.store = store;
+    RC.setImageSource((id) => store.shotSrc(id));
+    if (OB.map.size) obKick(1500);  // (as the start's own drain of adopted writes: 1.5 s after load)
+  }
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
   const panelKey = host.board ? "sight.annotate.panel.board" : "sight.annotate.panel";
@@ -577,7 +590,10 @@ export function createAnnotator(host){
 
   // Board mode: the Canvas view's annotator (see the header). Every board-specific branch below goes through this.
   const isBoard = () => S.kind === "board";
-  function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
+  // Settings: read through the host (host.getSetting(key) → the stored string or null), written through putSetting.
+  // (A function declaration: S's initializer above reads settings before this line runs.)
+  function getSetting(k){ return host.getSetting ? host.getSetting(k) : localStorage.getItem(k); }
+  function readJSON(k, dflt){ try { const v = JSON.parse(getSetting(k)); return v ?? dflt; } catch { return dflt; } }
   function writeJSON(k, v){ try { host.putSetting(k, JSON.stringify(v)); } catch {} }
   function loadStyles(){
     if (sharedStyles) return sharedStyles;
@@ -647,7 +663,8 @@ export function createAnnotator(host){
     paintBar(); renderProps();
     try { paintStamp(true); paintStampPop(); } catch {}
   });
-  const reviewer = () => localStorage.getItem("sight.reviewer") || "";
+  // The author of notes, replies, state events and the review state (Sight: the typed reviewer name).
+  const reviewer = () => host.author?.() || "";
 
   // ---- toast ---------------------------------------------------------------------------------
   let toastTimer = 0;
@@ -717,7 +734,7 @@ export function createAnnotator(host){
     // the tracker link popover belongs to the file it was opened on; a sync of this file repaints it itself
     if (trkState.aid && trkState.aid !== a.id){ const pop = S.ui?.querySelector(".an-trk"); if (pop) pop.hidden = true; }
     let rows = [];
-    try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); }
+    try { rows = await store.loadRows(isBoard() ? "board" : "asset", a.id); }
     catch (e){ console.warn(e); if (S.asset?.id === a.id) toast("Could not load the notes of this file"); }
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
@@ -750,7 +767,7 @@ export function createAnnotator(host){
     S.versions = []; S.prevOpen = null;
     if (S.kind === "model3d" || isBoard()){ renderVersions(); return; }
     let list = [];
-    try { list = (await host.api(`/api/assets/${a.id}/versions`)).items || []; } catch {}
+    try { list = (store.versions ? await store.versions(a.id) : null) || []; } catch {}
     if (S.asset?.id !== a.id) return;
     S.versions = list;
     host.onVersions?.(a.id, list); // (the lightbox's compare button: enabled with 2+ versions)
@@ -758,7 +775,7 @@ export function createAnnotator(host){
     const prev = i > 0 ? list[i - 1] : null;
     if (prev){
       try {
-        const rows = await host.api(`/api/annotations?asset_id=${encodeURIComponent(prev.id)}`);
+        const rows = await store.loadRows("asset", prev.id);
         if (S.asset?.id !== a.id) return;
         S.prevOpen = { asset: prev, rows };
       } catch {}
@@ -828,7 +845,7 @@ export function createAnnotator(host){
     S.status = state;
     paintStatus();
     try {
-      const res = await host.api(`/api/assets/${a.id}/review-status`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, author: reviewer() }) });
+      const res = await store.setReviewState(a.id, state, reviewer());
       if (S.asset?.id === a.id && Array.isArray(res?.history)){ S.statusHist = res.history; paintStatus(); }
       host.onReviewChanged?.(a.id);
     } catch (e){
@@ -919,7 +936,7 @@ export function createAnnotator(host){
   function composerBack(a, back){
     const fields = [[S.ui?.querySelector(".an-input"), a.text || ""], [S.ui?.querySelector(".an-cin"), a.cap || ""]];
     if (back){
-      for (const sid of a.shots) if (!S.pending.some((p) => p.id === sid)) S.pending.push({ id: sid, url: `/api/review/shots/${sid}` });
+      for (const sid of a.shots) if (!S.pending.some((p) => p.id === sid)) S.pending.push({ id: sid, url: store.shotUrl(sid) });
       for (const [f, v] of fields) if (f && v){ f.value = f.value.trim() ? f.value.trimEnd() + "\n" + v : v; f.style.height = "auto"; f.style.height = Math.min(160, f.scrollHeight + 2) + "px"; }
     } else {
       S.pending = S.pending.filter((p) => !a.shots.includes(p.id));
@@ -1694,7 +1711,7 @@ export function createAnnotator(host){
       const type = alpha ? "image/png" : "image/jpeg";
       const blob = await new Promise((res) => cv.toBlob(res, type, 0.9));
       if (!blob) throw new Error("encode failed");
-      const r = await host.api("/api/review/shots", { method: "POST", headers: { "content-type": type }, body: blob });
+      const r = await store.putShot(blob, type);
       return { id: r.id, w: cv.width, h: cv.height };
     } finally {
       if (typeof src !== "string") URL.revokeObjectURL(url);
@@ -3362,9 +3379,9 @@ export function createAnnotator(host){
     const menu = el.querySelector(".an-menu:not(.an-trk)"), exBtn = el.querySelector("[data-act=export]");
     exBtn.onclick = () => {
       menu.hidden = !menu.hidden;
-      if (!menu.hidden){ paintXbg(); menu.querySelector(".an-mbg").hidden = isBoard() || S.kind === "model3d"; }  // (2D pictures only)
+      if (!menu.hidden){ paintXbg(); menu.querySelector(".an-mbg").hidden = isBoard() || S.kind === "model3d" || !store.exportReview; }  // (2D pictures only)
       // A sequence: the same exports for every clip of it that has notes (the host walks the clips).
-      if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard();
+      if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard() || !store.exportReview;
     };
     // Export backdrop past the frame: Auto, or a colour (the swatch also switches to Colour when one is picked).
     const xbgc = menu.querySelector(".an-xbgc");
@@ -3392,6 +3409,10 @@ export function createAnnotator(host){
       };
     });
     el.querySelector(".an-file").addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
+    // What the store cannot do is not offered: exports (and their backdrop), the import, the mic.
+    if (!store.exportReview) menu.querySelectorAll("[data-ex=pdf], [data-ex=html], [data-ex=pkg], [data-ex=zip], .an-mseq [data-exall]").forEach((x) => x.remove());
+    if (!store.importReview) menu.querySelectorAll("[data-ex=import]").forEach((x) => x.remove());
+    if (!S.dict) el.querySelector("[data-act=dict]").hidden = true;
     el.querySelector("[data-act=close]").onclick = () => togglePanel(false);
     el.querySelectorAll("[data-rs]").forEach((b) => { b.onclick = () => setStatus(b.dataset.rs); });
     el.querySelector(".an-compose [data-act=shot]").onclick = () => screenshot(false);
@@ -3485,7 +3506,7 @@ export function createAnnotator(host){
     el.classList.toggle("an-board", b);
     el.querySelectorAll("[data-ex]:not([data-ex=text])").forEach((x) => { x.hidden = b; });
     el.querySelector(".an-menu:not(.an-trk) > hr").hidden = b;
-    el.querySelector(".an-mbg").hidden = b;
+    el.querySelector(".an-mbg").hidden = b || !store.exportReview;
     // a link ▾ per connected tracker, none on a board (no media entity) (docs/PLAN-trackers.md decisions 10, 11)
     paintTrkBtns(b);
   }
@@ -3497,25 +3518,21 @@ export function createAnnotator(host){
   // link this file to one of the tracker's media entities (project + search, or the one its notes already name), then
   // Sync — the adapter's sync pulls the tracker's notes / replies / pictures (merged by /api/review/import), sends the
   // notes written here (pictures = the report's frames with drawings burned in) and stamps the tracker's ids on the
-  // rows. Credentials stay in Sight's server (app/trackers.py); this side only talks to /api/trackers/<tracker key>/… (one link ▾ per connected site, several of one kind included).
+  // rows. Credentials stay on the host's server (Sight: app/trackers.py); this side only talks to store.trackers (one link ▾
+  // per connected site, several of one kind included). A store without `trackers` shows no link ▾. The registry
+  // (globalThis.SightTrackers) and its adapters are imported by the host (index.html), not here.
   const TRK = () => globalThis.SightTrackers;
-  const trkHeaders = { "X-Sight": "1" };
-  const trkPath = (key, p) => `/api/trackers/${encodeURIComponent(key)}/${p}`;   // (key: the tracker key)
   const trkAdapter = (key) => TRK()?.adapter(TRK().split(key)?.kind) || null;
   // a per-site setting (the last project picked): "<the kind's name>@<host>", read falling back to the kind's own
   const trkStoreName = (A, key, n) => TRK().storeName(A, n, undefined, TRK().split(key)?.host);
-  const trkStored = (A, key, n) => TRK().readStored((k) => localStorage.getItem(k), A, n, undefined, TRK().split(key)?.host);
-  async function trkApi(path, opts = {}){
-    const r = await fetch(path, { ...opts, headers: { ...trkHeaders, ...(opts.headers || {}) } });
-    const j = await r.json().catch(() => null);
-    if (!r.ok) throw new Error(j?.detail || j?.errors?.[0]?.title || `HTTP ${r.status}`);
-    return j;
-  }
+  const trkStored = (A, key, n) => TRK().readStored((k) => getSetting(k), A, n, undefined, TRK().split(key)?.host);
+  // (key: the tracker key; p: "status", "link/<asset id>")
+  const trkApi = (key, p, opts) => store.trackers.api(key, p, opts);
   // the connected trackers this page has an adapter for (index.html refreshTrackers → host.trackers)
-  const trkConnected = () => (host.trackers?.() || []).filter((t) => t && TRK()?.adapterOf(t));
+  const trkConnected = () => store.trackers ? (host.trackers?.() || []).filter((t) => t && TRK()?.adapterOf(t)) : [];
   async function trkClient(key){
     const A = trkAdapter(key);
-    const st = await trkApi(trkPath(key, "status"));
+    const st = await trkApi(key, "status");
     if (!st.configured) throw new Error(`${A.name} is not connected: Settings → Trackers`);
     return { st, A, client: A.serverClient(st.site, key) };
   }
@@ -3554,7 +3571,7 @@ export function createAnnotator(host){
     const aid = S.asset.id;
     if (trkState.aid !== aid){ trkState.aid = aid; trkState.msg = ""; trkState.picking = false; }
     let st, cur;
-    try { [st, cur] = await Promise.all([trkApi(trkPath(key, "status")), trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`))]); }
+    try { [st, cur] = await Promise.all([trkApi(key, "status"), trkApi(key, `link/${encodeURIComponent(aid)}`)]); }
     catch (e){ if (trkState.key === key) box.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; return; }
     if (S.asset?.id !== aid || trkState.key !== key) return;
     const msg = trkState.msg ? `<div class="an-trkmsg">${trkState.msg}</div>` : "";
@@ -3610,7 +3627,7 @@ export function createAnnotator(host){
         else if (a === "pick"){ trkState.picking = true; trkState.msg = ""; trkPaint(); }
         else if (a === "back"){ trkState.picking = false; trkPaint(); }
         else if (a === "known") trkLink(key, A.linkedIdOf([...S.items.values()], A.siteHost(st.site)));
-        else if (a === "unlink") trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "DELETE" }).then(() => { trkState.msg = ""; trkPaint(); });
+        else if (a === "unlink") trkApi(key, `link/${encodeURIComponent(aid)}`, { method: "DELETE" }).then(() => { trkState.msg = ""; trkPaint(); });
       };
     });
   }
@@ -3618,7 +3635,7 @@ export function createAnnotator(host){
     try {
       const { client, A } = await trkClient(key);
       const link = await A.loadLink(client, id);
-      await trkApi(trkPath(key, `link/${encodeURIComponent(S.asset.id)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
+      await trkApi(key, `link/${encodeURIComponent(S.asset.id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
       if (trkState.key === key){ trkState.picking = false; trkState.msg = `Linked to <b>${esc(A.linkLabel(link))}</b> — Sync now to exchange notes`; }
     } catch (e){ if (trkState.key === key) trkState.msg = esc(e.message); }
     trkPaint();
@@ -3633,7 +3650,7 @@ export function createAnnotator(host){
       const list = [];
       if (n.frame) list.push({ blob: await blob(n.frame), name: n.frameFile || "frame" });
       for (const m of n.more || []) if (m.frame) list.push({ blob: await blob(m.frame), name: m.file || "frame" });
-      for (const sid of n.shots || []){ if (skip.has(sid)) continue; try { list.push({ blob: await blob(`/api/review/shots/${sid}`), name: sid }); } catch {} }
+      for (const sid of n.shots || []){ if (skip.has(sid)) continue; try { list.push({ blob: await store.shotBlob(sid), name: sid }); } catch {} }
       out.set(n.id, list);
     }
     return out;
@@ -3646,17 +3663,17 @@ export function createAnnotator(host){
     try {
       await flush();
       const { st, client } = await trkClient(key);
-      const cur = await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`));
+      const cur = await trkApi(key, `link/${encodeURIComponent(aid)}`);
       if (!cur.link) throw new Error(`Not linked to a ${A.media.one}`);
       const asset = { id: a.id, name: a.name, path: a.path, ext: a.ext, kind: a.kind, size: a.size, mtime: a.mtime, width: a.width, height: a.height, duration: a.duration };
       const res = await A.sync({
         client, link: cur.link, asset, fps: S.fps, state: cur.state, settings: st,
-        getRows: () => trkApi(`/api/annotations?asset_id=${aid}&deleted=1`),  // tombstones: a note deleted here stays deleted
-        importPackage: (pkg) => trkApi("/api/review/import", { method: "POST", body: JSON.stringify(pkg) }),
+        getRows: () => store.trackers.rows(aid),  // tombstones: a note deleted here stays deleted
+        importPackage: (pkg) => store.trackers.importPackage(pkg),
         pictures: (ids, opt) => S.asset?.id === aid ? trkPictures(ids, opt) : new Map(),
         progress: (t) => toast(`<span class="ld" style="--ld-d:${-Math.round(performance.now())}ms">${esc(t)}</span>`, 60000),  // (the phase: .ld in index.html)
       });
-      await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
+      await trkApi(key, `link/${encodeURIComponent(aid)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
       const p = res.pulled, q = res.pushed, from = A.name;
       const parts = [p.added && `${p.added} new from ${from}`, p.updated && `${p.updated} updated from ${from}`, q.notes && `${q.notes} sent`,
         q.updated && `${q.updated} updated on ${from}`, q.replies && `${q.replies} repl${q.replies === 1 ? "y" : "ies"} sent`, q.pictures && `${q.pictures} picture${q.pictures === 1 ? "" : "s"} uploaded`].filter(Boolean);
@@ -3698,7 +3715,7 @@ export function createAnnotator(host){
     list.innerHTML = !all.length ? "" : !notes.length ? `<div class="an-hint"><p>No ${S.filter === "done" ? "resolved" : S.filter === "progress" ? "in-progress" : "open"} notes.</p></div>` : notes.map((n) => {
       const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
-      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<span class="an-shotw${ct ? " an-hascap" : ""}" data-src="/api/review/shots/${sid}" data-shot="${sid}" title="${ct ? esc(ct) : "Screenshot — click to enlarge"}"><img src="/api/review/shots/${sid}" alt="" loading="lazy"></span>`; }).join("");
+      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<span class="an-shotw${ct ? " an-hascap" : ""}" data-src="${store.shotUrl(sid)}" data-shot="${sid}" title="${ct ? esc(ct) : "Screenshot — click to enlarge"}"><img src="${store.shotUrl(sid)}" alt="" loading="lazy"></span>`; }).join("");
       const ctx = ctxLabel(noteCtx(n));
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
@@ -3944,14 +3961,15 @@ export function createAnnotator(host){
     if (PF.aid !== (S.asset?.id || null)){ resetPF(); PF.aid = S.asset?.id || null; }
     if (PF.aid && !PF.diskP && !isBoard()){
       const aid = PF.aid, gen = PF.gen;
-      PF.diskP = host.api(`/api/review/nprev/${encodeURIComponent(aid)}`).then((r) => {
+      // (a store without stored previews: none on disk, every preview is made here)
+      PF.diskP = (store.previews ? store.previews.list(aid) : Promise.reject(new Error("no stored previews"))).then((r) => {
         if (PF.gen !== gen) return;
         PF.disk = new Set(r?.keys || []); PF.diskV = r?.v || "";
       }, () => { if (PF.gen === gen) PF.disk = new Set(); });
     }
     return PF.diskP || Promise.resolve();
   }
-  const npUrl = (tok) => `/api/review/nprev/${encodeURIComponent(PF.aid)}/${tok}.jpg?v=${encodeURIComponent(PF.diskV)}`;
+  const npUrl = (tok) => store.previews.url(PF.aid, tok, PF.diskV);
   // Stores a preview made here (best effort: a failed upload only means it is made again next time).
   // The upload carries the file version it listed (diskV): the server refuses it if the file changed since.
   // (A 3D still is often taken before the list is in: it waits for it, so it knows the version.)
@@ -3963,7 +3981,7 @@ export function createAnnotator(host){
     if (PF.disk?.has(tok)) return;
     cv.toBlob((b) => {
       if (!b || PF.gen !== gen) return;
-      host.api(`/api/review/nprev/${encodeURIComponent(aid)}/${tok}?v=${encodeURIComponent(ver)}`, { method: "PUT", headers: { "content-type": "image/jpeg" }, body: b })
+      store.previews.put(aid, tok, ver, b)
         .then(() => { if (PF.gen === gen) PF.disk?.add(tok); }, () => {});
     }, "image/jpeg", 0.82);
   }
@@ -4023,7 +4041,7 @@ export function createAnnotator(host){
     } finally { PF.collect = null; S.hiddenReplies = hid; }
     if (![...PF.disk].some((k) => !keep.has(k))) return;
     const aid = PF.aid, gen = PF.gen;
-    host.api(`/api/review/nprev/${encodeURIComponent(aid)}/prune`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keep: [...keep] }) })
+    store.previews.prune(aid, [...keep])
       .then(() => {
         if (PF.gen !== gen || !PF.disk) return;
         for (const k of [...PF.disk]){
@@ -4096,13 +4114,13 @@ export function createAnnotator(host){
           nv.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
           document.body.appendChild(nv);
           PF.v = nv;
-          nv.src = `/api/file/${aid}`;
+          nv.src = store.mediaUrl(aid);
           // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
           let playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
-          if (!playable){
-            const res = await convertForPlayback(aid, null, () => PF.gen === gen);
+          if (!playable && store.convertForPlayback){
+            const res = await store.convertForPlayback(aid, null, () => PF.gen === gen);
             if (res.ok && PF.gen === gen){
-              nv.src = `/api/file/${aid}?copy=${Date.now()}`;
+              nv.src = store.mediaUrl(aid, { copy: true });
               playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
             }
           }
@@ -4162,7 +4180,7 @@ export function createAnnotator(host){
       <span>${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
       <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span>${rdrawChip(n, r)}<button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
       ${r.text ? `<div class="an-rt" title="Double-click to edit">${esc(r.text)}</div>` : ""}
-      ${picGrid(replyPreview(n, r) + (r.shots || []).map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join(""))}</div>`).join("")}</div>`;
+      ${picGrid(replyPreview(n, r) + (r.shots || []).map((sid) => `<img src="${esc(store.shotUrl(sid))}" data-rshot="${esc(store.shotUrl(sid))}" alt="" loading="lazy">`).join(""))}</div>`).join("")}</div>`;
   }
   // Inline editor under a note card (new reply) or in place of a reply's text (edit).
   function replyEditor(card, anchor, initial, done){
@@ -4310,7 +4328,7 @@ export function createAnnotator(host){
       // clip / camera on that picture.
       const id = t.closest(".an-note").dataset.id, p = picOfKey(t.dataset.cap);
       if (S.pinFocus !== id) goNote(id);
-      if (p.shot != null){ showShot(`/api/review/shots/${p.shot}`, { note: id, shot: p.shot }); return; }
+      if (p.shot != null){ showShot(store.shotUrl(p.shot), { note: id, shot: p.shot }); return; }
       if (p.t != null){ const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(p.t)); } }
       else if (p.vk && S.views.has(p.vk) && p.vk !== S.curVk) goView(p.vk);
       return;
@@ -5077,7 +5095,7 @@ export function createAnnotator(host){
   async function uploadCanvas(cv){
     const blob = await new Promise((res) => cv.toBlob(res, "image/png"));
     if (!blob) throw new Error("encode failed");
-    const r = await host.api("/api/review/shots", { method: "POST", headers: { "content-type": "image/png" }, body: blob });
+    const r = await store.putShot(blob, "image/png");
     return r;
   }
   async function screenshot(region){
@@ -5304,7 +5322,7 @@ export function createAnnotator(host){
     toast(`<span class="ld">Building PDF…</span>`, 60000);
     try {
       const payload = await gatherReport(false);
-      const r = await host.api("/api/review/export/pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await store.exportReview("pdf", payload);
       toast(`Saved <b>${esc(r.name)}</b> · ${r.pages} page${r.pages > 1 ? "s" : ""}`, 4000);
     } catch (e){
       console.warn(e);
@@ -5317,7 +5335,7 @@ export function createAnnotator(host){
     toast(`<span class="ld">Building the web page…</span>`, 60000);
     try {
       const payload = await gatherReport(true);
-      const r = await host.api("/api/review/export/html", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await store.exportReview("html", payload);
       toast(`Saved <b>${esc(r.name)}</b> — opens in any browser; replies come back as a .srev file`, 5000);
     } catch (e){
       console.warn(e);
@@ -5330,7 +5348,7 @@ export function createAnnotator(host){
     toast(`<span class="ld">Building the ZIP…</span>`, 60000);
     try {
       const payload = await gatherReport(false, true);
-      const r = await host.api("/api/review/export/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await store.exportReview("zip", payload);
       toast(`Saved <b>${esc(r.name)}</b> · ${r.notes} note${r.notes === 1 ? "" : "s"}, ${r.pictures} picture${r.pictures === 1 ? "" : "s"}`, 4000);
     } catch (e){
       console.warn(e);
@@ -5341,7 +5359,7 @@ export function createAnnotator(host){
     if (!S.asset) return;
     await flush();
     try {
-      const r = await host.api("/api/review/export/package", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset_id: S.asset.id, author: reviewer(), reveal: true }) });
+      const r = await store.exportReview("package", { asset_id: S.asset.id, author: reviewer(), reveal: true });
       toast(`Saved <b>${esc(r.name)}</b> — send it; Sight opens it on the same file`, 4500);
     } catch (e){
       console.warn(e);
@@ -5365,12 +5383,13 @@ export function createAnnotator(host){
     catch { toast("Clipboard not available"); }
   }
   async function importFile(file){
+    if (!store.importReview) return;
     let r;
     await flush();
     const body = await file.arrayBuffer();
     const post = async (restore, before) => {
       try {
-        const res = await fetch("/api/review/import" + (restore ? `?restore=1&before=${Number.isFinite(before) ? before : ""}` : ""), { method: "POST", body });
+        const res = await store.importReview(body, restore ? { restore: true, before } : null);
         const r = await res.json().catch(() => ({}));
         if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return null; }
         if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return null; }
@@ -5571,10 +5590,8 @@ export function createAnnotator(host){
   async function loadFps(){
     const a = S.asset;
     try {
-      const info = await host.api(`/api/assets/${a.id}/info`);
-      for (const sec of info.sections || []) for (const row of sec.rows || []){
-        if (/frame rate/i.test(row[0] || "")){ const f = parseFloat(row[1]); if (f > 0 && S.asset?.id === a.id){ S.fps = f; S.fpsKnown = true; } }
-      }
+      const f = await store.fps(a);  // (0: not known)
+      if (f > 0 && S.asset?.id === a.id){ S.fps = f; S.fpsKnown = true; }
     } catch {}
     renderPanel();
   }
@@ -5735,9 +5752,9 @@ export function createAnnotator(host){
     S.light = lightEl;
     lightEl.classList.add("an-host");  // the CSS below keys on this (the lightbox and a board view share it)
     if (host.board) lightEl.classList.add("an-bhost");
-    S.dict = createDictationUI({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
+    S.dict = store.dictation ? store.dictation({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
       getEngine: () => readJSON("sight.dictation.engine", "webspeech"),
-      getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) });
+      getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) }) : null;
     S.bar = buildBar(lightEl);
     S.ui = buildPanel(lightEl);
     const t = document.createElement("div");

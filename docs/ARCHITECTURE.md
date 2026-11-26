@@ -504,6 +504,35 @@ queued and the lately landed (30 s, `OB.recent`) writes over the GET's rows (`ob
 asset only through `settle()` (blur an open panel field, `finishEdit`, `stage`) while `S.asset` is still the old
 one; never write rows outside the queue (ordering per row id depends on it); `flush()` = stage + wait for the queue.
 
+**Annotator store (`host.store`, R0a of docs/PLAN-coreline.md).** annotate.js makes no call to a server of its own:
+no `/api/…` URL, no `fetch()` of the host's API, no `localStorage` read of a setting. What it needs comes from the
+host: `host.store` (required), `host.getSetting(key)` → string | null (falls back to localStorage) /
+`host.putSetting(key, string)`, and `host.author()` (the name in notes, replies, state events, the review state).
+Sight's store is `app/static/sight-store.js` (`createSightStore({api})`); index.html makes **one** and gives it to
+all three annotators, because the write queue is one per page and takes the first store it sees (it also sets
+`RC.setImageSource(store.shotSrc)`). Imports are relative (`./keys.js`), so the module works under any URL prefix;
+the tracker registry / adapters (`trackers-core.js`, `shotgrid-core.js`) are imported by the host, not here.
+Store members (`?` = optional: missing hides the control and skips the feature):
+- rows: `loadRows(scope "asset"|"board", id)` → rows; `writeRow(req, extra)` → a Response-like `{ok, status}`, with
+  `req` = `{op: "create", id, body}` (the full row, an upsert) | `{op: "patch", id, body}` (only `obFields`: `data`,
+  `z_index`, `color`, the box, `shape_kind`) | `{op: "delete", id}` | `{op: "batch", items: [{id, …obFields}]}`, and
+  `extra` = `{signal}` (a drain; aborted after 20 s) or `{keepalive: true}` (pagehide, called synchronously).
+  **The store contract** (what the queue relies on): a create upserts; a patch / batch item of a row that is gone on
+  the server is skipped, never revived; 2xx = landed; 4xx other than 408 / 429 = refused for good (dropped, the
+  badge's note); anything else or a throw = retried with backoff; a batch that failed twice goes one by one.
+- `setReviewState(aid, state, author)` → `{history}`; `versions?(aid)` → the version list; `fps(asset)` → number (0 =
+  unknown); `mediaUrl(aid, {copy})` (the original for note-preview seeks); `convertForPlayback?(aid, onProgress,
+  alive)` → `{ok}`.
+- shots: `putShot(blob, type)` → `{id}`; `shotUrl(id)`; `shotSrc(id)` (a reference image's picture, "" = none);
+  `shotBlob(id)`.
+- `previews?` (stored note previews): `list(aid)` → `{keys, v}`, `url(aid, tok, v)`, `put(aid, tok, v, blob)`,
+  `prune(aid, keep)`. Without it every preview is made in the browser each time.
+- `exportReview?(kind "pdf"|"html"|"zip"|"package", payload)`; `importReview?(bytes, {restore, before}|null)` → a
+  Response (404 = the media is not in the library).
+- `trackers?`: `api(key, p, opts)`, `rows(aid)` (with tombstones), `importPackage(pkg)` — the link ▾.
+- `dictation?(opts)` → dictation.js's `createDictationUI` (the mic; hidden without it).
+- `mergesOnServer` (Sight: false) — see the stamps rule in docs/PLAN-coreline.md R0a.
+
 **Reference images** (kind `image`, FORMAT.md) — a drawing whose picture is a shot (`/api/review/shots`, stored by
 `storeRef`: decoded in the browser, ≤ 2048 px, PNG when the source may have alpha else JPEG). Added by `addRefs`
 (annotate.js) from a drop on the surface (`onRefDrop`: OS files, or `application/x-sight-ids` from the grid via
@@ -513,8 +542,8 @@ uniform (review-core `transformItem` / `xfDrag` treat it like text). Crop mode (
 one selected editable visible image): `cropFrame(d)` = the whole source picture in doc units (origin + rotated axes +
 units per picture), `applyCrop` sets the window and a box that keeps the picture where the frame had it; grips move
 an edge, "pan" slides the window; the overlay (`cropSvg`) is in the `.an-ui` layer. Canvas exports await
-`RC.imagesReady` (composeView, gatherReport1); `RC.setImageSource` is set by each client (annotate.js module
-init, the HTML page, the phone's `refShots` which makes object URLs ahead since the core asks synchronously).
+`RC.imagesReady` (composeView, gatherReport1); `RC.setImageSource` is set by each client (annotate.js with its first store,
+the HTML page, the phone's `refShots` which makes object URLs ahead since the core asks synchronously).
 
 **Library beside the lightbox** (index.html, `state.lightSplit` / `lightSplitRatio` in `sight.layout`, Tab and
 `#libBtn`) — reuses the board split: `applyViewDom()` shows the grid at its ratio, `#splitHandle`, and behind the

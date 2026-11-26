@@ -14,6 +14,42 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.141.5 — 2026-11-26 — R0a block 1: the annotator talks to the server only through `host.store`
+- **What:** a refactor; Sight behaves the same. annotate.js has no `/api/…` URL, no `fetch()` of Sight's API, no
+  `localStorage` read of a setting and no `/static/` import left. It is the first block of R0a (docs/PLAN-coreline.md).
+- **Where:**
+  - new `app/static/sight-store.js` (`createSightStore({api})`): every call the annotator made, with the same URLs,
+    methods, headers and bodies: rows, review state, versions, fps (parsed from `/info` there), media URL,
+    playback conversion, shots, stored note previews, exports, import, the tracker link ▾, dictation.
+  - `annotate.js`:
+    - `host.store` is required;
+    - the queue sends through `OB.store.writeRow(req, extra)` (`obReq` now builds `{op, id, body}`);
+    - settings are read with `host.getSetting` (falls back to localStorage), the author comes from `host.author()`;
+    - imports are relative (`./keys.js`); also in `key-help.js` and `dictation.js`;
+    - trackers-core / shotgrid-core / dictation / video-playable are no longer imported here;
+    - optional store members, when missing, hide their control (exports, import, the mic, link ▾, versions).
+  - `index.html`: one `annotStore` and one `annotBase` (store, getSetting, putSetting, author) for all three
+    annotators; their `api` is gone.
+  - `docs/ARCHITECTURE.md`: "Annotator store" (the members and the queue's store contract).
+- **Notes:**
+  - One store per page: the write queue takes the first one and sets `RC.setImageSource(store.shotSrc)` (it was set at
+    module load). Adopted outbox writes still go out 1.5 s after the start (`obKick(1500)` on the first store).
+  - `getSetting` must stay a function declaration: S's initializer reads settings before the line it sits on.
+  - The pagehide beacon still calls `fetch(…, {keepalive: true})` synchronously inside the handler.
+  - The queue's error message is now `<op> <id>: <status>`; obDrain only tests its shape (an HTTP answer vs none).
+  - Not done here: the queue keyed per store, stamps in puts, "apply rows by id", CSS tokens (next R0a blocks).
+- **Review:** a fresh agent compared every replaced call with the old code. It found:
+  - (high) `getSetting` was a `const` declared after S's initializer, so every startup setting read hit the TDZ, was
+    swallowed by `readJSON`'s catch and returned the default (styles, stamp, panel state…), and the next style change
+    would have written the defaults back. The R0 settings test caught it too. Fixed (function declaration);
+  - (low) adopted writes went out at 0 ms instead of 1.5 s. Fixed.
+
+  The same reviewer confirmed both fixes and found nothing new.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1, every test module): every R0 test passes except R0Export's PDF check, which
+  fails the same way on a clean origin/master here (the PDF build; `test_review_all.test_pdf_all` is the known twin).
+  Otherwise the known failures only: `test_pwa` ×4, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`,
+  `test_sources.test_file_uri_to_path`. 2 skips by design (macOS / Windows launchers).
+
 ## 0.141.4 — 2026-11-26 — R0-0 block 5: regression tests of the board, compare, sequence, exports, trackers and the look
 - **What:** the last block of the R0-0 safety net (docs/PLAN-coreline.md). No app code changed (only the version).
   It is also the first R0 run on Windows: blocks 1–4 pass there too, after the two environmental fixes below.
@@ -432,65 +468,3 @@ Add new entries directly below this line.
   reviewer confirmed every fix. Its mutations now fail the intended checks: asset-row size in `onReady`, nudge
   without the scale, the author dropped, the onion fade, undo. Green alone, in reverse order, and with three runs at
   once.
-
-## 0.135.0 — 2026-11-26 — Coreline tracker adapter (PLAN-coreline R4)
-- **What:** Coreline is a second tracker kind beside ShotGrid (desktop only). Settings → Trackers → *Connect a tracker…*
-  → Coreline (server + API key). Its projects sit under Sources. Their Versions show as library tiles, with thumbnails,
-  the scrub sprite as a filmstrip, the status / type filters, Fields ▾ and Filter ▾. A double-click (touch: a tap on the
-  selected tile) downloads the **original** and opens it. **CL ▾ → Sync now** pulls Coreline's review rows into Sight's
-  own import and pushes the rows changed here to Coreline's merge API, with pictures uploaded as shots. Review only: no
-  Version upload (the plan's open question, settled as proposed).
-- **Where:**
-  - new: `app/coreline.py` (server adapter), `app/static/coreline-core.js` (client adapter + sync), `docs/CORELINE.md`
-    (decisions, mapping, what to check on a real server), tests `tests/test_coreline.py`, `cl_fake_server.cjs` (a fake
-    built from Coreline main 9cffd42's API.md / ADR-0037 / ADR-0006; it merges with review-core.js `mergeRows`, as
-    Coreline does), `cl_sight.cjs` (the sync through Sight's server) and `cl_view_e2e.cjs` (browser, mouse and touch);
-  - edited: `app/trackers.py` (registry), `app/server.py` (`Content-Range` now passed through `…/fetch`; ShotGrid's
-    adapter ignores it), `app/static/index.html` (one import);
-  - expectations updated now that two kinds exist: `tests/test_trackers.py` (kinds), `trackers_e2e.cjs` /
-    `trackers_multi_e2e.cjs` (while ShotGrid's fields are open, *Connect a tracker…* still offers Coreline);
-  - MANUAL, ARCHITECTURE, PLAN-coreline, CLAUDE.md (doc list).
-- **Notes:**
-  - The generic tracker UI (tracker-source.js, annotate.js link ▾, Settings form) needed no change. ShotGrid's code is
-    untouched.
-  - Media id = `"<type>:<id>:<field>"`. The link is `{site, type, id, field, code, project, source?, scaled?, file?}`,
-    filed under `coreline:<host>`.
-  - Doc units: Sight opens the original. If Coreline has no original (or Sight cannot open its type), Sight opens the
-    `web` rendition. If that rendition's size differs from the original's, the link says `scaled` and Sync refuses:
-    drawings would land in rendition pixels. Scaling rows (`transformItem`) is left for later.
-  - Push sends only rows whose content (a hash, stamps left out) differs from Coreline's copy and was not sent as is
-    (`state.sent`). Tombstones go only for rows Coreline had.
-  - The same Version linked to two files: Sight's import re-derives ids that another file holds. Sync records those
-    derived ids (`state.foreign`), never sends them (they would duplicate on Coreline) and says so.
-  - The key never reaches the page. The proxy refuses every `/api/auth/…` route except `GET /api/auth/me`, so the
-    page cannot mint or list keys.
-  - Not used: the WS realtime (Sync is a button).
-  - The phone app does not load the adapter: Coreline has no CORS.
-  - Pre-existing, not from this change: `test_annot_tools.test_tools` and `test_review_page.test_cut_copy_paste` fail
-    on origin/master too (checked in a clean worktree). `test_r0_lightbox` needs `psd-tools` (it was installed here and
-    passes).
-- **Review:** a fresh agent reviewed it in four rounds.
-  - Round 1, 10 findings:
-    - **high:** the proxy's account-route guard could be passed with dot segments (`/api/x/../auth/api-keys` reached
-      Coreline with the key). Now `_guard_path` refuses dot / empty segments, backslashes and encoded dots / slashes,
-      and checks on-site redirects too;
-    - a failed picture upload was never retried;
-    - a re-linked scaled preview lost its `scaled` mark. The link now keeps the original's size, and Sync refuses a
-      file of another size (swapped sizes are accepted);
-    - one 400 switched a server to plain queries;
-    - a short page stopped the grid's paging, and the entity list was capped at 1000;
-    - "no picture" answers were cached while renditions were still being made;
-    - the web rendition's extension was guessed;
-    - possible cache-name clashes;
-    - id case;
-    - a route to check on a real server (docs).
-  - Rounds 2–4 found smaller follow-ups:
-    - only the final shots PUT's 409 counts as "taken";
-    - a missing picture is reported once and downloaded when it appears on Coreline;
-    - 403 is handled like 404 on the file lookup;
-    - ids are lowercased throughout;
-    - a ready file without renditions is cached as final.
-  - All of it is fixed; the same reviewer confirmed every fix, and ShotGrid's code paths are unchanged.
-  - The whole suite: the same 8 failures with and without the change (`test_pwa` ×4, `test_review_all.test_pdf_all`,
-    `test_sources.test_file_uri_to_path`, and the two above), compared against a clean origin/master worktree.
-    Plus 8 new Coreline tests, green.

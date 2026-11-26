@@ -9,7 +9,7 @@
 //   keyName("Ctrl+Shift+KeyZ") -> "Ctrl+Shift+Z"                how a combo reads to a person
 //
 // groups: [{ group: "Title", rows: [[["Key", "Alt key"], "What it does"], …] }] — keys are shown as given.
-import { hotkey } from "/static/keys.js";
+import { hotkey } from "./keys.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const CLOSE_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
