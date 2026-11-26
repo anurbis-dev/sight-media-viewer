@@ -2,6 +2,56 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.132.0 — 2026-11-25 — Big Gaussian splats: level of detail (phone and lightbox), lighter phone viewer
+- **What:** a 32 MB .spz (millions of splats) froze a mid-range Android phone. Splats over a budget now load with
+  Spark's LoD tree and draw at most the budget, picked for the camera (coarser out of view / behind it): phone
+  600k, lightbox Spark's per-device default (2.5M on a desktop). The phone viewer also caps the pixel ratio at 1.5
+  (was 2), drops it to 1 while the camera moves, and uses smaller splat footprints (`maxStdDev` sqrt(5)) for big
+  files. Files at or under the budget load exactly as before: LoD is asked for only when a file is likely
+  over the budget (`splatCountHint`: .splat size / 32, a .ply's header, an .spz's gzipped header; .ksplat / .sog
+  4 bytes per splat as an upper bound), Spark's `lodAbove` then decides on the real count.
+- **Where:** `app/static/model3d-core.js` (`SPLAT_LOD_PHONE`, `splatLodOptions`, `splatCountHint`, `splatLodFor`,
+  `splatSource`, `splatBox`),
+  `mobile/js/model3d.js` `createSplatViewer` (LoD options, pixel ratio, render tail, `still()` LoD loop, `V.lod`),
+  `app/static/index.html` (`boot3d` splat branch — now disposes the SplatMesh / SparkRenderer on stop;
+  `fetchHead` (Range request for the hint); `renderSplatThumb` bounds; imports), tests (`fixtures_3d.py`
+  `make_big_splat` + the new `make_splat_spz` SPZ v2 / v3 fixtures; `test_pwa.py` `test_model_formats` now also
+  opens SPZ v2 / v3 and checks small files get no tree, new `test_big_splat`; `pwa_3d_formats.cjs` reports `lod`),
+  ARCHITECTURE (splat paragraph "Big splats").
+- **Notes:**
+  - A big file keeps **only** the LoD tree (`nonLod` off): `packedSplats.numSplats` is 0 and
+    `SplatMesh.getBoundingBox` is empty — use `splatSource` / `splatBox`. Spark does not report the original count
+    once the tree is built: the shown count (phone `splatCount`, lightbox info row) comes from the exact hint, else
+    the tree's (originals + merged nodes, e.g. 700k → 788k; lightbox label "(LoD tree)").
+  - Asking for `lod` at all sends a file through Spark's other decoder (csplatarray), even if `lodAbove` then
+    skips the tree: that is why the hint gates it. An inexact hint errs high (LoD asked, `lodAbove` guards).
+  - Stills (phone): Spark's LoD pick runs in a worker and is used only by the next generate, and is skipped while
+    the worker is busy — `still()` loops update / wait-idle until `currentLod` stops changing, at the still's own
+    render size. Do not add `minSortIntervalMs` (makes `update()` return before the sort).
+  - Nothing is drawn until the first LoD pick lands (no fallback to the originals); the phone warm-up waits up to
+    10 s for a tree (3 s otherwise). The tree is built in Spark's load worker (700k splats ≈ 1.3 s in desktop
+    Chromium); not measured on a phone.
+  - Not verified on a real Mali GPU (SwiftShader only). Desktop LoD checked in Playwright with a temporarily
+    lowered budget (700k-splat file, tree built, framed right); a 2.7M-splat file is too slow to draw in
+    SwiftShader to check at the real budget. Grid thumbnails still load without LoD.
+  - Review (fresh agent): (1) `still()` did not cancel a deferred live update (`spark.updateTimeoutId`, Spark's
+    non-preUpdate path) that could sort for the live camera during the still's `update` → cleared after
+    `autoUpdate = false` (the lightbox takes no Spark-sorted stills); (2) the lightbox never disposed the
+    SparkRenderer / SplatMesh, leaking an LoD worker with a tree copy per open → disposed in the viewer's `stop()`
+    (the thumbnail already did); (3) `lod: true` for every file changed the decoder for small ones (.ksplat / .sog
+    untested) → LoD only when `splatCountHint` says likely over budget; (4) info row showed the tree count → the
+    hint's exact count. Tests: small-splat hint asserted {800, exact} for .splat / .ply / SPZ v2 / v3; big
+    splat count 700000. Second pass (same reviewer): all four fixes confirmed; found a deferred Spark update
+    (`setTimeout(updateInternal)` from the last render) firing after `spark.dispose()` and re-creating its sort / LoD
+    workers → every dispose (lightbox, thumbnail, phone) now clears `spark.updateTimeoutId` first (confirmed by the same reviewer). Not covered by tests:
+    the hint of an .spz over 64 KB (truncated gzip slice; falls back to size/4 on any error).
+
+## 0.131.0 — 2026-11-25 — Drop a file: sidebar adds it, the rest of the window just opens it
+- **What:** dropping a supported media file on the window either adds it to the library (left strip, the sidebar's width, in the accent colour) or only opens it in the viewer (the rest of the window, a white veil). Folders still add as sources (the whole-window overlay). **A** on a file that was only opened adds it, then drawing works.
+- **Where:** app/library.py — `ensure_dropped_source`, `add_dropped_file`, `view_file`, `resolve_asset`; app/server.py — `drop_file_paths`, `POST /api/files/drop`; app/static/index.html — `#srcDrop` two zones, `takeDroppedFiles` / `addDroppedFiles` / `ensureLightInLibrary`; tests/test_sources.py `DropFilesTest`; tests/drop_files_e2e.cjs; MANUAL, ARCHITECTURE.
+- **Notes:** files stay on disk; the parent folder is not added. **Dropped files** is an inbox source (`<SIGHT_HOME>/dropped`) that is never scanned or watched — each row keeps the original path; adding that folder later as a source reassigns the row (same path-hash id). View-only assets are in-memory (`Library._ephemeral`) so they are not in All / the grid. Same path already in the library: both zones return that row. 32-file cap, NFC name match, capture-phase drop, overlay hide timeout — same as folders. Image drop onto the annotator while drawing is still a reference picture. Overlay display uses `:not([hidden])` (a later `data-kind` rule had shown the overlay always). Busy file drops queue as separate jobs (mode is not mixed). A lone `.srev` is not POSTed as media.
+- **Review:** a fresh reviewer found: OS image drop while drawing on the board or compare still opened the file (→ `dropOnAnnotatorSurface` checks all three annotators and `.canvas-viewport` / `.cmp-stage`); overlay `[hidden]` lost to `[data-kind=folder]` so the tint stayed up (→ `:not([hidden])`); library-zone hit-test vs `min-width: 168px` at UI scale &lt; 1 (→ drop the min-width, JS already uses `--side-w × --ui-k`); view-only text / transcode / model sidecars / USDZ used `get_asset` (→ `resolve_asset`); `.srev` also POSTed as unsupported (→ skip); busy queue mixed modes (→ job list); compare **A** did not promote (→ `cmpToggleAnnot` through `ensureLightInLibrary`). Same reviewer then found leftover `scrub_audio_*` still on `get_asset` and compare A promoting `light.asset` instead of the selected layer (→ `resolve_asset`, `ensureInLibrary(assetById(cmp.selectedId()))`). It confirmed those. No new blocking issues.
+
 ## 0.130.0 — 2026-11-25 — Drop folders on the window to add them as sources
 - **What:** dropping one or more folders from Explorer / Finder onto the Sight window adds them as library sources (the same as **+ Folder**). A dashed overlay says so while a folder drag is over the window. A `.srev` in the same drop still imports.
 - **Where:** app/server.py — `file_uri_to_path`, `drop_folder_paths`, `drop_name_key`, `os_manager_selected_dirs`, `POST /api/sources/drop`; app/static/index.html — `#srcDrop`, `takeDroppedFolders` / `addDroppedFolders` (window `drop` in capture); annotate.js `onRefDrop` lets mixed folder+pictures bubble; tests/test_sources.py `DropFoldersTest`; MANUAL, ARCHITECTURE.

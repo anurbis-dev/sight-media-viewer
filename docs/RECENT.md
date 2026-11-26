@@ -14,7 +14,7 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
-## 0.138.2 — 2026-11-26 — R0-0 block 4: regression tests of the 3D viewer
+## 0.140.1 — 2026-11-26 — R0-0 block 4: regression tests of the 3D viewer
 - **What:** the fourth block of the R0-0 safety net (docs/PLAN-coreline.md): the lightbox's 3D viewer as it is
   before R0c. No app code changed (only the version).
 - **Where:**
@@ -82,6 +82,55 @@ Add new entries directly below this line.
     - a click on an element the app may hide by itself can time out quietly;
     - read storage from a non-app same-origin page (`/api/settings`) when app pages' timers could interfere;
     - `isVisible()` ignores overlap: use `elementFromPoint` to tell whether the library split is shown.
+
+## 0.140.0 — 2026-11-26 — Guides: one Perspective item, real 2- and 3-point
+- **What:** the Guides menu has one **Perspective** item with a 1 / 2 / 3 count beside it (a count turns it on; the
+  item toggles it and keeps the last count). 2-point: both vanishing points sit on one dashed horizon; moving either
+  up / down, or dragging the diamond on the horizon, moves both. 3-point: the same two plus a zenith / nadir point,
+  kept at least 5 % of the height off the horizon. Lines still radiate from each point with their own count.
+- **Where:** `app/static/guides.js` (`isPersp`, `rec.np`, `pointsFor` evening-out, `keepOffHorizon`, `moveVp`
+  horizon drag `i = -1`, `drawPersp` horizon line + tab, the menu); `app/static/index.html` help text;
+  `tests/test_guides.py` (seeds a 0.138 entry) + `tests/guides_persp_e2e.cjs`; `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:**
+  - Stored modes stay "1" / "2" / "3" (`sight.guides`), so 0.138 entries load and 0.138 can still read new ones; old
+    2- / 3-point points at different heights are shown on their mean height (rewritten on the next drag). `np` is a
+    new field (the last count).
+  - Whatever is dragged gives way: dragging point 3 keeps it off the horizon; dragging the horizon (or point 1 / 2)
+    toward point 3 makes the horizon jump past it.
+  - The horizon line takes no presses: only its tab (halfway between points 1 and 2, slid into the window when that
+    is off screen; its cursor follows a turned view). 1-point has no tab: its point moves the horizon.
+  - Not done: vertical guide lines for 2-point (verticals are simply not drawn as a fan).
+- **Review:** a fresh reviewer found no correctness bugs. It found that a full-width horizon hit band ate pen strokes,
+  pans and pinches that started on that row (now a small tab), a fixed `ns-resize` cursor that was wrong on a turned
+  view (now per angle), plain buttons inside the `role=menu` (now `menuitemradio`), MANUAL wording for 1-point, and
+  test gaps: the Esc check only read storage (now the points on screen), no turned-view case (added), a touch drag
+  that grabbed near point 3 (now the tab). The same reviewer confirmed every fix and found nothing new.
+
+## 0.139.0 — 2026-11-26 — Guides: rulers outside the picture, Ctrl+click delete, Shift+H
+- **What:** the grid's rulers lie just outside the picture's top / left edges, reach out to a guide dragged past the
+  picture, and stay inside the window when zoomed in. Ctrl+click a guide (long-press with a finger) deletes it.
+  Shift+H and the eye hide / show the guides with the drawings; the eye shows whenever guides are on. Snap sits to the
+  right of Grid in the menu.
+- **Where:** `app/static/guides.js` (`rulerFrames`, `rulerAt`, `overRuler` in view px, `deleteGuide`, the long press,
+  `hooks.hidden` / `reveal` / `onModeChange`, `active()` / `refresh()`); `app/static/annotate.js` (`eyeSubject`,
+  `toggleHidden` → `host.onHiddenChange`, API `hidden` / `setHidden` / `repaintEye`); `app/static/index.html` (the hooks
+  both ways, help text); `tests/test_guides.py` + `tests/guides_e2e.cjs`; `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:**
+  - Deliberate: at Frame fit a picture touches the window on one axis (`fitS` has no margin), so that ruler is clamped
+    into the window and lies over the picture's edge there. Goal 3 (stay in the window) wins. Not done: a fit margin
+    while the grid is on.
+  - Picking a guide mode while the eye hides things shows both again (one state).
+  - Touch: a press that moves less than 10 px (mouse 4 px) does not move or re-snap the guide, so a tap opens its field
+    and a 550 ms hold deletes it.
+  - The board / compare annotators do not pass `hasGuides`; their eye is unchanged.
+- **Review:** a fresh reviewer found: (1) the drag-to-delete test read the rulers as last drawn, so a fast flick onto
+  the ruler past its old end did not delete; the rulers are now rebuilt before the test. (2) The fit-covers-ruler case
+  (kept, see Notes). (3) The toast said "Guides" on the board / compare eye with nothing drawn; now "Drawings" when no
+  guides. (4) A report export flipped `S.hidden` without telling the guides; it now calls `onHiddenChange` on restore.
+  (5) The long press needed a perfectly still finger; touch now has a 10 px still zone. Tests added for drag-back,
+  the flick, the left ruler stretching and a 90° turn. The same reviewer confirmed all fixes. It also noted (older
+  behaviour) that a tap on an existing guide where it crosses a ruler deleted it; now delete-on-ruler needs a real drag
+  (or a fresh guide); confirmed by the same reviewer.
 
 ## 0.138.1 — 2026-11-26 — R0-0 block 3: regression tests of the write queue, settings, shots, previews, dictation
 - **What:** the third block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator's plumbing does
@@ -515,53 +564,3 @@ Add new entries directly below this line.
     awaited turned the mesh mid-still and the still's `finally` put back the *old* turn while `turns` / notes said the
     new one → `stillTurns`: during a still `setTurns` measures the new turn's bounds and puts the mesh straight back
     at the still's turn; the `finally` turns to the current `turns`. Second pass (same reviewer): fix confirmed, nothing new.
-
-## 0.132.0 — 2026-11-25 — Big Gaussian splats: level of detail (phone and lightbox), lighter phone viewer
-- **What:** a 32 MB .spz (millions of splats) froze a mid-range Android phone. Splats over a budget now load with
-  Spark's LoD tree and draw at most the budget, picked for the camera (coarser out of view / behind it): phone
-  600k, lightbox Spark's per-device default (2.5M on a desktop). The phone viewer also caps the pixel ratio at 1.5
-  (was 2), drops it to 1 while the camera moves, and uses smaller splat footprints (`maxStdDev` sqrt(5)) for big
-  files. Files at or under the budget load exactly as before: LoD is asked for only when a file is likely
-  over the budget (`splatCountHint`: .splat size / 32, a .ply's header, an .spz's gzipped header; .ksplat / .sog
-  4 bytes per splat as an upper bound), Spark's `lodAbove` then decides on the real count.
-- **Where:** `app/static/model3d-core.js` (`SPLAT_LOD_PHONE`, `splatLodOptions`, `splatCountHint`, `splatLodFor`,
-  `splatSource`, `splatBox`),
-  `mobile/js/model3d.js` `createSplatViewer` (LoD options, pixel ratio, render tail, `still()` LoD loop, `V.lod`),
-  `app/static/index.html` (`boot3d` splat branch — now disposes the SplatMesh / SparkRenderer on stop;
-  `fetchHead` (Range request for the hint); `renderSplatThumb` bounds; imports), tests (`fixtures_3d.py`
-  `make_big_splat` + the new `make_splat_spz` SPZ v2 / v3 fixtures; `test_pwa.py` `test_model_formats` now also
-  opens SPZ v2 / v3 and checks small files get no tree, new `test_big_splat`; `pwa_3d_formats.cjs` reports `lod`),
-  ARCHITECTURE (splat paragraph "Big splats").
-- **Notes:**
-  - A big file keeps **only** the LoD tree (`nonLod` off): `packedSplats.numSplats` is 0 and
-    `SplatMesh.getBoundingBox` is empty — use `splatSource` / `splatBox`. Spark does not report the original count
-    once the tree is built: the shown count (phone `splatCount`, lightbox info row) comes from the exact hint, else
-    the tree's (originals + merged nodes, e.g. 700k → 788k; lightbox label "(LoD tree)").
-  - Asking for `lod` at all sends a file through Spark's other decoder (csplatarray), even if `lodAbove` then
-    skips the tree: that is why the hint gates it. An inexact hint errs high (LoD asked, `lodAbove` guards).
-  - Stills (phone): Spark's LoD pick runs in a worker and is used only by the next generate, and is skipped while
-    the worker is busy — `still()` loops update / wait-idle until `currentLod` stops changing, at the still's own
-    render size. Do not add `minSortIntervalMs` (makes `update()` return before the sort).
-  - Nothing is drawn until the first LoD pick lands (no fallback to the originals); the phone warm-up waits up to
-    10 s for a tree (3 s otherwise). The tree is built in Spark's load worker (700k splats ≈ 1.3 s in desktop
-    Chromium); not measured on a phone.
-  - Not verified on a real Mali GPU (SwiftShader only). Desktop LoD checked in Playwright with a temporarily
-    lowered budget (700k-splat file, tree built, framed right); a 2.7M-splat file is too slow to draw in
-    SwiftShader to check at the real budget. Grid thumbnails still load without LoD.
-  - Review (fresh agent): (1) `still()` did not cancel a deferred live update (`spark.updateTimeoutId`, Spark's
-    non-preUpdate path) that could sort for the live camera during the still's `update` → cleared after
-    `autoUpdate = false` (the lightbox takes no Spark-sorted stills); (2) the lightbox never disposed the
-    SparkRenderer / SplatMesh, leaking an LoD worker with a tree copy per open → disposed in the viewer's `stop()`
-    (the thumbnail already did); (3) `lod: true` for every file changed the decoder for small ones (.ksplat / .sog
-    untested) → LoD only when `splatCountHint` says likely over budget; (4) info row showed the tree count → the
-    hint's exact count. Tests: small-splat hint asserted {800, exact} for .splat / .ply / SPZ v2 / v3; big
-    splat count 700000. Second pass (same reviewer): all four fixes confirmed; found a deferred Spark update
-    (`setTimeout(updateInternal)` from the last render) firing after `spark.dispose()` and re-creating its sort / LoD
-    workers → every dispose (lightbox, thumbnail, phone) now clears `spark.updateTimeoutId` first (confirmed by the same reviewer). Not covered by tests:
-    the hint of an .spz over 64 KB (truncated gzip slice; falls back to size/4 on any error).
-
-## 0.131.0 — 2026-11-25 — Drop a file: sidebar adds it, the rest of the window just opens it
-- **What:** dropping a supported media file on the window either adds it to the library (left strip, the sidebar's width, in the accent colour) or only opens it in the viewer (the rest of the window, a white veil). Folders still add as sources (the whole-window overlay). **A** on a file that was only opened adds it, then drawing works.
-- **Where:** app/library.py — `ensure_dropped_source`, `add_dropped_file`, `view_file`, `resolve_asset`; app/server.py — `drop_file_paths`, `POST /api/files/drop`; app/static/index.html — `#srcDrop` two zones, `takeDroppedFiles` / `addDroppedFiles` / `ensureLightInLibrary`; tests/test_sources.py `DropFilesTest`; tests/drop_files_e2e.cjs; MANUAL, ARCHITECTURE.
-- **Notes:** files stay on disk; the parent folder is not added. **Dropped files** is an inbox source (`<SIGHT_HOME>/dropped`) that is never scanned or watched — each row keeps the original path; adding that folder later as a source reassigns the row (same path-hash id). View-only assets are in-memory (`Library._ephemeral`) so they are not in All / the grid. Same path already in the library: both zones return that row. 32-file cap, NFC name match, capture-phase drop, overlay hide timeout — same as folders. Image drop onto the annotator while drawing is still a reference picture. Overlay display uses `:not([hidden])` (a later `data-kind` rule had shown the overlay always). Busy file drops queue as separate jobs (mode is not mixed). A lone `.srev` is not POSTed as media.
-- **Review:** a fresh reviewer found: OS image drop while drawing on the board or compare still opened the file (→ `dropOnAnnotatorSurface` checks all three annotators and `.canvas-viewport` / `.cmp-stage`); overlay `[hidden]` lost to `[data-kind=folder]` so the tint stayed up (→ `:not([hidden])`); library-zone hit-test vs `min-width: 168px` at UI scale &lt; 1 (→ drop the min-width, JS already uses `--side-w × --ui-k`); view-only text / transcode / model sidecars / USDZ used `get_asset` (→ `resolve_asset`); `.srev` also POSTed as unsupported (→ skip); busy queue mixed modes (→ job list); compare **A** did not promote (→ `cmpToggleAnnot` through `ensureLightInLibrary`). Same reviewer then found leftover `scrub_audio_*` still on `get_asset` and compare A promoting `light.asset` instead of the selected layer (→ `resolve_asset`, `ensureInLibrary(assetById(cmp.selectedId()))`). It confirmed those. No new blocking issues.
