@@ -1,6 +1,7 @@
 // Shared helpers of the R0-0 regression page scripts (tests/r0_harness.py runs them). A script calls
 // run(async (cfg, t) => { ... }): cfg is the JSON argument ({base, ids, shots, ...}); t collects checks and page
-// errors and prints the report ({checks, errors, done, fatal}) as the last line of stdout.
+// errors and prints the report ({checks, errors, done, fatal, data}) as the last line of stdout; t.data (any JSON)
+// carries what a script hands back to its Python test (e.g. rows for a golden file).
 // The selectors used here are the user-facing contract the R0 refactor must keep (docs/PLAN-coreline.md).
 "use strict";
 const path = require("path");
@@ -40,7 +41,7 @@ function run(body){
     .finally(async () => {
       try { if (browser) await browser.close(); } catch {}
       delete t.browser;
-      process.stdout.write("\n" + JSON.stringify({ checks: t.checks, errors: t.errors, done: t.done, fatal: t.fatal || null }) + "\n");
+      process.stdout.write("\n" + JSON.stringify({ checks: t.checks, errors: t.errors, done: t.done, fatal: t.fatal || null, data: t.data ?? null }) + "\n");
       process.exit(0);
     });
 }

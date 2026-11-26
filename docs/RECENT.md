@@ -14,6 +14,70 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.134.2 — 2026-11-26 — R0-0 block 2: regression tests of the annotator (geometry golden, notes, tools)
+- **What:** the second block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator does now.
+  No app code changed (only the version).
+- **Where:**
+  - `tests/test_r0_annotate.py` runs three page scripts on one temporary library:
+    - `tests/r0_geometry_e2e.cjs` + `tests/fixtures/r0_geometry_golden.json`. Known drawings, with real pointer input,
+      must store exactly the golden's rows (to 0.001). The drawings: every tool on a 1600 × 1000 picture at fit, then
+      a note; a picture whose asset row says 800 × 600 but decodes to 400 × 300; a clip on frame 25; a clip with a 2:1
+      pixel aspect (shown 640 × 240). Rewrite the golden with `SIGHT_R0_GOLDEN=update` (only a clean run writes it).
+    - `tests/r0_notes_e2e.cjs`:
+      - the reviewer name (You panel) signs notes, replies, state events and the review state;
+      - Add, an empty Add, undo / redo of adding a note (the words come back into the composer);
+      - reply and its edit, note edits, In progress / Resolve / Reopen, a reply's tombstone;
+      - the filters, the review state and its history;
+      - the clean picture after a note, picking a note (also while just watching), the panel on / off, delete;
+      - video notes on frames, their marks, a pick seeks;
+      - touch.
+    - `tests/r0_tools_e2e.cjs`:
+      - each tool's key and button;
+      - select, grips, move, resize, turn, nudge, Shift+click, marquee, Ctrl+A, duplicate, copy / cut / paste,
+        Ctrl+], the bin;
+      - undo / redo by keys and buttons;
+      - the eraser (Object and Partial);
+      - the eye, and onion skin, whose ghost opacities are pinned (0.5 / 0.5 half way, 0.25 / 0.75);
+      - touch, including a finger drag with the select tool.
+  - The shared harness:
+    - `run_page()` resets the server's UI settings to the class's before every script. Synced settings, such as the
+      notes panel left open, changed the next script's fit scale.
+    - `make_video(sar="2:1")` wrote 1:1: `setsar=2:1` reads as sar=2, max=1. Fixed.
+    - The report carries `t.data`.
+  - `docs/PLAN.md` "Found by the R0-0 regression tests", item 6: a tap on the drawing toolbar within about 0.5 s of a
+    finger stroke brings no click in Chromium's emulation. It is probably fling tap suppression; check on a real
+    touch screen.
+- **Notes:**
+  - **The golden alone does not prove units.** Strokes are aimed through the layer's own transform, so stored numbers
+    stay the same whatever unit the layer uses. The `layerUnits` checks catch a unit shift: the layer must map
+    (0, 0)–(decoded size) onto the media's own box.
+  - For "decoded ≠ row", the seed renders the thumbnail first. Rendering one rewrites the row's size, which made the
+    case hollow.
+  - The golden is this container's Chromium at 1400 × 900. A text row's box (system fonts) and `revision` (it counts
+    writes, which the queue coalesces) are left out.
+  - The tools script draws on a 2000 × 1300 picture, so screen px ≠ picture px (asserted). Drags assert they land on
+    the picture, not under a bar.
+  - Deliberately not done here:
+    - notes on a 3D view (block 4);
+    - the reference image tool (block 3);
+    - a phone-size context (PLAN item 2: a tile cannot be opened there).
+- **Review:** a fresh agent reviewed the block and mutated app code to prove the checks. It found:
+  - the hollow "decoded ≠ row" case;
+  - the golden depending on test order (shared UI settings);
+  - scale checks that were vacuous at s = 1;
+  - a font-dependent text box in the golden;
+  - a `null` golden that silently skipped the comparison;
+  - a wrong cause in PLAN item 6;
+  - coverage gaps (add-note undo, touch move);
+  - a vacuous `.every`;
+  - fixed waits;
+  - columns not pinned.
+
+  All were fixed. On re-review it found `revision` in the golden (write-coalescing dependent), also fixed. The same
+  reviewer confirmed every fix. Its mutations now fail the intended checks: asset-row size in `onReady`, nudge
+  without the scale, the author dropped, the onion fade, undo. Green alone, in reverse order, and with three runs at
+  once.
+
 ## 0.134.1 — 2026-11-26 — R0-0 block 1: regression tests of the 2D lightbox and video transport
 - **What:** the first block of the R0-0 safety net (docs/PLAN-coreline.md). Playwright tests pin how the lightbox and
   the video transport behave *now*, before the R0 refactor. Also a timing tool for the lightbox. No app code changed
@@ -312,9 +376,3 @@ Add new entries directly below this line.
 - **Where:** app/static/review-core.js — `xfHandles` (one pin: `pa` / `pc`), `xfDrag` (pa / pc branch), `XF_CURSOR`; review-draw.js `roundItem` rounds `ax` / `ay`; annotate.js — `dragHandle` (2 px threshold), `renderProps` / `bindProps` (`pinnum`), `editPin` inputMode, new `stillPic` / `makeStill` used by `previewBox`; MANUAL.
 - **Notes:** the still copy is a JPEG over black (short side 720, long ≤ 2400) made once per picture URL from the lightbox's decoded `<img>` (canvas `toBlob`), cached in `STILL`; cards made before it is ready (`img[data-still]` inside `S.ui`) are switched over; a picture already ≤ 1.25× that size keeps the file. Not done: the last blob is not revoked when the annotator moves to a video / closes (one per instance, replaced on the next picture). Video frames / 3D stills were already small (0.113). `pc` moves the circle by the pointer's travel (its handle is off-centre). Several pins selected: no handles (as before). The HTML page / phone get the pin handles through review-core but have no pin tool or label field. Browser (6000×4000 PNG, 13 notes): the card picture is a 1080×720 blob; pa / pc drags move one point each and are saved; *Number…* set "A1"; a 1 px-jitter click changes nothing.
 - **Review:** a fresh reviewer agent found: handle drags had no move threshold, so a tap on a pin handle made a stub line / nudged the circle (→ 2 px threshold in `dragHandle`); *Number…* used the item object from the last props render (→ looks the live one up); the `pc` handle on the circle's centre covered small pins and the number, and took over the whole-pin move (→ moved outside the circle); `ax` / `ay` not rounded on the page (→ added); the blob switch-over queried the whole document (→ scoped to `S.ui`). The same reviewer confirmed all fixes and found nothing new (the unrevoked last blob judged not worth handling).
-
-## 0.125.1 — 2026-11-24 — A picture dropped while annotating no longer joins the comparison
-- **What:** with the library beside the lightbox (Tab) and annotating on, dragging a picture from the grid onto the frame added it as a reference picture and also made it a compare candidate (⧉ said "Compare these 2 files"). Now the drop only adds the reference picture; the library selection goes back to what it was before the drag. With annotating off the drop still adds the file to the comparison, as before.
-- **Where:** app/static/index.html — `cardDrag` (the live tile drag), `restoreDragSel`, `finish()` in `ensureCard` (honours `d.restoreSel`), host hook `refsDropped`; app/static/annotate.js — `onRefDrop` calls `host.refsDropped?.()` when it takes library ids.
-- **Notes:** root cause: a tile drag selects the dragged tiles and keeps that selection when a target takes the drop; beside the lightbox `lightCompareIds()` counts the library selection as the comparison set while `light.cmpStack` is empty. The drop is fine on its own — it is the selection side effect. Backlog 4 (smart collection) re-checked, still not reproduced — one lead noted in PLAN-desktop-ui.md (the search box stays on and is ANDed with the smart rule). 15 / 16 still wait for the owner's details.
-- **Review:** a fresh reviewer agent found no bugs (checked drop / dragend / detached-tile order, annotating off, collection / board drops, OS files, overlapping drags). Its note: a video-only drop while annotating added nothing but kept the drag's selection, so the video became a compare candidate (→ `refsDropped` is called for any library ids taken while annotating). Left on purpose: a tile already selected before the drag stays selected (the user's own pick), and the touch way (*Library selection → add*, `addSelectedRefs`) keeps the selection — there the user selected the files themselves. The same reviewer confirmed the follow-up.

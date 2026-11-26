@@ -121,7 +121,7 @@ def make_video(path: Path, w: int = 320, h: int = 240, fps: int = 25, secs: floa
     else:
         cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p"] + (["-g", str(gop)] if gop else [])
         if sar:
-            cmd += ["-vf", f"setsar={sar}"]
+            cmd += ["-vf", "setsar=" + sar.replace(":", "/")]   # ("2:1" would read as sar=2, max=1)
         cmd += (["-c:a", "aac", "-b:a", "96k"] if audio else []) + ["-movflags", "+faststart"]
     subprocess.run(cmd + [str(path)], check=True, timeout=180)
 
@@ -211,6 +211,13 @@ class LiveCase(unittest.TestCase):
         return f"http://127.0.0.1:{self.port}"
 
     def run_page(self, script: str, timeout: int = 300, **cfg) -> dict:
+        # Every script starts from the class's UI settings: one script's synced settings (the notes panel left
+        # open, a filter) must not change the next one's layout (a golden's fit scale) or behaviour.
+        import urllib.request
+        req = urllib.request.Request(self.base + "/api/settings/ui", data=json.dumps(dict(self.ui_settings)).encode(),
+                                     method="PUT", headers={"content-type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            self.assertEqual(resp.status, 200)
         arg = json.dumps({"base": self.base, "ids": self.ids, "shots": os.environ.get("SIGHT_TEST_SHOTS", ""), **cfg})
         r = subprocess.run([NODE, str(ROOT / "tests" / script), arg], capture_output=True, text=True,
                            timeout=timeout, cwd=ROOT / "tests")
