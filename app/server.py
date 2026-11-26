@@ -2085,7 +2085,8 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
                 if len(buf) > 512 * 1048576:
                     raise HTTPException(413, "too big")
             body = bytes(buf)
-        hdrs = {k.lower(): v for k, v in request.headers.items() if k.lower() in ("content-type", "accept")}
+        # (Content-Range: Coreline's resumable uploads; ShotGrid's adapter forwards only Content-Type / Accept)
+        hdrs = {k.lower(): v for k, v in request.headers.items() if k.lower() in ("content-type", "accept", "content-range")}
         try:
             status, ctype, data = await asyncio.to_thread(a.forward, method, url, body, hdrs, sudo)
         except TrackerError as e:

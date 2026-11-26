@@ -60,7 +60,7 @@ a fix is its own block, and changes the pinned check in the same block.
    found in the 0.134.1 review): `carryOver()` scales by `fx = g.nw / p.asset.width`, the decoded width of this
    version over the earlier version's *thumbnail* width (item 4): a 1920-wide clip gets drawings × 5.3. Images are not
    affected (their columns are the real size). Fix with item 4, and test it with two versions of a clip.
-6. **On touch, a tap on the drawing toolbar right after a finger stroke brings no click** (0.134.2 tests, a touch
+6. **On touch, a tap on the drawing toolbar right after a finger stroke brings no click** (0.135.1 tests, a touch
    laptop in Chromium's emulation): within about half a second of a pencil stroke drawn with a finger, a tap on Undo
    gives `pointerdown` / `pointerup` / `touchend` but no `click`, so nothing is undone. The same tap 0.6 s later works,
    so does one after a finger that held still before lifting, and so does a mouse stroke. The toolbar is not inside the

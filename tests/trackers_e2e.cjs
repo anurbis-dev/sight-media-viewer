@@ -68,7 +68,8 @@ const put = (body) => fetch(base + "/api/sg/config", { method: "PUT", headers: {
   assert.strictEqual(await p.getAttribute(SG + " [name=logins]", "placeholder"), "Ann Lee = ann.lee@studio.com");
   assert.ok(/Test/.test(await p.textContent(SG + " [data-act=test]")) && /not connected — site, script name and key/.test(await p.textContent(SG + " .trk-state")));
   assert.ok(await p.locator(SG + " [data-act=cancel]").isVisible() && await p.locator(SG + " [data-act=disconnect]").isHidden() && await p.locator(SG + " .trk-cache").isHidden());
-  assert.ok(await p.locator("#trkAddRow").isHidden(), "nothing else to connect while ShotGrid's fields are open");
+  // (only the other kinds are offered while ShotGrid's fields are open — Coreline since 0.135; ShotGrid alone hid the row)
+  assert.deepStrictEqual(await p.$$eval("#trkKinds [data-kind]", (x) => x.map((e) => e.dataset.kind).filter(Boolean)), ["coreline"], "no second ShotGrid while ShotGrid's fields are open");
   assert.strictEqual(await p.inputValue(SG + " [name=site]"), site, "a disconnect kept the site");
   await p.fill(SG + " [name=key]", "secret");
   await p.click(SG + " [data-act=save]");

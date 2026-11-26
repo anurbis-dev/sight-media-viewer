@@ -10,7 +10,7 @@ Read this file first; it is short on purpose. Details live in `docs/`.
 3. `README.md` / `MANUAL.md` — user-facing behaviour.
 4. `docs/PLAN.md` — queued improvements and known bugs, with the numbers behind them. Take work from here.
    Bigger tracks: `docs/PLAN-mobile.md` (local review app on the phone, then trackers, clouds), `docs/PLAN-viewer.md`
-   and `docs/PLAN-multiclip.md` (one review page / `.srev` bundle for several clips). Tracker links: `docs/SHOTGRID.md`;
+   and `docs/PLAN-multiclip.md` (one review page / `.srev` bundle for several clips). Tracker links: `docs/SHOTGRID.md`, `docs/CORELINE.md`;
    Coreline (the owner's tracker) gets Sight's review built in: `docs/PLAN-coreline.md`.
 5. `docs/FORMAT.md` — the review data contract (rows, `.srev`, merge rules) shared with the HTML page and
    the mobile app. Read it before touching annotations / review code; merge changes go into both

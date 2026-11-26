@@ -28,7 +28,8 @@ const X = { "X-Sight": "1", "content-type": "application/json" };
   const NEW = '.trk-set[data-tracker=shotgrid]:not([data-key="' + K1 + '"])';
   await p.waitForSelector(NEW, { state: "visible" });
   assert.strictEqual(await p.inputValue(NEW + " [name=site]"), "", "another site starts empty");
-  assert.ok(await p.locator("#trkAddRow").isHidden(), "nothing else to connect while its fields are open");
+  // (only the other kinds are offered while its fields are open — Coreline since 0.135; ShotGrid alone hid the row)
+  assert.deepStrictEqual(await p.$$eval("#trkKinds [data-kind]", (x) => x.map((e) => e.dataset.kind).filter(Boolean)), ["coreline"], "no second ShotGrid while its fields are open");
   // the same site again: refused, in words
   await p.fill(NEW + " [name=site]", site1); await p.fill(NEW + " [name=script]", "sight"); await p.fill(NEW + " [name=key]", "secret");
   await p.click(NEW + " [data-act=save]");
