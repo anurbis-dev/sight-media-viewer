@@ -6043,6 +6043,13 @@ export function createAnnotator(host){
     renderPanel();  // the note previews need the picture
     startTick();
   }
+  // A viewer module (app/static/viewers/viewer.js): its surface, media and geometry. The 2D kinds go through
+  // bind2d (the board and compare still hand it their own view objects); 3D keeps bind3d until R0c.
+  function bind(viewer){
+    if (!viewer) return;
+    if (viewer.kind === "image" || viewer.kind === "video")
+      bind2d({ wrap: viewer.surface, media: viewer.media, isVid: viewer.kind === "video", geom: viewer.geom, unturn: viewer.unturn });
+  }
   // The viewer's view moved. A board keeps its drawings on show with the mode off, so its layer follows too.
   function viewChanged(){
     if (!S.layer || !(S.on || shownOff())) return;
@@ -6083,7 +6090,7 @@ export function createAnnotator(host){
   window.addEventListener("pointermove", trackHover, true);
 
   return {
-    mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, toggleHelp, importFile, explodeChanged,
+    mount, unmount, setAsset, bind, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, toggleHelp, importFile, explodeChanged,
     isOn: () => S.on, resetPrefs,
     // The eye's state, shared with the lightbox guides (guides.js hides with it); setHidden(false) shows both again.
     hidden: () => !!S.hidden,

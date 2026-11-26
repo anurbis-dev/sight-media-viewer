@@ -14,6 +14,24 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.142.2 — 2026-11-27 — R0b-1: the viewer interface and the image / video viewer modules
+- **What:** pure refactor, no behaviour change. The lightbox's 2D player (`attachViewer`, ~460 lines of index.html)
+  moved into `app/static/viewers/`: `viewer.js` (the interface, PLAN-coreline decision 8), `view2d.js` (the shared core),
+  `image.js`, `video.js` (seek pump, scrub copy, transport). index.html's `attachViewer` is now the frame: it picks the
+  module and passes `viewerHost` (hooks into its globals). annotate.js got `bind(viewer)` → `bind2d`.
+- **Notes:** `light` is read at call time through `host.ctl()`. Listener order is kept on purpose (claims → early
+  seek listeners → load / ready → ResizeObserver → `wire()` → input → `annot.bind`). `opts.docSize` (a fixed native doc
+  box) is new and never passed by Sight. The video bar / scrub audio / RAM cache (R0b-2) and sequences / compare
+  driving viewers (R0b-3) are still in index.html (PLAN-coreline R0b).
+- **Review:** a fresh agent compared old and new line by line and found no bugs.
+- **Suite** (Windows, SIGHT_REQUIRE_E2E=1, 182 tests, 5 skipped): every R0 test passes; 11 known older failures
+  (the list in 0.141.4, one `test_pwa` case passed this time).
+- **Bench** (`tools/bench_lightbox.py`, this machine, 3 runs each, 23f6124 before / this block after, medians):
+  open image 19 / 19 / 19 ms before, 19 / 18 / 19 after; open video 51 / 51 / 50 both; frame step 32 / 32 / 33 before,
+  32 / 32 / 32 after. No change. (A first single before-run gave open image 13 ms; the base re-run shows that was noise.)
+- **Merge:** R0a blocks 1–5 (host.store, `--an-*` tokens) merged in first; annotate.js merged cleanly, `bind(viewer)` unchanged. The R0
+  suite and `test_r0a_store` pass on the merged code (one run had a transient `page: Worker terminate`; the re-run passed).
+
 ## 0.142.1 — 2026-11-26 — R0a block 5: the annotator's CSS reads host tokens through `--an-*`
 - **What:** a refactor; Sight looks the same. Every theme / layout token the annotator's stylesheet takes from the
   host goes through an `--an-<name>` property that falls back to Sight's name, so another host maps its own theme.
@@ -503,9 +521,3 @@ Add new entries directly below this line.
 - **Suite:** 9 failures, none from this block, which changes no app code:
   - `test_pwa` ×4, `test_review_all.test_pdf_all`, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`, `test_sources.test_file_uri_to_path`: known;
   - new on origin/master since 0.135.2: `test_sources.DropFilesE2E` fails on a clean checkout of it too (`dropKind is not defined` in `drop_files_e2e.cjs`).
-
-## 0.138.0 — 2026-11-26 — Lightbox guides
-- **What:** a picture, PSD or video gets a Guides button in the lightbox bar: a grid with rulers (drag a guide, snap to a step or type pixels) or 1-, 2- or 3-point perspective (drag each vanishing point, set how many lines). Guides stick to the picture through pan, zoom, turn and mirror, and are remembered per file. The button is hidden for 3D and audio.
-- **Where:** new `app/static/guides.js`; `app/static/index.html` — `mountGuides`, the button, `light.guideGeom`, `passThrough` on the lightbox annotator. `MANUAL.md`, `docs/ARCHITECTURE.md`.
-- **Notes:** positions are image pixels. `sight.guides` goes through `putSetting` (a bare localStorage write would be deleted on the next start). At most 400 files are kept. No new shortcut. Not on compare, not on the phone.
-- **Review:** a fresh reviewer found one hole: changing the grid snap step saved it but left the ruler ticks on the old step until the next pan or drag (`paintMenu` `applySnap` never called `refresh()`, while the density sliders did). Fixed: both the live input and the change call `refresh()` (it only redraws the overlay, so the field keeps focus). The same reviewer confirmed that and found nothing new. The pen button and its right-click reset from 0.136.0 stayed in place; the guides button sits after the flip button.
