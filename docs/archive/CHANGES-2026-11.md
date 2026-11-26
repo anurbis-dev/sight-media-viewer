@@ -2,6 +2,26 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.133.1 — 2026-11-25 — Phone app: a pinch never zooms the page
+- **What:** pinching a splat / model / picture on the phone sometimes became browser page zoom: the whole UI grew
+  past the screen edges. The phone app now turns page zoom off: a pinch only reaches the app's own zoom.
+- **Where:** `mobile/index.html` (viewport meta `maximum-scale=1, user-scalable=no`), `mobile/js/app.js` ("no page
+  zoom" block before "full screen": cancels iOS `gesture*` events and any `touchmove` with more than one touch,
+  non-passive on `document`); MANUAL (phone section).
+- **Notes:**
+  - Android Chrome honours `user-scalable=no`; iOS Safari ignores it, hence the JS block. All the app's pinches run on
+    pointer events, which a cancelled touchmove does not stop (it only stops the browser's gesture and the
+    pointercancel that came with it). Likely origin: `.stage` is `touch-action: manipulation`, which lets the browser
+    take a pinch that does not start on the 3D canvas (`touch-action: none`). Left as is: the JS block covers it.
+  - Left open: on iOS a second finger landing while one is already scrolling a list sends non-cancelable touchmoves;
+    page zoom can still start there (rare, not fixable from JS). The document-level non-passive touchmove makes
+    Chrome wait on the main thread before a scroll starts; accepted (it must cover bars too).
+  - Not changed: Sight's HTML review page (`app/review.py`) keeps page zoom (text to read; it has no splat viewer).
+  - Checked in mobile Chromium: a two-finger touchmove is cancelled, a one-finger one is not. `test_touch` and
+    `test_model3d` fail with and without this change (pre-existing, unrelated).
+  - Review (fresh agent): no correctness bugs; the notes above (iOS non-cancelable case, scroll latency, version bump
+    for the service-worker cache) came from it. No fixes, so no second pass was needed.
+
 ## 0.133.0 — 2026-11-25 — Gaussian splats turn a quarter about X, like meshes (lightbox and phone)
 - **What:** splats often arrive upside down or Z-up. The lightbox's ↻ button (`Shift+7`, the only button of the shade
   bar on a splat) and the phone's ⟳ *Turn the model a quarter* now turn a splat as they turn a mesh: a quarter turn

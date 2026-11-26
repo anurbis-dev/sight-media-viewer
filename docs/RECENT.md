@@ -14,6 +14,12 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.141.1 — 2026-11-26 — Single-video scrub follows the compare
+- **What:** a clip of a few seconds gets a short-GOP scrub copy as soon as it opens. A drag shows that copy, and the full file is sought once when you let go. The green on the timeline is unchanged: it is the part of the file actually in RAM (one painter, shared with compare). A file that fits the cache budget still turns the whole line green, and that is not a sign the seek is instant.
+- **Where:** `app/static/video-cache-bar.js` (`cacheBarHtml`), `index.html` (`loadScrubCopy` from `onReady`, `seekVideo`, `endScrub`), `compare.js` (the lane uses the same painter), `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** the copy is asked only when the file already has a picture (`videoWidth`) and is at least 3 s. The proxy is created with no `src`; a drag sets it, and after the full file presents the frame `src` is cleared, so a hidden copy does not hold a hardware decoder. Until the copy can show a frame the full file is still seeked, so the picture does not sit still for the whole encode. Two slow seeks during a drag still ask, if the open-time ask did not run. `endScrub` queues the full-file seek before `settleScrub`: the timeline calls `seekVideo` while the drag is still on, and a picture drag only calls `endScrub`. The solo RAM budget and `stream()` are unchanged. `start`/`end` without a `spans` array draws nothing.
+- **Review:** pending.
+
 ## 0.141.0 — 2026-11-26 — Tracker grid keeps what it downloaded
 - **What:** a ShotGrid or Coreline project you already opened comes back at once, and only Versions that changed on the site are updated in place. Switching project or type no longer clears the grid and asks for every page again. The source row shimmers while Sight is connecting and turns red when the site does not answer; it stays until you disconnect it. A window full of thumbnails no longer makes the packaged app quit and show "Failed to fetch".
 - **Where:** `app/static/tracker-view.js` (merge by id), `tracker-source.js` (the view cache, IndexedDB `sight-tracker-views`), `shotgrid-core.js` / `coreline-core.js` (`since`, retired), `index.html` (paint the cache, three thumbnail sockets, the source row), `app/server.py` (the event stream keeps the window alive), `Sight.py`.
@@ -471,23 +477,3 @@ Add new entries directly below this line.
     spinning phone placeholders, and missed spots (HUD, Connecting, Saving, Installing, Syncing) — all fixed; the
     second pass confirmed them and caught the phase modulus breaking reduced motion (fixed) and the Install button
     stuck on a failed request (fixed). `test_pwa`: same 3 failures with and without the change (pre-existing here).
-
-## 0.133.1 — 2026-11-25 — Phone app: a pinch never zooms the page
-- **What:** pinching a splat / model / picture on the phone sometimes became browser page zoom: the whole UI grew
-  past the screen edges. The phone app now turns page zoom off: a pinch only reaches the app's own zoom.
-- **Where:** `mobile/index.html` (viewport meta `maximum-scale=1, user-scalable=no`), `mobile/js/app.js` ("no page
-  zoom" block before "full screen": cancels iOS `gesture*` events and any `touchmove` with more than one touch,
-  non-passive on `document`); MANUAL (phone section).
-- **Notes:**
-  - Android Chrome honours `user-scalable=no`; iOS Safari ignores it, hence the JS block. All the app's pinches run on
-    pointer events, which a cancelled touchmove does not stop (it only stops the browser's gesture and the
-    pointercancel that came with it). Likely origin: `.stage` is `touch-action: manipulation`, which lets the browser
-    take a pinch that does not start on the 3D canvas (`touch-action: none`). Left as is: the JS block covers it.
-  - Left open: on iOS a second finger landing while one is already scrolling a list sends non-cancelable touchmoves;
-    page zoom can still start there (rare, not fixable from JS). The document-level non-passive touchmove makes
-    Chrome wait on the main thread before a scroll starts; accepted (it must cover bars too).
-  - Not changed: Sight's HTML review page (`app/review.py`) keeps page zoom (text to read; it has no splat viewer).
-  - Checked in mobile Chromium: a two-finger touchmove is cancelled, a one-finger one is not. `test_touch` and
-    `test_model3d` fail with and without this change (pre-existing, unrelated).
-  - Review (fresh agent): no correctness bugs; the notes above (iOS non-cancelable case, scroll latency, version bump
-    for the service-worker cache) came from it. No fixes, so no second pass was needed.

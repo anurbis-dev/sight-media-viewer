@@ -231,8 +231,12 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   blocks **actually in RAM** (holes stay holes; the planned window is not drawn). `start`/`end` is still the one
   run that contains the playhead (`start == end` when that block is not loaded). `GET /api/video/cache?aids=`
   (up to 64 ids) and the compare's focus reply `clips` return one snapshot per asset id. The lightbox timeline,
-  each sequence segment and each compare lane draw those runs in green (`#2f9d5b`), mapped `byte / size` along
-  that clip. The sequence segment's shade and the compare lane's faint colour are the clip's place, not the cache.
+  each sequence segment and each compare lane draw those runs in green (`#2f9d5b`) through one painter
+  (`app/static/video-cache-bar.js` `cacheBarHtml`: `spans` must be an array; `start`/`end` alone draws
+  nothing), mapped `byte / size` along
+  that clip. A file that fits the budget turns the whole line green: those bytes are in RAM. The bar is
+  not the scrub copy, and a full green line does not mean a long-GOP seek is instant.
+  The sequence segment's shade and the compare lane's faint colour are the clip's place, not the cache.
   Body `gen` is the client's generation for who owns the windows. Compare bumps it on open and again on close;
   the lightbox sends the current one and does not post while compare is open. A lower `gen` does not move or
   release the windows, so a focus post already in flight cannot take them back. Compare posts the split as
@@ -247,16 +251,26 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   files needs the same fallback (`convertForPlayback`), or it shows nothing for the codecs above.
 - Scrub copy (lightbox, `attachViewer` `loadScrubCopy`): a browser seek decodes from the keyframe
   before the target, so a long-GOP clip costs ~0.9 ms per frame of distance (416x960 H.264; ~230 ms
-  at the end of an 8.3 s GOP) — RAM cache or not. Two seeks slower than `SLOW_SEEK_MS` (80) *during a
-  scrub* (`light.scrubbing`; not the first seek after open, a loop wrap or a frame step), on a clip of
-  at least 3 s, ask `POST /api/video/scrub` (`Library.start_scrub_copy`, the playback-copy job with `tag=".scrub"`:
+  at the end of an 8.3 s GOP) — RAM cache or not. When the clip's metadata is in, it has a picture
+  (`videoWidth`) and it is at least 3 s (`SCRUB_COPY_MIN_S`), the lightbox asks `POST /api/video/scrub`
+  at once (`Library.start_scrub_copy`, the playback-copy job with `tag=".scrub"`:
   <= 960 px, no audio, `-g 4 -bf 0`, file `thumbs/video/<aid>_<stamp>.scrub.<ext>`, served by
-  `GET /api/video/scrub/{id}`). Once loaded, a `.view-scrub` `<video>` sits right after the player
-  (same size / transform via `apply()`), seeks along during a scrub (`scWant` / `pumpScrubCopy`,
-  one in flight) and is shown only while `light.scrubbing`; `settleScrub` hides it after the player
-  presents its own frame (rVFC, <= 250 ms). The player keeps its own throttled seeks (`pumpSeek`), so
-  the landed frame is full quality. A new drag hides the copy until it has landed on that drag's
-  position (`scGen`); any other seek of the player (frame step, marker jump) hides it at once.
+  `GET /api/video/scrub/{id}`), the same moment compare asks (`ensureScrubs`). Two seeks slower than
+  `SLOW_SEEK_MS` (80) during a scrub still ask, if that open-time ask did not run. An unplayable file
+  (no picture size) does not ask: a playback transcode would kill the scrub encode. Once loaded, a
+  `.view-scrub` `<video>` sits right after the player (same size / transform via `apply()`). It is
+  created with no `src` (`armScrubCopy` sets it when a drag starts; `releaseScrubCopy` hides it and
+  then clears `src` after the full file has presented) so a hidden copy does not hold a hardware
+  decoder during playback. While `light.scrubbing`, if that copy can show a frame (`src`,
+  `readyState >= 1`, no error), the drag seeks only the copy (`scWant` / `pumpScrubCopy`, one in
+  flight) and does not seek the full file. `endScrub` seeks the full file once (`seekWant` /
+  `pumpSeek`, before `settleScrub`): the timeline's pointer-up calls `seekVideo` and then `endScrub`
+  while the drag is still on, and a picture drag only calls `endScrub`. Until the copy can show a
+  frame the full file is still seeked, so the picture does not sit still for the whole encode.
+  The copy is shown only while `light.scrubbing`; `settleScrub` hides it after the player presents
+  its own frame (rVFC, <= 250 ms) and then drops the decoder. A new drag hides the copy until it has
+  landed on that drag's position (`scGen`); any other seek of the player (frame step, marker jump)
+  hides it at once.
   Playback copies take `_play_slot` alone. Scrub copies use up to `SCRUB_PARALLEL` (3) slots
   (`_scrub_slots`, `_encode_copy`), so a compare can encode every clip together; each scrub ffmpeg
   caps decode, scale and encode at 2 threads (`-threads` before `-i`, `-filter_threads 2`, encoder `-threads 2`). A playback copy still goes first: while one waits or runs, scrub jobs

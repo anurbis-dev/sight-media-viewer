@@ -258,8 +258,10 @@
     one tool's icon in the drawing toolbar, or long-press it, resets only that tool.
   - **Turn by hand** — hold `R` and drag on a picture or a video: it turns about its own centre (where it is after panning, not the window centre; Shift+R too), to any angle (while
     annotating `R` is the rectangle tool, so hold `R` and Alt+drag. On a video a drag or Alt+drag scrubs, `Ctrl` held snaps it to the annotated frames. A clip with few keyframes — many phone and screen
-    recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy
-    in the background and later drags show it, so every position along the way is drawn. Sight keeps
+    recordings — seeks slowly in the middle. A clip of a few seconds gets a small scrub copy (a keyframe
+    every few frames) as soon as it opens, and a drag shows that copy; the full file is sought once when
+    you let go. The green on the timeline is the RAM cache, not this copy: a file that fits the cache
+    budget turns the whole line green while seeks can still be slow until the copy is ready. Sight keeps
     the newest 20 scrub copies, 1 GB at most, and makes one again when needed); press
     Shift during the drag to snap to absolute 15° steps (0, 15, 30 …). Sight remembers the angle per file.
   - **Video bar** — right of the timeline: the *sound* icon (click = mute / unmute; press and drag up / down,
@@ -946,7 +948,9 @@
 - Video in the full-screen preview: drag on the picture (or the timeline) to scrub — dragging
   across the window covers the whole clip, hold `Shift` for fine control; `Space` plays/pauses.
   The green on the timeline is the RAM cache actually in memory: the parts of the file held around the
-  playhead (a gap is left empty). Its budget is
+  playhead (a gap is left empty). A file smaller than the budget fills the whole line; that is the file
+  in RAM, not a sign that scrubbing will be instant. A clip of a few seconds also gets a short-GOP scrub
+  copy when it opens: a drag shows the copy, and the full file is sought once when you let go. The cache budget is
   set in Settings → RAM cache (32–2048 MB) and it slides as you play or scrub. Settings → Cache ahead
   (50–90 %, 70 % by default) is the part of it ahead of the playhead; the rest stays behind it, and both
   fill outwards from the playhead. In a sequence the window runs on into the next clip's start near a

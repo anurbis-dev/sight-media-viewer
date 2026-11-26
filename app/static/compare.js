@@ -49,6 +49,7 @@
 
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
+import { cacheBarHtml } from "/static/video-cache-bar.js";
 import { attachViewerInput } from "/static/viewer-input.js";
 import { setCursor } from "/static/cursors.js";
 import { HELP_HINT } from "/static/key-help.js";
@@ -1078,21 +1079,8 @@ export function createCompare(host){
       </div>`;
     }).join("") + (more.length ? `<button type="button" class="cmp-b cmp-addb" data-a="add" title="Add another version">+ Add</button>` : "");
   }
-  // Green on a lane: that file's blocks actually in RAM, as a fraction of the file, laid along the clip's span.
+  // Green on a lane: cacheBarHtml (video-cache-bar.js), the same painter as the lightbox.
   // The faint colour is only where the clip sits. Bytes map like the playhead (size · t / duration).
-  function cacheBarHtml(snap){
-    if (!snap || !(snap.size > 0) || !Array.isArray(snap.spans)) return "";
-    let html = "";
-    for (const pair of snap.spans){
-      const a = Number(pair[0]), b = Number(pair[1]);
-      if (!(b > a)) continue;
-      const l = Math.max(0, Math.min(100, a / snap.size * 100));
-      const w = Math.max(0, Math.min(100, b / snap.size * 100) - l);
-      if (w <= 0) continue;
-      html += `<i style="left:${l.toFixed(3)}%;width:${w.toFixed(3)}%"></i>`;
-    }
-    return html;
-  }
   function paintCmpCaches(){
     const box = C?.el.querySelector(".cmp-spans");
     if (!box) return;
