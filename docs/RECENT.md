@@ -14,6 +14,38 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.142.0 — 2026-11-26 — R0a block 4: apply rows by id (live updates without a reload)
+- **What:** the annotator's API has `applyRows(rows)`: rows changed elsewhere are applied by id to the open file, and
+  undo / redo survive (a step that touches a changed row is dropped, never written back). For Coreline's live updates
+  (R2). Sight does not call it, so Sight behaves the same.
+- **Where:** `annotate.js` `applyRows` / `applyNow` / `applyLater` / `applyBusy`, `S.seenAt` (newest `updated_at`
+  seen per row, from load and applied rows), `S.statusBusy` (counted around `setStatus`'s write; nothing else
+  changed there). `tests/r0a_store_e2e.cjs` "apply". `docs/ARCHITECTURE.md` "Annotator store" (the rules).
+- **Notes:**
+  - Rows that cannot be applied safely now wait and apply later (a gesture, an open editor, loading, a state write).
+    Applying them at once broke an open editor: a picture text / pin editor wrote its start copy back over the change
+    (or revived a deleted row), the eraser's undo step held the old copy, and the panel's re-render dropped a note /
+    reply being typed.
+  - A tombstone still removes a row that has a patch queued here, and drops the patch (the server skips patches of
+    deleted rows, so nothing would bring the delete back). A queued delete or create / revive is left to the store.
+  - Not done: the store's own echo of a write it changed in a merge drops that undo step (conservative; the copy on
+    screen is the server's).
+- **Review:** a fresh agent found no Sight change. It found ten problems in the first cut: the open editors and the
+  eraser above; a late older row overwriting a newer one (now `S.seenAt` / the landed write's send time); a
+  tombstone ignored while a patch was queued; rows dropped while loading (now they wait); rows with no target taken
+  by every file (now ignored); a deleted status row ignored and a status without history keeping the old history;
+  a status row racing this window's own state write (now it waits); a gesture cancelled by an unchanged echo (no
+  abort any more: rows wait); an unsupported new version leaving the stale copy (now removed). All fixed, with tests
+  of the tombstone + queued patch, an older copy, no target, a note editor open while rows arrive, the cleared state.
+
+  The same reviewer confirmed every fix. It then found one more: a state row read before this window's own state write
+  could arrive after it and turn the state back. Fixed (`S.statusAt`: the held state's stamp, from load, an applied
+  row and `setStatus`; an older row is ignored; a failed write restores the old stamp), with a test; the same reviewer
+  confirmed it. Left as noted: local edits are not kept in `S.seenAt` past the 30 s of `OB.recent`; `S.applyQ` is not
+  bounded while busy.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1): `test_r0_lightbox`, `_annotate`, `_review`, `_views` pass except R0Export's
+  PDF check (as on origin/master here, see 0.141.5); `test_r0a_store` passes (55 checks).
+
 ## 0.141.7 — 2026-11-26 — R0a block 3: stamps in every row write; undo stamped now for a merging store
 - **What:** every row write the annotator queues carries its stamps; Sight's server ignores them, so Sight behaves
   the same. For a store that merges on the server (`store.mergesOnServer`, Coreline) an undo / redo of a note is
@@ -460,9 +492,3 @@ Add new entries directly below this line.
 - **Where:** `app/static/index.html` — `makeCameraRig`, `CAM_MOVE_KEYS`, the 3D help and the Camera panel. `MANUAL.md`.
 - **Notes:** meshes and splats share the rig. Q/E move on world Y and fold into the same wish as WASD before one normalise. Shift multiplies that wish by `FINE`. Releasing a key or Shift eases out; velocity is cleared when the viewer is disposed and when the camera jumps (frame, recall, turn). Fly is ignored while annotating, in a text field, or with Ctrl/Alt/Cmd.
 - **Review:** the same reviewer that checked the guides merge found nothing wrong in the fly rig (wish axes, Shift, ease-out, halt on dispose and on a jump).
-
-## 0.136.0 — 2026-11-26 — Annotation tools keep their settings
-- **What:** each drawing tool's colour, size and options stay as you left them on the next file and the next time Sight starts. Turning annotating on still starts on the brush. Right-click the pen (long-press with a finger) puts every tool back to the defaults; right-click one tool's icon (or long-press it) resets only that tool.
-- **Where:** `app/static/annotate.js` — `sharedStyles`, `sharedStamp`, `flushPrefs` on `pagehide` (capture) and `setAsset`, `resetTool`; `app/static/index.html` `bindAnnoReset`; `app/static/compare.js` pen tooltip. `MANUAL.md`, `docs/ARCHITECTURE.md`.
-- **Notes:** the lightbox, compare and the board share one styles object and one stamp look. The tool in hand is not stored. Style and stamp writes are debounced; the flush runs in the capture phase so it lands in localStorage before index.html sends `settings.json`. A full reset still writes the shared objects in place. The shape tool's reset also clears the old ellipse slot. Selection-only property edits still do not become the tool's defaults (a colour-grade edit does). A mouse long-press on the pen no longer resets — that was easy to hit by holding the click.
-- **Review:** a fresh reviewer found the touch path double-fired. A finger or pen long-press both reset and toggled (or switched tool): `pointerup` cleared the timer before Windows fired `contextmenu` on release, the click then cleared the swallow flag, and that menu reset again. A release between the browser's menu (~500 ms) and the timer did both. Fixed the same way as the eye's onion toggle: `contextmenu` resets only for a mouse (a pen's barrel button counts as one); the timer is the touch path and `pointerup` only cancels it, so the click still sees the flag. The same reviewer confirmed that and found nothing new.

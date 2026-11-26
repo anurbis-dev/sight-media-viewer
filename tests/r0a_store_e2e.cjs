@@ -13,6 +13,12 @@
 //             between), Resolve by status_at (edited_at untouched), an added reply becomes a tombstone (redo brings it
 //             back, edited later). Without it (Sight's rule) the old stamps come back, the other edit wins, a reply
 //             is dropped. A create still queued across a reopen keeps its created_at.
+//   apply     A.applyRows(rows) applies rows by id without a reload: a changed row is shown and its undo steps are
+//             dropped (Ctrl+Z writes nothing old back over it), other undo steps stay; a new row comes in; a tombstone
+//             removes it (also one with a patch queued here, which is dropped); a row with a write still queued here,
+//             an older copy, a row of another asset or with no target are left alone; while a note editor is open the
+//             rows wait and apply after it closes (the typed text kept); the review state (set, cleared, an older one
+//             than this window's own write ignored).
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -151,6 +157,100 @@ run(async (cfg, t) => {
     await p.waitForFunction(() => window.__rows.size > 0, null, { timeout: 40000 }).catch(() => {});
     const row = await p.evaluate(() => structuredClone([...window.__rows.values()][0] || null));
     t.ok("a create queued across a reopen keeps its first created_at (obOverlay)", row && typeof c0 === "number" && row.created_at === c0 && row.x > first.x, [row?.created_at, c0, row?.x, first.x]);
+    await p.context().close();
+  }
+  // ---- apply rows by id ----
+  {
+    const p = await hostPage("?prefix=" + encodeURIComponent("fakehost:ap:") + "&merges=1", null);
+    await stroke(p, 100, 100, 300, 200);
+    await stroke(p, 400, 300, 600, 400);
+    await p.waitForFunction(() => window.__rows.size === 2, null, { timeout: 5000 }).catch(() => {});
+    const [s1, s2] = await p.evaluate(() => [...window.__rows.values()].sort((a, b) => a.x - b.x).map((r) => structuredClone(r)));
+    await p.keyboard.press("v");
+    await p.mouse.click(200, 150); await p.keyboard.press("ArrowRight");
+    await p.mouse.click(500, 350); await p.keyboard.press("ArrowRight");
+    await p.waitForFunction(([a, b]) => window.__rows.get(a).x > b, [s2.id, s2.x], { timeout: 5000 }).catch(() => {});
+    await p.waitForTimeout(400);
+    await p.mouse.click(700, 480);  // nothing selected
+    // s1 changed elsewhere: moved down 100 px
+    const moved = await p.evaluate((id) => { const r = structuredClone(window.__rows.get(id)); r.data.pts = r.data.pts.map((v, i) => (i % 3 === 1 ? v + 100 : v)); r.y += 100; r.updated_at = Date.now(); return r; }, s1.id);
+    const n0 = (await writes(p)).length;
+    let ret = await p.evaluate((r) => window.A.applyRows([r]), moved);
+    t.eq("applyRows returns the ids it changed", ret, [s1.id]);
+    await p.evaluate(() => document.activeElement?.blur?.());
+    await p.keyboard.press("Control+z");
+    await p.waitForTimeout(500);
+    let w = (await writes(p)).slice(n0);
+    const ids = (x) => x.req.op === "batch" ? x.req.items.map((i) => i.id) : [x.req.id];
+    t.ok("Ctrl+Z undoes the other stroke's nudge (its step kept)", w.some((x) => ids(x).includes(s2.id)), w.map((x) => [x.req.op, ids(x)]));
+    await p.keyboard.press("Control+z");   // (kept steps: s2's create, then its nudge; s1's nudge would come between)
+    await p.waitForTimeout(500);
+    w = (await writes(p)).slice(n0);
+    t.ok("…and never writes the changed row's old copy back (its steps are dropped)", !w.some((x) => ids(x).includes(s1.id)), w.map((x) => [x.req.op, ids(x)]));
+    // the changed row is what the annotator now holds: select-all + delete removes it (a delete write for it)
+    const n1 = (await writes(p)).length;
+    // a new row and a tombstone
+    const fresh = { ...structuredClone(s1), id: "00000000000000f1", created_at: Date.now(), updated_at: Date.now() };
+    ret = await p.evaluate((f) => window.A.applyRows([f, { ...f, id: "00000000000000f2", target_asset_id: "another-asset" }]), fresh);
+    t.eq("a new row comes in, another asset's row is ignored", ret, [fresh.id]);
+    ret = await p.evaluate((f) => window.A.applyRows([{ ...f, id: "00000000000000f3" }]), fresh);
+    ret = await p.evaluate((f) => window.A.applyRows([{ ...f, id: "00000000000000f3", deleted_at: Date.now() }, { ...f, id: "00000000000000f4", deleted_at: Date.now() }]), fresh);
+    t.eq("a tombstone removes the row (one not held: nothing)", ret, ["00000000000000f3"]);
+    await p.mouse.click(200, 250);   // the moved s1 (down 100 px)
+    await p.keyboard.press("Delete");
+    await p.waitForTimeout(400);
+    w = (await writes(p)).slice(n1);
+    t.ok("the applied copy is the one on screen (a click where it moved to selects it)", w.some((x) => x.req.op === "delete" && x.req.id === s1.id), w.map((x) => [x.req.op, ids(x)]));
+    t.ok("…and applying rows wrote nothing by itself", !w.some((x) => x.req.op !== "delete"), w.map((x) => x.req.op));
+    // a row with a write still queued here is left alone
+    await p.evaluate(() => { window.__fail = true; });
+    await p.mouse.click(200, 150);   // the new row f1 sits where s1 was
+    await p.keyboard.press("ArrowRight");
+    await p.waitForTimeout(500);
+    ret = await p.evaluate((f) => window.A.applyRows([{ ...f, z_index: 9 }]), fresh);
+    t.eq("a row with a write of this window still queued is not applied", ret, []);
+    // …but its tombstone is: the row goes, with the queued patch
+    ret = await p.evaluate((f) => window.A.applyRows([{ ...f, deleted_at: Date.now(), updated_at: Date.now() }]), fresh);
+    t.eq("a tombstone of a row with a queued patch removes it", ret, [fresh.id]);
+    const left = await p.evaluate((id) => Object.keys(localStorage).filter((k) => k.startsWith("fakehost:ap:")).some((k) => localStorage.getItem(k).includes(id)), fresh.id);
+    t.ok("…and drops the queued patch", !left, left);
+    await p.evaluate(() => { window.__fail = false; });
+    // (a note first: it takes the loose drawings, so the row below stays loose and unwritten)
+    await p.fill(".an-panel .an-input", "a note");
+    await p.press(".an-panel .an-input", "Enter");
+    await p.waitForSelector(".an-panel .an-note .an-nt", { timeout: 5000 });
+    await p.waitForTimeout(800);
+    // an older copy than the one held is not applied; rows with no target are not this file's
+    const g = { ...structuredClone(fresh), id: "00000000000000f5", updated_at: Date.now() };
+    await p.evaluate((g) => window.A.applyRows([g]), g);
+    ret = await p.evaluate((g) => window.A.applyRows([{ ...g, z_index: 3, updated_at: g.updated_at - 1000 }, { ...g, id: "00000000000000f6", target_asset_id: undefined }]), g);
+    t.eq("an older copy and a row with no target are left alone", ret, []);
+    // while a note editor is open the rows wait, then apply
+    await p.dblclick(".an-panel .an-note .an-nt");
+    await p.waitForSelector(".an-panel .an-nedit", { timeout: 3000 });
+    ret = await p.evaluate((g) => window.A.applyRows([{ ...g, z_index: 5, updated_at: Date.now() }]), g);
+    await p.waitForTimeout(400);
+    const still = await p.evaluate(() => !!document.querySelector(".an-panel .an-nedit"));
+    t.ok("an open note editor makes the rows wait (the editor stays)", ret.length === 0 && still, [ret, still]);
+    await p.fill(".an-panel .an-nedit", "the note, typed on");
+    await p.press(".an-panel .an-nedit", "Enter");
+    await p.waitForTimeout(600);
+    const typed = await p.evaluate(() => [...window.__rows.values()].some((r) => r.kind === "note" && r.data.text === "the note, typed on"));
+    ret = await p.evaluate((g) => window.A.applyRows([{ ...g, z_index: 5, updated_at: Date.now() }]), g);
+    t.ok("…the typed text is kept, and the waiting row was applied once the editor closed", typed && ret.length === 0, [typed, ret]);
+    // a deleted status row clears the state
+    // the review state
+    await p.evaluate(() => window.A.applyRows([{ id: "00000000000000e1", kind: "status", target_asset_id: "fake-asset-1", updated_at: Date.now(), data: { state: "approved", history: [{ state: "approved", author: "Elsewhere", at: Date.now() }] } }]));
+    const on = await p.evaluate(() => document.querySelector(".an-panel [data-rs=approved]")?.classList.contains("on"));
+    t.ok("a status row sets the review state shown", on, on);
+    await p.evaluate(() => window.A.applyRows([{ id: "00000000000000e1", kind: "status", target_asset_id: "fake-asset-1", updated_at: Date.now(), deleted_at: Date.now(), data: {} }]));
+    const cleared = await p.evaluate(() => document.querySelector(".an-panel [data-rs='']")?.classList.contains("on"));
+    t.ok("…a deleted one clears it", cleared, cleared);
+    await p.click(".an-panel [data-rs=changes]");
+    await p.waitForTimeout(300);
+    await p.evaluate(() => window.A.applyRows([{ id: "00000000000000e1", kind: "status", target_asset_id: "fake-asset-1", updated_at: Date.now() - 5000, data: { state: "approved" } }]));
+    const kept = await p.evaluate(() => document.querySelector(".an-panel [data-rs=changes]")?.classList.contains("on"));
+    t.ok("…one older than this window's own state write is ignored", kept, kept);
     await p.context().close();
   }
   // ---- undo of a note edit: fresh edited_at only for a store that merges on the server ----

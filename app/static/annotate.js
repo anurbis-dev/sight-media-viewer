@@ -604,7 +604,7 @@ export function createAnnotator(host){
   const S = {
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
     tool: "brush", gradeLines: readJSON("sight.annotate.gradeLines", true) !== false, styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
-    asset: null, kind: null, items: new Map(), saved: new Set(), loading: null, createdAt: new Map(),
+    asset: null, kind: null, items: new Map(), saved: new Set(), loading: null, createdAt: new Map(), seenAt: new Map(), applyQ: null, statusBusy: 0,
     sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
@@ -767,10 +767,11 @@ export function createAnnotator(host){
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
     rows = obOverlay(rows, a.id);  // writes still queued for this file count (re-opened before they landed)
-    S.items.clear(); S.saved.clear(); S.createdAt.clear();
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.seenAt.clear();
     // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
     const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
     S.status = st?.data?.state || "";
+    S.statusAt = Number(st?.updated_at) || 0;
     // Rows from 0.17.0 have no history: their current state is the one entry.
     S.statusHist = Array.isArray(st?.data?.history) ? st.data.history
       : st?.data?.state ? [{ state: st.data.state, author: st.data.author || "", at: st.data.at || st.updated_at }] : [];
@@ -781,6 +782,7 @@ export function createAnnotator(host){
       S.items.set(it.id, it);
       S.saved.add(it.id);
       if (Number.isFinite(Number(r.created_at)) && r.created_at != null) S.createdAt.set(it.id, Number(r.created_at));
+      if (Number(r.updated_at)) S.seenAt.set(it.id, Number(r.updated_at));
     }
     notesSig = noteSig();  // the baseline: deleting the last note must differ from it and refresh the card's chip
     looseSig = isBoard() ? null : pendingDrawings().length;  // same for the red dot: a drawing added or cleared after this
@@ -790,6 +792,95 @@ export function createAnnotator(host){
     renderMarks();
     paintBadge();
     loadVersions(a);
+  }
+  // Rows that changed elsewhere (a live update: Coreline's journal deltas), applied by id to the open file without a
+  // reload, so undo / redo survive. `rows`: whole rows as loadRows gives them (ms stamps); one with deleted_at set
+  // removes it; a `status` row sets the review state. Returns the ids changed now. Rows that cannot be applied safely
+  // now wait and are applied as soon as they can (S.applyQ): while the file loads, during a gesture (a stroke, a drag,
+  // the eraser), while an editor is open (text / pin on the picture, a note / reply / caption field), or while this
+  // window's review-state write is on the way. Left alone: rows of another asset / board; a row older than the copy
+  // held here (updated_at below the newest seen, or below a write of this window that landed since); a row with a
+  // write of this window queued or being typed (the store merges that write; a tombstone still removes the row and
+  // drops a queued patch). An undo / redo step that touches a changed row is dropped: replaying it would write the
+  // old copy back over the new one. Unused by Sight (no live updates; reload() re-reads instead).
+  function applyBusy(){
+    if (S.loading || S.drag || S.edit || S.pinEdit || S.statusBusy) return true;
+    return !!(S.ui?.querySelector(".an-list textarea, .an-list input") || S.light?.querySelector(".scp.editing"));
+  }
+  function applyRows(rows){
+    const a = S.asset;
+    if (!a || !supported() || !Array.isArray(rows)) return [];
+    const field = isBoard() ? "board_id" : "target_asset_id";
+    const mine = rows.filter((r) => r && typeof r.id === "string" && r[field] === a.id);
+    if (!mine.length) return [];
+    if (applyBusy()){
+      const q = S.applyQ || (S.applyQ = { aid: a.id, rows: [], timer: 0 });
+      if (q.aid !== a.id){ q.aid = a.id; q.rows = []; }
+      q.rows.push(...mine);
+      clearTimeout(q.timer);
+      q.timer = setTimeout(applyLater, 250);
+      return [];
+    }
+    return applyNow(mine);
+  }
+  function applyLater(){
+    const q = S.applyQ;
+    if (!q) return;
+    if (S.asset?.id !== q.aid){ S.applyQ = null; return; }
+    if (applyBusy()){ q.timer = setTimeout(applyLater, 250); return; }
+    S.applyQ = null;
+    applyNow(q.rows);
+  }
+  // Newest updated_at of each row as this window last saw it (loaded / applied): an older copy is not applied.
+  const seenAt = (id) => Math.max(S.seenAt.get(id) || 0, (() => { const r = OB.recent.get(id); return r ? r.sentAt || 0 : 0; })());
+  function applyNow(rows){
+    const changed = new Set();
+    let status = null;
+    for (const r of rows){
+      const upd = Number(r.updated_at) || 0;
+      if (r.kind === "status"){ if (!status || upd >= (Number(status.updated_at) || 0)) status = r; continue; }
+      if (upd && upd < seenAt(r.id)) continue;
+      const queued = OB.map.get(r.id);
+      if (r.deleted_at){
+        if (queued && (queued.op === "del" || queued.create)) continue;  // our own delete, or our create / revive on the way
+        if (queued){ OB.map.delete(r.id); obSave(); }  // a patch of a gone row: the server would skip it anyway
+        S.dirty.delete(r.id);
+        if (S.items.has(r.id)){ S.items.delete(r.id); S.sel.delete(r.id); changed.add(r.id); }
+        S.saved.delete(r.id);
+        if (upd) S.seenAt.set(r.id, upd);
+        continue;
+      }
+      if (queued || S.dirty.has(r.id)) continue;
+      if (upd) S.seenAt.set(r.id, upd);
+      if (Number.isFinite(Number(r.created_at)) && r.created_at != null) S.createdAt.set(r.id, Number(r.created_at));
+      const it = { id: r.id, kind: r.kind, sub: r.shape_kind || null, z: r.z_index || 0, data: r.data || {} };
+      const prev = S.items.get(r.id);
+      if (!validItem(it)){  // a version this client cannot show: not the stale copy either
+        if (prev){ S.items.delete(r.id); S.sel.delete(r.id); changed.add(r.id); }
+        continue;
+      }
+      S.saved.add(r.id);
+      if (prev && prev.kind === it.kind && prev.sub === it.sub && prev.z === it.z && RC.same(prev.data, it.data)) continue;
+      S.items.set(r.id, it);
+      changed.add(r.id);
+    }
+    // (the review state: not older than the one held — loaded, applied, or written by this window)
+    if (status && (Number(status.updated_at) || 0) < (S.statusAt || 0)) status = null;
+    if (status){
+      S.statusAt = Number(status.updated_at) || S.statusAt;
+      const d = status.deleted_at ? {} : status.data || {};
+      S.status = d.state || "";
+      S.statusHist = Array.isArray(d.history) ? d.history : d.state ? [{ state: d.state, author: d.author || "", at: d.at || status.updated_at }] : [];
+      paintStatus();
+    }
+    if (!changed.size) return [];
+    const touches = (e) => [...e.before.keys(), ...e.after.keys()].some((id) => changed.has(id));
+    S.undo = S.undo.filter((e) => !touches(e));
+    S.redo = S.redo.filter((e) => !touches(e));
+    for (const id of changed) if (!S.items.has(id)) S.adopt.delete(id);
+    afterChange();
+    paintBar();
+    return [...changed];
   }
   // ---- versions / review state ------------------------------------------------------------------
   async function loadVersions(a){
@@ -870,18 +961,20 @@ export function createAnnotator(host){
   }
   async function setStatus(state){
     if (!S.asset) return;
-    const a = S.asset, was = S.status;
+    const a = S.asset, was = S.status, wasAt = S.statusAt;
     S.status = state;
     paintStatus();
+    S.statusBusy++;  // (applyRows waits meanwhile, and takes no state row older than this write)
+    S.statusAt = Math.max(S.statusAt || 0, Date.now());
     try {
       const res = await store.setReviewState(a.id, state, reviewer());
       if (S.asset?.id === a.id && Array.isArray(res?.history)){ S.statusHist = res.history; paintStatus(); }
       host.onReviewChanged?.(a.id);
     } catch (e){
       console.warn(e);
-      if (S.asset?.id === a.id){ S.status = was; paintStatus(); }
+      if (S.asset?.id === a.id){ S.status = was; S.statusAt = wasAt; paintStatus(); }
       toast("Could not save the review state");
-    }
+    } finally { S.statusBusy--; }
   }
   const STATE_LABEL = { review: "Needs review", changes: "Changes requested", approved: "Approved" };
   const histLine = (h) => `${STATE_LABEL[h.state] || "Cleared"}${h.author ? " by " + h.author : ""} · ${fmtDate(h.at)}`;
@@ -5858,7 +5951,7 @@ export function createAnnotator(host){
     S.b2 = S.b3 = null;
     S.layer = null;
     S.anchors = {};
-    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.sel.clear(); S.crop = null;
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.seenAt.clear(); S.sel.clear(); S.crop = null;
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear(); S.adopt.clear();
@@ -6031,6 +6124,7 @@ export function createAnnotator(host){
       S.undo = []; S.redo = []; paintBar();
       Promise.resolve(flush()).then(() => { if (S.asset === a){ obForget(a.id); load(a); } }); // after its own pending save lands
     },
+    applyRows,
     // For the board view (canvas.js): save pending edits, drop a half-drawn gesture, the drawings' bounds, modal state.
     flush: () => flush(), abortGesture, modal: () => !!help || !!stampPop && !stampPop.hidden,
     bounds: () => { let b = null; for (const it of S.items.values()){ if (!isDrawing(it)) continue; const x = boundsOf(it); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x.slice(); } return b; },

@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.136.0 — 2026-11-26 — Annotation tools keep their settings
+- **What:** each drawing tool's colour, size and options stay as you left them on the next file and the next time Sight starts. Turning annotating on still starts on the brush. Right-click the pen (long-press with a finger) puts every tool back to the defaults; right-click one tool's icon (or long-press it) resets only that tool.
+- **Where:** `app/static/annotate.js` — `sharedStyles`, `sharedStamp`, `flushPrefs` on `pagehide` (capture) and `setAsset`, `resetTool`; `app/static/index.html` `bindAnnoReset`; `app/static/compare.js` pen tooltip. `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** the lightbox, compare and the board share one styles object and one stamp look. The tool in hand is not stored. Style and stamp writes are debounced; the flush runs in the capture phase so it lands in localStorage before index.html sends `settings.json`. A full reset still writes the shared objects in place. The shape tool's reset also clears the old ellipse slot. Selection-only property edits still do not become the tool's defaults (a colour-grade edit does). A mouse long-press on the pen no longer resets — that was easy to hit by holding the click.
+- **Review:** a fresh reviewer found the touch path double-fired. A finger or pen long-press both reset and toggled (or switched tool): `pointerup` cleared the timer before Windows fired `contextmenu` on release, the click then cleared the swallow flag, and that menu reset again. A release between the browser's menu (~500 ms) and the timer did both. Fixed the same way as the eye's onion toggle: `contextmenu` resets only for a mouse (a pen's barrel button counts as one); the timer is the touch path and `pointerup` only cancels it, so the click still sees the flag. The same reviewer confirmed that and found nothing new.
+
 ## 0.135.2 — 2026-11-26 — File drop zones no longer give up on untyped files
 - **What:** dropping a file always gets the two zones (sidebar = add, the rest = view). A file whose drag carries no directory entry — empty MIME or `application/octet-stream`, which is how a lot of real files arrive — used to be treated as a folder, so the zones never came up and the drop did nothing.
 - **Where:** `app/static/index.html` — `dropKind`, `readDropped`, capture `dragenter`/`dragover`; `tests/drop_files_e2e.cjs`; `docs/ARCHITECTURE.md`.

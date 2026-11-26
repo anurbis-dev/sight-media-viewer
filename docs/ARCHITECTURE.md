@@ -541,6 +541,17 @@ Store members (`?` = optional: missing hides the control and skips the feature):
   delete), `status_at` if the state differs, `edited` on a changed reply, a dropped reply as a tombstone
   (`{id, created, deleted}`; state entries are kept). False (Sight): undo restores the old stamps, so an undone copy
   never wins a later `.srev` merge against someone's newer edit.
+- Live updates (the annotator's API, not a store member): `applyRows(rows)` applies whole rows by id to the open file
+  (`deleted_at` removes a row, also one with a patch queued here, which is dropped; a `status` row sets or clears the
+  review state) and returns the ids changed now. Rows wait (`S.applyQ`, retried every 250 ms) while the file loads,
+  during a gesture, while an editor is open (text / pin, a note / reply field, a caption plate) or while this window's
+  review-state write is on the way. Left alone: rows of another asset / board or with no target, an older copy
+  (`updated_at` below the newest seen, `S.seenAt`, or below a landed write's send time), a row with a write of this
+  window queued or debounced. Undo / redo steps touching a changed row are dropped, so an echo of one's own write that
+  the server changed (a merge) also drops that step. A changed row calls `host.onReviewChanged` (via afterChange):
+  a host must not re-fetch and re-apply on it in a loop. Sight does not call it (`reload()` re-reads, clears undo).
+  It assumes one clock: the store's `updated_at` and this machine's send times are compared (as in `obOverlay`). A
+  state row older than the one held (loaded, applied, or this window's own `setStatus`) is ignored.
 - `queue: {prefix, legacy?}` — the write queue's localStorage keys: prefix + window id per window (Sight:
   `sight-annot-outbox:v2:`, legacy `["sight-annot-outbox:v1"]`; default `annot-outbox:<kind>:`). The prefix ends
   with ":" and its parts hold no ":" (a key is adopted only when what follows the prefix has none). One store object
