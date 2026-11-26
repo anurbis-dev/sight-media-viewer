@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.137.0 — 2026-11-26 — 3D camera eases, and Q/E move up and down
+- **What:** WASD fly eases in and out instead of starting and stopping dead. E raises the camera and Q lowers it. Shift slows the whole fly, the same way it slows pan and zoom.
+- **Where:** `app/static/index.html` — `makeCameraRig`, `CAM_MOVE_KEYS`, the 3D help and the Camera panel. `MANUAL.md`.
+- **Notes:** meshes and splats share the rig. Q/E move on world Y and fold into the same wish as WASD before one normalise. Shift multiplies that wish by `FINE`. Releasing a key or Shift eases out; velocity is cleared when the viewer is disposed and when the camera jumps (frame, recall, turn). Fly is ignored while annotating, in a text field, or with Ctrl/Alt/Cmd.
+- **Review:** the same reviewer that checked the guides merge found nothing wrong in the fly rig (wish axes, Shift, ease-out, halt on dispose and on a jump).
+
 ## 0.136.0 — 2026-11-26 — Annotation tools keep their settings
 - **What:** each drawing tool's colour, size and options stay as you left them on the next file and the next time Sight starts. Turning annotating on still starts on the brush. Right-click the pen (long-press with a finger) puts every tool back to the defaults; right-click one tool's icon (or long-press it) resets only that tool.
 - **Where:** `app/static/annotate.js` — `sharedStyles`, `sharedStamp`, `flushPrefs` on `pagehide` (capture) and `setAsset`, `resetTool`; `app/static/index.html` `bindAnnoReset`; `app/static/compare.js` pen tooltip. `MANUAL.md`, `docs/ARCHITECTURE.md`.

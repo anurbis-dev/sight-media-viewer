@@ -14,6 +14,29 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.142.1 — 2026-11-26 — R0a block 5: the annotator's CSS reads host tokens through `--an-*`
+- **What:** a refactor; Sight looks the same. Every theme / layout token the annotator's stylesheet takes from the
+  host goes through an `--an-<name>` property that falls back to Sight's name, so another host maps its own theme.
+  This is the last R0a block: R0a is done.
+- **Where:** `annotate.js` (the styles section, written by a script: 121 uses wrapped, nested fallbacks too; the
+  `--an-pwk` inline style). `tests/r0a_store_e2e.cjs` "tokens". `docs/ARCHITECTURE.md` "Annotator store".
+- **Notes:**
+  - Tokens: border, border-strong, fg, accent, subtle, surface, surface-2, surface-3, muted, ok, font, canvas-bg, bg,
+    ui-k, bar-h. Sight must never define an `--an-<token>` of these names. JS reads of `--bg` / `--bar-h` also try
+    `--an-bg` / `--an-bar-h` first.
+  - Left for later stages: UI strings through labels (R0e); dynamic `import()` was not needed for the optional
+    modules (the host hands them in through the store, block 1).
+- **Review:** a fresh agent undid the wrapping by script and got HEAD back byte for byte (no broken parenthesis,
+  `calc()`, prefix mix-up or lost fallback); no `--an-<token>` is defined anywhere in Sight. It found two tokens
+  read in JS with the raw name (`--bg` for a canvas snapshot's fill, `--bar-h` for the offer toast). Fixed: they
+  read `--an-*` first. The same reviewer confirmed the fix and found nothing new.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1, every test module incl. `test_r0_3d`, 187 tests): every R0 test passes except
+  R0Export's PDF check (as on origin/master here, see 0.141.5); `test_r0a_store` passes (57 checks). Otherwise the
+  known failures only: `test_pwa` ×4, `test_review_all.test_pdf_all`, `test_annot_tools.test_tools`,
+  `test_review_page.test_cut_copy_paste`, `test_sources.test_file_uri_to_path`. 2 skips by design.
+- **For the owner (Windows):** R0a touched every server call of the annotator. Worth a quick try in daily use: notes,
+  replies, the review state, screenshots, exports / import, the SG ▾ link, dictation, and a save while offline.
+
 ## 0.142.0 — 2026-11-26 — R0a block 4: apply rows by id (live updates without a reload)
 - **What:** the annotator's API has `applyRows(rows)`: rows changed elsewhere are applied by id to the open file, and
   undo / redo survive (a step that touches a changed row is dropped, never written back). For Coreline's live updates
@@ -486,9 +509,3 @@ Add new entries directly below this line.
 - **Where:** new `app/static/guides.js`; `app/static/index.html` — `mountGuides`, the button, `light.guideGeom`, `passThrough` on the lightbox annotator. `MANUAL.md`, `docs/ARCHITECTURE.md`.
 - **Notes:** positions are image pixels. `sight.guides` goes through `putSetting` (a bare localStorage write would be deleted on the next start). At most 400 files are kept. No new shortcut. Not on compare, not on the phone.
 - **Review:** a fresh reviewer found one hole: changing the grid snap step saved it but left the ruler ticks on the old step until the next pan or drag (`paintMenu` `applySnap` never called `refresh()`, while the density sliders did). Fixed: both the live input and the change call `refresh()` (it only redraws the overlay, so the field keeps focus). The same reviewer confirmed that and found nothing new. The pen button and its right-click reset from 0.136.0 stayed in place; the guides button sits after the flip button.
-
-## 0.137.0 — 2026-11-26 — 3D camera eases, and Q/E move up and down
-- **What:** WASD fly eases in and out instead of starting and stopping dead. E raises the camera and Q lowers it. Shift slows the whole fly, the same way it slows pan and zoom.
-- **Where:** `app/static/index.html` — `makeCameraRig`, `CAM_MOVE_KEYS`, the 3D help and the Camera panel. `MANUAL.md`.
-- **Notes:** meshes and splats share the rig. Q/E move on world Y and fold into the same wish as WASD before one normalise. Shift multiplies that wish by `FINE`. Releasing a key or Shift eases out; velocity is cleared when the viewer is disposed and when the camera jumps (frame, recall, turn). Fly is ignored while annotating, in a text field, or with Ctrl/Alt/Cmd.
-- **Review:** the same reviewer that checked the guides merge found nothing wrong in the fly rig (wish axes, Shift, ease-out, halt on dispose and on a jump).
