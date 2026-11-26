@@ -207,6 +207,8 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   (`_stage_animated`: what the loader makes clips of — a suffixed `xformOp:transform:*` counts only in a binary
   root layer, since the loader's text parser gives it no clip), remembered by `thumbs/usdz/<aid>.anim` (mtime-fresh,
   cleaned like the cached `.glb`; `USDZ_CONVERTER_VERSION` 3). `cloneModel` copies a USD root's `skeleton`.
+- Lightbox 3D fly (`makeCameraRig` in index.html, meshes and splats): WASD move on the camera's view axes (`getWorldDirection` and matrix column 0), Q down / E up on world Y, one normalised wish. Velocity eases toward that wish and back to zero (tau 0.18 s); it is cleared on dispose and when the rig jumps (frame, recall, turn), not on keyup. Shift multiplies the wish by `FINE` (body class `k-shift`). The loop skips only when velocity is ~0 and no fly key is held. Fly is ignored while annotating, in a text field, or with Ctrl/Alt/Cmd.
+- Lightbox guides (`app/static/guides.js`, picture / video / PSD only): overlay in image pixels via `attachViewer` geom (`light.guideGeom`, including `turn`). Modes grid / 1 / 2 / 3. Stored as `sight.guides` through `putSetting` (one object, per asset id, capped at 400). Hidden for 3D. A press on `.gd-hit` / `.gd-edit` is `passThrough` for the lightbox annotator.
 - Lightbox 3D explode (`model3d-core.js`, shared with the phone app): `buildExplodeRig` solves an explosion graph per assembly level of the node
   hierarchy (box-based blocking, grounded largest part, one model axis per part, ride-along carry);
   `applyExplode(rig, t)` only sets `position`. Rebuilt per load, independent of the 90° turns.

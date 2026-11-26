@@ -21,6 +21,15 @@
   double-click).
 - **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
   thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held R / Alt / Shift does on a picture or video (turn, scrub).
+- **Guides** — in the lightbox of a picture, a PSD or a video, the guides button in the top bar opens **Grid**,
+  **1-point**, **2-point** or **3-point** (choose it again, or **Off**, to hide it). **Grid** puts rulers along the
+  top and left edges of the picture, in image pixels: drag down from the top ruler for a vertical guide, drag right
+  from the left ruler for a horizontal one. Guides snap to the step in that menu (1–500 px, default 10); a field
+  while dragging, or a click on a guide, types an exact pixel. Drag a guide back onto its ruler to delete it.
+  A perspective mode places a handle for each vanishing point (drag it, including outside the picture) and draws
+  lines through the picture toward it; each point has its own line count (2–40, default 8). Guides stay stuck to
+  the picture through pan, zoom, turn and mirror, and are remembered on this computer for each file. The button
+  is hidden for 3D and for audio. Esc closes the menu.
 - **File info** — in the lightbox press `I` (or the round *i* button in the top-left corner) for a translucent info
   overlay in the top-left corner, like Blender's viewport info. It shows the file's basics plus what
   only that type has: EXIF/camera data for photos, codecs/frame rate/bit depth for video, sample
@@ -948,7 +957,7 @@
   Environment light also cast a soft shadow on it. A model opened recently is kept in
   memory (up to Settings → RAM cache) and reopens without the loading bar; a model
   bigger than that budget loads from disk every time.
-  - **Camera** — `W A S D` fly the camera (speed slider under Camera in the settings panel);
+  - **Camera** — `W A S D` fly the camera, `E` raises it and `Q` lowers it (the motion eases in and out; hold `Shift` to fly slower; speed slider under Camera in the settings panel);
     `F` frames the whole model again; `Alt+1…9` saves the current view under that digit
     (overwriting what was there) and `1…9` jumps back to it. Saved views are kept per model.
   - USD: `.usdz` is converted once into glTF when the optional usd-core library is installed; `.usd`,
