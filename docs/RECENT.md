@@ -60,6 +60,9 @@ Add new entries directly below this line.
 
   The same reviewer confirmed every fix. It re-ran a recall that ignores `cam.turns`, and the new checks caught it.
   Still uncovered: a note picked after a turn (`setView`'s turn line), and the splat's own turn.
+- **Suite** (SIGHT_REQUIRE_E2E=1, with usd-core): every R0 test passes. The same 9 failures as in 0.138.1, none from this
+  block: `test_pwa` ×4, `test_review_all.test_pdf_all`, `test_annot_tools.test_tools`,
+  `test_review_page.test_cut_copy_paste`, `test_sources` (`DropFilesE2E`, `file_uri_to_path`).
 - **Block 5 handoff** (the last R0-0 block; the owner runs it from a local session):
   - What is left, per docs/PLAN-coreline.md R0-0:
     - board annotations, compare (incl. dropped files), sequences, the library split (Tab);
