@@ -463,6 +463,18 @@ side-by-side/stacked); header button `#splitBtn` toggles the grid pane.
 
 (The same editor also runs on Canvas boards, scope `board` — see "Board annotations" under Canvas.)
 
+**Toolbar preferences** — one styles object and one frame-stamp look (`sharedStyles`, `sharedStamp` in
+annotate.js), shared by the lightbox, compare and the board. Keys: `sight.annotate.styles`,
+`sight.annotate.stamp` (hold, grade-line visibility and onion were already one device preference). The tool in
+hand is not saved: `toggle(true)` sets the brush. `saveStyles` / `saveStamp` debounce; `pagehide` in the capture
+phase (before index.html pushes `settings.json`) and `setAsset` call `flushPrefs`, so a quit inside the debounce
+still lands in localStorage before the server copy is sent. The next start would otherwise drop that write: the
+server copy replaces localStorage and deletes keys it does not have. Right-click on the pen (`bindAnnoReset`,
+a long-press for a finger or a pen) resets every tool, the hold time and the stamp look, in place (a replaced
+object would leave the other two annotators on the old one), and puts the brush in hand. Right-click on one
+tool icon (`resetTool`) resets only that slot (`rect` also resets the old `ellipse` slot). `pokeStyles` repaints
+every open toolbar.
+
 **Saving (the write queue, `OB` in annotate.js).** No annotator writes rows with fetch() itself: `serverCreate` /
 `stage` (the 300 ms debounced updates) / `serverDelete` put a full copy of the row into one module-level queue shared
 by every annotator (lightbox, board, compare) — one entry per row id, the newest wins (`put {body, create}` / `del`,

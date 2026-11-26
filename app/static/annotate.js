@@ -548,6 +548,13 @@ if (typeof window !== "undefined"){
 
 // =================================================================================================
 
+// One copy for the lightbox, the board and compare. Each used to keep its own and the last one to
+// save won, so a colour set on a picture could come back as the default on the next file.
+// The tool in hand is not one of these: annotation mode always starts on the brush.
+let sharedStyles = null, sharedStamp = null;
+const styleWatchers = new Set();
+function pokeStyles(){ for (const fn of styleWatchers){ try { fn(); } catch {} } }
+
 export function createAnnotator(host){
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
@@ -573,6 +580,7 @@ export function createAnnotator(host){
   function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
   function writeJSON(k, v){ try { host.putSetting(k, JSON.stringify(v)); } catch {} }
   function loadStyles(){
+    if (sharedStyles) return sharedStyles;
     const saved = readJSON("sight.annotate.styles", {}) || {};
     const out = {};
     for (const [k, v] of Object.entries(DEFAULT_STYLES)) out[k] = { ...v, ...(saved[k] || {}) };
@@ -594,16 +602,24 @@ export function createAnnotator(host){
     // The migrated styles are saved with the marker (the other annotators — board, compare — read them back).
     if (mig){ writeJSON("sight.annotate.styles", out); writeJSON("sight.annotate.fill50", true); }
     if (out.rect.shape !== "ellipse") out.rect.shape = "rect";
+    sharedStyles = out;
     return out;
   }
   function loadStamp(){
+    if (sharedStamp) return sharedStamp;
     const v = readJSON("sight.annotate.stamp", {}) || {}, d = STAMP_DEFAULT, hex = (x, f) => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x) ? x : f;
     const num = (x, lo, hi, f) => Number.isFinite(Number(x)) && x !== null && x !== "" ? Math.min(hi, Math.max(lo, Number(x))) : f;
-    return {
+    sharedStamp = {
       mode: ["both", "frame", "time"].includes(v.mode) ? v.mode : d.mode, size: num(v.size, 1, 8, d.size),
       color: hex(v.color, d.color), bg: hex(v.bg, d.bg), bgOp: num(v.bgOp, 0, 1, d.bgOp),
       font: ["normal", "bold", "mono"].includes(v.font) ? v.font : d.font, pos: STAMP_POS.includes(v.pos) && v.pos ? v.pos : d.pos,
     };
+    return sharedStamp;
+  }
+  // Reset replaces fields in place: the lightbox, the board and compare hold this one object.
+  function fillStamp(src){
+    for (const k of Object.keys(S.stamp)) delete S.stamp[k];
+    Object.assign(S.stamp, src);
   }
   // On / off belongs to the VIDEO, and it is ON by default: sight.annotate.stamp.videos is { assetId: false } for the
   // videos where it was switched off (the key goes when it is switched on again). On, it shows and is burned on every
@@ -616,9 +632,21 @@ export function createAnnotator(host){
     writeJSON("sight.annotate.stamp.videos", S.stampVideos);
   }
   let stampTimer = 0;
-  function saveStamp(){ clearTimeout(stampTimer); stampTimer = setTimeout(() => writeJSON("sight.annotate.stamp", S.stamp), 300); }
+  function flushStamp(){ clearTimeout(stampTimer); stampTimer = 0; writeJSON("sight.annotate.stamp", S.stamp); }
+  function saveStamp(){ clearTimeout(stampTimer); stampTimer = setTimeout(flushStamp, 300); }
   let styleTimer = 0;
-  function saveStyles(){ clearTimeout(styleTimer); styleTimer = setTimeout(() => writeJSON("sight.annotate.styles", S.styles), 400); }
+  function flushStyles(){ clearTimeout(styleTimer); styleTimer = 0; writeJSON("sight.annotate.styles", S.styles); }
+  function saveStyles(){ clearTimeout(styleTimer); styleTimer = setTimeout(flushStyles, 400); }
+  function flushPrefs(){ flushStyles(); flushStamp(); }
+  // Capture, so this runs before index.html's pagehide pushes settings.json. A colour changed inside
+  // the debounce would otherwise stay only in memory: the next start replaces localStorage with the server copy.
+  window.addEventListener("pagehide", flushPrefs, true);
+  // A reset on one toolbar repaints the others (they share the style and stamp objects).
+  styleWatchers.add(() => {
+    if (!S.bar) return;
+    paintBar(); renderProps();
+    try { paintStamp(true); paintStampPop(); } catch {}
+  });
   const reviewer = () => localStorage.getItem("sight.reviewer") || "";
 
   // ---- toast ---------------------------------------------------------------------------------
@@ -2774,7 +2802,7 @@ export function createAnnotator(host){
     bar.hidden = true;
     bar.innerHTML = `
       <div class="an-bar">
-        ${TOOLS.map((t) => t ? `<button type="button" class="an-tool" data-tool="${t[0]}" title="${esc(t[2])} (${t[1].replace("Key", "")})">${t[3]}</button>` : `<span class="an-sep"></span>`).join("")}
+        ${TOOLS.map((t) => t ? `<button type="button" class="an-tool" data-tool="${t[0]}" title="${esc(t[2])} (${t[1].replace("Key", "")})${DEFAULT_STYLES[t[0]] ? " · right-click or long-press: reset this tool" : ""}">${t[3]}</button>` : `<span class="an-sep"></span>`).join("")}
         <span class="an-sep"></span>
         <button type="button" class="an-tool" data-act="undo" title="Undo (Ctrl+Z)">${ICON.undo}</button>
         <button type="button" class="an-tool" data-act="redo" title="Redo (Ctrl+Shift+Z)">${ICON.redo}</button>
@@ -2788,7 +2816,30 @@ export function createAnnotator(host){
     bar.addEventListener("pointerdown", (e) => e.stopPropagation());
     // While a text is being edited, the bar's buttons must not take the focus from it.
     bar.addEventListener("mousedown", (e) => { if (S.edit && !e.target.closest("input, select")) e.preventDefault(); });
-    bar.querySelectorAll("[data-tool]").forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
+    bar.querySelectorAll("[data-tool]").forEach((b) => {
+      // Right-click resets this tool's own settings. A finger or a pen has no right button: the timer does it.
+      // Windows also fires contextmenu on that release — mouse only here, or the reset runs twice and the
+      // click still switches the tool (same split as the eye's onion toggle).
+      let lp = 0, longed = false, lastPT = "mouse", x = 0, y = 0;
+      const cancel = () => { clearTimeout(lp); lp = 0; };
+      b.addEventListener("pointerdown", (e) => {
+        longed = false; x = e.clientX; y = e.clientY;
+        lastPT = e.button === 2 ? "mouse" : (e.pointerType || "mouse");
+        cancel();
+        if (lastPT === "mouse") return;
+        lp = setTimeout(() => { lp = 0; longed = true; resetTool(b.dataset.tool); }, 550);
+      });
+      b.addEventListener("pointermove", (e) => { if (lp && Math.hypot(e.clientX - x, e.clientY - y) > 10) cancel(); });
+      for (const ev of ["pointerup", "pointercancel", "pointerleave"]) b.addEventListener(ev, cancel);
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (lastPT !== "mouse") return;
+        longed = true; // a click after this menu must not also switch the tool
+        resetTool(b.dataset.tool);
+      });
+      b.onclick = () => { if (longed){ longed = false; return; } setTool(b.dataset.tool); };
+    });
     bar.querySelector("[data-act=undo]").onclick = () => undo();
     bar.querySelector("[data-act=redo]").onclick = () => redo();
     {
@@ -2845,20 +2896,40 @@ export function createAnnotator(host){
   }
   // The shape tool's kind: R / O, the bar's Shape switch. (Old names still arrive: "ellipse".)
   function setShape(kind){ S.styles.rect.shape = kind; saveStyles(); setTool("rect"); }
-  // Long-press on the annotate button: every toolbar preference back to its default (tool, per-tool colours / sizes /
-  // options, the hold time, the frame stamp's look). The drawings, notes and the per-video stamp on / off stay.
+  // Right-click on the annotate button (a long-press with a finger or a pen): every toolbar preference
+  // back to its default — each tool's colours / sizes / options, the hold time, the frame stamp's look —
+  // and the brush is the tool in hand. The drawings, notes and the per-video stamp on / off stay.
   function resetPrefs(quiet){
-    S.styles = structuredClone(DEFAULT_STYLES);
-    S.stamp = { ...STAMP_DEFAULT };
+    const fresh = structuredClone(DEFAULT_STYLES);
+    for (const k of Object.keys(S.styles)) delete S.styles[k];
+    Object.assign(S.styles, fresh);
+    fillStamp({ ...STAMP_DEFAULT });
     S.hold = 0;
     clearTimeout(styleTimer); clearTimeout(stampTimer);
     writeJSON("sight.annotate.styles", S.styles); writeJSON("sight.annotate.stamp", S.stamp); writeJSON("sight.annotate.hold", S.hold);
-    if (S.bar){
-      if (S.on) setTool("brush"); else S.tool = "brush";
-      paintBar(); renderProps();
-      try { paintStamp(true); paintStampPop(); } catch {}
-    } else S.tool = "brush";
+    S.tool = "brush";
+    if (S.on) setTool("brush");
+    else pokeStyles();
     if (!quiet) toast("Annotation toolbar reset to defaults");
+  }
+  // Right-click on one tool's icon: only that tool's settings. The shape tool is `rect` (ellipse is its
+  // kind); the old ellipse slot is reset with it so a selected ellipse does not keep a stale default.
+  function resetTool(id){
+    if (id === "line") id = "arrow";
+    const dflt = DEFAULT_STYLES[id];
+    if (!dflt || !S.styles[id]) return;
+    const put = (key, src) => {
+      const slot = S.styles[key];
+      for (const k of Object.keys(slot)) delete slot[k];
+      Object.assign(slot, structuredClone(src));
+    };
+    put(id, dflt);
+    if (id === "rect") put("ellipse", DEFAULT_STYLES.ellipse);
+    clearTimeout(styleTimer); styleTimer = 0;
+    writeJSON("sight.annotate.styles", S.styles);
+    pokeStyles();
+    const name = (TOOLS.find((t) => t && t[0] === id)?.[2] || id).split(" — ")[0].split(" · ")[0];
+    toast(name + " reset to defaults");
   }
   function setTool(t){
     if (t === "ellipse"){ setShape("ellipse"); return; }
@@ -4807,7 +4878,7 @@ export function createAnnotator(host){
     pop.querySelectorAll("[data-sr]").forEach((r) => r.addEventListener("input", () => set(r.dataset.sr, Number(r.value))));
     pop.querySelectorAll("[data-sc]").forEach((c) => c.addEventListener("input", () => set(c.dataset.sc, c.value)));
     pop.querySelector("[data-sx=close]").onclick = () => closeStampPop();
-    pop.querySelector("[data-sx=reset]").onclick = () => { S.stamp = { ...STAMP_DEFAULT }; saveStamp(); paintStamp(true); paintStampPop(); };
+    pop.querySelector("[data-sx=reset]").onclick = () => { fillStamp({ ...STAMP_DEFAULT }); saveStamp(); paintStamp(true); paintStampPop(); };
     lightEl.appendChild(pop);
     stampPop = pop;
     host.registerAutoClose?.(pop, () => { pop.hidden = true; }, bar.querySelector("[data-act=stampset]"));
@@ -5403,7 +5474,7 @@ export function createAnnotator(host){
     if (want && !supported()){ toast("Annotations work on images, video and 3D models"); return false; }
     if (want === S.on) return true;
     S.on = want;
-    if (want){ S.tool = "brush"; S.crop = null; }  // the drawing mode always starts with the brush
+    if (want){ S.tool = "brush"; S.crop = null; }
     if (!want){
       closeHelp(); closeStampPop(); closeShotView(); S.stampDrag = false; finishEdit(); cancelRegion(); S.sel.clear(); S.crop = null; S.drag = null; S.pinFocus = null; flush();
       // A board keeps its drawings on show with the mode off: no hover circle, no "hidden" left over from the bar.
@@ -5690,6 +5761,7 @@ export function createAnnotator(host){
     host.onModeChange?.(false);
   }
   function setAsset(a){
+    flushPrefs(); // a colour or stamp change in the last moment still has to be stored before the next file
     // The plates first (an open edit saves into the old asset's notes), then the flush.
     S.plate?.destroy(); S.plate = null;
     closeShotView();

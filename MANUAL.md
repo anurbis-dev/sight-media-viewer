@@ -78,7 +78,10 @@
 - **Annotations & review** — in the lightbox of an image, PSD, video or 3D model press `A`
   (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
   appears at the top with a second row that always shows the settings of the current tool — or of
-  the selected drawings, which stay editable: every drawing is a vector object you can select, move,
+  the selected drawings, which stay editable. Each tool's colour, size and options are remembered for
+  the next file and the next time Sight starts. Turning annotating on always starts on the brush.
+  Right-click the pen button (long-press it with a finger) to put every tool back to the defaults;
+  right-click a tool's own icon (or long-press it) to reset only that tool. Every drawing is a vector object you can select, move,
   scale, rotate, restyle and delete at any time. With annotating off, a picture's or video's drawings still
   show while you just watch (a video's on their frames as it plays); the eye button next to the pen (or
   `Shift+H`) hides / shows them — the one eye, in the top bar, while drawing too (a board's sits next to its pen). In a 3D model a note shows a picture of each camera
@@ -232,8 +235,10 @@
     view changes: the file and the drawings on it stay as they are (drawings follow the turned /
     flipped picture). The version compare shows every file unturned and unmirrored. Mirror, flip and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
-  - **Reset the toolbar** — hold the pen button (the one that turns annotating on) for about a second: every tool's colours, sizes
-    and options, the hold time and the frame stamp's look return to their defaults (a normal click still toggles annotating).
+  - **Reset the toolbar** — right-click the pen button (the one that turns annotating on), or long-press it
+    with a finger: every tool's colours, sizes and options, the hold time and the frame stamp's look return
+    to their defaults, and the brush is in hand again (a normal click still toggles annotating). Right-click
+    one tool's icon in the drawing toolbar, or long-press it, resets only that tool.
   - **Turn by hand** — hold `R` and drag on a picture or a video: it turns about its own centre (where it is after panning, not the window centre; Shift+R too), to any angle (while
     annotating `R` is the rectangle tool, so hold `R` and Alt+drag. On a video a drag or Alt+drag scrubs, `Ctrl` held snaps it to the annotated frames. A clip with few keyframes — many phone and screen
     recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy
