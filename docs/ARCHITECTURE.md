@@ -40,6 +40,15 @@ app/static/viewer-input.js shared pointer / gesture layer for the viewers (attac
                          zoomFactorWheel, pinchTracker — the last three also used by canvas.js and bind3dZoom): Compare's
                          stage and the lightbox 2D viewer (`attachViewer`, kept as `stage._vinput`, destroyed by
                          the next attachViewer / `fillStage` / `closeLight`) — see Compare
+app/static/viewers/      the viewer modules (PLAN-coreline decision 8): viewer.js = the interface (kind, surface, media,
+                         docBox, geom, unturn, place / goTo, capture, fit / zoom, transport, destroy) + viewerFor(asset);
+                         view2d.js = the 2D core (element, doc box, zoom / pan / fit, turn / mirror, placeholder);
+                         image.js (mountImage) and video.js (mountVideo: seek pump, scrub copy, transport). index.html's
+                         `attachViewer` is only the frame: it picks the module and passes `viewerHost` (its hooks,
+                         listed at the top of view2d.js / video.js). Imports inside are relative. A viewer claims the
+                         lightbox through host.ctl() (Sight: `light`, read at call time) and hands itself to
+                         annotate.js `bind(viewer)`. Doc box: the decoded element's size (Sight); a host that plays a
+                         scaled rendition passes `opts.docSize` (native px) and the element is scaled into it.
 app/static/cursors.js    one cursor system for view gestures (setCursor / during / zoomCursor, ROTATE_CURSOR, --cur-rot)
                          — see "Cursors" under Frontend conventions
 app/static/keys.js       keyboard-shortcut helpers (hotkey / runHotkeys) — see rule below
@@ -934,7 +943,8 @@ shortcut must be added to those rows too. The top bars show only `HELP_HINT`. `.
 
 **Host hooks** — `createAnnotator(host)` gets `api, putSetting, registerAutoClose, toast, getV3D,
 setV3D, openAsset, onModeChange`. The lightbox calls `mount` / `unmount`, `setAsset(a)` (before
-`fillStage`), `attachViewer` calls `bind2d({wrap, media, isVid, geom})` + `viewChanged()` from
+`fillStage`), the 2D viewer (viewers/view2d.js) calls `bind(viewer)` (→ `bind2d({wrap, media, isVid, geom, unturn})`;
+the board and compare still call `bind2d` with their own view objects) + `viewChanged()` from
 `apply()`, `boot3d` calls `bindAnnot3d` → `bind3d({aid, host, getCam, setCam, capture,
 annotating})`; `capture()` renders and returns the WebGL canvas in the same task (no
 preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for this.

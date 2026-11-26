@@ -49,6 +49,24 @@ Add new entries directly below this line.
 - **For the owner (Windows):** try the lightbox with the library alongside, dragged narrow, and a phone browser on
   the HTML review / Coreline later.
 
+## 0.142.2 — 2026-11-27 — R0b-1: the viewer interface and the image / video viewer modules
+- **What:** pure refactor, no behaviour change. The lightbox's 2D player (`attachViewer`, ~460 lines of index.html)
+  moved into `app/static/viewers/`: `viewer.js` (the interface, PLAN-coreline decision 8), `view2d.js` (the shared core),
+  `image.js`, `video.js` (seek pump, scrub copy, transport). index.html's `attachViewer` is now the frame: it picks the
+  module and passes `viewerHost` (hooks into its globals). annotate.js got `bind(viewer)` → `bind2d`.
+- **Notes:** `light` is read at call time through `host.ctl()`. Listener order is kept on purpose (claims → early
+  seek listeners → load / ready → ResizeObserver → `wire()` → input → `annot.bind`). `opts.docSize` (a fixed native doc
+  box) is new and never passed by Sight. The video bar / scrub audio / RAM cache (R0b-2) and sequences / compare
+  driving viewers (R0b-3) are still in index.html (PLAN-coreline R0b).
+- **Review:** a fresh agent compared old and new line by line and found no bugs.
+- **Suite** (Windows, SIGHT_REQUIRE_E2E=1, 182 tests, 5 skipped): every R0 test passes; 11 known older failures
+  (the list in 0.141.4, one `test_pwa` case passed this time).
+- **Bench** (`tools/bench_lightbox.py`, this machine, 3 runs each, 23f6124 before / this block after, medians):
+  open image 19 / 19 / 19 ms before, 19 / 18 / 19 after; open video 51 / 51 / 50 both; frame step 32 / 32 / 33 before,
+  32 / 32 / 32 after. No change. (A first single before-run gave open image 13 ms; the base re-run shows that was noise.)
+- **Merge:** R0a blocks 1–5 (host.store, `--an-*` tokens) merged in first; annotate.js merged cleanly, `bind(viewer)` unchanged. The R0
+  suite and `test_r0a_store` pass on the merged code (one run had a transient `page: Worker terminate`; the re-run passed).
+
 ## 0.142.1 — 2026-11-26 — R0a block 5: the annotator's CSS reads host tokens through `--an-*`
 - **What:** a refactor; Sight looks the same. Every theme / layout token the annotator's stylesheet takes from the
   host goes through an `--an-<name>` property that falls back to Sight's name, so another host maps its own theme.
@@ -462,79 +480,3 @@ Add new entries directly below this line.
   the flick, the left ruler stretching and a 90° turn. The same reviewer confirmed all fixes. It also noted (older
   behaviour) that a tap on an existing guide where it crosses a ruler deleted it; now delete-on-ruler needs a real drag
   (or a fresh guide); confirmed by the same reviewer.
-
-## 0.138.1 — 2026-11-26 — R0-0 block 3: regression tests of the write queue, settings, shots, previews, dictation
-- **What:** the third block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator's plumbing does
-  now. No app code changed (only the version).
-- **Where:** `tests/test_r0_review.py` runs two page scripts on one temporary library:
-  - `tests/r0_queue_e2e.cjs`:
-    - offline → kept → online → saved: a create, a change and a create-then-delete wait in this window's
-      `sight-annot-outbox:v2:<window>` key (one entry per row), the badge counts them, the server has none; a reload
-      while offline keeps them (the pagehide beacon tried all three and failed; the new window adopts its own old key
-      and the layer shows the queued state); the badge's click sends them once each (no duplicate, the deleted one
-      never created, the outbox and badge gone);
-    - nothing revived, both paths pinned by the logged URL: a change of a row another window deleted goes in
-      `/api/annotations/batch` (skipped, no note); one queued offline until the batch failed twice goes alone as
-      `PATCH /api/annotations/<id>` (404: the refused note). The row stays a tombstone either way;
-    - a second window: a live window's outbox is left alone; a frozen one (a CDP debugger pause: its timers stop,
-      checked by its stamp staying stale) is adopted and sent by the next window; the frozen one, woken, drops its
-      copy and its next write of that row is a `POST` upsert (`OB.handed`), one row;
-    - **outboxes left by the old version**, written as literal 0.135.x JSON (frozen through R0): a closed window's v2
-      key with a create, a change, a delete and a create without `at`, plus the v1 key, are each sent once
-      (POST ×3, the batch, DELETE) and removed; a live window's v2 key is left alone;
-    - the pagehide keepalive beacon: a closed window's write goes as one keepalive POST; its key stays (ts 0) and the
-      next start sends it again as a POST upsert (still one row); closed while even the beacon fails, the next window
-      sends it at once. This pins `fetch(…, {keepalive: true})`: moving to `navigator.sendBeacon` would need the test
-      changed, in its own step;
-    - settings: `sight.annotate.styles` (a brush colour), `.filter`, `.stamp` (mode, position), `.stamp.videos` (off
-      for one clip) reach the server and come back in a fresh browser, shown in the UI; `hydrateSettings` drops a
-      `sight.*` key the server lacks and keeps one outside `sight.*`;
-    - touch: the badge's tap retries.
-  - `tests/r0_shots_e2e.cjs`:
-    - screenshots: S, Shift+S (an area, 240 × 120 → a 240 × 120 picture; Esc cancels), the composer's button, × drops
-      one, a click enlarges, the note's `data.shots`, its card;
-    - reference images (`kind: "image"`): the tool's click → the file picker; a card dragged from the library split
-      (Tab) lands where dropped; Shift+click + "add selected" (the range includes the open file: both are added);
-    - note previews: a picture note's card has the 720-px still (a blob) with its drawing in picture px; a video
-      note's frame is stored (`/api/review/nprev/<aid>`, key `f1.000`), loaded from there in a fresh browser, pruned
-      when the note goes;
-    - dictation with a stand-in `SpeechRecognition`: Alt+M on / off, words land in the note field, the mic button,
-      its right-click language list;
-    - touch: the screenshot button, the mic, the library button, a long press to select a card, "add selected".
-  - `docs/PLAN.md` "Found by the R0-0 regression tests", item 7: the picture jumps by a bar's height once a library
-    drag is under way (the `.vmodes` bar shows), so a drop lands off from where it was aimed before the jump.
-- **Notes:**
-  - Every write is logged by the wrapper (localStorage `__r0_writes`); storage is read from a same-origin page that is
-    not the app (`/api/settings`), and no other app page stays open in the beacon / old-outbox parts: an app page's
-    60 s re-adopt timer would take the keys being checked.
-  - "Offline" is a fetch wrapper per tab (sessionStorage `__r0_off`, kept across a reload), not `page.route`: a
-    keepalive request of a page being unloaded escapes the route, so the "reload while offline" case was sending
-    everything through the beacon. The wrapper fails writes as a network error does (the queue's "down" path).
-  - The app's pagehide pushes every `sight.*` key it holds (`settingsPushTimer` is never reset), so the
-    hydrateSettings case sets its keys from a same-origin page that is not the app (`/api/settings`).
-  - Opening the stamp's settings switches the stamp on for that clip; the checks allow for it.
-  - In the split a plain click shows the file in the lightbox; Ctrl+click and Shift+click only select (checked); on
-    touch a tap shows the file, a long press selects.
-  - Not done here: 3D (block 4), board / compare / sequences, exports, trackers, scale / theme (block 5). Queue
-    behaviour outside the R0-0 list is not pinned either: the `landedAt` guard (an adopted entry older than a write
-    this window landed), `obOverlay` (a GET racing a landed write), the pageshow / bfcache branch, the beacon's 60 KB
-    budget and in-flight skip, `obFlush` waiters.
-- **Review:** a fresh agent reviewed the block and mutated app code (obAdopt, OB_STALE, keepalive, PATCH revive,
-  hydrateSettings, writeJSON, storeRef, npPut, …) to test the checks. Caught at once: 9 of 13. It found:
-  - old-format outboxes never tested (a refactor dropping v1 / adding a required field stayed green);
-  - the beacon checks racing: other pages' 60 s re-adopt timer, and (on re-review) the closing page itself seeing the
-    keepalive answer and clearing its key; the wrapper now sends the keepalive write and never answers the page;
-  - the "freeze" not freezing (B refreshed its stamp; it passed only by timing);
-  - the hand-off upsert check vacuous (D had made the row);
-  - the revive case taking the batch or the single path by timing;
-  - × and Esc checks that could pass vacuously, a missing touch stop check;
-  - the `landedAt` guard uncovered (listed above as not done).
-
-  All but the last were fixed as described above. Re-review rounds found two more timing flakes, both fixed:
-  - the badge click racing the queue's own retry: the click may now time out quietly, and the checks after it stay strict;
-  - a fixed 300 ms wait racing the 300 ms debounce of a change: it is polled for now.
-
-  The same reviewer confirmed every fix. Every mutation it ran fails a named check, and 8 runs at once are green.
-- **Suite:** 9 failures, none from this block, which changes no app code:
-  - `test_pwa` ×4, `test_review_all.test_pdf_all`, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`, `test_sources.test_file_uri_to_path`: known;
-  - new on origin/master since 0.135.2: `test_sources.DropFilesE2E` fails on a clean checkout of it too (`dropKind is not defined` in `drop_files_e2e.cjs`).
