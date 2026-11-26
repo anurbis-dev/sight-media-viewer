@@ -28,6 +28,29 @@ const FILE = process.argv[3];
     assert.ok(libW >= 160, "library zone should match the sidebar width, got " + libW);
     await p.evaluate(() => { document.getElementById("srcDrop").hidden = true; });
 
+    // A file drag with no directory entry must stay a file drag — even when the MIME type is
+    // empty or application/octet-stream, which is how WebView2 delivers plenty of real files.
+    const kinds = await p.evaluate(() => {
+      const fake = (items, files) => ({ dataTransfer: { types: ["Files"], items, files: files || [] } });
+      const file = (type, entry) => ({ kind: "file", type, webkitGetAsEntry: () => entry });
+      return {
+        octet: dropKind(fake([file("application/octet-stream", null)], [{}])),
+        emptyType: dropKind(fake([file("", null)], [{}])),
+        image: dropKind(fake([file("image/png", null)], [{}])),
+        realFile: dropKind(fake([file("", { isFile: true, isDirectory: false })])),
+        folder: dropKind(fake([file("", { isFile: false, isDirectory: true })])),
+        noItems: dropKind(fake([], [])),
+        sight: dropKind({ dataTransfer: { types: ["Files", "application/x-sight-ids"], items: [], files: [] } }),
+      };
+    });
+    assert.strictEqual(kinds.octet, "file");
+    assert.strictEqual(kinds.emptyType, "file");
+    assert.strictEqual(kinds.image, "file");
+    assert.strictEqual(kinds.realFile, "file");
+    assert.strictEqual(kinds.folder, "folder");
+    assert.strictEqual(kinds.noItems, "file");
+    assert.strictEqual(kinds.sight, "");
+
     const viewed = await p.evaluate(async (path) => {
       const r = await fetch("/api/files/drop", {
         method: "POST", headers: { "content-type": "application/json" },

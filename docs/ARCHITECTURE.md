@@ -172,9 +172,14 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
   which is never walked or watched). `mode=view` returns an ephemeral asset (`Library.view_file`, same
   path-hash id, served by `/api/file` through `resolve_asset`) and does not insert a row. Overlay two
   zones while a file drag is over the window: left strip `calc(var(--side-w) * var(--ui-k))` in `--accent`
-  = library, the rest (white) = view. **A** on an ephemeral file promotes it (`mode=library`) then
+  = library, the rest (white) = view. A drag is a folder drag only when `webkitGetAsEntry()` says
+  directory; a missing entry or a non-media MIME (empty, `application/octet-stream`) stays a file
+  drag — those are common in WebView2 until drop, and used to hide the zones. `dragenter` and
+  `dragover` are accepted in the capture phase (the first events often have no `items` yet, so a
+  drop would otherwise be discarded). Entries and `getAsFile()` are read once, before the first await. **A** on an ephemeral file promotes it (`mode=library`) then
   annotates. At most 32 files; unsupported extensions are `missed.reason=unsupported`. An image drop
-  onto the annotator surface while drawing stays a reference picture.
+  onto the annotator surface while drawing stays a reference picture, matched by `image/*` or by the
+  same extensions as annotate.js `REF_RE` (type is often empty until drop).
 - `GET /api/app-info` feeds the About dialog (brand mark button `#aboutBtn`, overlay `#aboutOverlay` reusing `.fb-modal`): version, frozen, python, platform, starlette, three (parsed from `vendor/three.core.js` `REVISION`), usd, ffmpegPath/ffmpegVersion (tool facts probed once, cached in `static_info()`), home, dbPath/dbBytes, assets, sources, thumbnails (top-level files in `thumbs/`), port, dev, uptimeSec, logPath. `/api/health` is only `{ok,name}`, so nothing is duplicated.
 - Asset `status`: `ready` | `missing` (file gone) | `excluded` (hidden: inside an excluded folder,
   matched by the scan ignore list, or a compiled `.obj`). Excluded rows are kept so metadata survives;

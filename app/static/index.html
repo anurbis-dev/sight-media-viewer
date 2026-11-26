@@ -10493,32 +10493,28 @@ function dropUriList(dt){
   }
   return out;
 }
-function dropHasFolders(e){
+// "folder" only when a directory entry is actually there. Anything else in an OS file drag is a
+// file drag: WebView2 often leaves webkitGetAsEntry() null and item.type "" until drop, and plenty
+// of real media (.mkv, .exr, .psd, models) arrive as application/octet-stream. Treating those as
+// folders hid the two zones and sent the drop down the folder path, which then did nothing.
+function dropKind(e){
   const items = [...(e.dataTransfer?.items || [])];
-  if (!items.length) return osFileDrag(e);
-  let known = false;
+  let dirs = 0, files = 0, unknown = 0;
   for (const it of items){
     if (it.kind !== "file") continue;
-    const ent = it.webkitGetAsEntry?.();
-    if (ent){ known = true; if (ent.isDirectory) return true; continue; }
+    let ent = null;
+    try { ent = typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null; } catch { ent = null; }
+    if (ent && ent.isDirectory) dirs++;
+    else if (ent && ent.isFile) files++;
+    else unknown++;
   }
-  if (known) return false;
-  const typed = items.filter((it) => it.kind === "file" && it.type);
-  if (typed.length && typed.every((it) => /^(image|video|audio)\//.test(it.type))) return false;
-  return osFileDrag(e);
+  if (dirs) return "folder";
+  if (files || unknown || (e.dataTransfer?.files?.length)) return "file";
+  if (osFileDrag(e)) return "file";
+  return "";
 }
-function dropHasFiles(e){
-  const items = [...(e.dataTransfer?.items || [])];
-  if (!items.length) return osFileDrag(e) && !dropHasFolders(e);
-  let known = false;
-  for (const it of items){
-    if (it.kind !== "file") continue;
-    const ent = it.webkitGetAsEntry?.();
-    if (ent){ known = true; if (ent.isFile) return true; continue; }
-  }
-  if (known) return false;
-  return osFileDrag(e);
-}
+function dropHasFolders(e){ return dropKind(e) === "folder"; }
+function dropHasFiles(e){ return dropKind(e) === "file"; }
 function srcDropZone(e){
   const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-w")) || 208;
   return e.clientX < w * uiK() ? "library" : "view";
@@ -10539,28 +10535,43 @@ window.addEventListener("dragleave", (e) => {
   if (!osFileDrag(e)) return;
   if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) showSrcDrop(false);
 });
-window.addEventListener("dragover", (e) => {
-  if (![...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) return;
+// Capture, and on dragenter as well as dragover: a drop is discarded unless the drag was accepted,
+// and the first dragover often has an empty items list (only types includes "Files"). A child that
+// stops the event must not keep the window from accepting it.
+function onOsFileDrag(e){
+  if (!osFileDrag(e)) return;
   e.preventDefault();
-  if (!osFileDrag(e)){ showSrcDrop(false); return; }
-  if (dropHasFolders(e)){
-    try { e.dataTransfer.dropEffect = "copy"; } catch {}
-    showSrcDrop(true, "folder");
-    return;
-  }
-  if (dropHasFiles(e)){
-    try { e.dataTransfer.dropEffect = "copy"; } catch {}
-    showSrcDrop(true, "file");
-    const el = $("srcDrop");
-    if (el) el.dataset.hot = srcDropZone(e);
-    return;
-  }
-  showSrcDrop(false);
-});
+  const kind = dropKind(e);
+  if (!kind){ showSrcDrop(false); return; }
+  try { e.dataTransfer.dropEffect = "copy"; } catch {}
+  showSrcDrop(true, kind);
+  const el = $("srcDrop");
+  if (!el) return;
+  if (kind === "file") el.dataset.hot = srcDropZone(e);
+  else delete el.dataset.hot;
+}
+window.addEventListener("dragenter", onOsFileDrag, true);
+window.addEventListener("dragover", onOsFileDrag, true);
 function dropOnAnnotatorSurface(e){
   const drawing = (x) => { try { return !!x?.isOn?.(); } catch { return false; } };
   if (!drawing(annot) && !drawing(boardAnnot) && !drawing(cmpAnnot)) return false;
   return !!e.target?.closest?.(".light-frame, .cmp-stage, .canvas-viewport");
+}
+// One read per drop. webkitGetAsEntry / getAsFile are not reliable on a second call (WebView2),
+// and DataTransfer itself dies at the first await — so both happen here, before any await.
+function readDropped(items){
+  const pending = [];
+  let dirs = 0;
+  for (const it of items){
+    if (it.kind !== "file") continue;
+    let ent = null, file = null, handleP = null;
+    try { ent = typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null; } catch {}
+    try { file = it.getAsFile?.() || null; } catch {}
+    try { handleP = typeof it.getAsFileSystemHandle === "function" ? it.getAsFileSystemHandle() : null; } catch {}
+    if (ent && ent.isDirectory) dirs++;
+    pending.push({ entry: ent, file, handleP });
+  }
+  return { pending, dirs };
 }
 // Capture: the annotator / lightbox stopPropagation on image drops; folders still have to reach us.
 window.addEventListener("drop", (e) => {
@@ -10568,52 +10579,52 @@ window.addEventListener("drop", (e) => {
   const files = [...(e.dataTransfer?.files || [])];
   if (!items.length && !files.length) return;
   if (items.some((i) => i.kind === "file") || files.length) e.preventDefault(); // never let the browser navigate to a dropped file
-  const folderHint = osFileDrag(e) && dropHasFolders(e);
-  const fileHint = osFileDrag(e) && dropHasFiles(e);
+  const read = readDropped(items);
+  const kind = !osFileDrag(e) ? "" : read.dirs ? "folder" : (read.pending.length || files.length) ? "file" : "";
   const mode = srcDropZone(e);
+  const uris = dropUriList(e.dataTransfer);
   hideSrcDrop();
   const review = files.find((x) => /\.(srev|sightreview)$/i.test(x.name));
   if (review) annot.importFile(review);
-  if (!osFileDrag(e)) return;
-  if (folderHint) takeDroppedFolders(e, items);
-  else if (fileHint){
-    if (dropOnAnnotatorSurface(e) && files.some((f) => /^image\//.test(f.type))) return;
+  if (!kind) return;
+  if (kind === "folder") takeDroppedFolders(read.pending, uris, mode);
+  else {
+    // Same picture test as annotate.js onRefDrop (image/* or REF_RE). WebView2 often leaves
+    // File.type empty; the annotator still takes the file by name. Only dataTransfer.files counts:
+    // that is the list onRefDrop reads. A picture that exists only via getAsFile() would be dropped
+    // on the floor if we returned here.
+    const refImage = (f) => /^image\//.test(f.type || "") || /\.(jpe?g|png|gif|webp|bmp|avif|svg)$/i.test(f.name || "");
+    if (dropOnAnnotatorSurface(e) && files.some(refImage)) return;
     if (review && files.every((x) => /\.(srev|sightreview)$/i.test(x.name))) return;
-    takeDroppedFiles(e, items, mode);
+    takeDroppedFiles(read.pending, uris, mode);
   }
 }, true);
-async function takeDroppedFolders(e, items){
-  const folderHint = dropHasFolders(e); // DataTransfer types/items die after the first await
-  const uris = dropUriList(e.dataTransfer);
-  const pending = [];
-  for (const it of items){
-    if (it.kind !== "file") continue;
-    pending.push({
-      entry: it.webkitGetAsEntry?.() || null,
-      file: it.getAsFile?.() || null,
-      handleP: typeof it.getAsFileSystemHandle === "function" ? it.getAsFileSystemHandle() : null,
-    });
-  }
+async function takeDroppedFolders(pending, uris, mode){
   const names = [], paths = [...uris];
   let sawEntry = false, anyDir = false;
+  const files = [];
   for (const p of pending){
     let handle = null;
     try { handle = p.handleP ? await p.handleP : null; } catch {}
     if (p.entry) sawEntry = true;
     const isDir = !!(p.entry?.isDirectory || (handle && handle.kind === "directory"));
-    if (!isDir) continue;
+    if (!isDir){ if (p.entry?.isFile || handle?.kind === "file" || p.file) files.push({ ...p, handle }); continue; }
     anyDir = true;
     const name = (handle && handle.name) || p.entry?.name || p.file?.name || "";
     if (name) names.push(name);
     const path = typeof p.file?.path === "string" ? p.file.path : "";
     if (path) paths.push(path);
   }
-  if (!anyDir && sawEntry) return; // every entry was a file — do not POST their URIs
-  if (!names.length && !paths.length){
-    if (folderHint) flash("Could not add the folder — use + Folder", 4000);
+  if (!anyDir){
+    // Classified as a folder up front, but nothing here is a directory. Open it as files
+    // (the uri list too — that is all a path-less drop has).
+    takeDroppedFiles(files.length ? files : pending, uris, mode);
     return;
   }
-  if (!anyDir && !folderHint) return;
+  if (!names.length && !paths.length){
+    flash("Could not add the folder — use + Folder", 4000);
+    return;
+  }
   addDroppedFolders(paths, names);
 }
 async function addDroppedFolders(paths, names){
@@ -10653,22 +10664,12 @@ async function addDroppedFolders(paths, names){
     if (q) addDroppedFolders(q.paths, q.names);
   }
 }
-async function takeDroppedFiles(e, items, mode){
-  const uris = dropUriList(e.dataTransfer);
-  const pending = [];
-  for (const it of items){
-    if (it.kind !== "file") continue;
-    pending.push({
-      entry: it.webkitGetAsEntry?.() || null,
-      file: it.getAsFile?.() || null,
-      handleP: typeof it.getAsFileSystemHandle === "function" ? it.getAsFileSystemHandle() : null,
-    });
-  }
+async function takeDroppedFiles(pending, uris, mode){
   const names = [], paths = [...uris];
   let sawEntry = false, anyFile = false;
   for (const p of pending){
-    let handle = null;
-    try { handle = p.handleP ? await p.handleP : null; } catch {}
+    let handle = p.handle || null;
+    if (!handle){ try { handle = p.handleP ? await p.handleP : null; } catch {} }
     if (p.entry) sawEntry = true;
     const isDir = !!(p.entry?.isDirectory || (handle && handle.kind === "directory"));
     if (isDir) continue;
