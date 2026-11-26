@@ -6,7 +6,10 @@
 // guide, and stay inside the lightbox window when the edge is scrolled off). Drag down from
 // the top ruler for a vertical guide, right from the left ruler for a horizontal one. Drag a
 // guide back onto its ruler, Ctrl+click it or long-press it (touch) to delete it.
-// Perspective: one handle per vanishing point, lines through the picture toward that point.
+// Perspective (one menu item, 1 / 2 / 3 points; stored as mode "1" / "2" / "3", as 0.138 did): one handle per
+// vanishing point, lines through the picture toward it. A horizon line runs through points 1 and 2, which always
+// share it (2- and 3-point): dragging either point up / down, or the horizon, moves both. Point 3 (3-point) is the
+// zenith / nadir: free, but kept off the horizon.
 // Guides hide with the drawings (the eye, Shift+H: hooks.hidden).
 
 const STORE_KEY = "sight.guides";
@@ -25,7 +28,12 @@ let editGuide = null; // {kind, i, typing, origin}
 let suppressEdit = false;
 
 function blank(){
-  return { mode: "", snap: 10, v: [], h: [], pts: {}, dens: [8, 8, 8] };
+  return { mode: "", snap: 10, v: [], h: [], pts: {}, dens: [8, 8, 8], np: 1 };
+}
+const isPersp = (m) => m === "1" || m === "2" || m === "3";
+function clampNp(v){
+  const n = Math.round(Number(v));
+  return n >= 1 && n <= 3 ? n : 1;
 }
 function clampSnap(v){
   const n = Math.round(Number(v));
@@ -78,8 +86,10 @@ function loadPts(raw){
 function loadRec(id){
   const r = readAll()[String(id)] || {};
   const dens = [0, 1, 2].map((i) => clampDens(Array.isArray(r.dens) ? r.dens[i] : 8));
+  const mode = MODES.includes(r.mode) ? r.mode : "";
   return {
-    mode: MODES.includes(r.mode) ? r.mode : "",
+    mode,
+    np: isPersp(mode) ? Number(mode) : clampNp(r.np ?? 1),
     snap: clampSnap(r.snap ?? 10),
     v: nums(r.v),
     h: nums(r.h),
@@ -92,10 +102,10 @@ function save(){
   const all = readAll();
   delete all[assetId];
   const keep = rec.mode || rec.v.length || rec.h.length || Object.keys(rec.pts).length
-    || rec.snap !== 10 || rec.dens.some((d) => d !== 8);
+    || rec.snap !== 10 || rec.dens.some((d) => d !== 8) || rec.np !== 1;
   if (keep){
     all[assetId] = {
-      mode: rec.mode, snap: rec.snap, v: rec.v, h: rec.h, pts: rec.pts, dens: rec.dens,
+      mode: rec.mode, snap: rec.snap, v: rec.v, h: rec.h, pts: rec.pts, dens: rec.dens, np: rec.np,
     };
   }
   const keys = Object.keys(all);
@@ -205,7 +215,27 @@ function pointsFor(g){
     const p = saved[i];
     out.push(p ? { x: p[0], y: p[1] } : defaultPt(rec.mode, i, g.w, g.h));
   }
+  // 0.138 kept 2- / 3-point points at any height: they now share one horizon (their mean height).
+  if (n >= 2 && out[0].y !== out[1].y){
+    const hy = (out[0].y + out[1].y) / 2;
+    out[0].y = hy; out[1].y = hy;
+  }
+  keepOffHorizon(out, g, 2);
   return out;
+}
+// The zenith / nadir point is kept at least 5 % of the picture's height off the horizon. `moved`: which one the
+// person moves (2 = point 3; otherwise the horizon gives way).
+function keepOffHorizon(list, g, moved){
+  if (list.length < 3) return;
+  const min = 0.05 * g.h, hy = list[0].y, p3 = list[2];
+  if (Math.abs(p3.y - hy) >= min) return;
+  if (moved === 2){
+    const side = p3.y >= hy ? 1 : -1;
+    p3.y = hy + side * min;
+  } else {
+    const side = hy >= p3.y ? 1 : -1;
+    list[0].y = list[1].y = p3.y + side * min;
+  }
 }
 function storePoints(list){
   rec.pts[rec.mode] = list.map((p) => [p.x, p.y]);
@@ -329,6 +359,10 @@ function injectCss(){
 .gd-svg .gd-hit { touch-action: none; cursor: grab; }
 .gd-svg .gd-hit[data-k="v"], .gd-svg .gd-hit[data-k="h"] { pointer-events: stroke; }
 .gd-svg .gd-hit[data-k="vp"] { pointer-events: all; }
+.gd-svg .gd-hit[data-k="hz"] { pointer-events: all; }
+.gd-np { display: flex; gap: 2px; padding: 0 6px 0 4px; flex: none; }
+.gd-pop .gd-np button { width: 30px; height: 28px; padding: 0; justify-content: center; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.gd-pop .gd-np button.on { border-color: var(--accent); }
 .gd-svg .gd-hit[data-k="top"], .gd-svg .gd-hit[data-k="left"] { pointer-events: all; cursor: crosshair; }
 .gd-svg text, .gd-svg .gd-mark { pointer-events: none; }
 .gd-edit {
@@ -375,7 +409,7 @@ function paintMenu(){
     const on = rec.mode === mode;
     return `<button type="button" role="menuitemradio" aria-checked="${on ? "true" : "false"}" data-mode="${mode}" class="${on ? "on" : ""}"><span class="chk">${on ? "✓" : ""}</span>${label}</button>`;
   };
-  const nVp = rec.mode === "1" || rec.mode === "2" || rec.mode === "3" ? Number(rec.mode) : 0;
+  const nVp = isPersp(rec.mode) ? Number(rec.mode) : 0;
   const dens = nVp ? Array.from({ length: nVp }, (_, i) =>
     `<label class="gd-dens"><i style="background:${VP_COLOR[i]}"></i><span>Point ${i + 1}</span><input type="range" min="2" max="40" step="1" data-dens="${i}" value="${rec.dens[i]}" aria-label="Point ${i + 1} lines"><b>${rec.dens[i]}</b></label>`
   ).join("") : "";
@@ -383,23 +417,34 @@ function paintMenu(){
     ${row("", "Off")}
     <div class="gd-row">${row("grid", "Grid")}<label class="gd-field">Snap<input type="number" min="1" max="500" step="1" data-snap value="${rec.snap}" aria-label="Snap step in pixels">px</label></div>
     <div class="sep"></div>
-    ${row("1", "1-point")}
-    ${row("2", "2-point")}
-    ${row("3", "3-point")}
+    <div class="gd-row"><button type="button" role="menuitemradio" aria-checked="${nVp ? "true" : "false"}" data-mode="persp" class="${nVp ? "on" : ""}"><span class="chk">${nVp ? "✓" : ""}</span>Perspective</button><span class="gd-np" role="group" aria-label="Vanishing points">${[1, 2, 3].map((n) =>
+      `<button type="button" role="menuitemradio" data-np="${n}" class="${rec.np === n ? "on" : ""}" aria-checked="${nVp && rec.np === n ? "true" : "false"}" title="${n}-point perspective">${n}</button>`).join("")}</span></div>
     ${dens}`;
   pop.querySelectorAll("[data-mode]").forEach((b) => {
     b.onclick = () => {
       const m = b.dataset.mode;
-      rec.mode = m && m === rec.mode ? "" : m;
-      save();
-      // Picking guides while the eye hides them shows them (and the drawings: one state).
-      if (rec.mode && hooks.hidden?.()) hooks.reveal?.();
-      paintBtn();
-      paintMenu();
-      refresh();
-      hooks.onModeChange?.();
+      if (m === "persp") rec.mode = isPersp(rec.mode) ? "" : String(rec.np);
+      else rec.mode = m && m === rec.mode ? "" : m;
+      pickedMode();
     };
   });
+  // The point count: picks it and turns perspective on with it.
+  pop.querySelectorAll("[data-np]").forEach((b) => {
+    b.onclick = () => {
+      rec.np = clampNp(b.dataset.np);
+      rec.mode = String(rec.np);
+      pickedMode();
+    };
+  });
+  function pickedMode(){
+    save();
+    // Picking guides while the eye hides them shows them (and the drawings: one state).
+    if (rec.mode && hooks.hidden?.()) hooks.reveal?.();
+    paintBtn();
+    paintMenu();
+    refresh();
+    hooks.onModeChange?.();
+  }
   const snap = pop.querySelector("[data-snap]");
   const applySnap = () => {
     const n = Number(snap.value);
@@ -620,6 +665,7 @@ function onPointerDown(e){
     return;
   }
   if (k === "vp") beginVpDrag(e, view, g, Number(hit.dataset.i), snap, vx, vy);
+  else if (k === "hz") beginVpDrag(e, view, g, -1, snap, vx, vy);
 }
 
 function deleteGuide(kind, i){
@@ -747,8 +793,20 @@ function moveVp(e){
   const [vx, vy] = clientToView(e, view);
   drag.vx = vx; drag.vy = vy;
   const [ix, iy] = viewToImg(vx, vy, g);
-  drag.list[drag.i] = { x: clampVp(ix, g.w, g.h), y: clampVp(iy, g.w, g.h) };
-  storePoints(drag.list);
+  const list = drag.list, n = list.length;
+  const x = clampVp(ix, g.w, g.h), y = clampVp(iy, g.w, g.h);
+  if (drag.i < 0){
+    // The horizon: the points on it move up / down with it (the 1-point one too), x stays.
+    for (let i = 0; i < Math.min(n, 2); i++) list[i] = { x: list[i].x, y };
+  } else if (drag.i < 2 && n >= 2){
+    list[drag.i] = { x, y };
+    const o = 1 - drag.i;
+    list[o] = { x: list[o].x, y };
+  } else {
+    list[drag.i] = { x, y };
+  }
+  keepOffHorizon(list, g, drag.i);
+  storePoints(list);
   refresh();
 }
 function upVp(){
@@ -758,7 +816,7 @@ function upVp(){
   drag = null;
   clearDragCursor();
   if (!moved){ if (snap) restore(snap); refresh(); return; }
-  if (list) storePoints(list.map((p) => ({ x: round1(p.x), y: round1(p.y) })));
+  if (list) storePoints(list.map((p) => ({ x: round1(p.x), y: round1(p.y) })));   // (points 1 and 2 round alike)
   save();
   refresh();
 }
@@ -781,7 +839,7 @@ function draw(view, g){
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   const parts = [];
   if (rec.mode === "grid") parts.push(...drawGrid(g, w, h));
-  else if (rec.mode === "1" || rec.mode === "2" || rec.mode === "3") parts.push(...drawPersp(g));
+  else if (isPersp(rec.mode)) parts.push(...drawPersp(g, w, h));
   svg.innerHTML = parts.join("");
   placeEdit(view, g);
 }
@@ -853,10 +911,46 @@ function rulerTicks(f, g){
   return parts;
 }
 
-function drawPersp(g){
+function drawPersp(g, W, H){
   const list = drag?.kind === "vp" && drag.list ? drag.list : pointsFor(g);
   const parts = [];
   const n = list.length;
+  // The horizon through point 1 (and 2), across the window: image y = hy from the window's leftmost to rightmost x.
+  if (n){
+    const hy = list[0].y;
+    const xs = [[0, 0], [W, 0], [0, H], [W, H]].map(([x, y]) => viewToImg(x, y, g)[0]);
+    const pad = 40 / g.s;
+    const a = imgToView(Math.min(...xs, 0) - pad, hy, g), b = imgToView(Math.max(...xs, g.w) + pad, hy, g);
+    if ([...a, ...b].every(Number.isFinite)){
+      const on = drag?.kind === "vp" && drag.i < 0;
+      parts.push(`<line class="gd-mark" x1="${px(a[0])}" y1="${px(a[1])}" x2="${px(b[0])}" y2="${px(b[1])}" stroke="var(--fg)" stroke-opacity="${on ? ".95" : ".6"}" stroke-width="${on ? 1.5 : 1}" stroke-dasharray="6 4"/>`);
+      // Only a small tab grabs the horizon (a band across the window would eat strokes, pans and pinches): halfway
+      // between points 1 and 2, kept in the window. 1-point has none: its point moves the horizon.
+      if (n >= 2){
+        const p1 = imgToView(list[0].x, hy, g), p2 = imgToView(list[1].x, hy, g);
+        const u = dir(a, b), r = coarse() ? 14 : 8, m = r + 6;
+        let c = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+        // Slide it along the horizon into the window if the midpoint is off screen.
+        const inside = (q) => q[0] >= m - 0.01 && q[0] <= W - m + 0.01 && q[1] >= m - 0.01 && q[1] <= H - m + 0.01;
+        if (!inside(c)){
+          let best = null;
+          for (const [k, lim] of [[0, m], [0, W - m], [1, m], [1, H - m]]){
+            if (Math.abs(u[k]) < 1e-9) continue;
+            const tt = (lim - c[k]) / u[k];
+            if (inside(add(c, u, tt)) && (best == null || Math.abs(tt) < Math.abs(best))) best = tt;
+          }
+          if (best != null) c = add(c, u, best);
+        }
+        if (c.every(Number.isFinite)){
+          // The drag runs across the horizon: ns-resize when it lies flat on screen, ew-resize when it is turned upright.
+          const cur = Math.abs(u[0]) >= Math.abs(u[1]) ? "ns-resize" : "ew-resize";
+          const pts = [add(c, u, -r * 1.6), add(c, [-u[1], u[0]], r), add(c, u, r * 1.6), add(c, [u[1], -u[0]], r)]
+            .map((q) => px(q[0]) + "," + px(q[1])).join(" ");
+          parts.push(`<polygon class="gd-hit" data-k="hz" points="${pts}" fill="var(--surface-2)" fill-opacity=".92" stroke="var(--fg)" stroke-opacity=".8" stroke-width="1" style="cursor:${cur}"><title>Horizon — drag to move points 1 and 2 up or down</title></polygon>`);
+        }
+      }
+    }
+  }
   for (let i = 0; i < n; i++){
     const vp = list[i];
     const col = VP_COLOR[i] || VP_COLOR[0];

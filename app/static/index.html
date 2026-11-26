@@ -8567,7 +8567,7 @@ function lightHelpGroups(){
       [["1–9"], "Zoom to that multiple of the native size (1 = 100 %)"],
       ...(light.turn ? [[["Shift+R"], "Turn 90°"], [["R (held) + drag"], "Turn to any angle (Shift during the drag: 15° steps; while drawing: R + Alt+drag)"]] : []),
       ...(light.mirror ? [[["Shift+M"], "Mirror — the mirror button"], [["Shift+V"], "Flip upside down — the flip button"]] : []),
-      ...(!$("guidesBtn")?.closest(".gd-anchor")?.hidden ? [[["Guides"], "Grid rulers, or 1- / 2- / 3-point perspective — the guides button in the top bar; Ctrl+click a guide (long-press with a finger) deletes it"]] : []),
+      ...(!$("guidesBtn")?.closest(".gd-anchor")?.hidden ? [[["Guides"], "Grid rulers, or perspective with 1, 2 or 3 vanishing points — the guides button in the top bar; Ctrl+click a guide (long-press with a finger) deletes it"]] : []),
       [["Shift (held)"], "Slower pan / zoom" + (vid ? " / scrub" : "")],
     ] });
   }

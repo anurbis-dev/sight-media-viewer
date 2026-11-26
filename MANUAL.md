@@ -21,16 +21,19 @@
   double-click).
 - **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
   thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held R / Alt / Shift does on a picture or video (turn, scrub).
-- **Guides** — in the lightbox of a picture, a PSD or a video, the guides button in the top bar opens **Grid**,
-  **1-point**, **2-point** or **3-point** (choose it again, or **Off**, to hide it). **Grid** puts rulers just
+- **Guides** — in the lightbox of a picture, a PSD or a video, the guides button in the top bar opens **Grid** or
+  **Perspective** with 1, 2 or 3 vanishing points (the count beside it; choose an item again, or **Off**, to hide it). **Grid** puts rulers just
   outside the top and left edges of the picture, in image pixels: drag down from the top ruler for a vertical guide,
   drag right from the left ruler for a horizontal one. A guide may go past the picture; its ruler then reaches out
   to it. Zoomed in, the rulers stay at the edge of the window. Guides snap to the step in the field beside **Grid**
   (1–500 px, default 10); a field while dragging, or a click on a guide, types an exact pixel. To delete a guide,
   `Ctrl`+click it, long-press it with a finger, or drag it back onto its ruler. `Shift+H` (or the eye button) hides
   and shows the guides together with the drawings; the eye shows whenever guides are on.
-  A perspective mode places a handle for each vanishing point (drag it, including outside the picture) and draws
-  lines through the picture toward it; each point has its own line count (2–40, default 8). Guides stay stuck to
+  Perspective places a handle for each vanishing point (drag it, including outside the picture) and draws lines
+  through the picture toward it; each point has its own line count (2–40, default 8). A dashed horizon runs through
+  point 1 (and 2). In 2- and 3-point perspective both points always sit on it, so moving either up or down, or
+  dragging the small diamond on the horizon between them, moves both (verticals stay vertical). Point 3 is the zenith / nadir: the vertical
+  lines run to it, and it is kept off the horizon. Guides stay stuck to
   the picture through pan, zoom, turn and mirror, and are remembered on this computer for each file. The button
   is hidden for 3D and for audio. Esc closes the menu.
 - **File info** — in the lightbox press `I` (or the round *i* button in the top-left corner) for a translucent info

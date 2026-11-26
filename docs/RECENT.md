@@ -14,6 +14,29 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.140.0 — 2026-11-26 — Guides: one Perspective item, real 2- and 3-point
+- **What:** the Guides menu has one **Perspective** item with a 1 / 2 / 3 count beside it (a count turns it on; the
+  item toggles it and keeps the last count). 2-point: both vanishing points sit on one dashed horizon; moving either
+  up / down, or dragging the diamond on the horizon, moves both. 3-point: the same two plus a zenith / nadir point,
+  kept at least 5 % of the height off the horizon. Lines still radiate from each point with their own count.
+- **Where:** `app/static/guides.js` (`isPersp`, `rec.np`, `pointsFor` evening-out, `keepOffHorizon`, `moveVp`
+  horizon drag `i = -1`, `drawPersp` horizon line + tab, the menu); `app/static/index.html` help text;
+  `tests/test_guides.py` (seeds a 0.138 entry) + `tests/guides_persp_e2e.cjs`; `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:**
+  - Stored modes stay "1" / "2" / "3" (`sight.guides`), so 0.138 entries load and 0.138 can still read new ones; old
+    2- / 3-point points at different heights are shown on their mean height (rewritten on the next drag). `np` is a
+    new field (the last count).
+  - Whatever is dragged gives way: dragging point 3 keeps it off the horizon; dragging the horizon (or point 1 / 2)
+    toward point 3 makes the horizon jump past it.
+  - The horizon line takes no presses: only its tab (halfway between points 1 and 2, slid into the window when that
+    is off screen; its cursor follows a turned view). 1-point has no tab: its point moves the horizon.
+  - Not done: vertical guide lines for 2-point (verticals are simply not drawn as a fan).
+- **Review:** a fresh reviewer found no correctness bugs. It found that a full-width horizon hit band ate pen strokes,
+  pans and pinches that started on that row (now a small tab), a fixed `ns-resize` cursor that was wrong on a turned
+  view (now per angle), plain buttons inside the `role=menu` (now `menuitemradio`), MANUAL wording for 1-point, and
+  test gaps: the Esc check only read storage (now the points on screen), no turned-view case (added), a touch drag
+  that grabbed near point 3 (now the tab). The same reviewer confirmed every fix and found nothing new.
+
 ## 0.139.0 — 2026-11-26 — Guides: rulers outside the picture, Ctrl+click delete, Shift+H
 - **What:** the grid's rulers lie just outside the picture's top / left edges, reach out to a guide dragged past the
   picture, and stay inside the window when zoomed in. Ctrl+click a guide (long-press with a finger) deletes it.
@@ -516,9 +539,3 @@ Add new entries directly below this line.
     (`setTimeout(updateInternal)` from the last render) firing after `spark.dispose()` and re-creating its sort / LoD
     workers → every dispose (lightbox, thumbnail, phone) now clears `spark.updateTimeoutId` first (confirmed by the same reviewer). Not covered by tests:
     the hint of an .spz over 64 KB (truncated gzip slice; falls back to size/4 on any error).
-
-## 0.131.0 — 2026-11-25 — Drop a file: sidebar adds it, the rest of the window just opens it
-- **What:** dropping a supported media file on the window either adds it to the library (left strip, the sidebar's width, in the accent colour) or only opens it in the viewer (the rest of the window, a white veil). Folders still add as sources (the whole-window overlay). **A** on a file that was only opened adds it, then drawing works.
-- **Where:** app/library.py — `ensure_dropped_source`, `add_dropped_file`, `view_file`, `resolve_asset`; app/server.py — `drop_file_paths`, `POST /api/files/drop`; app/static/index.html — `#srcDrop` two zones, `takeDroppedFiles` / `addDroppedFiles` / `ensureLightInLibrary`; tests/test_sources.py `DropFilesTest`; tests/drop_files_e2e.cjs; MANUAL, ARCHITECTURE.
-- **Notes:** files stay on disk; the parent folder is not added. **Dropped files** is an inbox source (`<SIGHT_HOME>/dropped`) that is never scanned or watched — each row keeps the original path; adding that folder later as a source reassigns the row (same path-hash id). View-only assets are in-memory (`Library._ephemeral`) so they are not in All / the grid. Same path already in the library: both zones return that row. 32-file cap, NFC name match, capture-phase drop, overlay hide timeout — same as folders. Image drop onto the annotator while drawing is still a reference picture. Overlay display uses `:not([hidden])` (a later `data-kind` rule had shown the overlay always). Busy file drops queue as separate jobs (mode is not mixed). A lone `.srev` is not POSTed as media.
-- **Review:** a fresh reviewer found: OS image drop while drawing on the board or compare still opened the file (→ `dropOnAnnotatorSurface` checks all three annotators and `.canvas-viewport` / `.cmp-stage`); overlay `[hidden]` lost to `[data-kind=folder]` so the tint stayed up (→ `:not([hidden])`); library-zone hit-test vs `min-width: 168px` at UI scale &lt; 1 (→ drop the min-width, JS already uses `--side-w × --ui-k`); view-only text / transcode / model sidecars / USDZ used `get_asset` (→ `resolve_asset`); `.srev` also POSTed as unsupported (→ skip); busy queue mixed modes (→ job list); compare **A** did not promote (→ `cmpToggleAnnot` through `ensureLightInLibrary`). Same reviewer then found leftover `scrub_audio_*` still on `get_asset` and compare A promoting `light.asset` instead of the selected layer (→ `resolve_asset`, `ensureInLibrary(assetById(cmp.selectedId()))`). It confirmed those. No new blocking issues.
