@@ -532,6 +532,11 @@ Store members (`?` = optional: missing hides the control and skips the feature):
 - `trackers?`: `api(key, p, opts)`, `rows(aid)` (with tombstones), `importPackage(pkg)` — the link ▾.
 - `dictation?(opts)` → dictation.js's `createDictationUI` (the mic; hidden without it).
 - `mergesOnServer` (Sight: false) — see the stamps rule in docs/PLAN-coreline.md R0a.
+- `queue: {prefix, legacy?}` — the write queue's localStorage keys: prefix + window id per window (Sight:
+  `sight-annot-outbox:v2:`, legacy `["sight-annot-outbox:v1"]`; default `annot-outbox:<kind>:`). The prefix ends
+  with ":" and its parts hold no ":" (a key is adopted only when what follows the prefix has none). One store object
+  per page: the queue starts on the first `createAnnotator` (`obStart`), another store throws. Window ids never hold
+  ":" (the adoption rule depends on it).
 
 **Reference images** (kind `image`, FORMAT.md) — a drawing whose picture is a shot (`/api/review/shots`, stored by
 `storeRef`: decoded in the browser, ≤ 2048 px, PNG when the source may have alpha else JPEG). Added by `addRefs`

@@ -37,6 +37,9 @@ export function createSightStore({ api }){
     kind: "sight",
     // Sight's server stores what it is sent (Library: created_at / updated_at are its own); undo restores old stamps.
     mergesOnServer: false,
+    // The write queue's localStorage keys: one per window (prefix + window id), plus the single key of 0.87.x.
+    // Outside "sight.*" on purpose: hydrateSettings() drops sight.* keys the server lacks.
+    queue: { prefix: "sight-annot-outbox:v2:", legacy: ["sight-annot-outbox:v1"] },
 
     // ---- rows ----
     // The rows of an asset ("asset") or a board ("board"), as the server has them.

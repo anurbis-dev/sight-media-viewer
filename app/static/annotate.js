@@ -234,7 +234,7 @@ const isDrawing = (it) => it.kind !== "note";
 const propType = (it) => { const t = typeOf(it); return t === "brush" && it.data?.close ? "lasso" : t; };
 // Tools that draw a freehand stroke (the brush circle follows the pointer).
 const freehand = (t) => STROKE_TOOLS.has(t) || t === "lasso";
-// Reference images (kind "image") show the store's shots: RC.setImageSource(store.shotSrc), set with the first store.
+// Reference images (kind "image") show the store's shots: RC.setImageSource(store.shotSrc), set by obStart.
 // Pictures a reference image is made from: anything the browser decodes. Kept at most REF_MAX px on the long side.
 const REF_MAX = 2048;
 const REF_RE = /\.(jpe?g|png|gif|webp|bmp|avif|svg)$/i;
@@ -279,16 +279,19 @@ function fmtDate(ms){
 // in localStorage until the server has it, retried with backoff while it fails, sent with keepalive when
 // the page goes away. Writes are therefore never tied to the annotator's current asset: switching clips
 // mid-save, a failed request or a closed window used to drop notes and replies (0.87.1).
-// Storage: one key per window (`OB_PREFIX + window id` = {ts, entries}), refreshed while it holds entries;
+// Storage: one key per window (the store's queue prefix + window id = {ts, entries}), refreshed while it holds entries;
 // a start adopts the keys of windows that stopped refreshing theirs (closed / crashed). The prefix is
 // outside "sight.*" on purpose: hydrateSettings() drops sight.* keys the server lacks.
-const OB_PREFIX = "sight-annot-outbox:v2:";
+// The prefix is the store's (`store.queue.prefix`; Sight's: "sight-annot-outbox:v2:", which also adopts the v1 key),
+// so one host's or one user's queue is never replayed through another (Coreline: "coreline:<host>:<user>:…").
+const OB_PREFIX_DEFAULT = (store) => `annot-outbox:${store.kind || "store"}:`;
 // OB_STALE: background tabs run timers about once a minute, so a live window may refresh its key late.
 const OB_STALE = 180000, OB_TIMEOUT = 20000, OB_RECENT = 30000;
 const OB = {
-  store: null, // the host's store (createAnnotator): the queue's transport (store.writeRow)
+  store: null, // the host's store (createAnnotator; the first one): the queue's transport (store.writeRow) and its keys
+  prefix: "", legacy: [], // this store's key prefix and its older single keys (obStart)
   map: new Map(), busy: false, gone: false, timer: 0, fails: 0, batchFails: 0, waiters: [], badge: null, note: "", noteTimer: 0,
-  key: OB_PREFIX + Math.random().toString(16).slice(2) + Date.now().toString(16),
+  key: "", // this window's key: prefix + a window id (obStart)
   // Writes that landed lately (id -> {e, at, sentAt}): a load() whose GET raced them still shows them (obOverlay).
   recent: new Map(),
   inflight: new Set(), // row ids with a request on the way (obBeacon leaves them alone)
@@ -323,7 +326,8 @@ function obAdopt(){
     const now = Date.now(), keys = [];
     for (let i = 0; i < localStorage.length; i++){
       const k = localStorage.key(i);
-      if (k && (k === "sight-annot-outbox:v1" || (k.startsWith(OB_PREFIX) && k !== OB.key))) keys.push(k);
+      // (a window id never holds ":": a longer prefix that starts with this one — another user's — is not ours)
+      if (k && (OB.legacy.includes(k) || (k.startsWith(OB.prefix) && k !== OB.key && !k.slice(OB.prefix.length).includes(":")))) keys.push(k);
     }
     for (const k of keys){
       let v = null;
@@ -428,7 +432,7 @@ function obDone(id, e, sentAt, refused){
   obSave();
 }
 async function obDrain(){
-  if (OB.busy || !OB.store) return;  // (no store yet: the first annotator's kicks the queue)
+  if (OB.busy || !OB.store) return;  // (defensive: nothing is queued before the first store starts the queue)
   obHandedOff();
   OB.busy = true;
   clearTimeout(OB.timer);
@@ -532,23 +536,42 @@ function obPaint(){
   OB.badge.hidden = !show;
   OB.badge.textContent = OB.fails && n ? `⚠ ${n} unsaved annotation change${n === 1 ? "" : "s"} — retrying` : OB.note;
 }
+// Starts the page's one queue on the first store (createAnnotator): its keys, the page listeners, adopting the writes
+// left over by closed windows of the same store. A later annotator must bring the same queue (one per page).
+// The prefix ends with ":" and its parts hold no ":" of their own (a host encodes them, e.g. encodeURIComponent).
+function obStart(store){
+  if (OB.store){
+    if (store !== OB.store) throw new Error("createAnnotator: one write queue per page, so one store per page (pass the same store object)");
+    return;
+  }
+  const prefix = String(store.queue?.prefix || OB_PREFIX_DEFAULT(store));
+  if (!prefix.endsWith(":")) throw new Error(`createAnnotator: store.queue.prefix must end with ":" ("${prefix}")`);
+  OB.store = store;
+  OB.prefix = prefix;
+  OB.legacy = Array.isArray(store.queue?.legacy) ? store.queue.legacy.map(String) : [];
+  OB.key = prefix + Math.random().toString(16).slice(2) + Date.now().toString(16);
+  // Writes left over from a closed window or the last session (the server was gone): send them now.
+  obAdopt();
+  if (OB.map.size) setTimeout(obDrain, 1500);
+  // Reference images show this store's shots.
+  RC.setImageSource((id) => store.shotSrc(id));
+}
+// The page listeners are added on import (before the host's own: the pagehide beacon goes out before any other
+// keepalive request takes the page's budget), and do nothing until a store started the queue.
 if (typeof window !== "undefined"){
   // Going away for good: open editors commit too. Only hidden (minimized, another app): queue what is
   // committed, leave a field being typed in alone.
   const away = (full) => { for (const s of OB.settlers){ try { (full ? s.settle : s.stage)(); } catch (e){ console.warn(e); } } };
-  window.addEventListener("pagehide", () => { away(true); OB.gone = true; obSave(); if (OB.map.size) obBeacon(); });
-  document.addEventListener("visibilitychange", () => { if (document.hidden){ away(false); obSave(); if (OB.map.size) obKick(0); } });
-  window.addEventListener("pageshow", (e) => { if (!e.persisted) return; obHandedOff(true); OB.gone = false; obSave(); if (OB.map.size) obKick(0); });
+  window.addEventListener("pagehide", () => { if (!OB.store) return; away(true); OB.gone = true; obSave(); if (OB.map.size) obBeacon(); });
+  document.addEventListener("visibilitychange", () => { if (OB.store && document.hidden){ away(false); obSave(); if (OB.map.size) obKick(0); } });
+  window.addEventListener("pageshow", (e) => { if (!e.persisted || !OB.store) return; obHandedOff(true); OB.gone = false; obSave(); if (OB.map.size) obKick(0); });
   // Keeps this window's stored queue marked as alive, so another window's start does not adopt it.
   setInterval(() => {
     if (!OB.map.size || obHandedOff()) return;
     obSave();
   }, 5000);
-  // Writes left over from a closed window or the last session (the server was gone): send them now.
-  obAdopt();
-  if (OB.map.size) setTimeout(obDrain, 1500);
   // A window that crashed while this one ran: its queue turns stale later and is picked up here.
-  setInterval(() => { const n = OB.map.size; obAdopt(); if (OB.map.size > n) obKick(0); }, 60000);
+  setInterval(() => { if (!OB.store) return; const n = OB.map.size; obAdopt(); if (OB.map.size > n) obKick(0); }, 60000);
 }
 
 // =================================================================================================
@@ -564,11 +587,7 @@ export function createAnnotator(host){
   // Every server call goes through the store (docs/ARCHITECTURE.md "Annotator store"; Sight's: sight-store.js).
   const store = host.store;
   if (!store) throw new Error("createAnnotator: host.store is required");
-  if (!OB.store){
-    OB.store = store;
-    RC.setImageSource((id) => store.shotSrc(id));
-    if (OB.map.size) obKick(1500);  // (as the start's own drain of adopted writes: 1.5 s after load)
-  }
+  obStart(store);
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
   const panelKey = host.board ? "sight.annotate.panel.board" : "sight.annotate.panel";

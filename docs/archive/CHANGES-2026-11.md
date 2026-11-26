@@ -2,6 +2,70 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.135.1 — 2026-11-26 — R0-0 block 2: regression tests of the annotator (geometry golden, notes, tools)
+- **What:** the second block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator does now.
+  No app code changed (only the version).
+- **Where:**
+  - `tests/test_r0_annotate.py` runs three page scripts on one temporary library:
+    - `tests/r0_geometry_e2e.cjs` + `tests/fixtures/r0_geometry_golden.json`. Known drawings, with real pointer input,
+      must store exactly the golden's rows (to 0.001). The drawings: every tool on a 1600 × 1000 picture at fit, then
+      a note; a picture whose asset row says 800 × 600 but decodes to 400 × 300; a clip on frame 25; a clip with a 2:1
+      pixel aspect (shown 640 × 240). Rewrite the golden with `SIGHT_R0_GOLDEN=update` (only a clean run writes it).
+    - `tests/r0_notes_e2e.cjs`:
+      - the reviewer name (You panel) signs notes, replies, state events and the review state;
+      - Add, an empty Add, undo / redo of adding a note (the words come back into the composer);
+      - reply and its edit, note edits, In progress / Resolve / Reopen, a reply's tombstone;
+      - the filters, the review state and its history;
+      - the clean picture after a note, picking a note (also while just watching), the panel on / off, delete;
+      - video notes on frames, their marks, a pick seeks;
+      - touch.
+    - `tests/r0_tools_e2e.cjs`:
+      - each tool's key and button;
+      - select, grips, move, resize, turn, nudge, Shift+click, marquee, Ctrl+A, duplicate, copy / cut / paste,
+        Ctrl+], the bin;
+      - undo / redo by keys and buttons;
+      - the eraser (Object and Partial);
+      - the eye, and onion skin, whose ghost opacities are pinned (0.5 / 0.5 half way, 0.25 / 0.75);
+      - touch, including a finger drag with the select tool.
+  - The shared harness:
+    - `run_page()` resets the server's UI settings to the class's before every script. Synced settings, such as the
+      notes panel left open, changed the next script's fit scale.
+    - `make_video(sar="2:1")` wrote 1:1: `setsar=2:1` reads as sar=2, max=1. Fixed.
+    - The report carries `t.data`.
+  - `docs/PLAN.md` "Found by the R0-0 regression tests", item 6: a tap on the drawing toolbar within about 0.5 s of a
+    finger stroke brings no click in Chromium's emulation. It is probably fling tap suppression; check on a real
+    touch screen.
+- **Notes:**
+  - **The golden alone does not prove units.** Strokes are aimed through the layer's own transform, so stored numbers
+    stay the same whatever unit the layer uses. The `layerUnits` checks catch a unit shift: the layer must map
+    (0, 0)–(decoded size) onto the media's own box.
+  - For "decoded ≠ row", the seed renders the thumbnail first. Rendering one rewrites the row's size, which made the
+    case hollow.
+  - The golden is this container's Chromium at 1400 × 900. A text row's box (system fonts) and `revision` (it counts
+    writes, which the queue coalesces) are left out.
+  - The tools script draws on a 2000 × 1300 picture, so screen px ≠ picture px (asserted). Drags assert they land on
+    the picture, not under a bar.
+  - Deliberately not done here:
+    - notes on a 3D view (block 4);
+    - the reference image tool (block 3);
+    - a phone-size context (PLAN item 2: a tile cannot be opened there).
+- **Review:** a fresh agent reviewed the block and mutated app code to prove the checks. It found:
+  - the hollow "decoded ≠ row" case;
+  - the golden depending on test order (shared UI settings);
+  - scale checks that were vacuous at s = 1;
+  - a font-dependent text box in the golden;
+  - a `null` golden that silently skipped the comparison;
+  - a wrong cause in PLAN item 6;
+  - coverage gaps (add-note undo, touch move);
+  - a vacuous `.every`;
+  - fixed waits;
+  - columns not pinned.
+
+  All were fixed. On re-review it found `revision` in the golden (write-coalescing dependent), also fixed. The same
+  reviewer confirmed every fix. Its mutations now fail the intended checks: asset-row size in `onReady`, nudge
+  without the scale, the author dropped, the onion fade, undo. Green alone, in reverse order, and with three runs at
+  once.
+
 ## 0.135.0 — 2026-11-26 — Coreline tracker adapter (PLAN-coreline R4)
 - **What:** Coreline is a second tracker kind beside ShotGrid (desktop only). Settings → Trackers → *Connect a tracker…*
   → Coreline (server + API key). Its projects sit under Sources. Their Versions show as library tiles, with thumbnails,

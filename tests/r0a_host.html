@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- A host page that is not Sight (tests/r0a_store_e2e.cjs serves it at /__r0a/host.html on Sight's dev server):
+     one annotator on a plain picture, with a fake store that records every call and keeps rows in memory.
+     The query string sets the store: ?merges=1 (mergesOnServer), ?prefix=<queue prefix>, ?bare=1 (only the
+     required members). window.__log: [{m, a}] calls; window.__rows: id -> row; window.A: the annotator. -->
+<html><head><meta charset="utf-8"><title>r0a host</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #222; color: #ddd; font: 13px sans-serif; }
+  #light { position: fixed; inset: 0; }
+  #wrap { position: absolute; left: 0; top: 0; width: 800px; height: 500px; overflow: hidden; }
+  #pic { display: block; width: 800px; height: 500px; background: #456; }
+</style></head>
+<body><div id="light"><div id="wrap"><canvas id="pic" width="800" height="500"></canvas></div></div>
+<script type="module">
+import { createAnnotator } from "/static/annotate.js";
+const q = new URLSearchParams(location.search);
+const log = window.__log = [];
+const rows = window.__rows = new Map();
+const clone = (x) => JSON.parse(JSON.stringify(x ?? null));
+const rec = (m, a) => log.push({ m, a: clone(a) });
+window.__fail = false;   // true: every row write answers 503
+const store = {
+  kind: "fake",
+  mergesOnServer: q.get("merges") === "1",
+  loadRows: async (scope, id) => { rec("loadRows", [scope, id]); return [...rows.values()].filter((r) => !r.deleted_at && (r.target_asset_id === id || r.board_id === id)).map(clone); },
+  writeRow: (req, extra) => {
+    rec("writeRow", { req, keepalive: !!extra?.keepalive });
+    if (window.__fail) return Promise.resolve({ ok: false, status: 503 });
+    const now = Date.now();
+    if (req.op === "create") rows.set(req.id, { ...clone(req.body), deleted_at: null });
+    else if (req.op === "patch"){ const r = rows.get(req.id); if (r && !r.deleted_at) Object.assign(r, clone(req.body)); }
+    else if (req.op === "batch") for (const it of req.items){ const r = rows.get(it.id); if (r && !r.deleted_at) Object.assign(r, clone(it)); }
+    else if (req.op === "delete"){ const r = rows.get(req.id); if (r) r.deleted_at = req.at ?? now; }
+    return Promise.resolve({ ok: true, status: 200 });
+  },
+  setReviewState: async (aid, state, author) => { rec("setReviewState", [aid, state, author]); return { history: [{ state, author, at: Date.now() }] }; },
+  fps: async () => 25,
+  mediaUrl: (aid) => "",
+  putShot: async (blob, type) => { rec("putShot", [type]); return { id: "00000000000000aa" }; },
+  shotUrl: (id) => "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
+  shotSrc: () => "",
+  shotBlob: async () => new Blob(),
+};
+if (q.get("prefix")) store.queue = { prefix: q.get("prefix") };
+window.__store = store;
+const settings = window.__settings = new Map();
+const A = window.A = createAnnotator({
+  store,
+  getSetting: (k) => (settings.has(k) ? settings.get(k) : null),
+  putSetting: (k, v) => { rec("putSetting", [k]); settings.set(k, v); },
+  author: () => "Fake Host User",
+  toast: () => {},
+});
+const light = document.getElementById("light"), wrap = document.getElementById("wrap"), pic = document.getElementById("pic");
+A.mount(light);
+A.setAsset({ id: "fake-asset-1", kind: "image", ext: ".png", name: "fake.png", width: 800, height: 500 });
+A.bind2d({ wrap, media: pic, isVid: false, geom: () => ({ x0: 0, y0: 0, s: 1, w: 800, h: 500 }) });
+document.addEventListener("keydown", (e) => { if (A.onKey(e)) e.preventDefault(); });
+window.__ready = true;
+</script></body></html>
