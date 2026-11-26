@@ -218,6 +218,22 @@ function host(rows){
     assert.deepStrictEqual([sgn5.content, sgn5.sg_status_list], ["edited on phone", "clsd"]);
   }
 
+  // the grid's point read: updated_at after a stamp, and retired rows on their own
+  {
+    const f = createFakeShotGrid();
+    f.add("Project", { id: 1, name: "P" });
+    f.add("Version", { id: 1, code: "old", project: { type: "Project", id: 1 }, created_at: "2026-11-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z" });
+    const gone = f.add("Version", { id: 2, code: "gone", project: { type: "Project", id: 1 }, created_at: "2026-11-02T00:00:00Z", updated_at: "2026-11-20T00:00:00Z" });
+    gone.retired = true;
+    f.add("Version", { id: 3, code: "fresh", project: { type: "Project", id: 1 }, created_at: "2026-11-03T00:00:00Z", updated_at: "2026-11-21T00:00:00Z" });
+    const c = SG.createClient({ site: f.site, script: f.script, key: f.key, fetch: f.fetch });
+    const A = SG.adapter;
+    const names = (xs) => xs.map((v) => v.code);
+    assert.deepStrictEqual(names(await A.browse(c, { project: 1 }, [], 1, 50)), ["fresh", "old"]);
+    assert.deepStrictEqual(names(await A.browse(c, { project: 1, since: "2026-11-10T00:00:00Z" }, [], 1, 50)), ["fresh"]);
+    assert.deepStrictEqual(names(await A.browseRetired(c, { project: 1, since: "2026-11-10T00:00:00Z" }, [], 1, 50)), ["gone"]);
+  }
+
   // helpers
   assert.strictEqual(SG.siteUrl("studio.shotgrid.autodesk.com/"), "https://studio.shotgrid.autodesk.com");
   assert.strictEqual(SG.siteUrl("https://x.shotgunstudio.com/api/v1.1"), "https://x.shotgunstudio.com");

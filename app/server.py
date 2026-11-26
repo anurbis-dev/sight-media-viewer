@@ -1570,12 +1570,21 @@ def build_app(lib: Library, settings: SettingsStore | None = None, dev: bool = F
                     return
                 yield f"data: {json.dumps({'type': 'hello'})}\n\n"
                 idle = 0.0
+                pulse = 0.0
                 while True:
                     try:
                         ev = q.get_nowait()
                     except queue.Empty:
                         await asyncio.sleep(0.1)
                         idle += 0.1
+                        pulse += 0.1
+                        # The packaged watchdog (Sight.py) quits when /api/heartbeat goes quiet for 10 s.
+                        # A ShotGrid grid's thumbnails can hold every browser socket for the whole remote
+                        # round trip, so that ping cannot leave. This stream is the window: while it is
+                        # open the process stays up, and it ends when the window itself closes.
+                        if pulse >= 1.0:
+                            pulse = 0.0
+                            app.state.last_heartbeat = time.time()
                         if idle >= 15:
                             idle = 0.0
                             yield ":\n\n"

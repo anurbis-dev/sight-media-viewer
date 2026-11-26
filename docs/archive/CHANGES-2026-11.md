@@ -2,6 +2,52 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.133.1 — 2026-11-25 — Phone app: a pinch never zooms the page
+- **What:** pinching a splat / model / picture on the phone sometimes became browser page zoom: the whole UI grew
+  past the screen edges. The phone app now turns page zoom off: a pinch only reaches the app's own zoom.
+- **Where:** `mobile/index.html` (viewport meta `maximum-scale=1, user-scalable=no`), `mobile/js/app.js` ("no page
+  zoom" block before "full screen": cancels iOS `gesture*` events and any `touchmove` with more than one touch,
+  non-passive on `document`); MANUAL (phone section).
+- **Notes:**
+  - Android Chrome honours `user-scalable=no`; iOS Safari ignores it, hence the JS block. All the app's pinches run on
+    pointer events, which a cancelled touchmove does not stop (it only stops the browser's gesture and the
+    pointercancel that came with it). Likely origin: `.stage` is `touch-action: manipulation`, which lets the browser
+    take a pinch that does not start on the 3D canvas (`touch-action: none`). Left as is: the JS block covers it.
+  - Left open: on iOS a second finger landing while one is already scrolling a list sends non-cancelable touchmoves;
+    page zoom can still start there (rare, not fixable from JS). The document-level non-passive touchmove makes
+    Chrome wait on the main thread before a scroll starts; accepted (it must cover bars too).
+  - Not changed: Sight's HTML review page (`app/review.py`) keeps page zoom (text to read; it has no splat viewer).
+  - Checked in mobile Chromium: a two-finger touchmove is cancelled, a one-finger one is not. `test_touch` and
+    `test_model3d` fail with and without this change (pre-existing, unrelated).
+  - Review (fresh agent): no correctness bugs; the notes above (iOS non-cancelable case, scroll latency, version bump
+    for the service-worker cache) came from it. No fixes, so no second pass was needed.
+
+## 0.133.0 — 2026-11-25 — Gaussian splats turn a quarter about X, like meshes (lightbox and phone)
+- **What:** splats often arrive upside down or Z-up. The lightbox's ↻ button (`Shift+7`, the only button of the shade
+  bar on a splat) and the phone's ⟳ *Turn the model a quarter* now turn a splat as they turn a mesh: a quarter turn
+  about X on top of the half turn every splat gets, re-framed from the turned bounds, remembered per file
+  (lightbox `sight.v3dRot`, its card thumbnail follows; phone `R.meta.turns`).
+- **Where:** `app/static/model3d-core.js` `turnSplat`; `mobile/js/model3d.js` `createSplatViewer` (`turns`, `setTurns`,
+  `getView` / `setView` / `turn`, `still` at `cam.turns`, `bounds()` per turn); `mobile/js/app.js` (turn button no
+  longer hidden for splats, `SPLAT_EXT` import dropped); `app/static/index.html` (`boot3d` splat branch `place` /
+  `turnTo` / camera rig turns / `onV3DRotate`, scene info bounds per turn; `#v3dShade.splat` CSS shows only ↻;
+  `renderSplatThumb` turned); tests (`fixtures_3d.make_splat(dy=)`, `pwa_3d_formats.cjs` `turned`,
+  `test_model_formats` balls_up.splat); ARCHITECTURE splat paragraph, MANUAL.
+- **Notes:**
+  - No new data-contract field: a splat view's `cam.turns` means what it means for a mesh, so a note written at one
+    turn turns the splat back to it when opened (phone `setView`, lightbox camera rig `turns.set` → `turnTo`, which
+    also stores the turn per file — as meshes do). A splat note from before 0.133 has `turns: 0` and still matches.
+  - Only about X (Sight's mesh turn). A splat whose up is another axis (e.g. X-up) cannot be put upright with it;
+    no other axis was added (it would need a new ctx field on both sides).
+  - Phone stills at another turn turn the splat for the still and back while `stilling` (the live canvas waits).
+    The lightbox's view capture is synchronous (as before): right after a turn Spark's sort may still be for the
+    previous pose for a frame.
+  - Review (fresh agent): pose composition, setView order, matrix freshness, persistence / thumbnail, teardown and
+    touch / keys confirmed. Found: on the phone a turn (or a setView with another turn) landing while a still was
+    awaited turned the mesh mid-still and the still's `finally` put back the *old* turn while `turns` / notes said the
+    new one → `stillTurns`: during a still `setTurns` measures the new turn's bounds and puts the mesh straight back
+    at the still's turn; the `finally` turns to the current `turns`. Second pass (same reviewer): fix confirmed, nothing new.
+
 ## 0.132.0 — 2026-11-25 — Big Gaussian splats: level of detail (phone and lightbox), lighter phone viewer
 - **What:** a 32 MB .spz (millions of splats) froze a mid-range Android phone. Splats over a budget now load with
   Spark's LoD tree and draw at most the budget, picked for the camera (coarser out of view / behind it): phone

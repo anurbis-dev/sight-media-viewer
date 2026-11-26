@@ -131,6 +131,10 @@ class CoreTest(unittest.TestCase):
         r = subprocess.run([NODE, str(ROOT / "tests" / "sg_unit.cjs")], capture_output=True, text=True, timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_tracker_view(self):
+        r = subprocess.run([NODE, str(ROOT / "tests" / "trk_view.mjs")], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
 
 def free_port() -> int:
     with socket.socket() as s:

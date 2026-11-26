@@ -11,6 +11,7 @@
 // The name filter is the top search box. ES module, imported by index.html; one source per tracker (key).
 
 import { hotkey } from "/static/keys.js";
+import { applyDelta, appendPage, retiredIds, watermark } from "/static/tracker-view.js";
 
 const SF = () => globalThis.SightFilter;
 export const TRK_PAGE = 100;
@@ -133,6 +134,85 @@ export function createTrackerSource(opts){
   }
   const thumb = (rec, pic) => `${base}/thumb/${encodeURIComponent(A.recordId(rec))}?${pic ? "pic=" + pic + "&" : ""}u=${encodeURIComponent(A.recordStamp(rec))}`;
 
+  // One view per project + filter (not per ticked fields: a new field is read onto the rows we have).
+  // Kept in memory and in the browser (IndexedDB), so coming back paints before the site answers.
+  const mem = new Map();
+  const VIEW_DB = "sight-tracker-views", VIEW_STORE = "views";
+  let viewDb = null;
+  function openViews(){
+    if (viewDb) return viewDb;
+    if (typeof indexedDB === "undefined") return Promise.resolve(null);
+    viewDb = new Promise((ok, no) => {
+      const req = indexedDB.open(VIEW_DB, 1);
+      req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(VIEW_STORE)) req.result.createObjectStore(VIEW_STORE); };
+      req.onsuccess = () => ok(req.result);
+      req.onerror = () => no(req.error);
+    }).catch(() => null);
+    return viewDb;
+  }
+  async function viewGet(k){
+    try {
+      const db = await openViews();
+      if (!db) return null;
+      return await new Promise((ok) => {
+        const q = db.transaction(VIEW_STORE, "readonly").objectStore(VIEW_STORE).get(k);
+        q.onsuccess = () => ok(q.result || null);
+        q.onerror = () => ok(null);
+      });
+    } catch { return null; }
+  }
+  function viewPut(k, v){
+    const packed = { records: v.records, more: !!v.more, page: v.page || 0 };
+    mem.set(k, packed);
+    openViews().then((db) => {
+      if (!db) return;
+      try {
+        const q = db.transaction(VIEW_STORE, "readwrite").objectStore(VIEW_STORE).put(packed, k);
+        q.onerror = () => {};
+      } catch { /* the memory copy still serves this session */ }
+    }, () => {});
+    return packed;
+  }
+  function viewKey(){
+    if (!project) return "";
+    return JSON.stringify([T.key, String(project.id), filter.type || "", filter.entity || "", filter.status || "", filter.q || "", smart || where]);
+  }
+  function asItems(v){ return { items: v.records.map(toItem), more: !!v.more, page: v.page || 0 }; }
+  function noteStatuses(vs){
+    vs.forEach((rec) => { const s = rec[A.statusField]; if (s && typeof s === "string" && !statuses.has(s)){ statuses.add(s); paintStatuses(); } });
+  }
+  async function onePage(n, extra){
+    const w = smart || where;
+    if ((w.c.length || (extra && extra.ids)) && !fieldsAll){ await loadFields(); opts.onChange("labels"); }
+    const cond = w.c.length ? A.toConditions(w, filterFields()) : null;
+    const vs = await A.browse(client(), Object.assign({ project: project.id }, filter, extra || {}), fields, n, TRK_PAGE, extra && extra.ids ? null : cond);
+    noteStatuses(vs);
+    return vs;
+  }
+  // Every page of a "changed since" read. A quiet project is one short answer.
+  async function collect(extra){
+    const out = [];
+    for (let n = 1; n < 50; n++){
+      const vs = await onePage(n, extra);
+      out.push(...vs);
+      if (vs.length < TRK_PAGE) break;
+    }
+    return out;
+  }
+  async function collectRetired(since){
+    if (typeof A.browseRetired !== "function") return [];
+    const w = smart || where;
+    if (w.c.length && !fieldsAll) await loadFields();
+    const cond = w.c.length ? A.toConditions(w, filterFields()) : null;
+    const out = [];
+    for (let n = 1; n < 50; n++){
+      const vs = await A.browseRetired(client(), Object.assign({ project: project.id, since }, filter), fields, n, TRK_PAGE, cond);
+      out.push(...vs);
+      if (vs.length < TRK_PAGE) break;
+    }
+    return out;
+  }
+
   return {
     adapter: A, tracker: T,
     // a source replaced by another for its tracker key: its document listener goes
@@ -161,6 +241,80 @@ export function createTrackerSource(opts){
     },
     get smartOn(){ return !!smart; },
     setSmart(t){ smart = t ? SF().sanitize(t) : null; },
+    // What this project + filter already has, from this session (null until warm() has read the browser store).
+    peek(){ const v = mem.get(viewKey()); return v ? asItems(v) : null; },
+    // The browser store, so switching back to a project paints before the site answers.
+    async warm(){
+      const k = viewKey();
+      if (!k) return null;
+      if (!mem.has(k)){
+        const stored = await viewGet(k);
+        if (stored && Array.isArray(stored.records)) mem.set(k, { records: stored.records, more: !!stored.more, page: stored.page || 0 });
+      }
+      const v = mem.get(k);
+      return v ? asItems(v) : null;
+    },
+    // First visit of a view: one page. A view we already have: only rows changed since its newest stamp,
+    // merged by id (Coreline's delta). The rows on screen stay until this returns.
+    async sync(){
+      const k = viewKey();
+      if (!k) return { items: [], more: false, page: 0 };
+      let v = mem.get(k);
+      if (!v){
+        const stored = await viewGet(k);
+        v = stored && Array.isArray(stored.records) ? { records: stored.records, more: !!stored.more, page: stored.page || 0 } : { records: [], more: true, page: 0 };
+        mem.set(k, v);
+      }
+      const idOf = (r) => A.recordId(r), stampOf = (r) => String(A.recordStamp(r) || ""), timeOf = (r) => A.recordTime(r) || 0;
+      const since = v.records.length ? watermark(v.records, stampOf) : "";
+      if (v.records.length && since){
+        let ups = [];
+        try { ups = await collect({ since }); }
+        catch (e){
+          if (e && e.status === 400) return asItems(v);   // this site has no "changed since" filter: keep what we have
+          throw e;
+        }
+        let gone = [];
+        try { gone = retiredIds(ups, await collectRetired(since), idOf); }
+        catch { /* no retired query: a deleted row stays until it can be told apart */ }
+        const next = applyDelta(v, { upserts: ups, removed: gone }, idOf, stampOf, timeOf);
+        return asItems(next.changed ? viewPut(k, next) : v);
+      }
+      if (v.records.length) return asItems(v);
+      const next = appendPage({ records: [], more: true, page: 0 }, await onePage(1), TRK_PAGE, idOf);
+      return asItems(viewPut(k, next));
+    },
+    // The following page, stored with the ones already shown. Nothing already stored is asked for again.
+    async more(){
+      const k = viewKey();
+      if (!k) return { items: [], more: false, page: 0 };
+      let v = mem.get(k);
+      if (!v){
+        const stored = await viewGet(k);
+        v = stored && Array.isArray(stored.records) ? { records: stored.records, more: !!stored.more, page: stored.page || 0 } : { records: [], more: true, page: 0 };
+        mem.set(k, v);
+      }
+      if (!v.more) return asItems(v);
+      const idOf = (r) => A.recordId(r);
+      const next = appendPage(v, await onePage(v.page + 1), TRK_PAGE, idOf);
+      return asItems(viewPut(k, next));
+    },
+    // Fields ticked after the rows were stored: read those fields for the rows we have, and merge them in.
+    async fillFields(){
+      const k = viewKey();
+      const v = mem.get(k);
+      if (!v) return null;
+      const idOf = (r) => A.recordId(r), stampOf = (r) => String(A.recordStamp(r) || ""), timeOf = (r) => A.recordTime(r) || 0;
+      const need = v.records.filter((r) => fields.some((f) => !(f in r)));
+      if (!need.length) return asItems(v);
+      const got = [];
+      for (let i = 0; i < need.length; i += TRK_PAGE){
+        const ids = need.slice(i, i + TRK_PAGE).map(idOf);
+        got.push(...await onePage(1, { ids }));
+      }
+      const next = applyDelta(v, { upserts: got, removed: [] }, idOf, stampOf, timeOf);
+      return asItems(next.changed ? viewPut(k, next) : v);
+    },
     // One page of records (1-based) as grid items; `more` = there may be further pages.
     async page(n){
       const w = smart || where;

@@ -846,8 +846,10 @@ def main() -> None:
         launched["server"] = server
 
         if frozen and not args.no_browser:
-            # No console window to close, so treat "no tab pinging /api/heartbeat for a while" as
-            # the signal to quit (see startHeartbeat() in index.html). STARTUP_GRACE covers the
+            # No console window to close, so treat "the window has gone quiet" as the signal to quit
+            # (see startHeartbeat() in index.html). The open /api/events stream refreshes this too
+            # (app/server.py): a grid of tracker thumbnails can occupy every browser socket, and the
+            # ping then cannot leave, but the stream is still the window. STARTUP_GRACE covers the
             # time between the server coming up and the browser actually opening the page.
             HEARTBEAT_TIMEOUT = 10.0
             STARTUP_GRACE = 30.0
