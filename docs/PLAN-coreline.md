@@ -282,6 +282,7 @@ Each block reviewed on its own.
 - `.srev` import / export in the UI.
 
 ### R4 — Sight: the Coreline adapter (was docs/PLAN-trackers.md 5c)
+**Done in 0.135.0** (docs/CORELINE.md: decisions, mapping, what to check on a real server). Review only, as proposed.
 - Implements the adapter interface (`app/trackers.py`, `trackers-core.js`):
   - connect (host + API key), projects, schema fields, Versions with filters, thumbnails / scrub;
   - open the original or the `web` rendition, through the signed URLs of the record's file field;
@@ -311,4 +312,4 @@ Each block reviewed on its own.
 - R1: can a review sit on any file field (`media`, `attachment`), or only a Version's `media`? Proposed: any file
   field, keyed by record + field.
 - R2: who may change a note's state: anyone who can edit the Version, or only its author and leads?
-- R4: does Sight upload new versions to Coreline, or only review what is there? Proposed: review only.
+- R4: ~~does Sight upload new versions to Coreline?~~ Review only (0.135.0, as proposed; uploading stays out).

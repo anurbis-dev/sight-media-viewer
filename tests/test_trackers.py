@@ -219,7 +219,7 @@ class RegistryTest(unittest.TestCase):
 
     def test_registry(self):
         t = Trackers(self.dir)
-        self.assertEqual(t.kinds, [{"id": "shotgrid", "name": "ShotGrid"}])
+        self.assertEqual(t.kinds, [{"id": "shotgrid", "name": "ShotGrid"}, {"id": "coreline", "name": "Coreline"}])   # (Coreline: 0.135)
         self.assertIsInstance(t.get("shotgrid"), ShotGridService)
         self.assertIsNone(t.get("ftrack"))
         self.assertEqual((t.connected(), t.key_of("shotgrid")), ([], ""))
@@ -446,7 +446,7 @@ class RoutesTest(unittest.TestCase):
     def test_list_and_status(self):
         got = self.c.get("/api/trackers").json()
         self.assertEqual([(t["id"], t["kind"], t["key"]) for t in got["trackers"]], [("shotgrid", "shotgrid", "shotgrid:studio.example")])
-        self.assertEqual(got["kinds"], [{"id": "shotgrid", "name": "ShotGrid"}])
+        self.assertEqual(got["kinds"], [{"id": "shotgrid", "name": "ShotGrid"}, {"id": "coreline", "name": "Coreline"}])   # (Coreline: 0.135)
         self.assertIsInstance(got["cacheSources"], list)
         self.assertNotIn("secret", json.dumps(got))
         a, b = self.c.get("/api/trackers/shotgrid/status").json(), self.c.get("/api/sg/status").json()

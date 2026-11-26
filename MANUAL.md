@@ -358,7 +358,7 @@
   there is no trace of it (no sidebar source, no row in the You panel, no SG ▾ in the review panel, no ShotGrid page
   on the phone). **Settings → Trackers** lists the connected trackers — each with its site, state, its settings and
   *Disconnect* (removes the key; the site, script name and logins stay for the next time) — and *Connect a
-  tracker…*, the one way to add one (ShotGrid for now: it opens ShotGrid's fields below). Connecting or
+  tracker…*, the one way to add one (ShotGrid or Coreline: it opens that tracker's fields below). Connecting or
   disconnecting shows / hides the controls at once, no reload; a ShotGrid project open in the grid goes back to the
   library on a disconnect (a change made in another window shows when you come back to this one). Smart
   collections and links made for a tracker stay and come back when it is connected again; Versions already
@@ -385,6 +385,18 @@
   wins). Deleting a note does not delete it on the other side. The phone app has the same: Settings → Trackers → *Connect a tracker…* → ShotGrid
   (later *ShotGrid settings…*) and *Export and more → ShotGrid…*; if the site does not answer the phone app, put a proxy's address in
   the connection (`tools/sg-proxy-worker.js`, a Cloudflare Worker). Details: `docs/SHOTGRID.md`.
+- **Coreline** — review a Coreline Version's media in Sight and sync its notes both ways. Connect it once in
+  Settings → Trackers → *Connect a tracker…* → Coreline: the server's address and an API key (made in Coreline under
+  your account → API keys; Sight's server keeps it and never shows it again, and Sight acts with that user's
+  permissions). *Coreline · <server>* then appears under Sources like ShotGrid's: its projects, their Versions as tiles
+  (All / Shots / Assets, a status, Fields ▾, Filter ▾; a video's tile plays through its frames under the pointer or a
+  finger dragged sideways). Double-click a Version (on a touch screen: tap it, then tap it again) to download its
+  original and open it with its review linked; in the review panel **CL ▾ → Sync now** brings the notes, drawings,
+  replies and pictures written in Coreline in and sends the ones written here — the drawings themselves, not
+  pictures of them; deletes travel too, and the later edit wins. A local file can be linked too: CL ▾ → pick the
+  project and the Version. A Version whose original Coreline no longer keeps opens as its smaller web preview, which
+  cannot be synced (its pixels do not match the original's). Sight does not upload new Versions. Desktop only (not
+  the phone app). Details: `docs/CORELINE.md`.
 - **You (reviewer name, tracker logins)** — the round person button (your initials once you have a name) at the top
   of the sidebar, and the same button in the review panel's header: your reviewer name (stored with every note) and
   a row per connected tracker (ShotGrid: its site, *Settings…* opens it in Settings → Trackers); with none

@@ -13,6 +13,7 @@ app/library.py           Library class: SQLite (WAL) at <SIGHT_HOME>/library.db,
 app/fileinfo.py          per-type file details for the lightbox info overlay (GET /api/assets/{id}/info)
 app/trackers.py          the tracker-neutral layer: tracker keys, the adapter interface, the registry (Trackers) — see "Tracker adapters"
 app/shotgrid.py          the ShotGrid adapter, server side: shotgrid.json (key never read back), token, …/fetch pass-through (docs/SHOTGRID.md)
+app/coreline.py          the Coreline adapter, server side: coreline.json (API key never read back), …/fetch pass-through, thumbnails / scrub filmstrip / media download through signed URLs (docs/CORELINE.md)
 app/review.py            review sessions: screenshot files, PDF report (PyMuPDF Story), .srev package,
                          HTML page for reviewers without Sight
 app/settings.py          settings.json store (UI prefs) + defaults
@@ -25,6 +26,7 @@ app/static/tracker-source.js  a tracker project's media entities (ShotGrid Versi
 app/static/trackers-core.js  the client tracker registry (SightTrackers: keys, adapter lookup) + the client adapter interface; also the phone's (core/)
 app/static/filter-core.js  the filter builder (Filter ▾): model, the library wire form, the UI (SightFilter) — a tracker's fields / conditions come from its adapter; also the phone's (core/)
 app/static/shotgrid-core.js  ShotGrid REST client + two-way sync of a review with a Version + the ShotGrid client adapter (SightShotGrid.adapter), shared with the phone app (docs/SHOTGRID.md)
+app/static/coreline-core.js  the Coreline client adapter (SightCoreline.adapter): browse Versions, link a file field, sync review rows (pull → import, push → Coreline's merge API) — Sight only (docs/CORELINE.md)
 app/static/review-draw.js  the full-screen drawing canvas (SightReviewDraw.open) shared by the HTML page and the phone app
 app/static/model3d-core.js 3D helpers shared by the lightbox and the phone app: applyTurns, frameObject3d, meshOrder,
                          buildExplodeRig / applyExplode, buildEnvTexture, per-format load helpers, ENV_PRESETS,
@@ -898,8 +900,8 @@ keeps the local rule over a stale `/api/state` until the server returns the same
 underneath; *Save as smart collection* moves it into the new row (`saveAsSmart`). Counts are not shown on smart rows
 (each would cost a filtered COUNT on every `/api/state`).
 **Tracker adapters** (docs/PLAN-trackers.md decision 11, stage 5b). Several trackers can be connected at once; the
-UI is one for all and talks to a tracker only through its **adapter** — one per *kind* on the client ("shotgrid"; ShotGrid
-is the only one yet), one per configured *site* on the server (0.110: several sites of one kind can be connected at once;
+UI is one for all and talks to a tracker only through its **adapter** — one per *kind* on the client ("shotgrid", "coreline" since 0.135 —
+docs/CORELINE.md), one per configured *site* on the server (0.110: several sites of one kind can be connected at once;
 each is a tracker of its own). A tracker is kind + site; the **tracker key** `"<kind>:<host>"` (host = `URL.host`: lowercased, default port
 dropped — `app/trackers.py host_of / tracker_key / split_key` and `SightTrackers.hostOf / key / split` follow the same
 rule — WHATWG canonical hostnames: IPv6 compressed without a dotted tail, IPv4 in any spelling as a dotted quad, punycode,

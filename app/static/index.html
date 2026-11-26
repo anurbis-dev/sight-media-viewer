@@ -945,6 +945,7 @@ import { setCursor, during as cursorDuring, zoomCursor } from "/static/cursors.j
 import { createTrackerSource } from "/static/tracker-source.js";
 import "/static/trackers-core.js";  // globalThis.SightTrackers — the tracker registry (docs/ARCHITECTURE.md "Tracker adapters")
 import "/static/shotgrid-core.js";  // globalThis.SightShotGrid — registers the ShotGrid adapter (annotate.js syncs through it)
+import "/static/coreline-core.js";  // globalThis.SightCoreline — registers the Coreline adapter (docs/CORELINE.md)
 import "/static/filter-core.js";    // globalThis.SightFilter (Filter ▾: the filter builder)
 import { convertForPlayback } from "/static/video-playable.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,

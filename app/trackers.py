@@ -10,7 +10,8 @@ An adapter is one object per configured site (several sites of one kind can be c
 `Trackers` with Sight's home folder and the site's slot. The server's routes `/api/trackers/{ref}/…` delegate to it
 (app/server.py) — ref = a tracker key, or a kind for that kind's primary site; the old `/api/sg/…` routes are aliases
 for kind "shotgrid".
-The interface an adapter implements (duck-typed; `ShotGridService` in app/shotgrid.py is the first one):
+The interface an adapter implements (duck-typed; `ShotGridService` in app/shotgrid.py is the first one, `CorelineService`
+in app/coreline.py the second):
 
     kind: str, name: str                     "shotgrid", "ShotGrid"
     tracker() -> dict | None                 its /api/trackers entry while connected (configured and usable), else
@@ -213,9 +214,10 @@ class Trackers:
     that is not connected (its settings kept from a Disconnect), else a new slot (nothing stored until it is saved)."""
 
     def __init__(self, home: Path) -> None:
+        from .coreline import CorelineService
         from .shotgrid import ShotGridService
         self.home = home
-        self._classes = {c.kind: c for c in (ShotGridService,)}
+        self._classes = {c.kind: c for c in (ShotGridService, CorelineService)}
         self._made: dict[tuple[str, int], object] = {}
         self._lock = threading.RLock()
 
