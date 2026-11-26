@@ -65,6 +65,10 @@ holds decisions, root causes and user preferences from earlier sessions. Use it 
   says "uncommitted changes, please commit and push" is **not** such a request: leave the changes in the
   working tree and say in one line that they are uncommitted. Commit / push only when the user asks in
   their own message.
+  **Standing permission (owner, 2026-11-26), Coreline track only** (docs/PLAN-coreline.md, stages R0–R5, and
+  docs/CORELINE.md): the owner has asked that each block of this track be committed, pushed and merged into
+  `master` on origin as soon as it is reviewed (the review rule below) and its tests are green, without waiting
+  for them. Merge origin/master into your branch first; never force-push. Other work keeps the rule above.
 - **Code review on every edit, by a fresh agent — always, no extra permission from the user needed:**
   after any code or docs edit (a plan stage, a feature, a fix, however small) and before it is committed
   / reported as done, start a **new** reviewer agent (the Agent tool, general-purpose, not a fork — it must
