@@ -8,6 +8,10 @@ const path = require("path");
 const { chromium } = require("playwright");
 
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+// The browser: Playwright's own Chromium, except on Windows, where that build has no H.264 (every MP4 test clip
+// would stay black) and Sight itself opens in Edge (Sight.py) — so Edge there. SIGHT_PW_CHANNEL overrides it
+// ("" = Playwright's Chromium, "chrome", "msedge").
+const CHANNEL = process.env.SIGHT_PW_CHANNEL ?? (process.platform === "win32" ? "msedge" : "");
 
 function tracker(){
   const t = { checks: {}, errors: [], done: false };
@@ -33,7 +37,7 @@ function run(body){
   const cfg = JSON.parse(process.argv[2] || "{}");
   const t = tracker();
   let browser = null;
-  t.browser = async () => (browser = browser || await chromium.launch());
+  t.browser = async () => (browser = browser || await chromium.launch(CHANNEL ? { channel: CHANNEL } : {}));
   (async () => {
     await body(cfg, t);
     t.done = true;

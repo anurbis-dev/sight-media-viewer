@@ -2,6 +2,71 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.134.1 — 2026-11-26 — R0-0 block 1: regression tests of the 2D lightbox and video transport
+- **What:** the first block of the R0-0 safety net (docs/PLAN-coreline.md). Playwright tests pin how the lightbox and
+  the video transport behave *now*, before the R0 refactor. Also a timing tool for the lightbox. No app code changed
+  (only the version).
+- **Where:**
+  - `tests/r0_harness.py`, shared by every R0-0 block. `LiveCase` makes a temporary library (never the live one) with
+    the media a test writes, waits until every file is ready, and serves it in-process. `run_page()` runs a node
+    script; `assertReport()` needs no fatal error, no page errors, every check ok, and at least `min_checks` of them.
+    `needs()` skips when node / Playwright / ffmpeg / psd-tools is missing; with `SIGHT_REQUIRE_E2E=1` that is a
+    failure instead. `SIGHT_R0_REPORT=<dir>` writes the whole report as JSON. Media makers: PNG, quadrant PNG,
+    layered PSD, H.264 / MPEG-1 clips.
+  - `tests/r0_lib.cjs`: page helpers. A check is `t.ok/eq/near(name, …)`. Desktop and touch pages; a touch page is a
+    touch laptop (`hasTouch`, no `isMobile`), see PLAN.md "Found by the R0-0 regression tests" 2. Also: pinch / finger
+    drag over CDP, `vstate` / `vsettled` / `vplaying`, a Web Audio start counter (`window.__abStarts`).
+  - `tests/test_r0_lightbox.py` + `tests/r0_lightbox_e2e.cjs`, 156 checks:
+    - pictures: open, fit, zoom (digits, F, double-click, wheel about the cursor, right-drag), pan, pixelation, turn
+      and mirror kept per file, ← → ↑ ↓, closing (Esc, ✕, Space);
+    - PSD: preview, layers panel (D and the button), a layer, back to Composite;
+    - video: autoplay, Space and click (the 250 ms hold), `.` `,` Shift+← →, the position field and its menu, fps
+      from the file, bar and stage scrub (Shift-fine), loop, mute and volume, scrub sound (heard through Web Audio),
+      timeline marks (a press on a mark enters annotation mode), RAM read-out, the scrub copy, playback conversion,
+      zoom / turn / resize refit, → leaving a video stops it;
+    - touch: pinch, pan, double tap, mirror, layers, tap / drag on the video and the bar, long press.
+  - `tools/bench_lightbox.py`: stdlib + benchlib, runs on Windows. It times open image (cold / warm), next image,
+    open video, frame step and close, using real CDP input and timing inside the page. Synthetic media, or
+    `--home <copy>` with `--image` / `--video`. Run it before and after each R0 block.
+  - `docs/PLAN.md`: a new section of what the tests found (not fixed):
+    - no next / previous file on touch;
+    - phone emulation cannot open a tile;
+    - `.` on the last frame lands on `t = duration`;
+    - a video's `width` / `height` columns are its thumbnail's;
+    - so carrying notes over between versions of a video scales them wrongly.
+- **Notes:**
+  - **The grid order is the scan order** (readdir: alphabetical on NTFS, hashed on ext4, reverse creation on tmpfs).
+    `LiveCase.ui_settings` writes the temp home's `settings.json` with Name sort, which wins over localStorage. Keep
+    it in later blocks, or read the order from `.card[data-id]`.
+  - A press on a timeline mark belongs to the mark (it enters annotation mode), so scrub presses avoid them.
+  - A stage scrub counts from where it became a drag (4 px), not from the press point.
+  - A small picture opens at 100 %, never upscaled.
+  - The R0 refactor must keep these tests unchanged. The selectors used (`#lightClose`, `.vbar [data-cur]`,
+    `.view-media`, `.view-hud`, `#psdBtn` …) are the contract.
+  - Suite here before this block: 6 failures that predate it. 3 in `test_pwa`, known. 3 not looked into:
+    - `test_annot_tools`, its touch part;
+    - `test_review_page` cut / copy / paste;
+    - `test_sources` `file_uri_to_path`, a Windows path.
+    `usd-core` is not installed, so the USD tests skip. Installed here: psd-tools, watchdog, pymupdf, zstandard,
+    imageio-ffmpeg (Sight's own deps).
+- **Review:** a fresh agent reviewed the block. It broke app code on purpose to catch checks that pass vacuously
+  (`git checkout` afterwards). It found:
+  - the grid-order dependence: 6 checks failed every run on tmpfs;
+  - a hollow "turn kept per file" check;
+  - a hollow scrub-sound check (the fetch came from the toggle, not the scrub);
+  - bench crashes ("next" onto a non-image, tiles not rendered);
+  - wrong "(cold)" labels;
+  - autoplay / loop timing races;
+  - checks with no precondition;
+  - harness gaps (silent scan timeout, unasserted server start, leak on a failed set-up, a low `min_checks`);
+  - PLAN item 4 was inaccurate, and the carry-over bug behind it.
+
+  Everything is fixed, and gaps it named are covered (touch layers button, video zoom / turn, resize refit, leaving a
+  video). The second pass found the "video left is stopped" check hollow (a detached element) and fixed 600 ms waits
+  that flaked under load. Fixed too. The same reviewer confirmed every fix. Its mutations now fail the intended
+  checks: turn fallback, `saPlay` stubbed, ResizeObserver refit, the scrub copy's hide. The suite is green alone, on
+  tmpfs, and with two runs at once.
+
 ## 0.134.0 (docs) — 2026-11-25 — Plan: Sight's desktop review built into Coreline
 - **What:** `docs/PLAN-coreline.md`. The owner chose: Coreline is not ready for a tracker adapter (no review layer,
   pre-MVP). So Coreline gets its own player and commenting, built from **Sight's desktop review**: the lightbox on the

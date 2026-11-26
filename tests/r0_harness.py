@@ -224,14 +224,15 @@ class LiveCase(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=10) as resp:
             self.assertEqual(resp.status, 200)
         arg = json.dumps({"base": self.base, "ids": self.ids, "shots": os.environ.get("SIGHT_TEST_SHOTS", ""), **cfg})
-        r = subprocess.run([NODE, str(ROOT / "tests" / script), arg], capture_output=True, text=True,
-                           timeout=timeout, cwd=ROOT / "tests")
+        # (utf-8: node writes UTF-8, and on Windows text=True alone decodes with the ANSI code page)
+        r = subprocess.run([NODE, str(ROOT / "tests" / script), arg], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout, cwd=ROOT / "tests")
         try:
             res = json.loads(r.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             self.fail(f"{script}: no report (exit {r.returncode})\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}")
         if os.environ.get("SIGHT_R0_REPORT"):  # a folder: the whole report is written there (debugging)
-            Path(os.environ["SIGHT_R0_REPORT"], Path(script).stem + ".json").write_text(json.dumps(res, indent=1))
+            Path(os.environ["SIGHT_R0_REPORT"], Path(script).stem + ".json").write_text(json.dumps(res, indent=1), encoding="utf-8")
         return res
 
     def assertReport(self, res: dict, min_checks: int) -> None:

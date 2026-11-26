@@ -14,6 +14,81 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.141.4 — 2026-11-26 — R0-0 block 5: regression tests of the board, compare, sequence, exports, trackers and the look
+- **What:** the last block of the R0-0 safety net (docs/PLAN-coreline.md). No app code changed (only the version).
+  It is also the first R0 run on Windows: blocks 1–4 pass there too, after the two environmental fixes below.
+- **Where:** `tests/test_r0_views.py` runs four page scripts. Each script's header lists its checks:
+  - `r0_board_e2e.cjs`: the board's annotator (Shift+A, the button, Esc). A stroke and a note are board rows in world
+    units, drawn on a moved and zoomed camera, and the camera moves them. The item keys are held back while drawing;
+    with it off, plain A frames. Undo / redo, the notes button, the library split (Tab, ◧). Touch: a tap, a two-finger
+    pan + pinch, a finger stroke.
+  - `r0_compare_e2e.cjs`: compare from the selection (the button, K). Layouts 1–4, Swipe, Difference, ↑ / ↓, H, the
+    chips. A stroke and a note made in compare go to the selected file; the note keeps `data.compare`, and K in the
+    lightbox brings that session back. A card dropped from the split onto the lightbox joins the set (⧉ counts 2).
+    The sequence: bar, title, ← / →, ⏮ / ⏭, Shift+L, a click on the track. Touch: long press, the touch bar's Compare
+    and Play in sequence, the buttons.
+  - `r0_export_e2e.cjs`: from Export ▾, PDF, web page (opened in a browser), `.srev` (format, asset id and name,
+    author, rows, points in picture px) and Copy as text. An edited `.srev` imported back (a reply, a new note), then
+    again (nothing doubled). The ShotGrid link ▾ against `sg_fake_server.cjs`: the pick view, project, search, link,
+    Sync now ("1 sent", `data.sg`), Unlink. Touch.
+  - `r0_ui_e2e.cjs`: Interface Scale 0.75 / 1 / 1.75 (`--ui-k`), the bars' sizes and their placement on screen. The
+    Light theme, kept across a reload, then Graphite. A text snapshot, `tests/r0_ui_snapshot.json`, of the top bars,
+    the lightbox / video / sequence / compare bars, the annotator's bar, the review panel and every mode's `?` list.
+    Touch at 1.75×.
+- **Notes:**
+  - **Windows (environmental, tests only):**
+    - Playwright's own Chromium on Windows has no H.264, so every MP4 stayed black and blocks 1–4 failed at
+      `waitMedia`. `r0_lib.cjs` now launches Edge on win32 (`channel: "msedge"`, the browser Sight.py opens there);
+      `SIGHT_PW_CHANNEL` overrides it (`""` = Playwright's Chromium).
+    - `run_page` decoded node's output with the ANSI code page and crashed on some bytes; it now reads UTF-8.
+    - With both fixes, blocks 1–4 pass on Windows unchanged: no font or file-order differences showed.
+  - Tools on this machine: ffmpeg is `imageio_ffmpeg`'s binary (already in `~/.sight/runtime`), put on PATH as
+    `D:\AI_dev\.testbin\ffmpeg.exe`. The `playwright` npm package (1.56.1, matching the cached browsers) lives in
+    `D:\AI_dev\node_modules`, outside the repo; node finds it by walking up from `tests/`.
+  - R0Export patches `app.review.export_dir` to a temp folder and `app.server.reveal_paths` to a no-op, so nothing
+    lands in the real Downloads and no Explorer window opens. Class cleanups undo the patches and stop the fake ShotGrid
+    even if set-up fails.
+  - Pinned as they are, not bugs:
+    - a board opens with the library beside it (`canvasSplit` on);
+    - Stack with Swipe on (the default) is written `"swipe"` in a note's `compare`;
+    - the review panel is not zoomed by the Interface Scale (320 px at every scale);
+    - at 1.75× the annotator toolbar and the compare bar wrap onto more lines (only "at least scaled" is checked).
+  - The snapshot leaves out file names, times, the RAM figure and the dictation chip (it shows the browser's
+    language). Rewrite it with `SIGHT_R0_UPDATE_SNAPSHOT=1` only on purpose. R0e must leave it unchanged.
+  - The tracker link ▾ on Coreline is still covered by `cl_view_e2e`, and the SG ▾ show / hide by `trackers_e2e`. The
+    ZIP export is covered by `test_review_all`.
+  - Board touch: a tap on the annotate button right after a finger stroke brings no click. This is PLAN.md "Found by
+    the R0-0 regression tests" item 6, already known; the script waits 0.6 s.
+- **Review:** a fresh agent reviewed the block and ran four app-code mutations:
+  - compare's `noteExtra` returning null: caught;
+  - board rows in viewport px: caught only by the camera check;
+  - the `.srev` author dropped: not caught;
+  - plain A toggling the board annotator: not caught.
+
+  It found five problems, all fixed:
+  - the px checks were circular: page px came from the annotation layer's own transform. Now they come from the card
+    box, the compare `<img>` and the lightbox media box, and the board strokes are drawn on a moved and zoomed camera;
+  - the `.srev` author and asset id were not checked;
+  - "plain A frames" was not checked;
+  - the second import waited a fixed 1.5 s; it now waits for the `/api/review/import` response;
+  - R0Export could leak its patches and the fake ShotGrid if set-up failed.
+
+  The same reviewer re-ran the mutations and confirmed every fix. Each mutation is now caught by a named check: the viewport-px
+  board rows by the four world-units checks too.
+- **Suite** (Windows, SIGHT_REQUIRE_E2E=1, 182 tests, 5 skipped by design): every R0 test passes (blocks 1–5).
+  12 older tests fail. None is from this block, which changes no app code:
+  - the R0Export flake found by this run is fixed: the picture re-fits a moment after the panel shows, so the script
+    now waits 0.6 s of stillness before aiming;
+  - known before: `test_pwa` ×4, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`;
+  - Windows-only, in older tests, environmental:
+    - `test_coreline.ConfigTest.test_store` expects POSIX mode 0o600 (NTFS gives 0o666);
+    - `test_review_page.test_two_clips`, `test_pwa.test_bundle` and `test_trackers.test_js_settings_form` read node's
+      output with the ANSI code page, so "—" / "·" arrive garbled (the same fix as `run_page`'s would do);
+    - `test_pwa.test_touch` and `test_export_extent.test_page` were not looked into.
+
+    These tests launch Playwright's own Chromium (no H.264 on Windows). `test_review_all.test_pdf_all` and
+    `test_sources` pass here.
+
 ## 0.141.3 — 2026-11-26 — The drop-zone test reaches the real drag handler
 - **What:** `test_sources.DropFilesE2E` failed on a clean master with `dropKind is not defined` since 0.135.2. A stale
   test, not an app bug: dropping files works. Only the test changed (and the version).
@@ -419,68 +494,3 @@ Add new entries directly below this line.
   - The whole suite: the same 8 failures with and without the change (`test_pwa` ×4, `test_review_all.test_pdf_all`,
     `test_sources.test_file_uri_to_path`, and the two above), compared against a clean origin/master worktree.
     Plus 8 new Coreline tests, green.
-
-## 0.134.1 — 2026-11-26 — R0-0 block 1: regression tests of the 2D lightbox and video transport
-- **What:** the first block of the R0-0 safety net (docs/PLAN-coreline.md). Playwright tests pin how the lightbox and
-  the video transport behave *now*, before the R0 refactor. Also a timing tool for the lightbox. No app code changed
-  (only the version).
-- **Where:**
-  - `tests/r0_harness.py`, shared by every R0-0 block. `LiveCase` makes a temporary library (never the live one) with
-    the media a test writes, waits until every file is ready, and serves it in-process. `run_page()` runs a node
-    script; `assertReport()` needs no fatal error, no page errors, every check ok, and at least `min_checks` of them.
-    `needs()` skips when node / Playwright / ffmpeg / psd-tools is missing; with `SIGHT_REQUIRE_E2E=1` that is a
-    failure instead. `SIGHT_R0_REPORT=<dir>` writes the whole report as JSON. Media makers: PNG, quadrant PNG,
-    layered PSD, H.264 / MPEG-1 clips.
-  - `tests/r0_lib.cjs`: page helpers. A check is `t.ok/eq/near(name, …)`. Desktop and touch pages; a touch page is a
-    touch laptop (`hasTouch`, no `isMobile`), see PLAN.md "Found by the R0-0 regression tests" 2. Also: pinch / finger
-    drag over CDP, `vstate` / `vsettled` / `vplaying`, a Web Audio start counter (`window.__abStarts`).
-  - `tests/test_r0_lightbox.py` + `tests/r0_lightbox_e2e.cjs`, 156 checks:
-    - pictures: open, fit, zoom (digits, F, double-click, wheel about the cursor, right-drag), pan, pixelation, turn
-      and mirror kept per file, ← → ↑ ↓, closing (Esc, ✕, Space);
-    - PSD: preview, layers panel (D and the button), a layer, back to Composite;
-    - video: autoplay, Space and click (the 250 ms hold), `.` `,` Shift+← →, the position field and its menu, fps
-      from the file, bar and stage scrub (Shift-fine), loop, mute and volume, scrub sound (heard through Web Audio),
-      timeline marks (a press on a mark enters annotation mode), RAM read-out, the scrub copy, playback conversion,
-      zoom / turn / resize refit, → leaving a video stops it;
-    - touch: pinch, pan, double tap, mirror, layers, tap / drag on the video and the bar, long press.
-  - `tools/bench_lightbox.py`: stdlib + benchlib, runs on Windows. It times open image (cold / warm), next image,
-    open video, frame step and close, using real CDP input and timing inside the page. Synthetic media, or
-    `--home <copy>` with `--image` / `--video`. Run it before and after each R0 block.
-  - `docs/PLAN.md`: a new section of what the tests found (not fixed):
-    - no next / previous file on touch;
-    - phone emulation cannot open a tile;
-    - `.` on the last frame lands on `t = duration`;
-    - a video's `width` / `height` columns are its thumbnail's;
-    - so carrying notes over between versions of a video scales them wrongly.
-- **Notes:**
-  - **The grid order is the scan order** (readdir: alphabetical on NTFS, hashed on ext4, reverse creation on tmpfs).
-    `LiveCase.ui_settings` writes the temp home's `settings.json` with Name sort, which wins over localStorage. Keep
-    it in later blocks, or read the order from `.card[data-id]`.
-  - A press on a timeline mark belongs to the mark (it enters annotation mode), so scrub presses avoid them.
-  - A stage scrub counts from where it became a drag (4 px), not from the press point.
-  - A small picture opens at 100 %, never upscaled.
-  - The R0 refactor must keep these tests unchanged. The selectors used (`#lightClose`, `.vbar [data-cur]`,
-    `.view-media`, `.view-hud`, `#psdBtn` …) are the contract.
-  - Suite here before this block: 6 failures that predate it. 3 in `test_pwa`, known. 3 not looked into:
-    - `test_annot_tools`, its touch part;
-    - `test_review_page` cut / copy / paste;
-    - `test_sources` `file_uri_to_path`, a Windows path.
-    `usd-core` is not installed, so the USD tests skip. Installed here: psd-tools, watchdog, pymupdf, zstandard,
-    imageio-ffmpeg (Sight's own deps).
-- **Review:** a fresh agent reviewed the block. It broke app code on purpose to catch checks that pass vacuously
-  (`git checkout` afterwards). It found:
-  - the grid-order dependence: 6 checks failed every run on tmpfs;
-  - a hollow "turn kept per file" check;
-  - a hollow scrub-sound check (the fetch came from the toggle, not the scrub);
-  - bench crashes ("next" onto a non-image, tiles not rendered);
-  - wrong "(cold)" labels;
-  - autoplay / loop timing races;
-  - checks with no precondition;
-  - harness gaps (silent scan timeout, unasserted server start, leak on a failed set-up, a low `min_checks`);
-  - PLAN item 4 was inaccurate, and the carry-over bug behind it.
-
-  Everything is fixed, and gaps it named are covered (touch layers button, video zoom / turn, resize refit, leaving a
-  video). The second pass found the "video left is stopped" check hollow (a detached element) and fixed 600 ms waits
-  that flaked under load. Fixed too. The same reviewer confirmed every fix. Its mutations now fail the intended
-  checks: turn fallback, `saPlay` stubbed, ResizeObserver refit, the scrub copy's hide. The suite is green alone, on
-  tmpfs, and with two runs at once.
