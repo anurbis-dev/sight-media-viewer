@@ -116,12 +116,12 @@ def make_gltf_with_bin(path: Path) -> Path:
     return path
 
 
-def make_glb(path: Path, anim: bool = False) -> Path:
-    """anim: also two UV sets on both boxes (TEXCOORD_0: each side the whole square, TEXCOORD_1: the lower left
+def make_glb(path: Path, anim: bool = False, at: tuple = ((-0.6, 0.0, 0.0), (0.6, 0.0, 0.0))) -> Path:
+    """at: the two boxes' centres (red, blue). anim: also two UV sets on both boxes (TEXCOORD_0: each side the whole square, TEXCOORD_1: the lower left
     quarter) and a 2 s clip "Lift" that moves Box 2 up by 1 and back (linear, keys at 0 / 1 / 2 s)."""
     meshes, bufs, views, accs, offset = [], [], [], [], 0
-    for i, (cx, col) in enumerate(((-0.6, [0.9, 0.3, 0.2, 1]), (0.6, [0.2, 0.5, 0.9, 1]))):
-        pos, idx = box(cx, 0.0, 0.0, 0.45)
+    for i, (c, col) in enumerate(((at[0], [0.9, 0.3, 0.2, 1]), (at[1], [0.2, 0.5, 0.9, 1]))):
+        pos, idx = box(*c, 0.45)
         pb = struct.pack(f"<{len(pos)}f", *pos)
         ib = struct.pack(f"<{len(idx)}H", *idx)
         ib += b"\0" * ((4 - len(ib) % 4) % 4)

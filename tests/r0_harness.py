@@ -44,7 +44,7 @@ def _has_playwright() -> bool:
 HAS_PLAYWRIGHT = _has_playwright()
 
 
-def needs(ffmpeg: bool = False, psd: bool = False):
+def needs(ffmpeg: bool = False, psd: bool = False, usd: bool = False):
     """Class decorator: skip (or, with SIGHT_REQUIRE_E2E=1, fail) when a tool the test needs is missing."""
     missing = []
     if not HAS_PLAYWRIGHT:
@@ -56,6 +56,11 @@ def needs(ffmpeg: bool = False, psd: bool = False):
             import psd_tools  # noqa: F401
         except ImportError:
             missing.append("psd-tools")
+    if usd:
+        try:
+            import pxr  # noqa: F401  (usd-core: the server's .usdz -> GLB conversion)
+        except ImportError:
+            missing.append("usd-core")
 
     def wrap(cls):
         if not missing:

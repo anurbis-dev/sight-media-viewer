@@ -14,6 +14,75 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.138.2 — 2026-11-26 — R0-0 block 4: regression tests of the 3D viewer
+- **What:** the fourth block of the R0-0 safety net (docs/PLAN-coreline.md): the lightbox's 3D viewer as it is
+  before R0c. No app code changed (only the version).
+- **Where:**
+  - `tests/test_r0_3d.py` + `tests/r0_3d_e2e.cjs` cover (the script's header lists every check):
+    - open, F, zoom / dolly / pan / orbit, explode (slider, Ctrl+right-drag), shading (Shift+1…6, the buttons);
+    - turns and saved views per asset, through the server;
+    - `.usdz` with and without the server's conversion;
+    - an FBX texture through `/api/model-res`;
+    - a splat;
+    - a note on a 3D view (its `ctx.vk`, a pick goes back to it);
+    - touch.
+  - Harness and fixtures:
+    - `needs(usd=True)`: usd-core (`pxr`) is needed for the server's conversion, installed here with pip;
+    - `tests/fixtures_3d.make_glb(at=…)` places the two boxes (default unchanged);
+    - the test file writes a textured ASCII FBX. Three's FBXLoader takes the texture's name from a `Video` node
+      connected to the `Texture`: without one it asks for nothing.
+- **Notes:**
+  - The picture is read back from a screenshot (red / blue / green pixel boxes, above the shading bar, whose buttons
+    are coloured too). `still()` waits until two frames agree, since camera moves ease.
+  - **F frames the model from the current side** (`frameBox` keeps the direction). So after an orbit F does not
+    return to the opening side, and the opening framing differs from F's (a tighter fit). Both are pinned as they
+    are. A reopen shows the opening side again.
+  - Shift+7's quarter turn about X is invisible on two boxes along X (a cube maps onto itself). The turn checks use
+    `m_step.glb`, whose blue box is raised.
+  - In 3D, A flies left (WASD): annotating is toggled with `#annoBtn`.
+  - A page that already has an FBX cached from its grid thumbnail may not ask for the texture again. The FBX case
+    runs in a fresh page.
+  - PSD (layers, preview) was covered in block 1.
+  - `makeCameraRig`'s header comment (index.html, "frame-all (F) back to the framing the model opened with") holds
+    only for splats; a mesh's F keeps the side. A stale comment, not changed here.
+  - One run takes about 13 min here (SwiftShader); `run_page` allows 30.
+- **Review:** a fresh agent reviewed it in one round, with mutations:
+  - The mutations were: camera save without `turns`, the explode slider's onChange emptied, the USDLoader fallback
+    replaced by a throw, `setModelTurns` not saving, the model manager's URL modifier removed. All were caught.
+  - It found no bugs and six gaps, all fixed:
+    - a view saved at one turn and recalled at another was never tried (now: three more turns, then 1 brings the
+      turn back);
+    - the explode thresholds had a 1 px margin (now 10 px; the mutation moves 0 px);
+    - Normal / Vertex / wire / X-ray checked only the button (now: the picture changes);
+    - an orbit could not be told from a pan (now: the boxes' gap must change, as a pan keeps it);
+    - the timeout was near the run time;
+    - the `.usdz` check counted the corner controls (now: the margins are ignored).
+
+  The same reviewer confirmed every fix. It re-ran a recall that ignores `cam.turns`, and the new checks caught it.
+  Still uncovered: a note picked after a turn (`setView`'s turn line), and the splat's own turn.
+- **Block 5 handoff** (the last R0-0 block; the owner runs it from a local session):
+  - What is left, per docs/PLAN-coreline.md R0-0:
+    - board annotations, compare (incl. dropped files), sequences, the library split (Tab);
+    - `.srev` / HTML / PDF export and import;
+    - the tracker link ▾ with the fake ShotGrid server (`tests/sg_fake_server.cjs`) and Coreline's fake
+      (`tests/cl_fake_server.cjs`, docs/CORELINE.md);
+    - UI scale 0.75× / 1.75× (`--ui-k`), light / dark;
+    - a text snapshot of the bars, the panel and the `?` lists;
+    - shortcuts and the touch path of each mode.
+  - Some of this is covered by older tests; check before writing new ones: `test_board_annotations`,
+    `test_review_page` / `_bundle` / `_all`, `sg_view_e2e`, `trackers_e2e`, `cl_view_e2e`, `drop_files_e2e`.
+  - The harness:
+    - reuse `tests/r0_harness.py` (`LiveCase`, `run_page`, `needs`) and `tests/r0_lib.cjs`;
+    - `SIGHT_REQUIRE_E2E=1` makes a missing tool a failure;
+    - `SIGHT_R0_REPORT=<dir>` writes each script's JSON report.
+  - Needed:
+    - node with Playwright, ffmpeg, psd-tools, usd-core.
+  - Lessons:
+    - poll, never wait a fixed time for a debounced write (300–400 ms timers);
+    - a click on an element the app may hide by itself can time out quietly;
+    - read storage from a non-app same-origin page (`/api/settings`) when app pages' timers could interfere;
+    - `isVisible()` ignores overlap: use `elementFromPoint` to tell whether the library split is shown.
+
 ## 0.138.1 — 2026-11-26 — R0-0 block 3: regression tests of the write queue, settings, shots, previews, dictation
 - **What:** the third block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator's plumbing does
   now. No app code changed (only the version).
@@ -496,9 +565,3 @@ Add new entries directly below this line.
 - **Where:** app/library.py — `ensure_dropped_source`, `add_dropped_file`, `view_file`, `resolve_asset`; app/server.py — `drop_file_paths`, `POST /api/files/drop`; app/static/index.html — `#srcDrop` two zones, `takeDroppedFiles` / `addDroppedFiles` / `ensureLightInLibrary`; tests/test_sources.py `DropFilesTest`; tests/drop_files_e2e.cjs; MANUAL, ARCHITECTURE.
 - **Notes:** files stay on disk; the parent folder is not added. **Dropped files** is an inbox source (`<SIGHT_HOME>/dropped`) that is never scanned or watched — each row keeps the original path; adding that folder later as a source reassigns the row (same path-hash id). View-only assets are in-memory (`Library._ephemeral`) so they are not in All / the grid. Same path already in the library: both zones return that row. 32-file cap, NFC name match, capture-phase drop, overlay hide timeout — same as folders. Image drop onto the annotator while drawing is still a reference picture. Overlay display uses `:not([hidden])` (a later `data-kind` rule had shown the overlay always). Busy file drops queue as separate jobs (mode is not mixed). A lone `.srev` is not POSTed as media.
 - **Review:** a fresh reviewer found: OS image drop while drawing on the board or compare still opened the file (→ `dropOnAnnotatorSurface` checks all three annotators and `.canvas-viewport` / `.cmp-stage`); overlay `[hidden]` lost to `[data-kind=folder]` so the tint stayed up (→ `:not([hidden])`); library-zone hit-test vs `min-width: 168px` at UI scale &lt; 1 (→ drop the min-width, JS already uses `--side-w × --ui-k`); view-only text / transcode / model sidecars / USDZ used `get_asset` (→ `resolve_asset`); `.srev` also POSTed as unsupported (→ skip); busy queue mixed modes (→ job list); compare **A** did not promote (→ `cmpToggleAnnot` through `ensureLightInLibrary`). Same reviewer then found leftover `scrub_audio_*` still on `get_asset` and compare A promoting `light.asset` instead of the selected layer (→ `resolve_asset`, `ensureInLibrary(assetById(cmp.selectedId()))`). It confirmed those. No new blocking issues.
-
-## 0.130.0 — 2026-11-25 — Drop folders on the window to add them as sources
-- **What:** dropping one or more folders from Explorer / Finder onto the Sight window adds them as library sources (the same as **+ Folder**). A dashed overlay says so while a folder drag is over the window. A `.srev` in the same drop still imports.
-- **Where:** app/server.py — `file_uri_to_path`, `drop_folder_paths`, `drop_name_key`, `os_manager_selected_dirs`, `POST /api/sources/drop`; app/static/index.html — `#srcDrop`, `takeDroppedFolders` / `addDroppedFolders` (window `drop` in capture); annotate.js `onRefDrop` lets mixed folder+pictures bubble; tests/test_sources.py `DropFoldersTest`; MANUAL, ARCHITECTURE.
-- **Notes:** Chromium does not give the OS path of a dropped folder to the page. The server takes whatever the page could read (`File.path`, `file://` in `text/uri-list` / `text/plain` / `text/x-moz-url`) and matches remaining folder names to the current Explorer (Shell.Application `SelectedItems`) or Finder selection. Two selected folders with the same name are skipped (`ambiguous`) rather than guessing. Dropped *files* are not turned into sources (their parent is not added). Already-indexed folders return `new: false`. Overlay is `pointer-events: none` so the drop still lands on the page. Linux has no file-manager selection hook; `file://` from the drag still works there. Explorer matching runs in `asyncio.to_thread` so PowerShell / osascript cannot stall SSE. Names are NFC-folded (`drop_name_key`) so Finder NFD paths match `File.name`. At most 32 folders per drop (`too many`). Window drop is capture-phase so a folder+image drop on the lightbox still adds the folder. File-only drops with directory entries do not POST. Overlay hides if `dragover` stops (~500 ms) or the pointer leaves the window. A second drop while busy is queued.
-- **Review:** a fresh reviewer agent found: Explorer lookup blocked the event loop (→ `to_thread`); overlay could stick and a Chromium drop with no names/paths was silent (→ hide timeout, + Folder toast); folder+pictures on the annotator swallowed the folders (→ capture-phase drop, `onRefDrop` does not `stopPropagation` when a directory is present); file-only URI POSTs, silent 32-cap, busy drop discarded (→ skip file-only POST, `too many`, queue). NFC vs NFD name match added. Same reviewer then found `dropHasFolders(e)` ran after `await getAsFileSystemHandle`, so the uri-list fallback could no-op (→ snapshot `folderHint` / uris in the drop tick). Real Explorer `DataTransfer` still untested in this environment (devtools cannot synthesize a folder drag).
