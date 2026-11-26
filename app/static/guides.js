@@ -2,10 +2,12 @@
 // Positions are image pixels and follow attachViewer's geom ({x0, y0, s, w, h, turn})
 // through pan, zoom, turn and mirror. One localStorage blob, keyed by asset id.
 //
-// Grid: rulers on the picture's top and left edges. Drag down from the top ruler for a
-// vertical guide, right from the left ruler for a horizontal one. Drag a guide back onto
-// its ruler to delete it. Perspective: one handle per vanishing point, lines through the
-// picture toward that point.
+// Grid: rulers just outside the picture's top and left edges (they reach out to the farthest
+// guide, and stay inside the lightbox window when the edge is scrolled off). Drag down from
+// the top ruler for a vertical guide, right from the left ruler for a horizontal one. Drag a
+// guide back onto its ruler, Ctrl+click it or long-press it (touch) to delete it.
+// Perspective: one handle per vanishing point, lines through the picture toward that point.
+// Guides hide with the drawings (the eye, Shift+H: hooks.hidden).
 
 const STORE_KEY = "sight.guides";
 const MODES = ["", "grid", "1", "2", "3"];
@@ -222,10 +224,42 @@ function clientToView(e, view){
   return [e.clientX - r.left, e.clientY - r.top];
 }
 function coarse(){ return window.matchMedia("(pointer: coarse)").matches; }
-function rulerPx(g){
-  const edge = Math.min(g.w, g.h) * g.s;
-  const want = coarse() ? 32 : 22;
-  return Math.min(want, Math.max(12, edge * 0.28));
+function rulerPx(){
+  return coarse() ? 32 : 22;
+}
+// The two rulers in view px. Each lies along a picture edge (top: image y = 0, left: x = 0), on its
+// outer side, and runs from min(0, guides) to max(size, guides) in image px along that edge.
+// o: the view point of image coordinate 0 on the ruler's inner line; a: unit along the edge (one
+// image px = g.s view px); n: unit normal pointing away from the picture; off: the inner line's
+// distance from the edge along n (0 = touching the picture; less when the edge is off screen, so
+// the band stays in the window); t: the band's depth; lo / hi: the drawn span in image px.
+let rulers = null;
+function rulerFrames(g, W, H){
+  const t = rulerPx();
+  const p00 = imgToView(0, 0, g), p10 = imgToView(g.w, 0, g), p01 = imgToView(0, g.h, g);
+  const right = dir(p00, p10), down = dir(p00, p01);
+  const corners = [[0, 0], [W, 0], [0, H], [W, H]];
+  const vis = corners.map(([x, y]) => viewToImg(x, y, g));
+  const frame = (k, a, n, size, list, axis) => {
+    const ds = corners.map(([x, y]) => (x - p00[0]) * n[0] + (y - p00[1]) * n[1]);
+    const dmax = Math.max(...ds), dmin = Math.min(...ds);
+    const off = Math.max(dmin, Math.min(0, dmax - t));
+    let lo = 0, hi = size;
+    for (const v of list){ if (Number.isFinite(v)){ lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+    // Only what can be on screen: the window's corners in image px bound the visible span.
+    const vs = vis.map((p) => p[axis]);
+    const pad = t / g.s;
+    lo = Math.max(lo, Math.min(...vs) - pad);
+    hi = Math.min(hi, Math.max(...vs) + pad);
+    return { k, o: add(p00, n, off), a, n, off, t, lo, hi, s: g.s };
+  };
+  return {
+    top: frame("top", right, [-down[0], -down[1]], g.w, rec.v, 0),
+    left: frame("left", down, [-right[0], -right[1]], g.h, rec.h, 1),
+  };
+}
+function rulerAt(f, v, depth){
+  return add(add(f.o, f.a, v * f.s), f.n, depth);
 }
 function labelStep(s, size){
   const raw = 64 / Math.max(s, 1e-6);
@@ -256,10 +290,13 @@ function readable(a){
   return x;
 }
 
-function overRuler(which, ix, iy, g, t){
-  const band = t / g.s, slop = 10 / g.s;
-  if (which === "top") return iy >= -slop && iy <= band && ix >= -slop && ix <= g.w + slop;
-  return ix >= -slop && ix <= band && iy >= -slop && iy <= g.h + slop;
+// Is the view point (vx, vy) on that ruler's band (with a little slop)?
+function overRuler(which, vx, vy){
+  const f = rulers?.[which];
+  if (!f || !(f.hi >= f.lo)) return false;
+  const dx = vx - f.o[0], dy = vy - f.o[1], slop = 10;
+  const u = (dx * f.a[0] + dy * f.a[1]) / f.s, w = dx * f.n[0] + dy * f.n[1];
+  return w >= -slop && w <= f.t + slop && u >= f.lo - slop / f.s && u <= f.hi + slop / f.s;
 }
 
 function injectCss(){
@@ -273,6 +310,9 @@ function injectCss(){
 .gd-pop { left: auto; right: 0; min-width: 228px; z-index: 120; touch-action: none; }
 .gd-pop[hidden] { display: none; }
 .gd-pop button.on { color: var(--accent); }
+.gd-row { display: flex; align-items: center; }
+.gd-row > button { flex: 1 1 auto; width: auto; min-width: 0; }
+.gd-row > .gd-field { flex: none; padding-left: 4px; }
 .gd-field, .gd-dens { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 2px 10px; color: var(--muted); font-size: 12px; }
 .gd-field span, .gd-dens span { flex: none; }
 .gd-field input[type=number], .gd-edit {
@@ -341,8 +381,7 @@ function paintMenu(){
   ).join("") : "";
   pop.innerHTML = `
     ${row("", "Off")}
-    ${row("grid", "Grid")}
-    <label class="gd-field">Snap<input type="number" min="1" max="500" step="1" data-snap value="${rec.snap}" aria-label="Snap step in pixels">px</label>
+    <div class="gd-row">${row("grid", "Grid")}<label class="gd-field">Snap<input type="number" min="1" max="500" step="1" data-snap value="${rec.snap}" aria-label="Snap step in pixels">px</label></div>
     <div class="sep"></div>
     ${row("1", "1-point")}
     ${row("2", "2-point")}
@@ -353,9 +392,12 @@ function paintMenu(){
       const m = b.dataset.mode;
       rec.mode = m && m === rec.mode ? "" : m;
       save();
+      // Picking guides while the eye hides them shows them (and the drawings: one state).
+      if (rec.mode && hooks.hidden?.()) hooks.reveal?.();
       paintBtn();
       paintMenu();
       refresh();
+      hooks.onModeChange?.();
     };
   });
   const snap = pop.querySelector("[data-snap]");
@@ -513,6 +555,7 @@ function restore(s){
 }
 function cancelDrag(){
   if (!drag) return;
+  clearTimeout(drag.lp);
   const s = drag.snapshot;
   unlisten();
   drag = null;
@@ -568,15 +611,41 @@ function onPointerDown(e){
     return;
   }
   if (k === "v" || k === "h"){
+    // Ctrl+click (Cmd on a Mac) deletes the guide at once; a finger long-presses it (beginGuideDrag).
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey){
+      deleteGuide(k, Number(hit.dataset.i));
+      return;
+    }
     beginGuideDrag(e, view, g, k, Number(hit.dataset.i), false, snap, vx, vy);
     return;
   }
   if (k === "vp") beginVpDrag(e, view, g, Number(hit.dataset.i), snap, vx, vy);
 }
 
+function deleteGuide(kind, i){
+  const arr = kind === "v" ? rec.v : rec.h;
+  if (!(i >= 0 && i < arr.length)) return;
+  if (drag) cancelDrag();
+  arr.splice(i, 1);
+  hideEdit();
+  save();
+  refresh();
+}
+const LONG_PRESS_MS = 550;
 function beginGuideDrag(e, view, g, kind, i, fresh, snap, vx, vy){
   hideEdit();
-  drag = { kind, i, fresh, snapshot: snap, moved: false, typing: false, kill: !!fresh, pid: e.pointerId, x0: e.clientX, y0: e.clientY, vx, vy };
+  drag = { kind, i, fresh, snapshot: snap, moved: false, typing: false, kill: !!fresh, pid: e.pointerId, pType: e.pointerType || "mouse", x0: e.clientX, y0: e.clientY, vx, vy };
+  // Touch / pen: holding an existing guide still deletes it (the finger's Ctrl+click).
+  if (!fresh && e.pointerType && e.pointerType !== "mouse"){
+    const d = drag;
+    d.lp = setTimeout(() => {
+      if (drag !== d || d.moved || editGuide?.typing) return;
+      unlisten();
+      drag = null;
+      clearDragCursor();
+      deleteGuide(kind, i);
+    }, LONG_PRESS_MS);
+  }
   setDragCursor(drag.kill);
   showEdit(kind, i, e.pointerType !== "touch");
   if (editGuide) editGuide.typing = false;
@@ -600,24 +669,30 @@ function moveGuide(e){
   const g = geom();
   const view = pictureView();
   if (!g || !view) return;
-  if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) >= 4) drag.moved = true;
+  // A resting finger wanders: touch / pen get a wider still zone (the long press needs it).
+  const still = drag.pType && drag.pType !== "mouse" ? 10 : 4;
+  if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) >= still){ drag.moved = true; clearTimeout(drag.lp); }
   const [vx, vy] = clientToView(e, view);
   drag.vx = vx; drag.vy = vy;
   const [ix, iy] = viewToImg(vx, vy, g);
-  const t = rulerPx(g);
   const which = drag.kind === "v" ? "top" : "left";
-  drag.kill = overRuler(which, ix, iy, g, t);
-  setDragCursor(drag.kill);
-  if (!editGuide?.typing){
+  // Within the still zone a tap / hold does not move (or re-snap) the guide.
+  if (!editGuide?.typing && drag.moved){
     const raw = drag.kind === "v" ? ix : iy;
     writeGuide(drag.kind, drag.i, raw, true);
-    markKill(drag.kill);
   }
+  // The ruler reaches out to the dragged guide: test against the rulers as they are now, not as last drawn.
+  rulers = rulerFrames(g, view.clientWidth, view.clientHeight);
+  // A tap on a guide where it crosses a ruler (zoomed in, the ruler is pinned over the picture) opens its field.
+  drag.kill = (drag.moved || drag.fresh) && overRuler(which, vx, vy);
+  setDragCursor(drag.kill);
+  if (!editGuide?.typing) markKill(drag.kill);
   refresh();
 }
 function upGuide(){
   if (!drag) return;
   const d = drag;
+  clearTimeout(d.lp);
   const typing = !!editGuide?.typing;
   unlisten();
   drag = null;
@@ -692,7 +767,7 @@ function refresh(){
   if (!bound) return;
   const g = geom();
   const view = pictureView();
-  if (!assetId || !rec.mode || !g || !view){
+  if (!assetId || !rec.mode || !g || !view || (hooks.hidden?.() && !drag)){
     if (!drag) detachRoot();
     return;
   }
@@ -705,21 +780,20 @@ function draw(view, g){
   if (!w || !h) return;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   const parts = [];
-  if (rec.mode === "grid") parts.push(...drawGrid(g));
+  if (rec.mode === "grid") parts.push(...drawGrid(g, w, h));
   else if (rec.mode === "1" || rec.mode === "2" || rec.mode === "3") parts.push(...drawPersp(g));
   svg.innerHTML = parts.join("");
   placeEdit(view, g);
 }
 
-function drawGrid(g){
-  const t = rulerPx(g);
-  const p00 = imgToView(0, 0, g), p10 = imgToView(g.w, 0, g), p01 = imgToView(0, g.h, g);
-  const down = dir(p00, p01), right = dir(p00, p10);
+function drawGrid(g, W, H){
+  rulers = rulerFrames(g, W, H);
   const parts = [];
-  parts.push(rulerPoly(p00, p10, down, t, "top"));
-  parts.push(rulerPoly(p00, p01, right, t, "left"));
-  parts.push(...rulerTicks(g, t, true, down));
-  parts.push(...rulerTicks(g, t, false, right));
+  for (const f of [rulers.top, rulers.left]){
+    if (!(f.hi > f.lo)) continue;
+    parts.push(rulerPoly(f));
+    parts.push(...rulerTicks(f, g));
+  }
   const hit = coarse() ? 28 : 14;
   rec.v.forEach((x, i) => {
     const a = imgToView(x, 0, g), b = imgToView(x, g.h, g);
@@ -737,44 +811,42 @@ function drawGrid(g){
   });
   return parts;
 }
-function rulerPoly(a, b, inward, t, k){
-  const i0 = add(a, inward, 0), i1 = add(b, inward, 0);
-  const o0 = add(a, inward, t), o1 = add(b, inward, t);
-  const pts = [i0, i1, o1, o0].map((p) => px(p[0]) + "," + px(p[1])).join(" ");
-  return `<polygon class="gd-hit" data-k="${k}" points="${pts}" fill="var(--surface-2)" fill-opacity=".9" stroke="var(--border)" stroke-width="1"/>`;
+function rulerPoly(f){
+  const pts = [rulerAt(f, f.lo, 0), rulerAt(f, f.hi, 0), rulerAt(f, f.hi, f.t), rulerAt(f, f.lo, f.t)]
+    .map((p) => px(p[0]) + "," + px(p[1])).join(" ");
+  return `<polygon class="gd-hit" data-k="${f.k}" points="${pts}" fill="var(--surface-2)" fill-opacity=".9" stroke="var(--border)" stroke-width="1"/>`;
 }
-function rulerTicks(g, t, horizontal, inward){
-  const size = horizontal ? g.w : g.h;
-  const step = labelStep(g.s, size);
+// Ticks grow from the side next to the picture; labels sit toward the outer side.
+function rulerTicks(f, g){
+  const t = f.t;
+  const step = labelStep(g.s, f.hi - f.lo);
   const parts = [];
-  const angBase = (() => {
-    const a = horizontal ? imgToView(0, 0, g) : imgToView(0, 0, g);
-    const b = horizontal ? imgToView(Math.min(size, 1) || 1, 0, g) : imgToView(0, Math.min(size, 1) || 1, g);
-    return readable(Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI);
-  })();
-  const minors = rec.snap >= 1 && rec.snap < step - 0.01 && size / rec.snap <= 100;
+  const angBase = readable(Math.atan2(f.a[1], f.a[0]) * 180 / Math.PI);
+  const minors = rec.snap >= 1 && rec.snap < step - 0.01 && (f.hi - f.lo) / rec.snap <= 100;
   const majorAt = new Set();
   const emit = (v, major) => {
-    if (v < -1e-6 || v > size + 1e-6) return;
-    const p0 = horizontal ? imgToView(v, 0, g) : imgToView(0, v, g);
+    if (v < f.lo - 1e-6 || v > f.hi + 1e-6) return;
+    const p0 = rulerAt(f, v, 0);
     if (!Number.isFinite(p0[0])) return;
-    const p1 = add(p0, inward, major ? Math.min(t - 4, 11) : Math.min(t * 0.45, 6));
+    const p1 = add(p0, f.n, major ? Math.min(t - 4, 11) : Math.min(t * 0.45, 6));
     parts.push(`<line class="gd-mark" x1="${px(p0[0])}" y1="${px(p0[1])}" x2="${px(p1[0])}" y2="${px(p1[1])}" stroke="${major ? "var(--fg)" : "var(--muted)"}" stroke-opacity="${major ? ".85" : ".55"}" stroke-width="1"/>`);
     if (!major) return;
-    const at = add(p0, inward, t * 0.62);
+    const at = add(p0, f.n, t * 0.62);
     const label = fmt(Math.round(v * 100) / 100);
     parts.push(`<text class="gd-mark" x="${px(at[0])}" y="${px(at[1])}" fill="var(--fg)" font-size="10" font-family="var(--font, sans-serif)" text-anchor="middle" dominant-baseline="middle" transform="rotate(${px(angBase)} ${px(at[0])} ${px(at[1])})">${xml(label)}</text>`);
   };
-  for (let i = 0; i < 48; i++){
+  const first = Math.ceil((f.lo - 1e-6) / step);
+  for (let i = first, c = 0; c < 60; i++, c++){
     const v = i * step;
-    if (v > size + 1e-6) break;
+    if (v > f.hi + 1e-6) break;
     majorAt.add(Math.round(v * 1000));
     emit(v, true);
   }
   if (minors){
-    for (let i = 0; i < 120; i++){
+    const s0 = Math.ceil((f.lo - 1e-6) / rec.snap);
+    for (let i = s0, c = 0; c < 120; i++, c++){
       const v = i * rec.snap;
-      if (v > size + 1e-6) break;
+      if (v > f.hi + 1e-6) break;
       if (!majorAt.has(Math.round(v * 1000))) emit(v, false);
     }
   }
@@ -835,7 +907,7 @@ export function mountGuides(h = {}){
     }
     if (menuOpen){ e.preventDefault(); e.stopPropagation(); closeMenu(); }
   }, true);
-  return { bind, setAsset, close };
+  return { bind, setAsset, close, refresh: () => refresh(), active: () => !!(assetId && rec.mode && bound) };
 }
 function bind(light){
   bound = light;
@@ -852,6 +924,7 @@ function setAsset(id){
   if (!next) closeMenu();
   else if (menuOpen) paintMenu();
   paintBtn();
+  hooks.onModeChange?.();
 }
 function close(){
   cancelDrag();

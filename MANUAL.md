@@ -22,10 +22,13 @@
 - **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
   thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held R / Alt / Shift does on a picture or video (turn, scrub).
 - **Guides** — in the lightbox of a picture, a PSD or a video, the guides button in the top bar opens **Grid**,
-  **1-point**, **2-point** or **3-point** (choose it again, or **Off**, to hide it). **Grid** puts rulers along the
-  top and left edges of the picture, in image pixels: drag down from the top ruler for a vertical guide, drag right
-  from the left ruler for a horizontal one. Guides snap to the step in that menu (1–500 px, default 10); a field
-  while dragging, or a click on a guide, types an exact pixel. Drag a guide back onto its ruler to delete it.
+  **1-point**, **2-point** or **3-point** (choose it again, or **Off**, to hide it). **Grid** puts rulers just
+  outside the top and left edges of the picture, in image pixels: drag down from the top ruler for a vertical guide,
+  drag right from the left ruler for a horizontal one. A guide may go past the picture; its ruler then reaches out
+  to it. Zoomed in, the rulers stay at the edge of the window. Guides snap to the step in the field beside **Grid**
+  (1–500 px, default 10); a field while dragging, or a click on a guide, types an exact pixel. To delete a guide,
+  `Ctrl`+click it, long-press it with a finger, or drag it back onto its ruler. `Shift+H` (or the eye button) hides
+  and shows the guides together with the drawings; the eye shows whenever guides are on.
   A perspective mode places a handle for each vanishing point (drag it, including outside the picture) and draws
   lines through the picture toward it; each point has its own line count (2–40, default 8). Guides stay stuck to
   the picture through pan, zoom, turn and mirror, and are remembered on this computer for each file. The button

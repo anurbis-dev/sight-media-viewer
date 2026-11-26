@@ -5282,6 +5282,7 @@ export function createAnnotator(host){
       if (S.b3 && keep.anim) S.b3.setAnimState?.(keep.anim);  // (playing again if it was)
       if (S.b3) S.curVk = keep.vk;
       S.hidden = keep.hidden; S.hiddenReplies = keep.hiddenReplies;
+      host.onHiddenChange?.(S.hidden);   // the lightbox guides may have been redrawn while the report showed everything
       paintVisibility();
     }
     const g = geom(), nw = g?.nw || a.width, nh = g?.nh || a.height;
@@ -5499,7 +5500,14 @@ export function createAnnotator(host){
     startTick();
     return true;
   }
-  function toggleHidden(){ S.hidden = !S.hidden; paintBar(); paintBadge(); paintVisibility(); renderSel(); if (followOff()) startTick(); toast(S.hidden ? "Drawings hidden" : "Drawings shown"); }
+  // The eye's subject: the drawings, and the lightbox guides (index.html guides.js: host.hasGuides) — one hidden state.
+  const eyeSubject = () => hasDrawings() || (!isBoard() && !!host.hasGuides?.());
+  function toggleHidden(){
+    S.hidden = !S.hidden; paintBar(); paintBadge(); paintVisibility(); renderSel(); if (followOff()) startTick();
+    const what = hasDrawings() || !host.hasGuides?.() ? (host.hasGuides?.() ? "Drawings and guides" : "Drawings") : "Guides";
+    toast(`${what} ${S.hidden ? "hidden" : "shown"}`);
+    host.onHiddenChange?.(S.hidden);
+  }
   // The notes button (index.html #notesBtn in the lightbox bar, #boardNotesBtn in the top bar for a board — host.notesBtn):
   // opens / closes the panel of the mode in use; its badge counts the notes.
   function paintNotesBtn(nb, n){
@@ -5531,12 +5539,12 @@ export function createAnnotator(host){
     if (!eye) return;
     // (While drawing, a hidden state carried over from another file shows even with nothing drawn yet: new strokes
     // would vanish without a sign.)
-    eye.hidden = !S.asset || !supported() || !(hasDrawings() || (S.on && S.hidden)) || host.notesBtnShown?.() === false || !(S.on || (shownOff() && !isBoard()));
+    eye.hidden = !S.asset || !supported() || !(eyeSubject() || (S.on && S.hidden)) || host.notesBtnShown?.() === false || !(S.on || (shownOff() && !isBoard()));
     const vid = S.kind === "video", onion = vid && S.onion;
     eye.innerHTML = S.hidden ? ICON.eyeOff : onion ? ICON.onion : ICON.eye;
     eye.classList.toggle("off", !!S.hidden);
     eye.classList.toggle("onion", onion);
-    eye.title = (S.hidden ? "Show" : "Hide") + " the drawings (Shift+H)"
+    eye.title = (S.hidden ? "Show" : "Hide") + (host.hasGuides?.() && !isBoard() ? (hasDrawings() ? " the drawings and guides" : " the guides") : " the drawings") + " (Shift+H)"
       + (vid ? ` · right-click / long-press: onion skin ${onion ? "off" : "on"} (drawings fade between annotated frames)` : "");
     eye.setAttribute("aria-pressed", S.hidden ? "true" : "false");
     if (eye.dataset.wired) return;
@@ -5555,7 +5563,7 @@ export function createAnnotator(host){
     if (!S.asset || S.kind !== "video") return;
     S.onion = !S.onion;
     writeJSON("sight.annotate.onion", S.onion);
-    if (S.onion && S.hidden){ S.hidden = false; paintBar(); }   // asking for the ghosts means showing the drawings
+    if (S.onion && S.hidden){ S.hidden = false; paintBar(); host.onHiddenChange?.(false); }   // asking for the ghosts means showing the drawings
     paintBadge(); paintVisibility(); renderSel();
     if (followOff()) startTick();   // a playing video's drawings follow again (the tick stopped while they were hidden)
     toast(S.onion ? "Onion skin on — drawings fade between annotated frames" : "Onion skin off");
@@ -5673,7 +5681,7 @@ export function createAnnotator(host){
       if (supported() && readable() && hotkey(e, "KeyC") && !e.repeat){ e.preventDefault(); togglePanel(); return true; }
       if (S.pinFocus && hotkey(e, "Escape")){ e.preventDefault(); S.pinFocus = null; paintVisibility(); renderPanel(); return true; }
       // The eye works while just watching too (drawings are shown on playback).
-      if (shownOff() && !isBoard() && hasDrawings() && hotkey(e, "Shift+KeyH")){ e.preventDefault(); if (!e.repeat) toggleHidden(); return true; }
+      if (shownOff() && !isBoard() && eyeSubject() && hotkey(e, "Shift+KeyH")){ e.preventDefault(); if (!e.repeat) toggleHidden(); return true; }
       // Frame stepping works in any video, annotating or not.
       if (S.kind === "video") return runHotkeys(e, keyTable().filter((r) => r[3] === "Video"));
       return false;
@@ -5910,6 +5918,10 @@ export function createAnnotator(host){
   return {
     mount, unmount, setAsset, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, toggleHelp, importFile, explodeChanged,
     isOn: () => S.on, resetPrefs,
+    // The eye's state, shared with the lightbox guides (guides.js hides with it); setHidden(false) shows both again.
+    hidden: () => !!S.hidden,
+    setHidden: (v) => { if (!!v !== !!S.hidden && S.asset) toggleHidden(); },
+    repaintEye: () => paintBadge(),
     supports: () => supported(),
     // The open video's timeline marks: [{t, note}] (note: true for a note's frame), for a sequence's bar.
     marks: () => (S.kind === "video" ? marks().map((m) => ({ t: m.t, note: !!m.note })) : []),

@@ -952,7 +952,9 @@ import { mountGuides } from "/static/guides.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, turnSplat, splatHome, splatCountHint, splatLodFor, splatSource, splatBox, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
   setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
-const guides = mountGuides({ registerAutoClose: (...a) => registerAutoClose(...a), putSetting: (k, v) => putSetting(k, v) });
+// Guides share the eye's hidden state with the lightbox drawings (Shift+H / the eye button hide both).
+const guides = mountGuides({ registerAutoClose: (...a) => registerAutoClose(...a), putSetting: (k, v) => putSetting(k, v),
+  hidden: () => !!annot.hidden?.(), reveal: () => annot.setHidden?.(false), onModeChange: () => annot.repaintEye?.() });
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 // Sidebar icon per kind (ids of the ICONS catalogue) for the Types rows when "Sidebar icons" is on.
 const KIND_ICON = { image:"image", video:"film", audio:"music", model3d:"box", document:"file", font:"font", design:"palette" };
@@ -1916,6 +1918,9 @@ const annot = createAnnotator({
   onLooseDrawings: (aid, n) => paintLooseDraw(aid, n),
   // A press on a ruler, guide or vanishing point is the guides overlay, not a stroke.
   passThrough: (e) => !!e.target.closest?.(".gd-hit, .gd-edit"),
+  // The eye (Shift+H) also hides / shows the guides, and shows while only guides are on.
+  hasGuides: () => guides.active(),
+  onHiddenChange: () => guides.refresh(),
 });
 // The same tools on a Canvas board (annotate.js board mode): a second annotator, mounted in the board view by
 // canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
@@ -8518,7 +8523,7 @@ function lightGeneralRows(o){
     [["K"], "Compare: the set in the viewer, else this file's versions (also the compare button)"],
     [[o.d3 ? "Shift+A" : "A"], light?.asset?.ephemeral ? "Add this file to the library and draw notes" : "Draw and write notes — the pencil button (its own ? lists the drawing keys)"],
     [["C"], "Read the notes — the speech-bubble button (click a picture to go there)"],
-    [["Shift+H"], "Hide / show the drawings — the eye button"],
+    [["Shift+H"], "Hide / show the drawings and the guides — the eye button"],
     [["I"], "File info overlay — the round i button"],
     [["◱"], "Mask and corner radius of the frame"],
     [["One · Sequence · Compare"], "With several files in the viewer: one at a time, back to back, side by side"],
@@ -8562,7 +8567,7 @@ function lightHelpGroups(){
       [["1–9"], "Zoom to that multiple of the native size (1 = 100 %)"],
       ...(light.turn ? [[["Shift+R"], "Turn 90°"], [["R (held) + drag"], "Turn to any angle (Shift during the drag: 15° steps; while drawing: R + Alt+drag)"]] : []),
       ...(light.mirror ? [[["Shift+M"], "Mirror — the mirror button"], [["Shift+V"], "Flip upside down — the flip button"]] : []),
-      ...(!$("guidesBtn")?.closest(".gd-anchor")?.hidden ? [[["Guides"], "Grid rulers, or 1- / 2- / 3-point perspective — the guides button in the top bar"]] : []),
+      ...(!$("guidesBtn")?.closest(".gd-anchor")?.hidden ? [[["Guides"], "Grid rulers, or 1- / 2- / 3-point perspective — the guides button in the top bar; Ctrl+click a guide (long-press with a finger) deletes it"]] : []),
       [["Shift (held)"], "Slower pan / zoom" + (vid ? " / scrub" : "")],
     ] });
   }

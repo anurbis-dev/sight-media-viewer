@@ -14,6 +14,32 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.139.0 — 2026-11-26 — Guides: rulers outside the picture, Ctrl+click delete, Shift+H
+- **What:** the grid's rulers lie just outside the picture's top / left edges, reach out to a guide dragged past the
+  picture, and stay inside the window when zoomed in. Ctrl+click a guide (long-press with a finger) deletes it.
+  Shift+H and the eye hide / show the guides with the drawings; the eye shows whenever guides are on. Snap sits to the
+  right of Grid in the menu.
+- **Where:** `app/static/guides.js` (`rulerFrames`, `rulerAt`, `overRuler` in view px, `deleteGuide`, the long press,
+  `hooks.hidden` / `reveal` / `onModeChange`, `active()` / `refresh()`); `app/static/annotate.js` (`eyeSubject`,
+  `toggleHidden` → `host.onHiddenChange`, API `hidden` / `setHidden` / `repaintEye`); `app/static/index.html` (the hooks
+  both ways, help text); `tests/test_guides.py` + `tests/guides_e2e.cjs`; `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:**
+  - Deliberate: at Frame fit a picture touches the window on one axis (`fitS` has no margin), so that ruler is clamped
+    into the window and lies over the picture's edge there. Goal 3 (stay in the window) wins. Not done: a fit margin
+    while the grid is on.
+  - Picking a guide mode while the eye hides things shows both again (one state).
+  - Touch: a press that moves less than 10 px (mouse 4 px) does not move or re-snap the guide, so a tap opens its field
+    and a 550 ms hold deletes it.
+  - The board / compare annotators do not pass `hasGuides`; their eye is unchanged.
+- **Review:** a fresh reviewer found: (1) the drag-to-delete test read the rulers as last drawn, so a fast flick onto
+  the ruler past its old end did not delete; the rulers are now rebuilt before the test. (2) The fit-covers-ruler case
+  (kept, see Notes). (3) The toast said "Guides" on the board / compare eye with nothing drawn; now "Drawings" when no
+  guides. (4) A report export flipped `S.hidden` without telling the guides; it now calls `onHiddenChange` on restore.
+  (5) The long press needed a perfectly still finger; touch now has a 10 px still zone. Tests added for drag-back,
+  the flick, the left ruler stretching and a 90° turn. The same reviewer confirmed all fixes. It also noted (older
+  behaviour) that a tap on an existing guide where it crosses a ruler deleted it; now delete-on-ruler needs a real drag
+  (or a fresh guide); confirmed by the same reviewer.
+
 ## 0.138.1 — 2026-11-26 — R0-0 block 3: regression tests of the write queue, settings, shots, previews, dictation
 - **What:** the third block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator's plumbing does
   now. No app code changed (only the version).
@@ -496,9 +522,3 @@ Add new entries directly below this line.
 - **Where:** app/library.py — `ensure_dropped_source`, `add_dropped_file`, `view_file`, `resolve_asset`; app/server.py — `drop_file_paths`, `POST /api/files/drop`; app/static/index.html — `#srcDrop` two zones, `takeDroppedFiles` / `addDroppedFiles` / `ensureLightInLibrary`; tests/test_sources.py `DropFilesTest`; tests/drop_files_e2e.cjs; MANUAL, ARCHITECTURE.
 - **Notes:** files stay on disk; the parent folder is not added. **Dropped files** is an inbox source (`<SIGHT_HOME>/dropped`) that is never scanned or watched — each row keeps the original path; adding that folder later as a source reassigns the row (same path-hash id). View-only assets are in-memory (`Library._ephemeral`) so they are not in All / the grid. Same path already in the library: both zones return that row. 32-file cap, NFC name match, capture-phase drop, overlay hide timeout — same as folders. Image drop onto the annotator while drawing is still a reference picture. Overlay display uses `:not([hidden])` (a later `data-kind` rule had shown the overlay always). Busy file drops queue as separate jobs (mode is not mixed). A lone `.srev` is not POSTed as media.
 - **Review:** a fresh reviewer found: OS image drop while drawing on the board or compare still opened the file (→ `dropOnAnnotatorSurface` checks all three annotators and `.canvas-viewport` / `.cmp-stage`); overlay `[hidden]` lost to `[data-kind=folder]` so the tint stayed up (→ `:not([hidden])`); library-zone hit-test vs `min-width: 168px` at UI scale &lt; 1 (→ drop the min-width, JS already uses `--side-w × --ui-k`); view-only text / transcode / model sidecars / USDZ used `get_asset` (→ `resolve_asset`); `.srev` also POSTed as unsupported (→ skip); busy queue mixed modes (→ job list); compare **A** did not promote (→ `cmpToggleAnnot` through `ensureLightInLibrary`). Same reviewer then found leftover `scrub_audio_*` still on `get_asset` and compare A promoting `light.asset` instead of the selected layer (→ `resolve_asset`, `ensureInLibrary(assetById(cmp.selectedId()))`). It confirmed those. No new blocking issues.
-
-## 0.130.0 — 2026-11-25 — Drop folders on the window to add them as sources
-- **What:** dropping one or more folders from Explorer / Finder onto the Sight window adds them as library sources (the same as **+ Folder**). A dashed overlay says so while a folder drag is over the window. A `.srev` in the same drop still imports.
-- **Where:** app/server.py — `file_uri_to_path`, `drop_folder_paths`, `drop_name_key`, `os_manager_selected_dirs`, `POST /api/sources/drop`; app/static/index.html — `#srcDrop`, `takeDroppedFolders` / `addDroppedFolders` (window `drop` in capture); annotate.js `onRefDrop` lets mixed folder+pictures bubble; tests/test_sources.py `DropFoldersTest`; MANUAL, ARCHITECTURE.
-- **Notes:** Chromium does not give the OS path of a dropped folder to the page. The server takes whatever the page could read (`File.path`, `file://` in `text/uri-list` / `text/plain` / `text/x-moz-url`) and matches remaining folder names to the current Explorer (Shell.Application `SelectedItems`) or Finder selection. Two selected folders with the same name are skipped (`ambiguous`) rather than guessing. Dropped *files* are not turned into sources (their parent is not added). Already-indexed folders return `new: false`. Overlay is `pointer-events: none` so the drop still lands on the page. Linux has no file-manager selection hook; `file://` from the drag still works there. Explorer matching runs in `asyncio.to_thread` so PowerShell / osascript cannot stall SSE. Names are NFC-folded (`drop_name_key`) so Finder NFD paths match `File.name`. At most 32 folders per drop (`too many`). Window drop is capture-phase so a folder+image drop on the lightbox still adds the folder. File-only drops with directory entries do not POST. Overlay hides if `dragover` stops (~500 ms) or the pointer leaves the window. A second drop while busy is queued.
-- **Review:** a fresh reviewer agent found: Explorer lookup blocked the event loop (→ `to_thread`); overlay could stick and a Chromium drop with no names/paths was silent (→ hide timeout, + Folder toast); folder+pictures on the annotator swallowed the folders (→ capture-phase drop, `onRefDrop` does not `stopPropagation` when a directory is present); file-only URI POSTs, silent 32-cap, busy drop discarded (→ skip file-only POST, `too many`, queue). NFC vs NFD name match added. Same reviewer then found `dropHasFolders(e)` ran after `await getAsFileSystemHandle`, so the uri-list fallback could no-op (→ snapshot `folderHint` / uris in the drop tick). Real Explorer `DataTransfer` still untested in this environment (devtools cannot synthesize a folder drag).
