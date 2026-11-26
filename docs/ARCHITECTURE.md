@@ -517,6 +517,11 @@ Store members (`?` = optional: missing hides the control and skips the feature):
   `req` = `{op: "create", id, body}` (the full row, an upsert) | `{op: "patch", id, body}` (only `obFields`: `data`,
   `z_index`, `color`, the box, `shape_kind`) | `{op: "delete", id}` | `{op: "batch", items: [{id, …obFields}]}`, and
   `extra` = `{signal}` (a drain; aborted after 20 s) or `{keepalive: true}` (pagehide, called synchronously).
+  **Stamps** (ms numbers): a create's body carries `created_at` (the loaded row's, or the time this client first
+  wrote it) and `updated_at`; a patch / batch item carries `updated_at`; a delete carries `at`. `updated_at` is the
+  queue entry's own time, so a stale entry replayed later carries its old time. Sight's server ignores all of them (it
+  stamps rows itself). `loadRows` must return `created_at` / `updated_at` as ms numbers, `updated_at` being the
+  server's own write time (`obOverlay` compares it with this machine's send time).
   **The store contract** (what the queue relies on): a create upserts; a patch / batch item of a row that is gone on
   the server is skipped, never revived; 2xx = landed; 4xx other than 408 / 429 = refused for good (dropped, the
   badge's note); anything else or a throw = retried with backoff; a batch that failed twice goes one by one.
@@ -531,7 +536,11 @@ Store members (`?` = optional: missing hides the control and skips the feature):
   Response (404 = the media is not in the library).
 - `trackers?`: `api(key, p, opts)`, `rows(aid)` (with tombstones), `importPackage(pkg)` — the link ▾.
 - `dictation?(opts)` → dictation.js's `createDictationUI` (the mic; hidden without it).
-- `mergesOnServer` (Sight: false) — see the stamps rule in docs/PLAN-coreline.md R0a.
+- `mergesOnServer` (Sight: false). True: an undo / redo writes the restored note stamped now, part by part as
+  `mergeRows` judges it (`undoStamp`): `edited_at` if the content differs from the note now (or it comes back from a
+  delete), `status_at` if the state differs, `edited` on a changed reply, a dropped reply as a tombstone
+  (`{id, created, deleted}`; state entries are kept). False (Sight): undo restores the old stamps, so an undone copy
+  never wins a later `.srev` merge against someone's newer edit.
 - `queue: {prefix, legacy?}` — the write queue's localStorage keys: prefix + window id per window (Sight:
   `sight-annot-outbox:v2:`, legacy `["sight-annot-outbox:v1"]`; default `annot-outbox:<kind>:`). The prefix ends
   with ":" and its parts hold no ":" (a key is adopted only when what follows the prefix has none). One store object

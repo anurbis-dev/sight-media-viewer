@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.135.2 — 2026-11-26 — File drop zones no longer give up on untyped files
+- **What:** dropping a file always gets the two zones (sidebar = add, the rest = view). A file whose drag carries no directory entry — empty MIME or `application/octet-stream`, which is how a lot of real files arrive — used to be treated as a folder, so the zones never came up and the drop did nothing.
+- **Where:** `app/static/index.html` — `dropKind`, `readDropped`, capture `dragenter`/`dragover`; `tests/drop_files_e2e.cjs`; `docs/ARCHITECTURE.md`.
+- **Notes:** a folder drag is only a drag that contains a directory entry. `dragenter` and `dragover` are accepted even when `items` is still empty, otherwise the browser never fires `drop`. Entries and `getAsFile()` are read once on drop (a second call is empty in WebView2). While drawing, a picture dropped on the lightbox / compare / board stays a reference even when `File.type` is empty — the name test matches annotate.js `REF_RE` (jpeg/png/gif/webp/bmp/avif/svg). A directory the entry still reports is never sent to `/api/files/drop`.
+- **Review:** a fresh reviewer found one hole: an untyped image (`shot.png`, type `""` or `application/octet-stream`) dropped while drawing was opened as a file and also added as a reference, because the capture handler only bailed on `image/*`. Fixed by the same name test as `REF_RE`, applied only to `dataTransfer.files` (the list the annotator reads). A first cut also bailed when the file existed only via `getAsFile()` and `files` was empty, which neither opened it nor added a reference; that fallback was removed. The same reviewer confirmed both fixes and found nothing new. It also noted the folder fallthrough cannot see a live directory, so it does not POST one to `/api/files/drop`.
+
 ## 0.135.1 — 2026-11-26 — R0-0 block 2: regression tests of the annotator (geometry golden, notes, tools)
 - **What:** the second block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator does now.
   No app code changed (only the version).

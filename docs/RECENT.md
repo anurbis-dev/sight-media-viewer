@@ -14,6 +14,43 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.141.7 — 2026-11-26 — R0a block 3: stamps in every row write; undo stamped now for a merging store
+- **What:** every row write the annotator queues carries its stamps; Sight's server ignores them, so Sight behaves
+  the same. For a store that merges on the server (`store.mergesOnServer`, Coreline) an undo / redo of a note is
+  written stamped now, so the merge keeps it. Sight keeps today's undo (old stamps restored).
+- **Where:** `annotate.js`:
+  - `S.createdAt` (id → created_at: from the loaded rows, else the first write here; kept through `obOverlay` for a
+    create still queued); `rowBody` sends it;
+  - `obPut` sets the copy's `updated_at` = the entry's `at`; `obFields` sends it; a delete request carries `at`;
+  - `undoStamp` (from `applyStates`, only with `mergesOnServer`).
+
+  Tests: `tests/r0a_store_e2e.cjs` "stamps", "undo" and the queued-create case (fake host, both store kinds).
+  `docs/ARCHITECTURE.md` "Annotator store": stamps, `mergesOnServer`.
+- **Notes:**
+  - Sight's `Library.add_annotation` / `update_annotation` / `batch_update_annotations` read only
+    `_ANNOTATION_FIELDS`, which has no stamps. The golden geometry test already leaves stamps out. Each outbox entry
+    and keepalive request grows by about 50 bytes.
+  - Old outbox entries (no stamps) are still sent as they are. A merging store would take `now` for them; Coreline
+    has no old entries (its own queue prefix).
+  - `undoStamp` stamps each part by the rule `mergeRows` judges it by. Stamping only `edited_at` (the first cut) made
+    an undone Resolve or reply come back after the merge and let an old text overwrite a newer one. State entries
+    of the thread (`statusEvent`) are never tombstoned: one an undo drops is kept (so the history still shows it).
+  - `loadRows` must give ms numbers: a store that returns ISO dates would lose `created_at` (contract in
+    ARCHITECTURE).
+- **Review:** a fresh agent found no Sight regression. It found:
+  - (real, merging stores only) undo stamped only `edited_at`, so undoing a state change or a reply did nothing after
+    the merge and could overwrite a concurrent text edit. Fixed (`undoStamp`, with tests of Resolve, a reply, redo);
+  - (low) `created_at` given as a non-number is dropped. Documented (ms numbers);
+  - (low) `obOverlay` assumes the server's `updated_at`. Documented;
+  - test gaps: the overlay's `created_at`, redo. Added.
+
+  The same reviewer confirmed every fix and found nothing new that is wrong. Its leftovers, all for merging stores
+  only: the content compare used `JSON.stringify` (key order counted) — now `RC.same`; not done: after an undone
+  Resolve the thread still shows "Resolved" while the note is open (Sight's undo drops the entry; a "Reopened" entry
+  could be added), and a reply brought back by undo / redo shows "· edited".
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1): `test_r0_lightbox`, `_annotate`, `_review`, `_views` pass except R0Export's
+  PDF check (as on origin/master here, see 0.141.5); `test_r0a_store` passes (39 checks).
+
 ## 0.141.6 — 2026-11-26 — R0a block 2: the write queue is keyed by the store
 - **What:** the annotator's durable write queue keeps its localStorage keys under the store's own prefix, so a
   page of another host (Coreline: one prefix per host and user) never replays Sight's queue or another user's.
@@ -429,9 +466,3 @@ Add new entries directly below this line.
 - **Where:** `app/static/annotate.js` — `sharedStyles`, `sharedStamp`, `flushPrefs` on `pagehide` (capture) and `setAsset`, `resetTool`; `app/static/index.html` `bindAnnoReset`; `app/static/compare.js` pen tooltip. `MANUAL.md`, `docs/ARCHITECTURE.md`.
 - **Notes:** the lightbox, compare and the board share one styles object and one stamp look. The tool in hand is not stored. Style and stamp writes are debounced; the flush runs in the capture phase so it lands in localStorage before index.html sends `settings.json`. A full reset still writes the shared objects in place. The shape tool's reset also clears the old ellipse slot. Selection-only property edits still do not become the tool's defaults (a colour-grade edit does). A mouse long-press on the pen no longer resets — that was easy to hit by holding the click.
 - **Review:** a fresh reviewer found the touch path double-fired. A finger or pen long-press both reset and toggled (or switched tool): `pointerup` cleared the timer before Windows fired `contextmenu` on release, the click then cleared the swallow flag, and that menu reset again. A release between the browser's menu (~500 ms) and the timer did both. Fixed the same way as the eye's onion toggle: `contextmenu` resets only for a mouse (a pen's barrel button counts as one); the timer is the touch path and `pointerup` only cancels it, so the click still sees the flag. The same reviewer confirmed that and found nothing new.
-
-## 0.135.2 — 2026-11-26 — File drop zones no longer give up on untyped files
-- **What:** dropping a file always gets the two zones (sidebar = add, the rest = view). A file whose drag carries no directory entry — empty MIME or `application/octet-stream`, which is how a lot of real files arrive — used to be treated as a folder, so the zones never came up and the drop did nothing.
-- **Where:** `app/static/index.html` — `dropKind`, `readDropped`, capture `dragenter`/`dragover`; `tests/drop_files_e2e.cjs`; `docs/ARCHITECTURE.md`.
-- **Notes:** a folder drag is only a drag that contains a directory entry. `dragenter` and `dragover` are accepted even when `items` is still empty, otherwise the browser never fires `drop`. Entries and `getAsFile()` are read once on drop (a second call is empty in WebView2). While drawing, a picture dropped on the lightbox / compare / board stays a reference even when `File.type` is empty — the name test matches annotate.js `REF_RE` (jpeg/png/gif/webp/bmp/avif/svg). A directory the entry still reports is never sent to `/api/files/drop`.
-- **Review:** a fresh reviewer found one hole: an untyped image (`shot.png`, type `""` or `application/octet-stream`) dropped while drawing was opened as a file and also added as a reference, because the capture handler only bailed on `image/*`. Fixed by the same name test as `REF_RE`, applied only to `dataTransfer.files` (the list the annotator reads). A first cut also bailed when the file existed only via `getAsFile()` and `files` was empty, which neither opened it nor added a reference; that fallback was removed. The same reviewer confirmed both fixes and found nothing new. It also noted the folder fallthrough cannot see a live directory, so it does not POST one to `/api/files/drop`.

@@ -43,7 +43,7 @@ const store = {
 };
 if (q.get("prefix")) store.queue = { prefix: q.get("prefix") };
 window.__store = store;
-const settings = window.__settings = new Map();
+const settings = window.__settings = new Map([["sight.annotate.read", "true"]]);   // the notes panel open
 const A = window.A = createAnnotator({
   store,
   getSetting: (k) => (settings.has(k) ? settings.get(k) : null),

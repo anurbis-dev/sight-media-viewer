@@ -360,8 +360,11 @@ function obPut(body, create){
   const prev = OB.map.get(body.id);
   // A row whose create (or revive after a delete) has not landed yet still needs the POST (an upsert).
   const mustCreate = !!create || prev?.op === "del" || (prev?.op === "put" && prev.create) || OB.handed.delete(body.id);
-  // A copy: the row as it is now, whatever happens to the live item afterwards.
-  OB.map.set(body.id, { op: "put", body: structuredClone(body), create: mustCreate, key: body.target_asset_id || body.board_id || null, at: Date.now() });
+  // A copy: the row as it is now, whatever happens to the live item afterwards. Its updated_at is the write's own
+  // time (entry.at): a stale entry replayed later carries its old time, so a merging store keeps a newer row.
+  const at = Date.now(), copy = structuredClone(body);
+  copy.updated_at = at;
+  OB.map.set(body.id, { op: "put", body: copy, create: mustCreate, key: body.target_asset_id || body.board_id || null, at });
   obSave();
   obKick(0);
 }
@@ -385,7 +388,11 @@ function obOverlay(rows, key){
   const now = Date.now();
   const lay = (id, e) => {
     if (e.op === "del") out.delete(id);
-    else out.set(id, { ...(out.get(id) || {}), id, kind: e.body.kind, shape_kind: e.body.shape_kind, z_index: e.body.z_index, data: structuredClone(e.body.data) });
+    else {
+      const row = { ...(out.get(id) || {}), id, kind: e.body.kind, shape_kind: e.body.shape_kind, z_index: e.body.z_index, data: structuredClone(e.body.data) };
+      if (row.created_at == null && e.body.created_at != null) row.created_at = e.body.created_at;  // (a create not landed yet)
+      out.set(id, row);
+    }
   };
   for (const [id, r] of OB.recent){
     if (now - r.at > OB_RECENT){ OB.recent.delete(id); continue; }
@@ -416,10 +423,10 @@ async function obFetch(req){
 }
 // The store contract's row writes (docs/ARCHITECTURE.md "Annotator store"): a create (an upsert: the full row),
 // a patch of obFields (a row gone on the server is skipped, never revived), a delete, a batch of patches.
-const obReq = (id, e) => e.op === "del" ? { op: "delete", id }
+const obReq = (id, e) => e.op === "del" ? { op: "delete", id, at: Number(e.at) || null }
   : e.create ? { op: "create", id, body: e.body }
   : { op: "patch", id, body: obFields(e.body) };
-function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind }; }
+function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind, updated_at: b.updated_at }; }
 // Removes `e` once sent, unless a newer write for the row came in meanwhile (that one is sent next).
 // `refused`: the server did not take it; it must not show (OB.recent) nor count as landed.
 function obDone(id, e, sentAt, refused){
@@ -597,7 +604,7 @@ export function createAnnotator(host){
   const S = {
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
     tool: "brush", gradeLines: readJSON("sight.annotate.gradeLines", true) !== false, styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
-    asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
+    asset: null, kind: null, items: new Map(), saved: new Set(), loading: null, createdAt: new Map(),
     sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
@@ -700,8 +707,10 @@ export function createAnnotator(host){
   function rowBody(it){
     const b = boundsOf(it);
     const where = isBoard() ? { scope: "board", board_id: S.asset.id } : { scope: "asset", target_asset_id: S.asset.id };
+    // created_at: the row's (as loaded), or the time this client first wrote it. updated_at is set by obPut.
+    if (!S.createdAt.has(it.id)) S.createdAt.set(it.id, Date.now());
     return {
-      id: it.id, ...where, kind: it.kind, shape_kind: it.sub || null,
+      id: it.id, ...where, kind: it.kind, shape_kind: it.sub || null, created_at: S.createdAt.get(it.id),
       z_index: it.z | 0, data: it.data, color: it.data.color || null,
       x: isDrawing(it) ? r2(b[0]) : null, y: isDrawing(it) ? r2(b[1]) : null,
       w: isDrawing(it) ? r2(b[2] - b[0]) : null, h: isDrawing(it) ? r2(b[3] - b[1]) : null,
@@ -758,7 +767,7 @@ export function createAnnotator(host){
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
     rows = obOverlay(rows, a.id);  // writes still queued for this file count (re-opened before they landed)
-    S.items.clear(); S.saved.clear();
+    S.items.clear(); S.saved.clear(); S.createdAt.clear();
     // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
     const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
     S.status = st?.data?.state || "";
@@ -771,6 +780,7 @@ export function createAnnotator(host){
       if (!validItem(it)) continue;
       S.items.set(it.id, it);
       S.saved.add(it.id);
+      if (Number.isFinite(Number(r.created_at)) && r.created_at != null) S.createdAt.set(it.id, Number(r.created_at));
     }
     notesSig = noteSig();  // the baseline: deleting the last note must differ from it and refresh the card's chip
     looseSig = isBoard() ? null : pendingDrawings().length;  // same for the red dot: a drawing added or cleared after this
@@ -924,10 +934,38 @@ export function createAnnotator(host){
       const had = S.items.has(id);
       if (v && v.kind !== "note" && !v.data?.note && S.items.get(id)?.data?.note) S.adopt.add(id);
       if (!v){ if (had){ S.items.delete(id); S.sel.delete(id); serverDelete(id); } continue; }
-      S.items.set(id, structuredClone(v));
+      const copy = structuredClone(v);
+      // Sight's store restores the old stamps, so an undone copy never wins a later .srev merge against someone's
+      // newer edit. A store that merges on the server gets the restored note stamped now, field by field as the
+      // merge judges it (undoStamp); other rows: updated_at = the write's time (obPut). docs/PLAN-coreline.md R0a.
+      if (store.mergesOnServer && copy.kind === "note") undoStamp(copy.data, S.items.get(id)?.data || null, Date.now());
+      S.items.set(id, copy);
       if (!S.saved.has(id)) serverCreate(S.items.get(id));
       else serverUpdate(id);
     }
+  }
+  // An undo / redo of a note for a merging store (review-core mergeRows): what the restored copy `d` changes against
+  // the note now (`cur`, null = it comes back from a delete) gets the stamp `now`, each part by its own rule —
+  // the content (text, captions, pictures…) by edited_at, the state by status_at, a reply by its `edited` (a reply
+  // the copy drops becomes a tombstone, `deleted`, since replies merge as a union). State entries in the thread are
+  // never deleted (statusEvent): one the copy drops is kept.
+  function undoStamp(d, cur, now){
+    // (RC.same: deep equality, key order does not count)
+    const rest = (x) => { const o = { ...x }; for (const k of ["status", "status_at", "replies", "edited_at"]) delete o[k]; return o; };
+    if (!cur || !RC.same(rest(d), rest(cur))) d.edited_at = now;
+    if (!cur || (d.status || "") !== (cur.status || "")) d.status_at = now;
+    if (!cur) return;
+    const mine = new Map((d.replies || []).map((r) => [r.id, r]));
+    const body = (r) => { const o = { ...r }; delete o.edited; return o; };
+    const out = (d.replies || []).map((r) => {
+      const c = (cur.replies || []).find((x) => x.id === r.id);
+      return c && !RC.same(body(c), body(r)) ? { ...r, edited: now } : r;
+    });
+    for (const c of cur.replies || []){
+      if (mine.has(c.id)) continue;
+      out.push(c.event || c.deleted ? c : { id: c.id, created: c.created, deleted: now });
+    }
+    if (out.length || d.replies) d.replies = out.sort((a, b) => (Number(a.created) || 0) - (Number(b.created) || 0));
   }
   function undo(){
     const e = S.undo.pop();
@@ -5799,7 +5837,7 @@ export function createAnnotator(host){
     S.b2 = S.b3 = null;
     S.layer = null;
     S.asset = null;
-    S.items.clear(); S.saved.clear(); S.sel.clear();
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = []; S.adopt.clear();
     resetPF();
     host.onModeChange?.(false);
@@ -5820,7 +5858,7 @@ export function createAnnotator(host){
     S.b2 = S.b3 = null;
     S.layer = null;
     S.anchors = {};
-    S.items.clear(); S.saved.clear(); S.sel.clear(); S.crop = null;
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.sel.clear(); S.crop = null;
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear(); S.adopt.clear();

@@ -6,6 +6,13 @@
 //             and sent through the store; Sight's v1 / v2 keys and another user's prefix (also a longer one that
 //             starts with this prefix) are left alone; a second annotator with another store object is refused;
 //             no prefix = `annot-outbox:<store.kind>:`.
+//   stamps    every put carries created_at / updated_at (a create: both now; a change: the first created_at kept,
+//             updated_at the write's time), a delete carries its time (`at`); a loaded row keeps its created_at.
+//   undo      with mergesOnServer an undone note is stamped now field by field, so the merge (review-core
+//             mergeRows) keeps the undo: a text edit by edited_at (it wins over another reviewer's edit made in
+//             between), Resolve by status_at (edited_at untouched), an added reply becomes a tombstone (redo brings it
+//             back, edited later). Without it (Sight's rule) the old stamps come back, the other edit wins, a reply
+//             is dropped. A create still queued across a reopen keeps its created_at.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -84,6 +91,142 @@ run(async (cfg, t) => {
     t.ok("a second annotator with another store (another queue prefix) is refused", /one write queue per page/.test(second.other), second.other);
     t.ok("…so is another store object with the same prefix", /one write queue per page/.test(second.copy), second.copy);
     t.eq("…one with the same store is made", second.same, "made");
+    await p.context().close();
+  }
+  // ---- stamps in every put ----
+  {
+    const p = await hostPage("?prefix=" + encodeURIComponent("fakehost:st:"), null);
+    const t0 = Date.now();
+    await stroke(p, 100, 100, 300, 200);
+    await p.waitForFunction(() => window.__log.some((x) => x.m === "writeRow" && x.a.req.op === "create"), null, { timeout: 5000 }).catch(() => {});
+    let w = await writes(p);
+    const cr = w.find((x) => x.req.op === "create")?.req.body || {};
+    t.ok("a create carries created_at and updated_at (now)", cr.created_at >= t0 && cr.updated_at >= cr.created_at && cr.updated_at <= Date.now(), [cr.created_at, cr.updated_at, t0]);
+    // a change: select it, nudge it
+    const id = cr.id;
+    await p.waitForTimeout(30);
+    const t1 = Date.now();
+    await p.evaluate(() => { document.activeElement?.blur?.(); });
+    await p.keyboard.press("v");
+    await p.mouse.click(200, 150);
+    await p.keyboard.press("ArrowRight");
+    await p.waitForFunction((id) => window.__log.some((x) => x.m === "writeRow" && (x.a.req.op === "patch" && x.a.req.id === id || x.a.req.op === "batch" && x.a.req.items.some((i) => i.id === id))), id, { timeout: 5000 }).catch(() => {});
+    w = await writes(p);
+    const ch = w.map((x) => x.req.op === "patch" && x.req.id === id ? x.req.body : x.req.op === "batch" ? x.req.items.find((i) => i.id === id) : null).filter(Boolean)[0] || {};
+    t.ok("a change carries updated_at (the write's time)", ch.updated_at >= t1 && ch.updated_at <= Date.now(), [ch.updated_at, t1]);
+    t.ok("…and a patch never sends created_at (only obFields)", !("created_at" in ch), Object.keys(ch));
+    // reload: the loaded row's created_at is kept in the next full write (an undo revive is a create)
+    await p.evaluate(() => { const r = window.__rows.values().next().value; r.created_at = 1000; });
+    await p.evaluate(() => { window.A.setAsset({ id: "fake-asset-1", kind: "image", ext: ".png", name: "fake.png", width: 800, height: 500 }); window.A.bind2d({ wrap: document.getElementById("wrap"), media: document.getElementById("pic"), isVid: false, geom: () => ({ x0: 0, y0: 0, s: 1, w: 800, h: 500 }) }); });
+    await p.waitForTimeout(300);
+    await p.mouse.click(210, 150);
+    await p.keyboard.press("Delete");
+    await p.waitForFunction((id) => window.__log.some((x) => x.m === "writeRow" && x.a.req.op === "delete" && x.a.req.id === id), id, { timeout: 5000 }).catch(() => {});
+    const t2 = Date.now();
+    await p.keyboard.press("Control+z");
+    await p.waitForFunction((id) => window.__log.filter((x) => x.m === "writeRow" && x.a.req.op === "create" && x.a.req.id === id).length >= 2, id, { timeout: 5000 }).catch(() => {});
+    w = await writes(p);
+    const del = w.find((x) => x.req.op === "delete" && x.req.id === id)?.req || {};
+    t.ok("a delete carries its time (at)", del.at > t1 && del.at <= t2, [del.at, t1, t2]);
+    const rv = w.filter((x) => x.req.op === "create" && x.req.id === id).map((x) => x.req.body)[1] || {};
+    t.eq("the undone delete is a create keeping the loaded created_at", rv.created_at, 1000);
+    t.ok("…stamped with the undo's time (later than the delete)", rv.updated_at >= t2 && rv.updated_at > del.at, [rv.updated_at, del.at]);
+    await p.context().close();
+  }
+  // ---- a create still queued when the file is opened again keeps its created_at ----
+  {
+    const p = await hostPage("?prefix=" + encodeURIComponent("fakehost:ov:"), null);
+    await p.evaluate(() => { window.__fail = true; });
+    await stroke(p, 100, 100, 300, 200);
+    await p.waitForFunction(() => window.__log.some((x) => x.m === "writeRow" && x.a.req.op === "create"), null, { timeout: 5000 }).catch(() => {});
+    const first = (await writes(p)).find((x) => x.req.op === "create")?.req.body || {}, c0 = first.created_at;
+    await p.waitForTimeout(40);
+    await p.evaluate(() => { window.A.setAsset({ id: "fake-asset-1", kind: "image", ext: ".png", name: "fake.png", width: 800, height: 500 }); window.A.bind2d({ wrap: document.getElementById("wrap"), media: document.getElementById("pic"), isVid: false, geom: () => ({ x0: 0, y0: 0, s: 1, w: 800, h: 500 }) }); });
+    await p.waitForFunction(() => window.__log.filter((x) => x.m === "loadRows").length >= 2, null, { timeout: 5000 }).catch(() => {});
+    await p.waitForTimeout(200);
+    await p.keyboard.press("v");
+    await p.mouse.click(200, 150);
+    await p.keyboard.press("ArrowRight");
+    await p.evaluate(() => { window.__fail = false; });
+    await p.waitForFunction(() => window.__rows.size > 0, null, { timeout: 40000 }).catch(() => {});
+    const row = await p.evaluate(() => structuredClone([...window.__rows.values()][0] || null));
+    t.ok("a create queued across a reopen keeps its first created_at (obOverlay)", row && typeof c0 === "number" && row.created_at === c0 && row.x > first.x, [row?.created_at, c0, row?.x, first.x]);
+    await p.context().close();
+  }
+  // ---- undo of a note edit: fresh edited_at only for a store that merges on the server ----
+  for (const merges of [false, true]){
+    const p = await hostPage("?prefix=" + encodeURIComponent(`fakehost:m${merges ? 1 : 0}:`) + (merges ? "&merges=1" : ""), null);
+    const tag = merges ? "mergesOnServer" : "Sight's rule";
+    await p.evaluate(() => window.A.toggle(true));
+    await p.fill(".an-panel .an-input", "first words");
+    await p.press(".an-panel .an-input", "Enter");
+    await p.waitForSelector(".an-panel .an-note .an-nt", { timeout: 5000 });
+    await p.dblclick(".an-panel .an-note .an-nt");
+    await p.fill(".an-panel .an-nedit", "second words");
+    await p.press(".an-panel .an-nedit", "Enter");
+    await p.waitForFunction(() => [...window.__rows.values()].some((r) => r.kind === "note" && r.data.text === "second words"), null, { timeout: 5000 }).catch(() => {});
+    const edited = await p.evaluate(() => [...window.__rows.values()].find((r) => r.kind === "note")?.data.edited_at || 0);
+    t.ok(`${tag}: the edit stamps edited_at`, edited > 0, edited);
+    // another reviewer edits the note after this edit, before the undo
+    await p.waitForTimeout(40);
+    const other = await p.evaluate(() => { const r = structuredClone([...window.__rows.values()].find((x) => x.kind === "note")); r.data.text = "their words"; r.data.edited_at = Date.now(); return r; });
+    await p.waitForTimeout(40);
+    const tu = Date.now();
+    await p.evaluate(() => document.activeElement?.blur?.());
+    await p.keyboard.press("Control+z");
+    await p.waitForFunction(() => [...window.__rows.values()].some((r) => r.kind === "note" && r.data.text === "first words"), null, { timeout: 5000 }).catch(() => {});
+    const undone = await p.evaluate(() => [...window.__rows.values()].find((r) => r.kind === "note"));
+    t.eq(`${tag}: undo writes the old words`, undone?.data.text, "first words");
+    if (merges) t.ok(`${tag}: …with edited_at = the undo's time`, undone?.data.edited_at >= tu, [undone?.data.edited_at, tu]);
+    else t.ok(`${tag}: …with the old stamp (no edited_at, as before the edit)`, undone && undone.data.edited_at === undefined, undone?.data.edited_at);
+    // the server's merge: the other reviewer's copy is there, ours comes in
+    const won = await p.evaluate(([other, mine]) => globalThis.SightReviewCore.mergeRows([other], [mine]).rows.find((r) => r.id === mine.id).data.text, [other, undone]);
+    t.eq(`${tag}: merged against the other reviewer's newer edit, ${merges ? "the undo wins" : "theirs wins"}`, won, merges ? "first words" : "their words");
+    // the state: Resolve, then undo
+    const note = () => p.evaluate(() => structuredClone([...window.__rows.values()].find((r) => r.kind === "note")));
+    await p.click(".an-panel .an-note [data-done]");
+    await p.waitForFunction(() => [...window.__rows.values()].some((r) => r.kind === "note" && r.data.status === "done"), null, { timeout: 5000 }).catch(() => {});
+    const done = await note();
+    await p.waitForTimeout(30);
+    const ts = Date.now();
+    await p.evaluate(() => document.activeElement?.blur?.());
+    await p.keyboard.press("Control+z");
+    await p.waitForFunction(() => [...window.__rows.values()].some((r) => r.kind === "note" && r.data.status !== "done"), null, { timeout: 5000 }).catch(() => {});
+    const reopened = await note();
+    t.ok(`${tag}: undoing Resolve writes the old state`, reopened.data.status !== "done", reopened.data.status);
+    if (merges){
+      t.ok(`${tag}: …with status_at = the undo's time`, reopened.data.status_at >= ts, [reopened.data.status_at, ts]);
+      const st = await p.evaluate(([srv, mine]) => globalThis.SightReviewCore.mergeRows([srv], [mine]).rows[0].data.status || "", [done, reopened]);
+      t.eq(`${tag}: …and it wins the merge over the resolved copy`, st, reopened.data.status || "");
+      t.eq(`${tag}: …the content stamp is not moved by a state-only undo`, reopened.data.edited_at, done.data.edited_at);
+    } else t.eq(`${tag}: …with the old status_at`, reopened.data.status_at ?? null, null);
+    // a reply, then undo
+    await p.click(".an-panel .an-note [data-reply]");
+    await p.fill(".an-panel .an-redit", "a reply");
+    await p.press(".an-panel .an-redit", "Enter");
+    await p.waitForFunction(() => [...window.__rows.values()].some((r) => r.kind === "note" && (r.data.replies || []).some((x) => x.text === "a reply")), null, { timeout: 5000 }).catch(() => {});
+    const replied = await note();
+    const rid = (replied.data.replies || []).find((x) => x.text === "a reply")?.id;
+    await p.waitForTimeout(30);
+    const tr = Date.now();
+    await p.evaluate(() => document.activeElement?.blur?.());
+    await p.keyboard.press("Control+z");
+    await p.waitForFunction((rid) => [...window.__rows.values()].some((r) => r.kind === "note" && !(r.data.replies || []).some((x) => x.id === rid && !x.deleted)), rid, { timeout: 5000 }).catch(() => {});
+    const unreplied = await note();
+    const gone = (unreplied.data.replies || []).find((x) => x.id === rid);
+    if (merges){
+      t.ok(`${tag}: undoing a reply writes it as a tombstone stamped now`, gone && gone.deleted >= tr && !gone.text, gone);
+      const live = await p.evaluate(([srv, mine, rid]) => globalThis.SightReviewCore.mergeRows([srv], [mine]).rows[0].data.replies.filter((x) => x.id === rid && !x.deleted).length, [replied, unreplied, rid]);
+      t.eq(`${tag}: …so the merge does not bring the reply back`, live, 0);
+      // redo: the reply comes back, stamped later than its tombstone
+      await p.keyboard.press("Control+Shift+z");
+      await p.waitForFunction((rid) => [...window.__rows.values()].some((r) => r.kind === "note" && (r.data.replies || []).some((x) => x.id === rid && !x.deleted)), rid, { timeout: 5000 }).catch(() => {});
+      const redone = await note();
+      const back = (redone.data.replies || []).find((x) => x.id === rid);
+      t.ok(`${tag}: redo brings the reply back, edited after its tombstone`, back && !back.deleted && back.edited >= gone?.deleted, back);
+      const live2 = await p.evaluate(([srv, mine, rid]) => globalThis.SightReviewCore.mergeRows([srv], [mine]).rows[0].data.replies.filter((x) => x.id === rid && !x.deleted).length, [unreplied, redone, rid]);
+      t.eq(`${tag}: …and wins the merge over the tombstone`, live2, 1);
+    } else t.ok(`${tag}: undoing a reply drops it (as before)`, !gone, gone);
     await p.context().close();
   }
   {
