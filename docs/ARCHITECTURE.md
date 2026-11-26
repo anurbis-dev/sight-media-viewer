@@ -521,6 +521,10 @@ Sight's store is `app/static/sight-store.js` (`createSightStore({api})`); index.
 all three annotators, because the write queue is one per page and takes the first store it sees (it also sets
 `RC.setImageSource(store.shotSrc)`). Imports are relative (`./keys.js`), so the module works under any URL prefix;
 the tracker registry / adapters (`trackers-core.js`, `shotgrid-core.js`) are imported by the host, not here.
+**CSS tokens:** the injected stylesheet reads every host token as `var(--an-<name>, var(--<name>…))` — `border`,
+`border-strong`, `fg`, `accent`, `subtle`, `surface`, `surface-2`, `surface-3`, `muted`, `ok`, `font`, `canvas-bg`,
+`bg`, `ui-k`, `bar-h`. Sight defines none of the `--an-*` names (so its own tokens apply); another host maps its
+theme onto them (Coreline: `--an-fg: var(--ct-fg)` …). Do not define an `--an-<token>` in Sight.
 Store members (`?` = optional: missing hides the control and skips the feature):
 - rows: `loadRows(scope "asset"|"board", id)` → rows; `writeRow(req, extra)` → a Response-like `{ok, status}`, with
   `req` = `{op: "create", id, body}` (the full row, an upsert) | `{op: "patch", id, body}` (only `obFields`: `data`,

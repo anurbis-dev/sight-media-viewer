@@ -219,7 +219,7 @@ Each block reviewed on its own.
   then `image` and `video` modules (player, transport, video bar, zoom / pan through viewer-input.js, frame
   stepping, fps); annotate.js's `bind2d` becomes `bind(viewer)`. index.html's lightbox becomes a frame that picks
   the viewer; sequences and compare drive viewers instead of owning their own players. The biggest step: split it.
-  - **R0b-1 (done, 0.142.1):** the interface (`viewers/viewer.js`), the 2D core and the image / video modules
+  - **R0b-1 (done, 0.142.2):** the interface (`viewers/viewer.js`), the 2D core and the image / video modules
     (`view2d.js`, `image.js`, `video.js`: element, doc box with `opts.docSize`, zoom / pan / fit / turn, seek pump,
     scrub copy, transport), annotate.js `bind(viewer)`. index.html's `attachViewer` is the frame (`viewerHost`).
   - **R0b-2:** the video bar (sound, loop, position field, fps from `/info`), scrub audio and the RAM cache calls move

@@ -2,6 +2,12 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.138.0 — 2026-11-26 — Lightbox guides
+- **What:** a picture, PSD or video gets a Guides button in the lightbox bar: a grid with rulers (drag a guide, snap to a step or type pixels) or 1-, 2- or 3-point perspective (drag each vanishing point, set how many lines). Guides stick to the picture through pan, zoom, turn and mirror, and are remembered per file. The button is hidden for 3D and audio.
+- **Where:** new `app/static/guides.js`; `app/static/index.html` — `mountGuides`, the button, `light.guideGeom`, `passThrough` on the lightbox annotator. `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** positions are image pixels. `sight.guides` goes through `putSetting` (a bare localStorage write would be deleted on the next start). At most 400 files are kept. No new shortcut. Not on compare, not on the phone.
+- **Review:** a fresh reviewer found one hole: changing the grid snap step saved it but left the ruler ticks on the old step until the next pan or drag (`paintMenu` `applySnap` never called `refresh()`, while the density sliders did). Fixed: both the live input and the change call `refresh()` (it only redraws the overlay, so the field keeps focus). The same reviewer confirmed that and found nothing new. The pen button and its right-click reset from 0.136.0 stayed in place; the guides button sits after the flip button.
+
 ## 0.137.0 — 2026-11-26 — 3D camera eases, and Q/E move up and down
 - **What:** WASD fly eases in and out instead of starting and stopping dead. E raises the camera and Q lowers it. Shift slows the whole fly, the same way it slows pan and zoom.
 - **Where:** `app/static/index.html` — `makeCameraRig`, `CAM_MOVE_KEYS`, the 3D help and the Camera panel. `MANUAL.md`.

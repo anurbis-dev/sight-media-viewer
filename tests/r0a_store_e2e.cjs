@@ -19,6 +19,8 @@
 //             an older copy, a row of another asset or with no target are left alone; while a note editor is open the
 //             rows wait and apply after it closes (the typed text kept); the review state (set, cleared, an older one
 //             than this window's own write ignored).
+//   tokens    the annotator's CSS reads the host's tokens through --an-* (falling back to Sight's names): a host that
+//             sets --an-fg / --an-surface on its frame sees them on the panel; without them Sight's --fg / --surface.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -327,6 +329,16 @@ run(async (cfg, t) => {
       const live2 = await p.evaluate(([srv, mine, rid]) => globalThis.SightReviewCore.mergeRows([srv], [mine]).rows[0].data.replies.filter((x) => x.id === rid && !x.deleted).length, [unreplied, redone, rid]);
       t.eq(`${tag}: …and wins the merge over the tombstone`, live2, 1);
     } else t.ok(`${tag}: undoing a reply drops it (as before)`, !gone, gone);
+    await p.context().close();
+  }
+  // ---- CSS tokens through --an-* ----
+  {
+    const p = await hostPage("?prefix=" + encodeURIComponent("fakehost:css:"), null);
+    const look = () => p.evaluate(() => { const cs = getComputedStyle(document.querySelector(".an-panel")); return [cs.color, cs.backgroundColor]; });
+    await p.evaluate(() => { document.body.style.setProperty("--fg", "rgb(4, 5, 6)"); document.body.style.setProperty("--surface", "rgb(7, 8, 9)"); });
+    t.eq("without --an-* the panel takes Sight's --fg / --surface", await look(), ["rgb(4, 5, 6)", "rgb(7, 8, 9)"]);
+    await p.evaluate(() => { const l = document.getElementById("light"); l.style.setProperty("--an-fg", "rgb(1, 2, 3)"); l.style.setProperty("--an-surface", "rgb(10, 11, 12)"); });
+    t.eq("a host's --an-fg / --an-surface win", await look(), ["rgb(1, 2, 3)", "rgb(10, 11, 12)"]);
     await p.context().close();
   }
   {
