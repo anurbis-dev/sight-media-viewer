@@ -5,6 +5,9 @@ from the playhead, and a sequence's neighbours taking the part past the clip's e
 """
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -166,6 +169,24 @@ class VideoCache(unittest.TestCase):
         self.wait()
         data = b"".join(self.c.stream(self.files["b"], 0, 3 * MB))
         self.assertEqual(data, b"b" * (3 * MB))
+
+
+class CacheBarHtml(unittest.TestCase):
+    """The shared painter (video-cache-bar.js): loaded spans only, same for the lightbox and compare."""
+
+    def test_spans_paint_and_start_end_does_not(self) -> None:
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        script = Path(__file__).resolve().parent / "cache_bar_unit.mjs"
+        r = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr or r.stdout)
+        out = json.loads(r.stdout)
+        self.assertTrue(out["ok"])
+        self.assertIn("width:10.000%", out["partial"])
+        self.assertEqual(out["nostart"], "")
+        self.assertEqual(out["empty"], "")
+        self.assertIn("width:100.000%", out["full"])
 
 
 if __name__ == "__main__":

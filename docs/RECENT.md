@@ -14,7 +14,7 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
-## 0.141.1 — 2026-11-26 — R0-0 block 4: regression tests of the 3D viewer
+## 0.141.2 — 2026-11-26 — R0-0 block 4: regression tests of the 3D viewer
 - **What:** the fourth block of the R0-0 safety net (docs/PLAN-coreline.md): the lightbox's 3D viewer as it is
   before R0c. No app code changed (only the version).
 - **Where:**
@@ -86,10 +86,16 @@ Add new entries directly below this line.
     - read storage from a non-app same-origin page (`/api/settings`) when app pages' timers could interfere;
     - `isVisible()` ignores overlap: use `elementFromPoint` to tell whether the library split is shown.
 
+## 0.141.1 — 2026-11-26 — Single-video scrub follows the compare
+- **What:** a clip of a few seconds gets a short-GOP scrub copy as soon as it opens. A drag shows that copy, and the full file is sought once when you let go. The green on the timeline is unchanged: it is the part of the file actually in RAM (one painter, shared with compare). A file that fits the cache budget still turns the whole line green, and that is not a sign the seek is instant.
+- **Where:** `app/static/video-cache-bar.js` (`cacheBarHtml`), `index.html` (`loadScrubCopy` from `onReady`, `seekVideo`, `endScrub`), `compare.js` (the lane uses the same painter), `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** the copy is asked only when the file already has a picture (`videoWidth`) and is at least 3 s. The proxy is created with no `src`; a drag sets it, and after the full file presents the frame `src` is cleared, so a hidden copy does not hold a hardware decoder. Until the copy can show a frame the full file is still seeked, so the picture does not sit still for the whole encode. Two slow seeks during a drag still ask, if the open-time ask did not run. `endScrub` queues the full-file seek before `settleScrub`: the timeline calls `seekVideo` while the drag is still on, and a picture drag only calls `endScrub`. The solo RAM budget and `stream()` are unchanged. `start`/`end` without a `spans` array draws nothing.
+- **Review:** pending.
+
 ## 0.141.0 — 2026-11-26 — Tracker grid keeps what it downloaded
 - **What:** a ShotGrid or Coreline project you already opened comes back at once, and only Versions that changed on the site are updated in place. Switching project or type no longer clears the grid and asks for every page again. The source row shimmers while Sight is connecting and turns red when the site does not answer; it stays until you disconnect it. A window full of thumbnails no longer makes the packaged app quit and show "Failed to fetch".
 - **Where:** `app/static/tracker-view.js` (merge by id), `tracker-source.js` (the view cache, IndexedDB `sight-tracker-views`), `shotgrid-core.js` / `coreline-core.js` (`since`, retired), `index.html` (paint the cache, three thumbnail sockets, the source row), `app/server.py` (the event stream keeps the window alive), `Sight.py`.
-- **Notes:** the cache key is tracker + project + type + entity + status + search + filter, not the ticked fields — a new field is read onto the rows already stored. A row older than the pages loaded so far is not pulled up into them. A retired read that echoes the active rows removes nothing. A site that refuses "changed since" (HTTP 400) keeps the cached rows. The event stream refreshes the packaged watchdog every second, because Chromium allows six connections to localhost and the thumbnails used to hold all of them.
+- **Notes:** the cache key is tracker + project + type + entity + status + search + filter, not the ticked fields — a new field is read onto the rows already stored. A read keeps the view it started with, and one view's delta and next page run one after another, so a switch cannot file rows under the wrong key or drop a page. A row older than the pages loaded so far is not pulled up into them. A retired read that echoes the active rows removes nothing. A site that refuses "changed since" (HTTP 400) keeps the cached rows. The event stream refreshes the packaged watchdog every second, because Chromium allows six connections to localhost and the thumbnails used to hold all of them. A thumbnail waits until its tile is in the document, then takes one of three slots.
 - **Review:** pending.
 
 ## 0.140.1 — 2026-11-26 — Guides: 2- and 3-point lines meet, not at the picture's corners
@@ -512,34 +518,3 @@ Add new entries directly below this line.
     not change.
 
   The same reviewer confirmed every fix.
-
-## 0.134.0 — 2026-11-25 — Loading mark: the Sight "eye" turning, wherever something loads
-- **What:** every "loading / working…" text now has the Sight logo beside it (ring + blue focus dot) turning, so
-  the dot orbits — desktop and phone. A bigger mark above the text in the tracker grid's "Loading…" and the phone's
-  busy overlay / "Loading the model…"; the mark alone in the phone's note-picture placeholders (were "…").
-- **Where:** CSS `.ld` / `.ld-col` / `@keyframes ld-spin` in `app/static/index.html` and `mobile/index.html` (keep
-  them alike); `ldPhase()` in index.html. Used in index.html (scan counter, Reading file…, Loading model… label,
-  font / text / waveform / UVs / layers / tracker fields / About, review export `say()`s, playback-conversion HUD,
-  tracker "Connecting…", scan defaults "Saving…", ffmpeg "Installing…"), `annotate.js` (sync progress and
-  Building… toasts, Searching…, Syncing… button), `tracker-source.js` (fields), `mobile/js/app.js` (`busy()`,
-  model wait, picture placeholders), `mobile/js/trackers.js` (Searching… / Loading… / Connecting…). ARCHITECTURE
-  (Frontend conventions) has the rule.
-- **Notes:**
-  - Pure CSS, `::before` on the element: a border circle in `currentColor` + a radial-gradient dot at the favicon's
-    proportions, the whole box rotating (the ring is round, so only the dot seems to move). Inline-block, so it
-    also sits in one-line ellipsized toasts. `textContent` changes keep it (the model % label relies on that).
-  - Put `.ld` only where the wait's content is later *replaced* (a span inside) or the element removed — never on
-    an element that then shows the result. `<option>` texts ("Loading projects…") are left: `::before` does not
-    render there. Plain-text toasts (`flash()`, `flashV3DToast`) get no mark.
-  - Marks rebuilt by innerHTML several times a second (scan counter per batch, progress toasts) would restart at 0°
-    and stall: they carry `style="--ld-d:-<performance.now()>ms"` (no modulus, so it fits the 4 s reduced-motion
-    duration too). Reduced motion: a slow 4 s turn, not none.
-  - Side fixes: the annotator's host toasts (lightbox 3D, board, compare) now pass `htmlToText(text)` — HTML from
-    annotate.js used to show as raw text there; phone picture placeholders drop on a failed picture (`.catch`); the
-    ffmpeg Install button comes back if the request fails.
-  - Not done: the Windows launch splash (`app/splash_win.py`, a static PNG in a native layered window) stays still.
-    Pre-existing: a UV / PSD layers pane left after its inspection is cleared (not replaced) keeps its wait text.
-  - Review (fresh agent): found raw markup in the board / compare host toasts, the restart-at-0° stall, forever-
-    spinning phone placeholders, and missed spots (HUD, Connecting, Saving, Installing, Syncing) — all fixed; the
-    second pass confirmed them and caught the phase modulus breaking reduced motion (fixed) and the Install button
-    stuck on a failed request (fixed). `test_pwa`: same 3 failures with and without the change (pre-existing here).

@@ -422,7 +422,7 @@ L.run(async (cfg, t) => {
   t.ok("…and the video left is stopped (paused, its time not moving)", left0.paused && left1.paused && left1.t === left0.t, [left0, left1]);
   await p.keyboard.press("Escape"); await L.lightGone(p);
 
-  // ---- the scrub copy: slow seeks on a long-GOP clip ask the server for one -----------------------------
+  // ---- the scrub copy: a clip of at least 3 s asks for one as soon as it opens ------------------------
   const scrubReq = [];
   p.on("request", (r) => { if (/\/api\/video\/scrub(\?|\/|$)/.test(r.url())) scrubReq.push(r.method() + " " + new URL(r.url()).pathname); });
   await L.openLight(p, id["e_long.mp4"]); await L.waitMedia(p, "video");
@@ -433,13 +433,13 @@ L.run(async (cfg, t) => {
   for (let i = 1; i <= 40; i++){ await p.mouse.move(tr2.x + tr2.width * (0.1 + i * 0.02), tr2.y + tr2.height / 2); await p.waitForTimeout(40); }
   await p.mouse.up();
   for (let i = 0; i < 300 && !(await p.$(".light video.view-scrub")); i++) await p.waitForTimeout(200);   // (the server encodes it: up to a minute here)
-  t.ok("slow scrub seeks: a scrub copy is asked for", scrubReq.includes("POST /api/video/scrub"), scrubReq.slice(0, 5));
-  t.ok("…and loaded over the player", await p.$eval(".light video.view-scrub", (s) => new URL(s.src).pathname.startsWith("/api/video/scrub/") && s.previousElementSibling?.classList.contains("view-media")).catch(() => false));
+  t.ok("opening the clip asks for a scrub copy", scrubReq.includes("POST /api/video/scrub"), scrubReq.slice(0, 5));
+  t.ok("…and the proxy sits over the player", await p.$eval(".light video.view-scrub", (s) => s.previousElementSibling?.classList.contains("view-media")).catch(() => false));
   const hiddenCopy = () => p.waitForFunction(() => document.querySelector(".light video.view-scrub")?.hidden === true, null, { timeout: 10000 }).then(() => true, () => false);
   t.ok("…hidden while not scrubbing", await hiddenCopy());
   await p.mouse.move(tr2.x + tr2.width * 0.2, tr2.y + tr2.height / 2); await p.mouse.down();
   let shownCopy = false;
-  for (let i = 1; i <= 20; i++){ await p.mouse.move(tr2.x + tr2.width * (0.2 + i * 0.03), tr2.y + tr2.height / 2); await p.waitForTimeout(50); shownCopy = shownCopy || await p.$eval(".light video.view-scrub", (s) => !s.hidden).catch(() => false); }
+  for (let i = 1; i <= 40; i++){ await p.mouse.move(tr2.x + tr2.width * (0.2 + i * 0.015), tr2.y + tr2.height / 2); await p.waitForTimeout(50); shownCopy = shownCopy || await p.$eval(".light video.view-scrub", (s) => !s.hidden && new URL(s.src, location.href).pathname.startsWith("/api/video/scrub/")).catch(() => false); }
   await p.mouse.up();
   t.ok("the scrub copy shows while scrubbing", shownCopy);
   t.ok("…and hides once the player has landed", await hiddenCopy());

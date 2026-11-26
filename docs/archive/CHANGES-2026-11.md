@@ -2,6 +2,37 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.134.0 — 2026-11-25 — Loading mark: the Sight "eye" turning, wherever something loads
+- **What:** every "loading / working…" text now has the Sight logo beside it (ring + blue focus dot) turning, so
+  the dot orbits — desktop and phone. A bigger mark above the text in the tracker grid's "Loading…" and the phone's
+  busy overlay / "Loading the model…"; the mark alone in the phone's note-picture placeholders (were "…").
+- **Where:** CSS `.ld` / `.ld-col` / `@keyframes ld-spin` in `app/static/index.html` and `mobile/index.html` (keep
+  them alike); `ldPhase()` in index.html. Used in index.html (scan counter, Reading file…, Loading model… label,
+  font / text / waveform / UVs / layers / tracker fields / About, review export `say()`s, playback-conversion HUD,
+  tracker "Connecting…", scan defaults "Saving…", ffmpeg "Installing…"), `annotate.js` (sync progress and
+  Building… toasts, Searching…, Syncing… button), `tracker-source.js` (fields), `mobile/js/app.js` (`busy()`,
+  model wait, picture placeholders), `mobile/js/trackers.js` (Searching… / Loading… / Connecting…). ARCHITECTURE
+  (Frontend conventions) has the rule.
+- **Notes:**
+  - Pure CSS, `::before` on the element: a border circle in `currentColor` + a radial-gradient dot at the favicon's
+    proportions, the whole box rotating (the ring is round, so only the dot seems to move). Inline-block, so it
+    also sits in one-line ellipsized toasts. `textContent` changes keep it (the model % label relies on that).
+  - Put `.ld` only where the wait's content is later *replaced* (a span inside) or the element removed — never on
+    an element that then shows the result. `<option>` texts ("Loading projects…") are left: `::before` does not
+    render there. Plain-text toasts (`flash()`, `flashV3DToast`) get no mark.
+  - Marks rebuilt by innerHTML several times a second (scan counter per batch, progress toasts) would restart at 0°
+    and stall: they carry `style="--ld-d:-<performance.now()>ms"` (no modulus, so it fits the 4 s reduced-motion
+    duration too). Reduced motion: a slow 4 s turn, not none.
+  - Side fixes: the annotator's host toasts (lightbox 3D, board, compare) now pass `htmlToText(text)` — HTML from
+    annotate.js used to show as raw text there; phone picture placeholders drop on a failed picture (`.catch`); the
+    ffmpeg Install button comes back if the request fails.
+  - Not done: the Windows launch splash (`app/splash_win.py`, a static PNG in a native layered window) stays still.
+    Pre-existing: a UV / PSD layers pane left after its inspection is cleared (not replaced) keeps its wait text.
+  - Review (fresh agent): found raw markup in the board / compare host toasts, the restart-at-0° stall, forever-
+    spinning phone placeholders, and missed spots (HUD, Connecting, Saving, Installing, Syncing) — all fixed; the
+    second pass confirmed them and caught the phase modulus breaking reduced motion (fixed) and the Install button
+    stuck on a failed request (fixed). `test_pwa`: same 3 failures with and without the change (pre-existing here).
+
 ## 0.133.1 — 2026-11-25 — Phone app: a pinch never zooms the page
 - **What:** pinching a splat / model / picture on the phone sometimes became browser page zoom: the whole UI grew
   past the screen edges. The phone app now turns page zoom off: a pinch only reaches the app's own zoom.
