@@ -14,6 +14,37 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.141.3 — 2026-11-26 — The drop-zone test reaches the real drag handler
+- **What:** `test_sources.DropFilesE2E` failed on a clean master with `dropKind is not defined` since 0.135.2. A stale
+  test, not an app bug: dropping files works. Only the test changed (and the version).
+- **Where:** `tests/drop_files_e2e.cjs`.
+- **Notes:**
+  - `dropKind()` lives in index.html's `<script type="module">`, so it is not on `window`. The app's own capture
+    `dragenter` / `dragover` handler (`onOsFileDrag`) calls it from the same module and works. The test called it
+    from `page.evaluate`, which cannot see module-scoped names.
+  - The test now dispatches fake drag events on `document.body`: a plain `Event` with `dataTransfer`, `clientX` and
+    `clientY` defined on it. It reads what the real handler did: `#srcDrop` hidden, `data-kind`, `data-hot`, and
+    `defaultPrevented`. It covers the same seven cases as before (octet-stream, empty type, image, a real file entry,
+    a folder entry, no items, a Sight-internal drag) and also pins the zone split (x 40 = library, x 900 = view) and
+    that the drag is accepted.
+  - Deliberately not done: exposing `dropKind` on `window` just for the test.
+  - A mutation that puts back the pre-0.135.2 rule (an entry-less item counts as a folder) fails the test.
+  - Checked by hand with Playwright on a temp library, using a real `DataTransfer` and `DragEvent`s. An untyped
+    `.mkv`, an octet-stream `.exr` and a `image/png` each got the overlay (kind `file`, zone by X). Each drop was
+    accepted and posted `/api/files/drop` with the matching `mode`.
+  - `test_sources.DropFoldersTest.test_file_uri_to_path` still fails on Linux: it expects a Windows path. It is
+    unrelated and was left as is.
+- **Review:** a fresh agent found no bugs. It ran seven mutations of the drag path and six were caught. The seventh,
+  `unknown` dropped from `dropKind`'s "file" condition, changes no behaviour because the `osFileDrag` fallback still
+  answers "file".
+  - It noted one gap: nothing pinned that the window listener is a capture one, so a child that stops `dragover`
+    cannot block the drop. Now covered by the `stopped` case: the probe is dispatched on a child that calls
+    `stopPropagation`. A non-capture `dragover` listener fails that case.
+
+  The same reviewer confirmed the fix and found nothing new.
+- **Suite:** `test_sources` passes apart from `test_file_uri_to_path`. Every R0 test passes with SIGHT_REQUIRE_E2E=1
+  (`test_r0_annotate`, `_lightbox`, `_review`, `_3d`). They need psd-tools and usd-core, installed here with pip.
+
 ## 0.141.2 — 2026-11-26 — R0-0 block 4: regression tests of the 3D viewer
 - **What:** the fourth block of the R0-0 safety net (docs/PLAN-coreline.md): the lightbox's 3D viewer as it is
   before R0c. No app code changed (only the version).
@@ -453,68 +484,3 @@ Add new entries directly below this line.
   that flaked under load. Fixed too. The same reviewer confirmed every fix. Its mutations now fail the intended
   checks: turn fallback, `saPlay` stubbed, ResizeObserver refit, the scrub copy's hide. The suite is green alone, on
   tmpfs, and with two runs at once.
-
-## 0.134.0 (docs) — 2026-11-25 — Plan: Sight's desktop review built into Coreline
-- **What:** `docs/PLAN-coreline.md`. The owner chose: Coreline is not ready for a tracker adapter (no review layer,
-  pre-MVP). So Coreline gets its own player and commenting, built from **Sight's desktop review**: the lightbox on the
-  left, annotate.js's notes panel on the right; on the phone the notes go under the player. It is not built from the
-  phone app's screen; the owner preferred the desktop look. The owner also wants 3D in Coreline, so viewing is split
-  into viewer modules behind one interface (image, video, model3d). Documents (scripts) are deferred by the owner
-  (R5 keeps a sketch). Sight becomes an optional external reviewer. Linked from PLAN.md, CLAUDE.md and PLAN-mobile stage 5.
-  PLAN-trackers 5c is superseded: the adapter is now R4. No code yet.
-- **Where:** docs only. The Coreline repo was read at `ea411a7`. This session cannot push there (the GitHub App has no
-  write access), so the Coreline stages R1–R3 are for a session in that repository.
-- **Notes:**
-  - FORMAT.md v1 rows are stored as they are in Coreline, every column (incl. `shape_kind`, `rotation`, `locked`),
-    keyed by record + file field + id.
-  - The server merges with the same `mergeRows`. Coreline is ESM, so it uses a side-effect import + `globalThis`, not
-    `module.exports`. Sight's `merge_cases.json` runs in Coreline's tests.
-  - R0 (Sight side) comes first: annotate.js made host-neutral (`host.store`: its write queue, direct fetches, URLs
-    in templates, fps, author, settings, CSS tokens, `/static/` imports), viewer modules (2D first,
-    then 3D), a narrow layout, a labels hook for i18n.
-  - **No regressions** (owner: Sight desktop is in daily use). R0 starts with R0-0, Playwright regression tests of
-    today's lightbox / annotator behaviour passing on the current code. Refactor steps change no behaviour and do not
-    edit those tests. Each block ships as its own version with the whole suite green and benchmarks no worse.
-    Stored keys / the outbox format stay readable.
-  - R1: a row put is merged on the server, not replaced (replies live in `note.data`); ids are never re-derived.
-  - Gotchas for R2:
-    - drawings are in the original's pixels, while the `web` rendition is scaled (video ≤ 1920 wide, image WebP ≤ 2048),
-      and today's lightbox takes the decoded size as doc units;
-    - `/api/media` takes signed URLs only (from the record's file field), not Bearer;
-    - review rows need a new realtime subscription (Coreline's WS sends entity records).
-- **Review:** a fresh agent checked the first draft against both repos. It found 4 errors, 4 smaller inaccuracies, and
-  2 problems with this entry:
-  - review-draw.js is a full-screen sheet, not a mountable widget (moot now: the desktop look uses annotate.js);
-  - `module.exports` is dead under Coreline's ESM;
-  - the table lacked `shape_kind` / `rotation` / `locked` and an id scope;
-  - media needs signed URLs;
-  - renditions differ for images, and some files get none;
-  - the WS needs a new message kind;
-  - permissions must follow the file field;
-  - R4 settles only half of 5b-2 (2);
-  - this entry had a placeholder review line, and the archive step had not been run.
-
-  All are fixed in the rewrite. A second round on the desktop-based rewrite found:
-  - the write queue and many URLs bypass `host.api`;
-  - the doc-unit size comes from the decoded element;
-  - the lightbox core is `attachViewer` (wrong lines given);
-  - the id re-derive policy contradicted the key and would duplicate notes on a Sight round trip;
-  - lost replies if a put replaces the row;
-  - no "apply rows by id" entry point;
-  - the outbox is not per user;
-  - the author is a typed name;
-  - imports, settings, CSS tokens and note previews are tied to Sight.
-
-  A third round found:
-  - undo writes had to name their stamp (`edited_at` for notes);
-  - puts must carry the client's stamps, or a stale outbox wins;
-  - `mountStage` does not exist (it is `fillStage`);
-  - the 3D viewer is ~1400 lines tied to Sight's server (model-res, model-glb), so GLB first;
-  - the vendored list was incomplete.
-
-  Further rounds added two more fixes:
-  - the regression block clashed with R0a / R0d; it now names the only behaviour changes;
-  - fresh undo stamps are limited to server-merging stores, so Sight's undo keeps old stamps and `.srev` merges do
-    not change.
-
-  The same reviewer confirmed every fix.

@@ -30,26 +30,47 @@ const FILE = process.argv[3];
 
     // A file drag with no directory entry must stay a file drag — even when the MIME type is
     // empty or application/octet-stream, which is how WebView2 delivers plenty of real files.
+    // dropKind() lives in index.html's module script (not on window), so drive the real capture
+    // dragenter / dragover handler with a fake DataTransfer and read what it did to the overlay.
     const kinds = await p.evaluate(() => {
-      const fake = (items, files) => ({ dataTransfer: { types: ["Files"], items, files: files || [] } });
+      const n = document.getElementById("srcDrop");
+      const fake = (items, files, types) => ({ types: types || ["Files"], items, files: files || [] });
       const file = (type, entry) => ({ kind: "file", type, webkitGetAsEntry: () => entry });
+      const probe = (type, dt, x, target) => {
+        n.hidden = true; delete n.dataset.kind; delete n.dataset.hot;
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "dataTransfer", { value: dt });
+        Object.defineProperty(ev, "clientX", { value: x });
+        Object.defineProperty(ev, "clientY", { value: 400 });
+        (target || document.body).dispatchEvent(ev);
+        const r = { shown: !n.hidden, kind: n.hidden ? "" : (n.dataset.kind || ""), hot: n.dataset.hot || "",
+                    accepted: ev.defaultPrevented };
+        n.hidden = true; delete n.dataset.kind; delete n.dataset.hot;
+        return r;
+      };
       return {
-        octet: dropKind(fake([file("application/octet-stream", null)], [{}])),
-        emptyType: dropKind(fake([file("", null)], [{}])),
-        image: dropKind(fake([file("image/png", null)], [{}])),
-        realFile: dropKind(fake([file("", { isFile: true, isDirectory: false })])),
-        folder: dropKind(fake([file("", { isFile: false, isDirectory: true })])),
-        noItems: dropKind(fake([], [])),
-        sight: dropKind({ dataTransfer: { types: ["Files", "application/x-sight-ids"], items: [], files: [] } }),
+        octet: probe("dragover", fake([file("application/octet-stream", null)], [{}]), 900),
+        emptyType: probe("dragenter", fake([file("", null)], [{}]), 900),
+        image: probe("dragover", fake([file("image/png", null)], [{}]), 900),
+        realFile: probe("dragover", fake([file("", { isFile: true, isDirectory: false })]), 40),
+        folder: probe("dragover", fake([file("", { isFile: false, isDirectory: true })]), 900),
+        noItems: probe("dragenter", fake([], []), 900),
+        sight: probe("dragover", fake([], [], ["Files", "application/x-sight-ids"]), 900),
+        // The window listener is a capture one, so a child that stops the event cannot block it.
+        stopped: (() => {
+          const c = document.body.appendChild(document.createElement("div"));
+          c.addEventListener("dragover", (e) => e.stopPropagation());
+          try { return probe("dragover", fake([file("", null)], [{}]), 900, c); } finally { c.remove(); }
+        })(),
       };
     });
-    assert.strictEqual(kinds.octet, "file");
-    assert.strictEqual(kinds.emptyType, "file");
-    assert.strictEqual(kinds.image, "file");
-    assert.strictEqual(kinds.realFile, "file");
-    assert.strictEqual(kinds.folder, "folder");
-    assert.strictEqual(kinds.noItems, "file");
-    assert.strictEqual(kinds.sight, "");
+    const k = (o) => JSON.stringify(kinds[o]);
+    for (const o of ["octet", "emptyType", "image", "noItems", "stopped"]){
+      assert.deepStrictEqual(kinds[o], { shown: true, kind: "file", hot: "view", accepted: true }, o + " " + k(o));
+    }
+    assert.deepStrictEqual(kinds.realFile, { shown: true, kind: "file", hot: "library", accepted: true }, k("realFile"));
+    assert.deepStrictEqual(kinds.folder, { shown: true, kind: "folder", hot: "", accepted: true }, k("folder"));
+    assert.deepStrictEqual(kinds.sight, { shown: false, kind: "", hot: "", accepted: false }, k("sight"));
 
     const viewed = await p.evaluate(async (path) => {
       const r = await fetch("/api/files/drop", {

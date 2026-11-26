@@ -2,6 +2,71 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.134.0 (docs) — 2026-11-25 — Plan: Sight's desktop review built into Coreline
+- **What:** `docs/PLAN-coreline.md`. The owner chose: Coreline is not ready for a tracker adapter (no review layer,
+  pre-MVP). So Coreline gets its own player and commenting, built from **Sight's desktop review**: the lightbox on the
+  left, annotate.js's notes panel on the right; on the phone the notes go under the player. It is not built from the
+  phone app's screen; the owner preferred the desktop look. The owner also wants 3D in Coreline, so viewing is split
+  into viewer modules behind one interface (image, video, model3d). Documents (scripts) are deferred by the owner
+  (R5 keeps a sketch). Sight becomes an optional external reviewer. Linked from PLAN.md, CLAUDE.md and PLAN-mobile stage 5.
+  PLAN-trackers 5c is superseded: the adapter is now R4. No code yet.
+- **Where:** docs only. The Coreline repo was read at `ea411a7`. This session cannot push there (the GitHub App has no
+  write access), so the Coreline stages R1–R3 are for a session in that repository.
+- **Notes:**
+  - FORMAT.md v1 rows are stored as they are in Coreline, every column (incl. `shape_kind`, `rotation`, `locked`),
+    keyed by record + file field + id.
+  - The server merges with the same `mergeRows`. Coreline is ESM, so it uses a side-effect import + `globalThis`, not
+    `module.exports`. Sight's `merge_cases.json` runs in Coreline's tests.
+  - R0 (Sight side) comes first: annotate.js made host-neutral (`host.store`: its write queue, direct fetches, URLs
+    in templates, fps, author, settings, CSS tokens, `/static/` imports), viewer modules (2D first,
+    then 3D), a narrow layout, a labels hook for i18n.
+  - **No regressions** (owner: Sight desktop is in daily use). R0 starts with R0-0, Playwright regression tests of
+    today's lightbox / annotator behaviour passing on the current code. Refactor steps change no behaviour and do not
+    edit those tests. Each block ships as its own version with the whole suite green and benchmarks no worse.
+    Stored keys / the outbox format stay readable.
+  - R1: a row put is merged on the server, not replaced (replies live in `note.data`); ids are never re-derived.
+  - Gotchas for R2:
+    - drawings are in the original's pixels, while the `web` rendition is scaled (video ≤ 1920 wide, image WebP ≤ 2048),
+      and today's lightbox takes the decoded size as doc units;
+    - `/api/media` takes signed URLs only (from the record's file field), not Bearer;
+    - review rows need a new realtime subscription (Coreline's WS sends entity records).
+- **Review:** a fresh agent checked the first draft against both repos. It found 4 errors, 4 smaller inaccuracies, and
+  2 problems with this entry:
+  - review-draw.js is a full-screen sheet, not a mountable widget (moot now: the desktop look uses annotate.js);
+  - `module.exports` is dead under Coreline's ESM;
+  - the table lacked `shape_kind` / `rotation` / `locked` and an id scope;
+  - media needs signed URLs;
+  - renditions differ for images, and some files get none;
+  - the WS needs a new message kind;
+  - permissions must follow the file field;
+  - R4 settles only half of 5b-2 (2);
+  - this entry had a placeholder review line, and the archive step had not been run.
+
+  All are fixed in the rewrite. A second round on the desktop-based rewrite found:
+  - the write queue and many URLs bypass `host.api`;
+  - the doc-unit size comes from the decoded element;
+  - the lightbox core is `attachViewer` (wrong lines given);
+  - the id re-derive policy contradicted the key and would duplicate notes on a Sight round trip;
+  - lost replies if a put replaces the row;
+  - no "apply rows by id" entry point;
+  - the outbox is not per user;
+  - the author is a typed name;
+  - imports, settings, CSS tokens and note previews are tied to Sight.
+
+  A third round found:
+  - undo writes had to name their stamp (`edited_at` for notes);
+  - puts must carry the client's stamps, or a stale outbox wins;
+  - `mountStage` does not exist (it is `fillStage`);
+  - the 3D viewer is ~1400 lines tied to Sight's server (model-res, model-glb), so GLB first;
+  - the vendored list was incomplete.
+
+  Further rounds added two more fixes:
+  - the regression block clashed with R0a / R0d; it now names the only behaviour changes;
+  - fresh undo stamps are limited to server-merging stores, so Sight's undo keeps old stamps and `.srev` merges do
+    not change.
+
+  The same reviewer confirmed every fix.
+
 ## 0.134.0 — 2026-11-25 — Loading mark: the Sight "eye" turning, wherever something loads
 - **What:** every "loading / working…" text now has the Sight logo beside it (ring + blue focus dot) turning, so
   the dot orbits — desktop and phone. A bigger mark above the text in the tracker grid's "Loading…" and the phone's
