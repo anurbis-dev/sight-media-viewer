@@ -14,7 +14,7 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
-## 0.141.5 — 2026-11-26 — R0b-1: the viewer interface and the image / video viewer modules
+## 0.142.1 — 2026-11-27 — R0b-1: the viewer interface and the image / video viewer modules
 - **What:** pure refactor, no behaviour change. The lightbox's 2D player (`attachViewer`, ~460 lines of index.html)
   moved into `app/static/viewers/`: `viewer.js` (the interface, PLAN-coreline decision 8), `view2d.js` (the shared core),
   `image.js`, `video.js` (seek pump, scrub copy, transport). index.html's `attachViewer` is now the frame: it picks the
@@ -26,10 +26,146 @@ Add new entries directly below this line.
 - **Review:** a fresh agent compared old and new line by line and found no bugs.
 - **Suite** (Windows, SIGHT_REQUIRE_E2E=1, 182 tests, 5 skipped): every R0 test passes; 11 known older failures
   (the list in 0.141.4, one `test_pwa` case passed this time).
-- **Bench** (`tools/bench_lightbox.py`, this machine): before — open image 13 ms, next 6, open video 48, frame step 31,
-  close 246; after (two runs) — open image 19 / 20 ms, next 5, open video 52 / 51, frame step 30 / 29, close 240 / 239.
-  **Open image +6 ms is not explained yet** (the before number is a single run): look at it before merging.
-  Not merged into master for that reason; it is on branch `r0b-1`.
+- **Bench** (`tools/bench_lightbox.py`, this machine, 3 runs each, 23f6124 before / this block after, medians):
+  open image 19 / 19 / 19 ms before, 19 / 18 / 19 after; open video 51 / 51 / 50 both; frame step 32 / 32 / 33 before,
+  32 / 32 / 32 after. No change. (A first single before-run gave open image 13 ms; the base re-run shows that was noise.)
+- **Merge:** R0a blocks 1–4 (host.store) merged in first; annotate.js merged cleanly, `bind(viewer)` unchanged. The R0
+  suite and `test_r0a_store` pass on the merged code (one run had a transient `page: Worker terminate`; the re-run passed).
+## 0.142.0 — 2026-11-26 — R0a block 4: apply rows by id (live updates without a reload)
+- **What:** the annotator's API has `applyRows(rows)`: rows changed elsewhere are applied by id to the open file, and
+  undo / redo survive (a step that touches a changed row is dropped, never written back). For Coreline's live updates
+  (R2). Sight does not call it, so Sight behaves the same.
+- **Where:** `annotate.js` `applyRows` / `applyNow` / `applyLater` / `applyBusy`, `S.seenAt` (newest `updated_at`
+  seen per row, from load and applied rows), `S.statusBusy` (counted around `setStatus`'s write; nothing else
+  changed there). `tests/r0a_store_e2e.cjs` "apply". `docs/ARCHITECTURE.md` "Annotator store" (the rules).
+- **Notes:**
+  - Rows that cannot be applied safely now wait and apply later (a gesture, an open editor, loading, a state write).
+    Applying them at once broke an open editor: a picture text / pin editor wrote its start copy back over the change
+    (or revived a deleted row), the eraser's undo step held the old copy, and the panel's re-render dropped a note /
+    reply being typed.
+  - A tombstone still removes a row that has a patch queued here, and drops the patch (the server skips patches of
+    deleted rows, so nothing would bring the delete back). A queued delete or create / revive is left to the store.
+  - Not done: the store's own echo of a write it changed in a merge drops that undo step (conservative; the copy on
+    screen is the server's).
+- **Review:** a fresh agent found no Sight change. It found ten problems in the first cut: the open editors and the
+  eraser above; a late older row overwriting a newer one (now `S.seenAt` / the landed write's send time); a
+  tombstone ignored while a patch was queued; rows dropped while loading (now they wait); rows with no target taken
+  by every file (now ignored); a deleted status row ignored and a status without history keeping the old history;
+  a status row racing this window's own state write (now it waits); a gesture cancelled by an unchanged echo (no
+  abort any more: rows wait); an unsupported new version leaving the stale copy (now removed). All fixed, with tests
+  of the tombstone + queued patch, an older copy, no target, a note editor open while rows arrive, the cleared state.
+
+  The same reviewer confirmed every fix. It then found one more: a state row read before this window's own state write
+  could arrive after it and turn the state back. Fixed (`S.statusAt`: the held state's stamp, from load, an applied
+  row and `setStatus`; an older row is ignored; a failed write restores the old stamp), with a test; the same reviewer
+  confirmed it. Left as noted: local edits are not kept in `S.seenAt` past the 30 s of `OB.recent`; `S.applyQ` is not
+  bounded while busy.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1): `test_r0_lightbox`, `_annotate`, `_review`, `_views` pass except R0Export's
+  PDF check (as on origin/master here, see 0.141.5); `test_r0a_store` passes (55 checks).
+
+## 0.141.7 — 2026-11-26 — R0a block 3: stamps in every row write; undo stamped now for a merging store
+- **What:** every row write the annotator queues carries its stamps; Sight's server ignores them, so Sight behaves
+  the same. For a store that merges on the server (`store.mergesOnServer`, Coreline) an undo / redo of a note is
+  written stamped now, so the merge keeps it. Sight keeps today's undo (old stamps restored).
+- **Where:** `annotate.js`:
+  - `S.createdAt` (id → created_at: from the loaded rows, else the first write here; kept through `obOverlay` for a
+    create still queued); `rowBody` sends it;
+  - `obPut` sets the copy's `updated_at` = the entry's `at`; `obFields` sends it; a delete request carries `at`;
+  - `undoStamp` (from `applyStates`, only with `mergesOnServer`).
+
+  Tests: `tests/r0a_store_e2e.cjs` "stamps", "undo" and the queued-create case (fake host, both store kinds).
+  `docs/ARCHITECTURE.md` "Annotator store": stamps, `mergesOnServer`.
+- **Notes:**
+  - Sight's `Library.add_annotation` / `update_annotation` / `batch_update_annotations` read only
+    `_ANNOTATION_FIELDS`, which has no stamps. The golden geometry test already leaves stamps out. Each outbox entry
+    and keepalive request grows by about 50 bytes.
+  - Old outbox entries (no stamps) are still sent as they are. A merging store would take `now` for them; Coreline
+    has no old entries (its own queue prefix).
+  - `undoStamp` stamps each part by the rule `mergeRows` judges it by. Stamping only `edited_at` (the first cut) made
+    an undone Resolve or reply come back after the merge and let an old text overwrite a newer one. State entries
+    of the thread (`statusEvent`) are never tombstoned: one an undo drops is kept (so the history still shows it).
+  - `loadRows` must give ms numbers: a store that returns ISO dates would lose `created_at` (contract in
+    ARCHITECTURE).
+- **Review:** a fresh agent found no Sight regression. It found:
+  - (real, merging stores only) undo stamped only `edited_at`, so undoing a state change or a reply did nothing after
+    the merge and could overwrite a concurrent text edit. Fixed (`undoStamp`, with tests of Resolve, a reply, redo);
+  - (low) `created_at` given as a non-number is dropped. Documented (ms numbers);
+  - (low) `obOverlay` assumes the server's `updated_at`. Documented;
+  - test gaps: the overlay's `created_at`, redo. Added.
+
+  The same reviewer confirmed every fix and found nothing new that is wrong. Its leftovers, all for merging stores
+  only: the content compare used `JSON.stringify` (key order counted) — now `RC.same`; not done: after an undone
+  Resolve the thread still shows "Resolved" while the note is open (Sight's undo drops the entry; a "Reopened" entry
+  could be added), and a reply brought back by undo / redo shows "· edited".
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1): `test_r0_lightbox`, `_annotate`, `_review`, `_views` pass except R0Export's
+  PDF check (as on origin/master here, see 0.141.5); `test_r0a_store` passes (39 checks).
+
+## 0.141.6 — 2026-11-26 — R0a block 2: the write queue is keyed by the store
+- **What:** the annotator's durable write queue keeps its localStorage keys under the store's own prefix, so a
+  page of another host (Coreline: one prefix per host and user) never replays Sight's queue or another user's.
+  Sight keeps its keys: `sight-annot-outbox:v2:<window>`, plus the old v1 key. Behaviour of Sight is unchanged.
+- **Where:**
+  - `annotate.js`: `obStart(store)` from the first `createAnnotator` (the window key, adopting closed windows'
+    queues, the 1.5 s drain, `RC.setImageSource`); `OB.prefix` / `OB.legacy` / `OB.key` from `store.queue`.
+  - `sight-store.js`: `queue: {prefix: "sight-annot-outbox:v2:", legacy: ["sight-annot-outbox:v1"]}`.
+  - New `tests/r0a_host.html` (a host page that is not Sight, with a fake store that records every call),
+    `tests/r0a_store_e2e.cjs`, `tests/test_r0a_store.py`. Later R0a blocks add their checks there.
+  - `docs/ARCHITECTURE.md` "Annotator store": `queue`.
+- **Notes:**
+  - The page listeners (pagehide beacon, visibilitychange, pageshow, the 5 s / 60 s timers) stay registered at
+    import, guarded until a store started the queue. Do not move them into `obStart`: index.html's own pagehide
+    (settings, keepalive) would then run first and could take the page's keepalive budget before the beacon.
+  - A prefix must end with ":"; a key is adopted only when what follows the prefix holds no ":" (a window id), so
+    a longer prefix of another user (`…:u1:x:`) is never taken. Hosts encode the parts they put in a prefix.
+  - One store object per page: a second `createAnnotator` with another store throws (index.html passes one
+    `annotStore`). No `store.queue` = `annot-outbox:<store.kind>:`.
+  - Adopting other windows' keys now happens at the first `createAnnotator` (after index.html's settings fetch),
+    not at import; nothing is sent earlier than before.
+- **Review:** a fresh agent found no regression for Sight. It found:
+  - (medium) a prefix that begins another user's prefix would adopt that user's queue. Fixed (the ":" rule above,
+    with a test);
+  - (low) a second store with the same prefix was silently accepted. Fixed (identity check, with a test).
+
+  The same reviewer confirmed both fixes and found nothing new. It noted that window ids must never hold ":"
+  (random hex + `Date.now` hex today): the ":" rule depends on it.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1): `test_r0_lightbox`, `_annotate`, `_review`, `_views`, `test_r0a_store` pass, except
+  R0Export's PDF check (fails the same way on origin/master here, see 0.141.5). `test_r0_review` re-run after the fixes.
+
+## 0.141.5 — 2026-11-26 — R0a block 1: the annotator talks to the server only through `host.store`
+- **What:** a refactor; Sight behaves the same. annotate.js has no `/api/…` URL, no `fetch()` of Sight's API, no
+  `localStorage` read of a setting and no `/static/` import left. It is the first block of R0a (docs/PLAN-coreline.md).
+- **Where:**
+  - new `app/static/sight-store.js` (`createSightStore({api})`): every call the annotator made, with the same URLs,
+    methods, headers and bodies: rows, review state, versions, fps (parsed from `/info` there), media URL,
+    playback conversion, shots, stored note previews, exports, import, the tracker link ▾, dictation.
+  - `annotate.js`:
+    - `host.store` is required;
+    - the queue sends through `OB.store.writeRow(req, extra)` (`obReq` now builds `{op, id, body}`);
+    - settings are read with `host.getSetting` (falls back to localStorage), the author comes from `host.author()`;
+    - imports are relative (`./keys.js`); also in `key-help.js` and `dictation.js`;
+    - trackers-core / shotgrid-core / dictation / video-playable are no longer imported here;
+    - optional store members, when missing, hide their control (exports, import, the mic, link ▾, versions).
+  - `index.html`: one `annotStore` and one `annotBase` (store, getSetting, putSetting, author) for all three
+    annotators; their `api` is gone.
+  - `docs/ARCHITECTURE.md`: "Annotator store" (the members and the queue's store contract).
+- **Notes:**
+  - One store per page: the write queue takes the first one and sets `RC.setImageSource(store.shotSrc)` (it was set at
+    module load). Adopted outbox writes still go out 1.5 s after the start (`obKick(1500)` on the first store).
+  - `getSetting` must stay a function declaration: S's initializer reads settings before the line it sits on.
+  - The pagehide beacon still calls `fetch(…, {keepalive: true})` synchronously inside the handler.
+  - The queue's error message is now `<op> <id>: <status>`; obDrain only tests its shape (an HTTP answer vs none).
+  - Not done here: the queue keyed per store, stamps in puts, "apply rows by id", CSS tokens (next R0a blocks).
+- **Review:** a fresh agent compared every replaced call with the old code. It found:
+  - (high) `getSetting` was a `const` declared after S's initializer, so every startup setting read hit the TDZ, was
+    swallowed by `readJSON`'s catch and returned the default (styles, stamp, panel state…), and the next style change
+    would have written the defaults back. The R0 settings test caught it too. Fixed (function declaration);
+  - (low) adopted writes went out at 0 ms instead of 1.5 s. Fixed.
+
+  The same reviewer confirmed both fixes and found nothing new.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1, every test module): every R0 test passes except R0Export's PDF check, which
+  fails the same way on a clean origin/master here (the PDF build; `test_review_all.test_pdf_all` is the known twin).
+  Otherwise the known failures only: `test_pwa` ×4, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`,
+  `test_sources.test_file_uri_to_path`. 2 skips by design (macOS / Windows launchers).
 
 ## 0.141.4 — 2026-11-26 — R0-0 block 5: regression tests of the board, compare, sequence, exports, trackers and the look
 - **What:** the last block of the R0-0 safety net (docs/PLAN-coreline.md). No app code changed (only the version).
@@ -367,85 +503,3 @@ Add new entries directly below this line.
 - **Where:** new `app/static/guides.js`; `app/static/index.html` — `mountGuides`, the button, `light.guideGeom`, `passThrough` on the lightbox annotator. `MANUAL.md`, `docs/ARCHITECTURE.md`.
 - **Notes:** positions are image pixels. `sight.guides` goes through `putSetting` (a bare localStorage write would be deleted on the next start). At most 400 files are kept. No new shortcut. Not on compare, not on the phone.
 - **Review:** a fresh reviewer found one hole: changing the grid snap step saved it but left the ruler ticks on the old step until the next pan or drag (`paintMenu` `applySnap` never called `refresh()`, while the density sliders did). Fixed: both the live input and the change call `refresh()` (it only redraws the overlay, so the field keeps focus). The same reviewer confirmed that and found nothing new. The pen button and its right-click reset from 0.136.0 stayed in place; the guides button sits after the flip button.
-
-## 0.137.0 — 2026-11-26 — 3D camera eases, and Q/E move up and down
-- **What:** WASD fly eases in and out instead of starting and stopping dead. E raises the camera and Q lowers it. Shift slows the whole fly, the same way it slows pan and zoom.
-- **Where:** `app/static/index.html` — `makeCameraRig`, `CAM_MOVE_KEYS`, the 3D help and the Camera panel. `MANUAL.md`.
-- **Notes:** meshes and splats share the rig. Q/E move on world Y and fold into the same wish as WASD before one normalise. Shift multiplies that wish by `FINE`. Releasing a key or Shift eases out; velocity is cleared when the viewer is disposed and when the camera jumps (frame, recall, turn). Fly is ignored while annotating, in a text field, or with Ctrl/Alt/Cmd.
-- **Review:** the same reviewer that checked the guides merge found nothing wrong in the fly rig (wish axes, Shift, ease-out, halt on dispose and on a jump).
-
-## 0.136.0 — 2026-11-26 — Annotation tools keep their settings
-- **What:** each drawing tool's colour, size and options stay as you left them on the next file and the next time Sight starts. Turning annotating on still starts on the brush. Right-click the pen (long-press with a finger) puts every tool back to the defaults; right-click one tool's icon (or long-press it) resets only that tool.
-- **Where:** `app/static/annotate.js` — `sharedStyles`, `sharedStamp`, `flushPrefs` on `pagehide` (capture) and `setAsset`, `resetTool`; `app/static/index.html` `bindAnnoReset`; `app/static/compare.js` pen tooltip. `MANUAL.md`, `docs/ARCHITECTURE.md`.
-- **Notes:** the lightbox, compare and the board share one styles object and one stamp look. The tool in hand is not stored. Style and stamp writes are debounced; the flush runs in the capture phase so it lands in localStorage before index.html sends `settings.json`. A full reset still writes the shared objects in place. The shape tool's reset also clears the old ellipse slot. Selection-only property edits still do not become the tool's defaults (a colour-grade edit does). A mouse long-press on the pen no longer resets — that was easy to hit by holding the click.
-- **Review:** a fresh reviewer found the touch path double-fired. A finger or pen long-press both reset and toggled (or switched tool): `pointerup` cleared the timer before Windows fired `contextmenu` on release, the click then cleared the swallow flag, and that menu reset again. A release between the browser's menu (~500 ms) and the timer did both. Fixed the same way as the eye's onion toggle: `contextmenu` resets only for a mouse (a pen's barrel button counts as one); the timer is the touch path and `pointerup` only cancels it, so the click still sees the flag. The same reviewer confirmed that and found nothing new.
-
-## 0.135.2 — 2026-11-26 — File drop zones no longer give up on untyped files
-- **What:** dropping a file always gets the two zones (sidebar = add, the rest = view). A file whose drag carries no directory entry — empty MIME or `application/octet-stream`, which is how a lot of real files arrive — used to be treated as a folder, so the zones never came up and the drop did nothing.
-- **Where:** `app/static/index.html` — `dropKind`, `readDropped`, capture `dragenter`/`dragover`; `tests/drop_files_e2e.cjs`; `docs/ARCHITECTURE.md`.
-- **Notes:** a folder drag is only a drag that contains a directory entry. `dragenter` and `dragover` are accepted even when `items` is still empty, otherwise the browser never fires `drop`. Entries and `getAsFile()` are read once on drop (a second call is empty in WebView2). While drawing, a picture dropped on the lightbox / compare / board stays a reference even when `File.type` is empty — the name test matches annotate.js `REF_RE` (jpeg/png/gif/webp/bmp/avif/svg). A directory the entry still reports is never sent to `/api/files/drop`.
-- **Review:** a fresh reviewer found one hole: an untyped image (`shot.png`, type `""` or `application/octet-stream`) dropped while drawing was opened as a file and also added as a reference, because the capture handler only bailed on `image/*`. Fixed by the same name test as `REF_RE`, applied only to `dataTransfer.files` (the list the annotator reads). A first cut also bailed when the file existed only via `getAsFile()` and `files` was empty, which neither opened it nor added a reference; that fallback was removed. The same reviewer confirmed both fixes and found nothing new. It also noted the folder fallthrough cannot see a live directory, so it does not POST one to `/api/files/drop`.
-
-## 0.135.1 — 2026-11-26 — R0-0 block 2: regression tests of the annotator (geometry golden, notes, tools)
-- **What:** the second block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator does now.
-  No app code changed (only the version).
-- **Where:**
-  - `tests/test_r0_annotate.py` runs three page scripts on one temporary library:
-    - `tests/r0_geometry_e2e.cjs` + `tests/fixtures/r0_geometry_golden.json`. Known drawings, with real pointer input,
-      must store exactly the golden's rows (to 0.001). The drawings: every tool on a 1600 × 1000 picture at fit, then
-      a note; a picture whose asset row says 800 × 600 but decodes to 400 × 300; a clip on frame 25; a clip with a 2:1
-      pixel aspect (shown 640 × 240). Rewrite the golden with `SIGHT_R0_GOLDEN=update` (only a clean run writes it).
-    - `tests/r0_notes_e2e.cjs`:
-      - the reviewer name (You panel) signs notes, replies, state events and the review state;
-      - Add, an empty Add, undo / redo of adding a note (the words come back into the composer);
-      - reply and its edit, note edits, In progress / Resolve / Reopen, a reply's tombstone;
-      - the filters, the review state and its history;
-      - the clean picture after a note, picking a note (also while just watching), the panel on / off, delete;
-      - video notes on frames, their marks, a pick seeks;
-      - touch.
-    - `tests/r0_tools_e2e.cjs`:
-      - each tool's key and button;
-      - select, grips, move, resize, turn, nudge, Shift+click, marquee, Ctrl+A, duplicate, copy / cut / paste,
-        Ctrl+], the bin;
-      - undo / redo by keys and buttons;
-      - the eraser (Object and Partial);
-      - the eye, and onion skin, whose ghost opacities are pinned (0.5 / 0.5 half way, 0.25 / 0.75);
-      - touch, including a finger drag with the select tool.
-  - The shared harness:
-    - `run_page()` resets the server's UI settings to the class's before every script. Synced settings, such as the
-      notes panel left open, changed the next script's fit scale.
-    - `make_video(sar="2:1")` wrote 1:1: `setsar=2:1` reads as sar=2, max=1. Fixed.
-    - The report carries `t.data`.
-  - `docs/PLAN.md` "Found by the R0-0 regression tests", item 6: a tap on the drawing toolbar within about 0.5 s of a
-    finger stroke brings no click in Chromium's emulation. It is probably fling tap suppression; check on a real
-    touch screen.
-- **Notes:**
-  - **The golden alone does not prove units.** Strokes are aimed through the layer's own transform, so stored numbers
-    stay the same whatever unit the layer uses. The `layerUnits` checks catch a unit shift: the layer must map
-    (0, 0)–(decoded size) onto the media's own box.
-  - For "decoded ≠ row", the seed renders the thumbnail first. Rendering one rewrites the row's size, which made the
-    case hollow.
-  - The golden is this container's Chromium at 1400 × 900. A text row's box (system fonts) and `revision` (it counts
-    writes, which the queue coalesces) are left out.
-  - The tools script draws on a 2000 × 1300 picture, so screen px ≠ picture px (asserted). Drags assert they land on
-    the picture, not under a bar.
-  - Deliberately not done here:
-    - notes on a 3D view (block 4);
-    - the reference image tool (block 3);
-    - a phone-size context (PLAN item 2: a tile cannot be opened there).
-- **Review:** a fresh agent reviewed the block and mutated app code to prove the checks. It found:
-  - the hollow "decoded ≠ row" case;
-  - the golden depending on test order (shared UI settings);
-  - scale checks that were vacuous at s = 1;
-  - a font-dependent text box in the golden;
-  - a `null` golden that silently skipped the comparison;
-  - a wrong cause in PLAN item 6;
-  - coverage gaps (add-note undo, touch move);
-  - a vacuous `.every`;
-  - fixed waits;
-  - columns not pinned.
-
-  All were fixed. On re-review it found `revision` in the golden (write-coalescing dependent), also fixed. The same
-  reviewer confirmed every fix. Its mutations now fail the intended checks: asset-row size in `onReady`, nudge
-  without the scale, the author dropped, the onion fade, undo. Green alone, in reverse order, and with three runs at
-  once.

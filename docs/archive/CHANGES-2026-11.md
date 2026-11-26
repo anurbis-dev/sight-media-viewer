@@ -2,6 +2,88 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.137.0 — 2026-11-26 — 3D camera eases, and Q/E move up and down
+- **What:** WASD fly eases in and out instead of starting and stopping dead. E raises the camera and Q lowers it. Shift slows the whole fly, the same way it slows pan and zoom.
+- **Where:** `app/static/index.html` — `makeCameraRig`, `CAM_MOVE_KEYS`, the 3D help and the Camera panel. `MANUAL.md`.
+- **Notes:** meshes and splats share the rig. Q/E move on world Y and fold into the same wish as WASD before one normalise. Shift multiplies that wish by `FINE`. Releasing a key or Shift eases out; velocity is cleared when the viewer is disposed and when the camera jumps (frame, recall, turn). Fly is ignored while annotating, in a text field, or with Ctrl/Alt/Cmd.
+- **Review:** the same reviewer that checked the guides merge found nothing wrong in the fly rig (wish axes, Shift, ease-out, halt on dispose and on a jump).
+
+## 0.136.0 — 2026-11-26 — Annotation tools keep their settings
+- **What:** each drawing tool's colour, size and options stay as you left them on the next file and the next time Sight starts. Turning annotating on still starts on the brush. Right-click the pen (long-press with a finger) puts every tool back to the defaults; right-click one tool's icon (or long-press it) resets only that tool.
+- **Where:** `app/static/annotate.js` — `sharedStyles`, `sharedStamp`, `flushPrefs` on `pagehide` (capture) and `setAsset`, `resetTool`; `app/static/index.html` `bindAnnoReset`; `app/static/compare.js` pen tooltip. `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:** the lightbox, compare and the board share one styles object and one stamp look. The tool in hand is not stored. Style and stamp writes are debounced; the flush runs in the capture phase so it lands in localStorage before index.html sends `settings.json`. A full reset still writes the shared objects in place. The shape tool's reset also clears the old ellipse slot. Selection-only property edits still do not become the tool's defaults (a colour-grade edit does). A mouse long-press on the pen no longer resets — that was easy to hit by holding the click.
+- **Review:** a fresh reviewer found the touch path double-fired. A finger or pen long-press both reset and toggled (or switched tool): `pointerup` cleared the timer before Windows fired `contextmenu` on release, the click then cleared the swallow flag, and that menu reset again. A release between the browser's menu (~500 ms) and the timer did both. Fixed the same way as the eye's onion toggle: `contextmenu` resets only for a mouse (a pen's barrel button counts as one); the timer is the touch path and `pointerup` only cancels it, so the click still sees the flag. The same reviewer confirmed that and found nothing new.
+
+## 0.135.2 — 2026-11-26 — File drop zones no longer give up on untyped files
+- **What:** dropping a file always gets the two zones (sidebar = add, the rest = view). A file whose drag carries no directory entry — empty MIME or `application/octet-stream`, which is how a lot of real files arrive — used to be treated as a folder, so the zones never came up and the drop did nothing.
+- **Where:** `app/static/index.html` — `dropKind`, `readDropped`, capture `dragenter`/`dragover`; `tests/drop_files_e2e.cjs`; `docs/ARCHITECTURE.md`.
+- **Notes:** a folder drag is only a drag that contains a directory entry. `dragenter` and `dragover` are accepted even when `items` is still empty, otherwise the browser never fires `drop`. Entries and `getAsFile()` are read once on drop (a second call is empty in WebView2). While drawing, a picture dropped on the lightbox / compare / board stays a reference even when `File.type` is empty — the name test matches annotate.js `REF_RE` (jpeg/png/gif/webp/bmp/avif/svg). A directory the entry still reports is never sent to `/api/files/drop`.
+- **Review:** a fresh reviewer found one hole: an untyped image (`shot.png`, type `""` or `application/octet-stream`) dropped while drawing was opened as a file and also added as a reference, because the capture handler only bailed on `image/*`. Fixed by the same name test as `REF_RE`, applied only to `dataTransfer.files` (the list the annotator reads). A first cut also bailed when the file existed only via `getAsFile()` and `files` was empty, which neither opened it nor added a reference; that fallback was removed. The same reviewer confirmed both fixes and found nothing new. It also noted the folder fallthrough cannot see a live directory, so it does not POST one to `/api/files/drop`.
+
+## 0.135.1 — 2026-11-26 — R0-0 block 2: regression tests of the annotator (geometry golden, notes, tools)
+- **What:** the second block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator does now.
+  No app code changed (only the version).
+- **Where:**
+  - `tests/test_r0_annotate.py` runs three page scripts on one temporary library:
+    - `tests/r0_geometry_e2e.cjs` + `tests/fixtures/r0_geometry_golden.json`. Known drawings, with real pointer input,
+      must store exactly the golden's rows (to 0.001). The drawings: every tool on a 1600 × 1000 picture at fit, then
+      a note; a picture whose asset row says 800 × 600 but decodes to 400 × 300; a clip on frame 25; a clip with a 2:1
+      pixel aspect (shown 640 × 240). Rewrite the golden with `SIGHT_R0_GOLDEN=update` (only a clean run writes it).
+    - `tests/r0_notes_e2e.cjs`:
+      - the reviewer name (You panel) signs notes, replies, state events and the review state;
+      - Add, an empty Add, undo / redo of adding a note (the words come back into the composer);
+      - reply and its edit, note edits, In progress / Resolve / Reopen, a reply's tombstone;
+      - the filters, the review state and its history;
+      - the clean picture after a note, picking a note (also while just watching), the panel on / off, delete;
+      - video notes on frames, their marks, a pick seeks;
+      - touch.
+    - `tests/r0_tools_e2e.cjs`:
+      - each tool's key and button;
+      - select, grips, move, resize, turn, nudge, Shift+click, marquee, Ctrl+A, duplicate, copy / cut / paste,
+        Ctrl+], the bin;
+      - undo / redo by keys and buttons;
+      - the eraser (Object and Partial);
+      - the eye, and onion skin, whose ghost opacities are pinned (0.5 / 0.5 half way, 0.25 / 0.75);
+      - touch, including a finger drag with the select tool.
+  - The shared harness:
+    - `run_page()` resets the server's UI settings to the class's before every script. Synced settings, such as the
+      notes panel left open, changed the next script's fit scale.
+    - `make_video(sar="2:1")` wrote 1:1: `setsar=2:1` reads as sar=2, max=1. Fixed.
+    - The report carries `t.data`.
+  - `docs/PLAN.md` "Found by the R0-0 regression tests", item 6: a tap on the drawing toolbar within about 0.5 s of a
+    finger stroke brings no click in Chromium's emulation. It is probably fling tap suppression; check on a real
+    touch screen.
+- **Notes:**
+  - **The golden alone does not prove units.** Strokes are aimed through the layer's own transform, so stored numbers
+    stay the same whatever unit the layer uses. The `layerUnits` checks catch a unit shift: the layer must map
+    (0, 0)–(decoded size) onto the media's own box.
+  - For "decoded ≠ row", the seed renders the thumbnail first. Rendering one rewrites the row's size, which made the
+    case hollow.
+  - The golden is this container's Chromium at 1400 × 900. A text row's box (system fonts) and `revision` (it counts
+    writes, which the queue coalesces) are left out.
+  - The tools script draws on a 2000 × 1300 picture, so screen px ≠ picture px (asserted). Drags assert they land on
+    the picture, not under a bar.
+  - Deliberately not done here:
+    - notes on a 3D view (block 4);
+    - the reference image tool (block 3);
+    - a phone-size context (PLAN item 2: a tile cannot be opened there).
+- **Review:** a fresh agent reviewed the block and mutated app code to prove the checks. It found:
+  - the hollow "decoded ≠ row" case;
+  - the golden depending on test order (shared UI settings);
+  - scale checks that were vacuous at s = 1;
+  - a font-dependent text box in the golden;
+  - a `null` golden that silently skipped the comparison;
+  - a wrong cause in PLAN item 6;
+  - coverage gaps (add-note undo, touch move);
+  - a vacuous `.every`;
+  - fixed waits;
+  - columns not pinned.
+
+  All were fixed. On re-review it found `revision` in the golden (write-coalescing dependent), also fixed. The same
+  reviewer confirmed every fix. Its mutations now fail the intended checks: asset-row size in `onReady`, nudge
+  without the scale, the author dropped, the onion fade, undo. Green alone, in reverse order, and with three runs at
+  once.
+
 ## 0.135.0 — 2026-11-26 — Coreline tracker adapter (PLAN-coreline R4)
 - **What:** Coreline is a second tracker kind beside ShotGrid (desktop only). Settings → Trackers → *Connect a tracker…*
   → Coreline (server + API key). Its projects sit under Sources. Their Versions show as library tiles, with thumbnails,

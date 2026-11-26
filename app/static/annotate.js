@@ -21,17 +21,16 @@
 // Context (data.ctx): video {t, hold} — visible around time t; 3D {vk, cam} — visible while the
 // camera matches that view; images: none (always visible).
 
-import { hotkey, runHotkeys } from "/static/keys.js";
-import { buildKeyHelp, helpKey, keyName } from "/static/key-help.js";
-import { convertForPlayback } from "/static/video-playable.js";
-import { setCursor } from "/static/cursors.js";
+// Host-neutral (docs/ARCHITECTURE.md "Annotator store"): everything from the server goes through host.store
+// (Sight's: sight-store.js), settings through host.getSetting / putSetting, the author through host.author.
+// Imports are relative, so the module works from any URL prefix.
+import { hotkey, runHotkeys } from "./keys.js";
+import { buildKeyHelp, helpKey, keyName } from "./key-help.js";
+import { setCursor } from "./cursors.js";
 // Primitives, rendering, hit tests and the merge rules are shared with the HTML page and the
 // mobile app (review-core.js, a plain script that sets globalThis.SightReviewCore; docs/FORMAT.md).
-import "/static/review-core.js";
-import "/static/trackers-core.js";  // globalThis.SightTrackers — the tracker registry (docs/ARCHITECTURE.md "Tracker adapters")
-import "/static/shotgrid-core.js";  // registers the ShotGrid adapter (docs/SHOTGRID.md), shared with the phone app
-import { createPlate } from "/static/caption-plate.js";
-import { createDictationUI } from "/static/dictation.js";
+import "./review-core.js";
+import { createPlate } from "./caption-plate.js";
 const RC = globalThis.SightReviewCore;
 const { STROKE_TOOLS, FONTS, uid, clamp, r2, hyp, typeOf, esc, fontStack, textLayout,
   primsOf, primSvg, boundsOf, hitTest, transformItem, validItem } = RC;
@@ -235,8 +234,7 @@ const isDrawing = (it) => it.kind !== "note";
 const propType = (it) => { const t = typeOf(it); return t === "brush" && it.data?.close ? "lasso" : t; };
 // Tools that draw a freehand stroke (the brush circle follows the pointer).
 const freehand = (t) => STROKE_TOOLS.has(t) || t === "lasso";
-// Reference images (kind "image") show Sight's stored shots.
-RC.setImageSource((id) => (/^[0-9a-f]{16}$/.test(String(id)) ? `/api/review/shots/${id}` : ""));
+// Reference images (kind "image") show the store's shots: RC.setImageSource(store.shotSrc), set by obStart.
 // Pictures a reference image is made from: anything the browser decodes. Kept at most REF_MAX px on the long side.
 const REF_MAX = 2048;
 const REF_RE = /\.(jpe?g|png|gif|webp|bmp|avif|svg)$/i;
@@ -281,15 +279,19 @@ function fmtDate(ms){
 // in localStorage until the server has it, retried with backoff while it fails, sent with keepalive when
 // the page goes away. Writes are therefore never tied to the annotator's current asset: switching clips
 // mid-save, a failed request or a closed window used to drop notes and replies (0.87.1).
-// Storage: one key per window (`OB_PREFIX + window id` = {ts, entries}), refreshed while it holds entries;
+// Storage: one key per window (the store's queue prefix + window id = {ts, entries}), refreshed while it holds entries;
 // a start adopts the keys of windows that stopped refreshing theirs (closed / crashed). The prefix is
 // outside "sight.*" on purpose: hydrateSettings() drops sight.* keys the server lacks.
-const OB_PREFIX = "sight-annot-outbox:v2:";
+// The prefix is the store's (`store.queue.prefix`; Sight's: "sight-annot-outbox:v2:", which also adopts the v1 key),
+// so one host's or one user's queue is never replayed through another (Coreline: "coreline:<host>:<user>:…").
+const OB_PREFIX_DEFAULT = (store) => `annot-outbox:${store.kind || "store"}:`;
 // OB_STALE: background tabs run timers about once a minute, so a live window may refresh its key late.
 const OB_STALE = 180000, OB_TIMEOUT = 20000, OB_RECENT = 30000;
 const OB = {
+  store: null, // the host's store (createAnnotator; the first one): the queue's transport (store.writeRow) and its keys
+  prefix: "", legacy: [], // this store's key prefix and its older single keys (obStart)
   map: new Map(), busy: false, gone: false, timer: 0, fails: 0, batchFails: 0, waiters: [], badge: null, note: "", noteTimer: 0,
-  key: OB_PREFIX + Math.random().toString(16).slice(2) + Date.now().toString(16),
+  key: "", // this window's key: prefix + a window id (obStart)
   // Writes that landed lately (id -> {e, at, sentAt}): a load() whose GET raced them still shows them (obOverlay).
   recent: new Map(),
   inflight: new Set(), // row ids with a request on the way (obBeacon leaves them alone)
@@ -324,7 +326,8 @@ function obAdopt(){
     const now = Date.now(), keys = [];
     for (let i = 0; i < localStorage.length; i++){
       const k = localStorage.key(i);
-      if (k && (k === "sight-annot-outbox:v1" || (k.startsWith(OB_PREFIX) && k !== OB.key))) keys.push(k);
+      // (a window id never holds ":": a longer prefix that starts with this one — another user's — is not ours)
+      if (k && (OB.legacy.includes(k) || (k.startsWith(OB.prefix) && k !== OB.key && !k.slice(OB.prefix.length).includes(":")))) keys.push(k);
     }
     for (const k of keys){
       let v = null;
@@ -357,8 +360,11 @@ function obPut(body, create){
   const prev = OB.map.get(body.id);
   // A row whose create (or revive after a delete) has not landed yet still needs the POST (an upsert).
   const mustCreate = !!create || prev?.op === "del" || (prev?.op === "put" && prev.create) || OB.handed.delete(body.id);
-  // A copy: the row as it is now, whatever happens to the live item afterwards.
-  OB.map.set(body.id, { op: "put", body: structuredClone(body), create: mustCreate, key: body.target_asset_id || body.board_id || null, at: Date.now() });
+  // A copy: the row as it is now, whatever happens to the live item afterwards. Its updated_at is the write's own
+  // time (entry.at): a stale entry replayed later carries its old time, so a merging store keeps a newer row.
+  const at = Date.now(), copy = structuredClone(body);
+  copy.updated_at = at;
+  OB.map.set(body.id, { op: "put", body: copy, create: mustCreate, key: body.target_asset_id || body.board_id || null, at });
   obSave();
   obKick(0);
 }
@@ -382,7 +388,11 @@ function obOverlay(rows, key){
   const now = Date.now();
   const lay = (id, e) => {
     if (e.op === "del") out.delete(id);
-    else out.set(id, { ...(out.get(id) || {}), id, kind: e.body.kind, shape_kind: e.body.shape_kind, z_index: e.body.z_index, data: structuredClone(e.body.data) });
+    else {
+      const row = { ...(out.get(id) || {}), id, kind: e.body.kind, shape_kind: e.body.shape_kind, z_index: e.body.z_index, data: structuredClone(e.body.data) };
+      if (row.created_at == null && e.body.created_at != null) row.created_at = e.body.created_at;  // (a create not landed yet)
+      out.set(id, row);
+    }
   };
   for (const [id, r] of OB.recent){
     if (now - r.at > OB_RECENT){ OB.recent.delete(id); continue; }
@@ -398,22 +408,25 @@ function obOverlay(rows, key){
 function obForget(key){ for (const [id, r] of OB.recent) if (r.e.key === key) OB.recent.delete(id); }
 // 4xx (except 408 / 429) = the server refuses this row for good: retrying cannot help, keep the rest moving.
 class ObRefused extends Error {}
-async function obFetch(path, opts){
+// One write through the store (req: see obReq). Its error message is "<op> <id>: <status>" for an HTTP answer
+// (obDrain tells those from "no answer at all" by that shape).
+async function obFetch(req){
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), OB_TIMEOUT); // a hung request must not stall the queue for good
   try {
-    const r = await fetch(path, { ...opts, signal: ctl.signal });
+    const r = await OB.store.writeRow(req, { signal: ctl.signal });
     if (r.ok) return;
-    const msg = `${opts.method} ${path}: ${r.status}`;
+    const msg = `${req.op} ${req.id || "rows"}: ${r.status}`;
     if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw new ObRefused(msg);
     throw new Error(msg);
   } finally { clearTimeout(t); }
 }
-const JSON_HDR = { "content-type": "application/json" };
-const obReq = (id, e) => e.op === "del" ? [`/api/annotations/${encodeURIComponent(id)}`, { method: "DELETE" }]
-  : e.create ? ["/api/annotations", { method: "POST", headers: JSON_HDR, body: JSON.stringify(e.body) }]
-  : [`/api/annotations/${encodeURIComponent(id)}`, { method: "PATCH", headers: JSON_HDR, body: JSON.stringify(obFields(e.body)) }];
-function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind }; }
+// The store contract's row writes (docs/ARCHITECTURE.md "Annotator store"): a create (an upsert: the full row),
+// a patch of obFields (a row gone on the server is skipped, never revived), a delete, a batch of patches.
+const obReq = (id, e) => e.op === "del" ? { op: "delete", id, at: Number(e.at) || null }
+  : e.create ? { op: "create", id, body: e.body }
+  : { op: "patch", id, body: obFields(e.body) };
+function obFields(b){ return { data: b.data, z_index: b.z_index, color: b.color, x: b.x, y: b.y, w: b.w, h: b.h, shape_kind: b.shape_kind, updated_at: b.updated_at }; }
 // Removes `e` once sent, unless a newer write for the row came in meanwhile (that one is sent next).
 // `refused`: the server did not take it; it must not show (OB.recent) nor count as landed.
 function obDone(id, e, sentAt, refused){
@@ -426,7 +439,7 @@ function obDone(id, e, sentAt, refused){
   obSave();
 }
 async function obDrain(){
-  if (OB.busy) return;
+  if (OB.busy || !OB.store) return;  // (defensive: nothing is queued before the first store starts the queue)
   obHandedOff();
   OB.busy = true;
   clearTimeout(OB.timer);
@@ -440,7 +453,7 @@ async function obDrain(){
         if (down){ failedNow.add(id); return; }
         const sentAt = Date.now();
         OB.inflight.add(id);
-        try { const [p, o] = obReq(id, e); await obFetch(p, o); obDone(id, e, sentAt); }
+        try { await obFetch(obReq(id, e)); obDone(id, e, sentAt); }
         catch (err){
           if (err instanceof ObRefused){ console.warn("annotation write refused", err); obDone(id, e, 0, true); obRefusedNote(); }
           else { failedNow.add(id); down = !/^\w+ \S+: \d+$/.test(err.message || ""); console.warn("annotation save failed, will retry", err); }
@@ -456,7 +469,7 @@ async function obDrain(){
         const sentAt = Date.now();
         for (const [id] of updates) OB.inflight.add(id);
         try {
-          await obFetch("/api/annotations/batch", { method: "POST", headers: JSON_HDR, body: JSON.stringify({ items: updates.map(([id, e]) => ({ id, ...obFields(e.body) })) }) });
+          await obFetch({ op: "batch", items: updates.map(([id, e]) => ({ id, ...obFields(e.body) })) });
           for (const [id, e] of updates) obDone(id, e, sentAt);
           OB.batchFails = 0;
         } catch (err){
@@ -492,16 +505,19 @@ function obFlush(){
 // The page is going away: every request at once (the page may not live to see one answer), keepalive, within
 // its 64 KB budget. Whatever does not fit or fails stays stored for the next start.
 function obBeacon(){
+  if (!OB.store) return;
   let budget = 60000;
   for (const [id, e] of OB.map){
     if (OB.inflight.has(id)) continue; // an older request for the row is on the way: never race it (stays stored)
-    const [p, o] = obReq(id, e.op === "put" && !e.create && !e.single ? { ...e, single: true } : e);
-    const size = (o.body || "").length + 200;
+    const req = obReq(id, e.op === "put" && !e.create && !e.single ? { ...e, single: true } : e);
+    const size = (req.body ? JSON.stringify(req.body) : "").length + 200;
     if (size > budget) continue;
     budget -= size;
     const sentAt = Date.now();
     OB.inflight.add(id);
-    fetch(p, { ...o, keepalive: true }).then((r) => { if (r.ok) obDone(id, e, sentAt); }).catch(() => {})
+    let sent;
+    try { sent = OB.store.writeRow(req, { keepalive: true }); } catch (err){ sent = Promise.reject(err); }  // (now: the page is going away)
+    Promise.resolve(sent).then((r) => { if (r.ok) obDone(id, e, sentAt); }).catch(() => {})
       .finally(() => OB.inflight.delete(id));
   }
 }
@@ -527,23 +543,42 @@ function obPaint(){
   OB.badge.hidden = !show;
   OB.badge.textContent = OB.fails && n ? `⚠ ${n} unsaved annotation change${n === 1 ? "" : "s"} — retrying` : OB.note;
 }
+// Starts the page's one queue on the first store (createAnnotator): its keys, the page listeners, adopting the writes
+// left over by closed windows of the same store. A later annotator must bring the same queue (one per page).
+// The prefix ends with ":" and its parts hold no ":" of their own (a host encodes them, e.g. encodeURIComponent).
+function obStart(store){
+  if (OB.store){
+    if (store !== OB.store) throw new Error("createAnnotator: one write queue per page, so one store per page (pass the same store object)");
+    return;
+  }
+  const prefix = String(store.queue?.prefix || OB_PREFIX_DEFAULT(store));
+  if (!prefix.endsWith(":")) throw new Error(`createAnnotator: store.queue.prefix must end with ":" ("${prefix}")`);
+  OB.store = store;
+  OB.prefix = prefix;
+  OB.legacy = Array.isArray(store.queue?.legacy) ? store.queue.legacy.map(String) : [];
+  OB.key = prefix + Math.random().toString(16).slice(2) + Date.now().toString(16);
+  // Writes left over from a closed window or the last session (the server was gone): send them now.
+  obAdopt();
+  if (OB.map.size) setTimeout(obDrain, 1500);
+  // Reference images show this store's shots.
+  RC.setImageSource((id) => store.shotSrc(id));
+}
+// The page listeners are added on import (before the host's own: the pagehide beacon goes out before any other
+// keepalive request takes the page's budget), and do nothing until a store started the queue.
 if (typeof window !== "undefined"){
   // Going away for good: open editors commit too. Only hidden (minimized, another app): queue what is
   // committed, leave a field being typed in alone.
   const away = (full) => { for (const s of OB.settlers){ try { (full ? s.settle : s.stage)(); } catch (e){ console.warn(e); } } };
-  window.addEventListener("pagehide", () => { away(true); OB.gone = true; obSave(); if (OB.map.size) obBeacon(); });
-  document.addEventListener("visibilitychange", () => { if (document.hidden){ away(false); obSave(); if (OB.map.size) obKick(0); } });
-  window.addEventListener("pageshow", (e) => { if (!e.persisted) return; obHandedOff(true); OB.gone = false; obSave(); if (OB.map.size) obKick(0); });
+  window.addEventListener("pagehide", () => { if (!OB.store) return; away(true); OB.gone = true; obSave(); if (OB.map.size) obBeacon(); });
+  document.addEventListener("visibilitychange", () => { if (OB.store && document.hidden){ away(false); obSave(); if (OB.map.size) obKick(0); } });
+  window.addEventListener("pageshow", (e) => { if (!e.persisted || !OB.store) return; obHandedOff(true); OB.gone = false; obSave(); if (OB.map.size) obKick(0); });
   // Keeps this window's stored queue marked as alive, so another window's start does not adopt it.
   setInterval(() => {
     if (!OB.map.size || obHandedOff()) return;
     obSave();
   }, 5000);
-  // Writes left over from a closed window or the last session (the server was gone): send them now.
-  obAdopt();
-  if (OB.map.size) setTimeout(obDrain, 1500);
   // A window that crashed while this one ran: its queue turns stale later and is picked up here.
-  setInterval(() => { const n = OB.map.size; obAdopt(); if (OB.map.size > n) obKick(0); }, 60000);
+  setInterval(() => { if (!OB.store) return; const n = OB.map.size; obAdopt(); if (OB.map.size > n) obKick(0); }, 60000);
 }
 
 // =================================================================================================
@@ -556,6 +591,10 @@ const styleWatchers = new Set();
 function pokeStyles(){ for (const fn of styleWatchers){ try { fn(); } catch {} } }
 
 export function createAnnotator(host){
+  // Every server call goes through the store (docs/ARCHITECTURE.md "Annotator store"; Sight's: sight-store.js).
+  const store = host.store;
+  if (!store) throw new Error("createAnnotator: host.store is required");
+  obStart(store);
   injectStyles();
   // The notes panel's on / off is remembered per host; on a board it starts closed (the view is often narrow).
   const panelKey = host.board ? "sight.annotate.panel.board" : "sight.annotate.panel";
@@ -565,7 +604,7 @@ export function createAnnotator(host){
   const S = {
     on: false, panelOn: readJSON(panelKey, host.board ? false : true), readOn: !!readJSON(readKey, false), hidden: false, onion: !!readJSON("sight.annotate.onion", false), hiddenReplies: new Set(),
     tool: "brush", gradeLines: readJSON("sight.annotate.gradeLines", true) !== false, styles: loadStyles(), stamp: loadStamp(), stampVideos: readJSON("sight.annotate.stamp.videos", {}) || {}, stampDrag: false, stampKey: "", hold: readJSON("sight.annotate.hold", 0),
-    asset: null, kind: null, items: new Map(), saved: new Set(), loading: null,
+    asset: null, kind: null, items: new Map(), saved: new Set(), loading: null, createdAt: new Map(), seenAt: new Map(), applyQ: null, statusBusy: 0,
     sel: new Set(), crop: null, lastPtr: "mouse", undo: [], redo: [], clip: null, clipCut: false,
     light: null, bar: null, ui: null, b2: null, b3: null, layer: null,
     drag: null, hover: null, edit: null, region: null, pending: [], cleanPic: false, altHeld: false,
@@ -577,7 +616,10 @@ export function createAnnotator(host){
 
   // Board mode: the Canvas view's annotator (see the header). Every board-specific branch below goes through this.
   const isBoard = () => S.kind === "board";
-  function readJSON(k, dflt){ try { const v = JSON.parse(localStorage.getItem(k)); return v ?? dflt; } catch { return dflt; } }
+  // Settings: read through the host (host.getSetting(key) → the stored string or null), written through putSetting.
+  // (A function declaration: S's initializer above reads settings before this line runs.)
+  function getSetting(k){ return host.getSetting ? host.getSetting(k) : localStorage.getItem(k); }
+  function readJSON(k, dflt){ try { const v = JSON.parse(getSetting(k)); return v ?? dflt; } catch { return dflt; } }
   function writeJSON(k, v){ try { host.putSetting(k, JSON.stringify(v)); } catch {} }
   function loadStyles(){
     if (sharedStyles) return sharedStyles;
@@ -647,7 +689,8 @@ export function createAnnotator(host){
     paintBar(); renderProps();
     try { paintStamp(true); paintStampPop(); } catch {}
   });
-  const reviewer = () => localStorage.getItem("sight.reviewer") || "";
+  // The author of notes, replies, state events and the review state (Sight: the typed reviewer name).
+  const reviewer = () => host.author?.() || "";
 
   // ---- toast ---------------------------------------------------------------------------------
   let toastTimer = 0;
@@ -664,8 +707,10 @@ export function createAnnotator(host){
   function rowBody(it){
     const b = boundsOf(it);
     const where = isBoard() ? { scope: "board", board_id: S.asset.id } : { scope: "asset", target_asset_id: S.asset.id };
+    // created_at: the row's (as loaded), or the time this client first wrote it. updated_at is set by obPut.
+    if (!S.createdAt.has(it.id)) S.createdAt.set(it.id, Date.now());
     return {
-      id: it.id, ...where, kind: it.kind, shape_kind: it.sub || null,
+      id: it.id, ...where, kind: it.kind, shape_kind: it.sub || null, created_at: S.createdAt.get(it.id),
       z_index: it.z | 0, data: it.data, color: it.data.color || null,
       x: isDrawing(it) ? r2(b[0]) : null, y: isDrawing(it) ? r2(b[1]) : null,
       w: isDrawing(it) ? r2(b[2] - b[0]) : null, h: isDrawing(it) ? r2(b[3] - b[1]) : null,
@@ -717,15 +762,16 @@ export function createAnnotator(host){
     // the tracker link popover belongs to the file it was opened on; a sync of this file repaints it itself
     if (trkState.aid && trkState.aid !== a.id){ const pop = S.ui?.querySelector(".an-trk"); if (pop) pop.hidden = true; }
     let rows = [];
-    try { rows = await host.api(`/api/annotations?${isBoard() ? "board_id" : "asset_id"}=${encodeURIComponent(a.id)}`); }
+    try { rows = await store.loadRows(isBoard() ? "board" : "asset", a.id); }
     catch (e){ console.warn(e); if (S.asset?.id === a.id) toast("Could not load the notes of this file"); }
     if (S.loading !== token || S.asset?.id !== a.id) return;
     S.loading = null;
     rows = obOverlay(rows, a.id);  // writes still queued for this file count (re-opened before they landed)
-    S.items.clear(); S.saved.clear();
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.seenAt.clear();
     // The review state is a row of its own (kind 'status', newest wins) — not an editable item.
     const st = rows.filter((r) => r.kind === "status").sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0))[0];
     S.status = st?.data?.state || "";
+    S.statusAt = Number(st?.updated_at) || 0;
     // Rows from 0.17.0 have no history: their current state is the one entry.
     S.statusHist = Array.isArray(st?.data?.history) ? st.data.history
       : st?.data?.state ? [{ state: st.data.state, author: st.data.author || "", at: st.data.at || st.updated_at }] : [];
@@ -735,6 +781,8 @@ export function createAnnotator(host){
       if (!validItem(it)) continue;
       S.items.set(it.id, it);
       S.saved.add(it.id);
+      if (Number.isFinite(Number(r.created_at)) && r.created_at != null) S.createdAt.set(it.id, Number(r.created_at));
+      if (Number(r.updated_at)) S.seenAt.set(it.id, Number(r.updated_at));
     }
     notesSig = noteSig();  // the baseline: deleting the last note must differ from it and refresh the card's chip
     looseSig = isBoard() ? null : pendingDrawings().length;  // same for the red dot: a drawing added or cleared after this
@@ -745,12 +793,101 @@ export function createAnnotator(host){
     paintBadge();
     loadVersions(a);
   }
+  // Rows that changed elsewhere (a live update: Coreline's journal deltas), applied by id to the open file without a
+  // reload, so undo / redo survive. `rows`: whole rows as loadRows gives them (ms stamps); one with deleted_at set
+  // removes it; a `status` row sets the review state. Returns the ids changed now. Rows that cannot be applied safely
+  // now wait and are applied as soon as they can (S.applyQ): while the file loads, during a gesture (a stroke, a drag,
+  // the eraser), while an editor is open (text / pin on the picture, a note / reply / caption field), or while this
+  // window's review-state write is on the way. Left alone: rows of another asset / board; a row older than the copy
+  // held here (updated_at below the newest seen, or below a write of this window that landed since); a row with a
+  // write of this window queued or being typed (the store merges that write; a tombstone still removes the row and
+  // drops a queued patch). An undo / redo step that touches a changed row is dropped: replaying it would write the
+  // old copy back over the new one. Unused by Sight (no live updates; reload() re-reads instead).
+  function applyBusy(){
+    if (S.loading || S.drag || S.edit || S.pinEdit || S.statusBusy) return true;
+    return !!(S.ui?.querySelector(".an-list textarea, .an-list input") || S.light?.querySelector(".scp.editing"));
+  }
+  function applyRows(rows){
+    const a = S.asset;
+    if (!a || !supported() || !Array.isArray(rows)) return [];
+    const field = isBoard() ? "board_id" : "target_asset_id";
+    const mine = rows.filter((r) => r && typeof r.id === "string" && r[field] === a.id);
+    if (!mine.length) return [];
+    if (applyBusy()){
+      const q = S.applyQ || (S.applyQ = { aid: a.id, rows: [], timer: 0 });
+      if (q.aid !== a.id){ q.aid = a.id; q.rows = []; }
+      q.rows.push(...mine);
+      clearTimeout(q.timer);
+      q.timer = setTimeout(applyLater, 250);
+      return [];
+    }
+    return applyNow(mine);
+  }
+  function applyLater(){
+    const q = S.applyQ;
+    if (!q) return;
+    if (S.asset?.id !== q.aid){ S.applyQ = null; return; }
+    if (applyBusy()){ q.timer = setTimeout(applyLater, 250); return; }
+    S.applyQ = null;
+    applyNow(q.rows);
+  }
+  // Newest updated_at of each row as this window last saw it (loaded / applied): an older copy is not applied.
+  const seenAt = (id) => Math.max(S.seenAt.get(id) || 0, (() => { const r = OB.recent.get(id); return r ? r.sentAt || 0 : 0; })());
+  function applyNow(rows){
+    const changed = new Set();
+    let status = null;
+    for (const r of rows){
+      const upd = Number(r.updated_at) || 0;
+      if (r.kind === "status"){ if (!status || upd >= (Number(status.updated_at) || 0)) status = r; continue; }
+      if (upd && upd < seenAt(r.id)) continue;
+      const queued = OB.map.get(r.id);
+      if (r.deleted_at){
+        if (queued && (queued.op === "del" || queued.create)) continue;  // our own delete, or our create / revive on the way
+        if (queued){ OB.map.delete(r.id); obSave(); }  // a patch of a gone row: the server would skip it anyway
+        S.dirty.delete(r.id);
+        if (S.items.has(r.id)){ S.items.delete(r.id); S.sel.delete(r.id); changed.add(r.id); }
+        S.saved.delete(r.id);
+        if (upd) S.seenAt.set(r.id, upd);
+        continue;
+      }
+      if (queued || S.dirty.has(r.id)) continue;
+      if (upd) S.seenAt.set(r.id, upd);
+      if (Number.isFinite(Number(r.created_at)) && r.created_at != null) S.createdAt.set(r.id, Number(r.created_at));
+      const it = { id: r.id, kind: r.kind, sub: r.shape_kind || null, z: r.z_index || 0, data: r.data || {} };
+      const prev = S.items.get(r.id);
+      if (!validItem(it)){  // a version this client cannot show: not the stale copy either
+        if (prev){ S.items.delete(r.id); S.sel.delete(r.id); changed.add(r.id); }
+        continue;
+      }
+      S.saved.add(r.id);
+      if (prev && prev.kind === it.kind && prev.sub === it.sub && prev.z === it.z && RC.same(prev.data, it.data)) continue;
+      S.items.set(r.id, it);
+      changed.add(r.id);
+    }
+    // (the review state: not older than the one held — loaded, applied, or written by this window)
+    if (status && (Number(status.updated_at) || 0) < (S.statusAt || 0)) status = null;
+    if (status){
+      S.statusAt = Number(status.updated_at) || S.statusAt;
+      const d = status.deleted_at ? {} : status.data || {};
+      S.status = d.state || "";
+      S.statusHist = Array.isArray(d.history) ? d.history : d.state ? [{ state: d.state, author: d.author || "", at: d.at || status.updated_at }] : [];
+      paintStatus();
+    }
+    if (!changed.size) return [];
+    const touches = (e) => [...e.before.keys(), ...e.after.keys()].some((id) => changed.has(id));
+    S.undo = S.undo.filter((e) => !touches(e));
+    S.redo = S.redo.filter((e) => !touches(e));
+    for (const id of changed) if (!S.items.has(id)) S.adopt.delete(id);
+    afterChange();
+    paintBar();
+    return [...changed];
+  }
   // ---- versions / review state ------------------------------------------------------------------
   async function loadVersions(a){
     S.versions = []; S.prevOpen = null;
     if (S.kind === "model3d" || isBoard()){ renderVersions(); return; }
     let list = [];
-    try { list = (await host.api(`/api/assets/${a.id}/versions`)).items || []; } catch {}
+    try { list = (store.versions ? await store.versions(a.id) : null) || []; } catch {}
     if (S.asset?.id !== a.id) return;
     S.versions = list;
     host.onVersions?.(a.id, list); // (the lightbox's compare button: enabled with 2+ versions)
@@ -758,7 +895,7 @@ export function createAnnotator(host){
     const prev = i > 0 ? list[i - 1] : null;
     if (prev){
       try {
-        const rows = await host.api(`/api/annotations?asset_id=${encodeURIComponent(prev.id)}`);
+        const rows = await store.loadRows("asset", prev.id);
         if (S.asset?.id !== a.id) return;
         S.prevOpen = { asset: prev, rows };
       } catch {}
@@ -824,18 +961,20 @@ export function createAnnotator(host){
   }
   async function setStatus(state){
     if (!S.asset) return;
-    const a = S.asset, was = S.status;
+    const a = S.asset, was = S.status, wasAt = S.statusAt;
     S.status = state;
     paintStatus();
+    S.statusBusy++;  // (applyRows waits meanwhile, and takes no state row older than this write)
+    S.statusAt = Math.max(S.statusAt || 0, Date.now());
     try {
-      const res = await host.api(`/api/assets/${a.id}/review-status`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, author: reviewer() }) });
+      const res = await store.setReviewState(a.id, state, reviewer());
       if (S.asset?.id === a.id && Array.isArray(res?.history)){ S.statusHist = res.history; paintStatus(); }
       host.onReviewChanged?.(a.id);
     } catch (e){
       console.warn(e);
-      if (S.asset?.id === a.id){ S.status = was; paintStatus(); }
+      if (S.asset?.id === a.id){ S.status = was; S.statusAt = wasAt; paintStatus(); }
       toast("Could not save the review state");
-    }
+    } finally { S.statusBusy--; }
   }
   const STATE_LABEL = { review: "Needs review", changes: "Changes requested", approved: "Approved" };
   const histLine = (h) => `${STATE_LABEL[h.state] || "Cleared"}${h.author ? " by " + h.author : ""} · ${fmtDate(h.at)}`;
@@ -888,10 +1027,38 @@ export function createAnnotator(host){
       const had = S.items.has(id);
       if (v && v.kind !== "note" && !v.data?.note && S.items.get(id)?.data?.note) S.adopt.add(id);
       if (!v){ if (had){ S.items.delete(id); S.sel.delete(id); serverDelete(id); } continue; }
-      S.items.set(id, structuredClone(v));
+      const copy = structuredClone(v);
+      // Sight's store restores the old stamps, so an undone copy never wins a later .srev merge against someone's
+      // newer edit. A store that merges on the server gets the restored note stamped now, field by field as the
+      // merge judges it (undoStamp); other rows: updated_at = the write's time (obPut). docs/PLAN-coreline.md R0a.
+      if (store.mergesOnServer && copy.kind === "note") undoStamp(copy.data, S.items.get(id)?.data || null, Date.now());
+      S.items.set(id, copy);
       if (!S.saved.has(id)) serverCreate(S.items.get(id));
       else serverUpdate(id);
     }
+  }
+  // An undo / redo of a note for a merging store (review-core mergeRows): what the restored copy `d` changes against
+  // the note now (`cur`, null = it comes back from a delete) gets the stamp `now`, each part by its own rule —
+  // the content (text, captions, pictures…) by edited_at, the state by status_at, a reply by its `edited` (a reply
+  // the copy drops becomes a tombstone, `deleted`, since replies merge as a union). State entries in the thread are
+  // never deleted (statusEvent): one the copy drops is kept.
+  function undoStamp(d, cur, now){
+    // (RC.same: deep equality, key order does not count)
+    const rest = (x) => { const o = { ...x }; for (const k of ["status", "status_at", "replies", "edited_at"]) delete o[k]; return o; };
+    if (!cur || !RC.same(rest(d), rest(cur))) d.edited_at = now;
+    if (!cur || (d.status || "") !== (cur.status || "")) d.status_at = now;
+    if (!cur) return;
+    const mine = new Map((d.replies || []).map((r) => [r.id, r]));
+    const body = (r) => { const o = { ...r }; delete o.edited; return o; };
+    const out = (d.replies || []).map((r) => {
+      const c = (cur.replies || []).find((x) => x.id === r.id);
+      return c && !RC.same(body(c), body(r)) ? { ...r, edited: now } : r;
+    });
+    for (const c of cur.replies || []){
+      if (mine.has(c.id)) continue;
+      out.push(c.event || c.deleted ? c : { id: c.id, created: c.created, deleted: now });
+    }
+    if (out.length || d.replies) d.replies = out.sort((a, b) => (Number(a.created) || 0) - (Number(b.created) || 0));
   }
   function undo(){
     const e = S.undo.pop();
@@ -919,7 +1086,7 @@ export function createAnnotator(host){
   function composerBack(a, back){
     const fields = [[S.ui?.querySelector(".an-input"), a.text || ""], [S.ui?.querySelector(".an-cin"), a.cap || ""]];
     if (back){
-      for (const sid of a.shots) if (!S.pending.some((p) => p.id === sid)) S.pending.push({ id: sid, url: `/api/review/shots/${sid}` });
+      for (const sid of a.shots) if (!S.pending.some((p) => p.id === sid)) S.pending.push({ id: sid, url: store.shotUrl(sid) });
       for (const [f, v] of fields) if (f && v){ f.value = f.value.trim() ? f.value.trimEnd() + "\n" + v : v; f.style.height = "auto"; f.style.height = Math.min(160, f.scrollHeight + 2) + "px"; }
     } else {
       S.pending = S.pending.filter((p) => !a.shots.includes(p.id));
@@ -1694,7 +1861,7 @@ export function createAnnotator(host){
       const type = alpha ? "image/png" : "image/jpeg";
       const blob = await new Promise((res) => cv.toBlob(res, type, 0.9));
       if (!blob) throw new Error("encode failed");
-      const r = await host.api("/api/review/shots", { method: "POST", headers: { "content-type": type }, body: blob });
+      const r = await store.putShot(blob, type);
       return { id: r.id, w: cv.width, h: cv.height };
     } finally {
       if (typeof src !== "string") URL.revokeObjectURL(url);
@@ -3362,9 +3529,9 @@ export function createAnnotator(host){
     const menu = el.querySelector(".an-menu:not(.an-trk)"), exBtn = el.querySelector("[data-act=export]");
     exBtn.onclick = () => {
       menu.hidden = !menu.hidden;
-      if (!menu.hidden){ paintXbg(); menu.querySelector(".an-mbg").hidden = isBoard() || S.kind === "model3d"; }  // (2D pictures only)
+      if (!menu.hidden){ paintXbg(); menu.querySelector(".an-mbg").hidden = isBoard() || S.kind === "model3d" || !store.exportReview; }  // (2D pictures only)
       // A sequence: the same exports for every clip of it that has notes (the host walks the clips).
-      if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard();
+      if (!menu.hidden) menu.querySelector(".an-mseq").hidden = !(host.seqClips?.() > 1) || isBoard() || !store.exportReview;
     };
     // Export backdrop past the frame: Auto, or a colour (the swatch also switches to Colour when one is picked).
     const xbgc = menu.querySelector(".an-xbgc");
@@ -3392,6 +3559,10 @@ export function createAnnotator(host){
       };
     });
     el.querySelector(".an-file").addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
+    // What the store cannot do is not offered: exports (and their backdrop), the import, the mic.
+    if (!store.exportReview) menu.querySelectorAll("[data-ex=pdf], [data-ex=html], [data-ex=pkg], [data-ex=zip], .an-mseq [data-exall]").forEach((x) => x.remove());
+    if (!store.importReview) menu.querySelectorAll("[data-ex=import]").forEach((x) => x.remove());
+    if (!S.dict) el.querySelector("[data-act=dict]").hidden = true;
     el.querySelector("[data-act=close]").onclick = () => togglePanel(false);
     el.querySelectorAll("[data-rs]").forEach((b) => { b.onclick = () => setStatus(b.dataset.rs); });
     el.querySelector(".an-compose [data-act=shot]").onclick = () => screenshot(false);
@@ -3485,7 +3656,7 @@ export function createAnnotator(host){
     el.classList.toggle("an-board", b);
     el.querySelectorAll("[data-ex]:not([data-ex=text])").forEach((x) => { x.hidden = b; });
     el.querySelector(".an-menu:not(.an-trk) > hr").hidden = b;
-    el.querySelector(".an-mbg").hidden = b;
+    el.querySelector(".an-mbg").hidden = b || !store.exportReview;
     // a link ▾ per connected tracker, none on a board (no media entity) (docs/PLAN-trackers.md decisions 10, 11)
     paintTrkBtns(b);
   }
@@ -3497,25 +3668,21 @@ export function createAnnotator(host){
   // link this file to one of the tracker's media entities (project + search, or the one its notes already name), then
   // Sync — the adapter's sync pulls the tracker's notes / replies / pictures (merged by /api/review/import), sends the
   // notes written here (pictures = the report's frames with drawings burned in) and stamps the tracker's ids on the
-  // rows. Credentials stay in Sight's server (app/trackers.py); this side only talks to /api/trackers/<tracker key>/… (one link ▾ per connected site, several of one kind included).
+  // rows. Credentials stay on the host's server (Sight: app/trackers.py); this side only talks to store.trackers (one link ▾
+  // per connected site, several of one kind included). A store without `trackers` shows no link ▾. The registry
+  // (globalThis.SightTrackers) and its adapters are imported by the host (index.html), not here.
   const TRK = () => globalThis.SightTrackers;
-  const trkHeaders = { "X-Sight": "1" };
-  const trkPath = (key, p) => `/api/trackers/${encodeURIComponent(key)}/${p}`;   // (key: the tracker key)
   const trkAdapter = (key) => TRK()?.adapter(TRK().split(key)?.kind) || null;
   // a per-site setting (the last project picked): "<the kind's name>@<host>", read falling back to the kind's own
   const trkStoreName = (A, key, n) => TRK().storeName(A, n, undefined, TRK().split(key)?.host);
-  const trkStored = (A, key, n) => TRK().readStored((k) => localStorage.getItem(k), A, n, undefined, TRK().split(key)?.host);
-  async function trkApi(path, opts = {}){
-    const r = await fetch(path, { ...opts, headers: { ...trkHeaders, ...(opts.headers || {}) } });
-    const j = await r.json().catch(() => null);
-    if (!r.ok) throw new Error(j?.detail || j?.errors?.[0]?.title || `HTTP ${r.status}`);
-    return j;
-  }
+  const trkStored = (A, key, n) => TRK().readStored((k) => getSetting(k), A, n, undefined, TRK().split(key)?.host);
+  // (key: the tracker key; p: "status", "link/<asset id>")
+  const trkApi = (key, p, opts) => store.trackers.api(key, p, opts);
   // the connected trackers this page has an adapter for (index.html refreshTrackers → host.trackers)
-  const trkConnected = () => (host.trackers?.() || []).filter((t) => t && TRK()?.adapterOf(t));
+  const trkConnected = () => store.trackers ? (host.trackers?.() || []).filter((t) => t && TRK()?.adapterOf(t)) : [];
   async function trkClient(key){
     const A = trkAdapter(key);
-    const st = await trkApi(trkPath(key, "status"));
+    const st = await trkApi(key, "status");
     if (!st.configured) throw new Error(`${A.name} is not connected: Settings → Trackers`);
     return { st, A, client: A.serverClient(st.site, key) };
   }
@@ -3554,7 +3721,7 @@ export function createAnnotator(host){
     const aid = S.asset.id;
     if (trkState.aid !== aid){ trkState.aid = aid; trkState.msg = ""; trkState.picking = false; }
     let st, cur;
-    try { [st, cur] = await Promise.all([trkApi(trkPath(key, "status")), trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`))]); }
+    try { [st, cur] = await Promise.all([trkApi(key, "status"), trkApi(key, `link/${encodeURIComponent(aid)}`)]); }
     catch (e){ if (trkState.key === key) box.innerHTML = `<div class="an-mlbl">${esc(e.message)}</div>`; return; }
     if (S.asset?.id !== aid || trkState.key !== key) return;
     const msg = trkState.msg ? `<div class="an-trkmsg">${trkState.msg}</div>` : "";
@@ -3610,7 +3777,7 @@ export function createAnnotator(host){
         else if (a === "pick"){ trkState.picking = true; trkState.msg = ""; trkPaint(); }
         else if (a === "back"){ trkState.picking = false; trkPaint(); }
         else if (a === "known") trkLink(key, A.linkedIdOf([...S.items.values()], A.siteHost(st.site)));
-        else if (a === "unlink") trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "DELETE" }).then(() => { trkState.msg = ""; trkPaint(); });
+        else if (a === "unlink") trkApi(key, `link/${encodeURIComponent(aid)}`, { method: "DELETE" }).then(() => { trkState.msg = ""; trkPaint(); });
       };
     });
   }
@@ -3618,7 +3785,7 @@ export function createAnnotator(host){
     try {
       const { client, A } = await trkClient(key);
       const link = await A.loadLink(client, id);
-      await trkApi(trkPath(key, `link/${encodeURIComponent(S.asset.id)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
+      await trkApi(key, `link/${encodeURIComponent(S.asset.id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ link }) });
       if (trkState.key === key){ trkState.picking = false; trkState.msg = `Linked to <b>${esc(A.linkLabel(link))}</b> — Sync now to exchange notes`; }
     } catch (e){ if (trkState.key === key) trkState.msg = esc(e.message); }
     trkPaint();
@@ -3633,7 +3800,7 @@ export function createAnnotator(host){
       const list = [];
       if (n.frame) list.push({ blob: await blob(n.frame), name: n.frameFile || "frame" });
       for (const m of n.more || []) if (m.frame) list.push({ blob: await blob(m.frame), name: m.file || "frame" });
-      for (const sid of n.shots || []){ if (skip.has(sid)) continue; try { list.push({ blob: await blob(`/api/review/shots/${sid}`), name: sid }); } catch {} }
+      for (const sid of n.shots || []){ if (skip.has(sid)) continue; try { list.push({ blob: await store.shotBlob(sid), name: sid }); } catch {} }
       out.set(n.id, list);
     }
     return out;
@@ -3646,17 +3813,17 @@ export function createAnnotator(host){
     try {
       await flush();
       const { st, client } = await trkClient(key);
-      const cur = await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`));
+      const cur = await trkApi(key, `link/${encodeURIComponent(aid)}`);
       if (!cur.link) throw new Error(`Not linked to a ${A.media.one}`);
       const asset = { id: a.id, name: a.name, path: a.path, ext: a.ext, kind: a.kind, size: a.size, mtime: a.mtime, width: a.width, height: a.height, duration: a.duration };
       const res = await A.sync({
         client, link: cur.link, asset, fps: S.fps, state: cur.state, settings: st,
-        getRows: () => trkApi(`/api/annotations?asset_id=${aid}&deleted=1`),  // tombstones: a note deleted here stays deleted
-        importPackage: (pkg) => trkApi("/api/review/import", { method: "POST", body: JSON.stringify(pkg) }),
+        getRows: () => store.trackers.rows(aid),  // tombstones: a note deleted here stays deleted
+        importPackage: (pkg) => store.trackers.importPackage(pkg),
         pictures: (ids, opt) => S.asset?.id === aid ? trkPictures(ids, opt) : new Map(),
         progress: (t) => toast(`<span class="ld" style="--ld-d:${-Math.round(performance.now())}ms">${esc(t)}</span>`, 60000),  // (the phase: .ld in index.html)
       });
-      await trkApi(trkPath(key, `link/${encodeURIComponent(aid)}`), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
+      await trkApi(key, `link/${encodeURIComponent(aid)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: res.state }) });
       const p = res.pulled, q = res.pushed, from = A.name;
       const parts = [p.added && `${p.added} new from ${from}`, p.updated && `${p.updated} updated from ${from}`, q.notes && `${q.notes} sent`,
         q.updated && `${q.updated} updated on ${from}`, q.replies && `${q.replies} repl${q.replies === 1 ? "y" : "ies"} sent`, q.pictures && `${q.pictures} picture${q.pictures === 1 ? "" : "s"} uploaded`].filter(Boolean);
@@ -3698,7 +3865,7 @@ export function createAnnotator(host){
     list.innerHTML = !all.length ? "" : !notes.length ? `<div class="an-hint"><p>No ${S.filter === "done" ? "resolved" : S.filter === "progress" ? "in-progress" : "open"} notes.</p></div>` : notes.map((n) => {
       const i = num.get(n.id) - 1;
       const d = n.data, done = d.status === "done", prog = d.status === "progress";
-      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<span class="an-shotw${ct ? " an-hascap" : ""}" data-src="/api/review/shots/${sid}" data-shot="${sid}" title="${ct ? esc(ct) : "Screenshot — click to enlarge"}"><img src="/api/review/shots/${sid}" alt="" loading="lazy"></span>`; }).join("");
+      const shots = (d.shots || []).map((sid) => { const ct = RC.captionOf(d, { shot: sid }); return `<span class="an-shotw${ct ? " an-hascap" : ""}" data-src="${store.shotUrl(sid)}" data-shot="${sid}" title="${ct ? esc(ct) : "Screenshot — click to enlarge"}"><img src="${store.shotUrl(sid)}" alt="" loading="lazy"></span>`; }).join("");
       const ctx = ctxLabel(noteCtx(n));
       return `<div class="an-note${done ? " done" : prog ? " prog" : ""}${S.pinFocus === n.id ? " on" : ""}" data-id="${n.id}">
         <div class="an-nh"><span class="an-nn">${i + 1}</span>${ctx ? `<button type="button" class="an-nctx" data-go="${n.id}" title="Go to">${S.kind === "model3d" ? ICON.view : ""}${esc(ctx)}</button>` : ""}<span class="an-nwho">${esc(d.author || "")}${d.author ? " · " : ""}${esc(fmtDate(d.created))}</span>
@@ -3944,14 +4111,15 @@ export function createAnnotator(host){
     if (PF.aid !== (S.asset?.id || null)){ resetPF(); PF.aid = S.asset?.id || null; }
     if (PF.aid && !PF.diskP && !isBoard()){
       const aid = PF.aid, gen = PF.gen;
-      PF.diskP = host.api(`/api/review/nprev/${encodeURIComponent(aid)}`).then((r) => {
+      // (a store without stored previews: none on disk, every preview is made here)
+      PF.diskP = (store.previews ? store.previews.list(aid) : Promise.reject(new Error("no stored previews"))).then((r) => {
         if (PF.gen !== gen) return;
         PF.disk = new Set(r?.keys || []); PF.diskV = r?.v || "";
       }, () => { if (PF.gen === gen) PF.disk = new Set(); });
     }
     return PF.diskP || Promise.resolve();
   }
-  const npUrl = (tok) => `/api/review/nprev/${encodeURIComponent(PF.aid)}/${tok}.jpg?v=${encodeURIComponent(PF.diskV)}`;
+  const npUrl = (tok) => store.previews.url(PF.aid, tok, PF.diskV);
   // Stores a preview made here (best effort: a failed upload only means it is made again next time).
   // The upload carries the file version it listed (diskV): the server refuses it if the file changed since.
   // (A 3D still is often taken before the list is in: it waits for it, so it knows the version.)
@@ -3963,7 +4131,7 @@ export function createAnnotator(host){
     if (PF.disk?.has(tok)) return;
     cv.toBlob((b) => {
       if (!b || PF.gen !== gen) return;
-      host.api(`/api/review/nprev/${encodeURIComponent(aid)}/${tok}?v=${encodeURIComponent(ver)}`, { method: "PUT", headers: { "content-type": "image/jpeg" }, body: b })
+      store.previews.put(aid, tok, ver, b)
         .then(() => { if (PF.gen === gen) PF.disk?.add(tok); }, () => {});
     }, "image/jpeg", 0.82);
   }
@@ -4023,7 +4191,7 @@ export function createAnnotator(host){
     } finally { PF.collect = null; S.hiddenReplies = hid; }
     if (![...PF.disk].some((k) => !keep.has(k))) return;
     const aid = PF.aid, gen = PF.gen;
-    host.api(`/api/review/nprev/${encodeURIComponent(aid)}/prune`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keep: [...keep] }) })
+    store.previews.prune(aid, [...keep])
       .then(() => {
         if (PF.gen !== gen || !PF.disk) return;
         for (const k of [...PF.disk]){
@@ -4096,13 +4264,13 @@ export function createAnnotator(host){
           nv.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
           document.body.appendChild(nv);
           PF.v = nv;
-          nv.src = `/api/file/${aid}`;
+          nv.src = store.mediaUrl(aid);
           // No picture from the file itself (a codec the browser cannot decode): play the server's copy.
           let playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
-          if (!playable){
-            const res = await convertForPlayback(aid, null, () => PF.gen === gen);
+          if (!playable && store.convertForPlayback){
+            const res = await store.convertForPlayback(aid, null, () => PF.gen === gen);
             if (res.ok && PF.gen === gen){
-              nv.src = `/api/file/${aid}?copy=${Date.now()}`;
+              nv.src = store.mediaUrl(aid, { copy: true });
               playable = await pfLoad(nv, 8000).then(() => !!nv.videoWidth, () => false);
             }
           }
@@ -4162,7 +4330,7 @@ export function createAnnotator(host){
       <span>${eventIcon(r)} ${eventLabel(r)}${r.author ? " by " + esc(r.author) : ""} · ${esc(fmtDate(r.created))}</span></div>` : `<div class="an-rep" data-rid="${esc(r.id)}">
       <div class="an-rh"><span>${esc(r.author || "")}${r.author ? " · " : ""}${esc(fmtDate(r.created))}${r.edited ? " · edited" : ""}</span>${rdrawChip(n, r)}<button type="button" class="an-ib sm" data-rdel="${esc(r.id)}" title="Delete reply">${ICON.close}</button></div>
       ${r.text ? `<div class="an-rt" title="Double-click to edit">${esc(r.text)}</div>` : ""}
-      ${picGrid(replyPreview(n, r) + (r.shots || []).map((sid) => `<img src="/api/review/shots/${esc(sid)}" data-rshot="/api/review/shots/${esc(sid)}" alt="" loading="lazy">`).join(""))}</div>`).join("")}</div>`;
+      ${picGrid(replyPreview(n, r) + (r.shots || []).map((sid) => `<img src="${esc(store.shotUrl(sid))}" data-rshot="${esc(store.shotUrl(sid))}" alt="" loading="lazy">`).join(""))}</div>`).join("")}</div>`;
   }
   // Inline editor under a note card (new reply) or in place of a reply's text (edit).
   function replyEditor(card, anchor, initial, done){
@@ -4310,7 +4478,7 @@ export function createAnnotator(host){
       // clip / camera on that picture.
       const id = t.closest(".an-note").dataset.id, p = picOfKey(t.dataset.cap);
       if (S.pinFocus !== id) goNote(id);
-      if (p.shot != null){ showShot(`/api/review/shots/${p.shot}`, { note: id, shot: p.shot }); return; }
+      if (p.shot != null){ showShot(store.shotUrl(p.shot), { note: id, shot: p.shot }); return; }
       if (p.t != null){ const v = video(); if (v){ vidPause(v); vidSeek(v, landAt(p.t)); } }
       else if (p.vk && S.views.has(p.vk) && p.vk !== S.curVk) goView(p.vk);
       return;
@@ -5077,7 +5245,7 @@ export function createAnnotator(host){
   async function uploadCanvas(cv){
     const blob = await new Promise((res) => cv.toBlob(res, "image/png"));
     if (!blob) throw new Error("encode failed");
-    const r = await host.api("/api/review/shots", { method: "POST", headers: { "content-type": "image/png" }, body: blob });
+    const r = await store.putShot(blob, "image/png");
     return r;
   }
   async function screenshot(region){
@@ -5304,7 +5472,7 @@ export function createAnnotator(host){
     toast(`<span class="ld">Building PDF…</span>`, 60000);
     try {
       const payload = await gatherReport(false);
-      const r = await host.api("/api/review/export/pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await store.exportReview("pdf", payload);
       toast(`Saved <b>${esc(r.name)}</b> · ${r.pages} page${r.pages > 1 ? "s" : ""}`, 4000);
     } catch (e){
       console.warn(e);
@@ -5317,7 +5485,7 @@ export function createAnnotator(host){
     toast(`<span class="ld">Building the web page…</span>`, 60000);
     try {
       const payload = await gatherReport(true);
-      const r = await host.api("/api/review/export/html", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await store.exportReview("html", payload);
       toast(`Saved <b>${esc(r.name)}</b> — opens in any browser; replies come back as a .srev file`, 5000);
     } catch (e){
       console.warn(e);
@@ -5330,7 +5498,7 @@ export function createAnnotator(host){
     toast(`<span class="ld">Building the ZIP…</span>`, 60000);
     try {
       const payload = await gatherReport(false, true);
-      const r = await host.api("/api/review/export/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await store.exportReview("zip", payload);
       toast(`Saved <b>${esc(r.name)}</b> · ${r.notes} note${r.notes === 1 ? "" : "s"}, ${r.pictures} picture${r.pictures === 1 ? "" : "s"}`, 4000);
     } catch (e){
       console.warn(e);
@@ -5341,7 +5509,7 @@ export function createAnnotator(host){
     if (!S.asset) return;
     await flush();
     try {
-      const r = await host.api("/api/review/export/package", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset_id: S.asset.id, author: reviewer(), reveal: true }) });
+      const r = await store.exportReview("package", { asset_id: S.asset.id, author: reviewer(), reveal: true });
       toast(`Saved <b>${esc(r.name)}</b> — send it; Sight opens it on the same file`, 4500);
     } catch (e){
       console.warn(e);
@@ -5365,12 +5533,13 @@ export function createAnnotator(host){
     catch { toast("Clipboard not available"); }
   }
   async function importFile(file){
+    if (!store.importReview) return;
     let r;
     await flush();
     const body = await file.arrayBuffer();
     const post = async (restore, before) => {
       try {
-        const res = await fetch("/api/review/import" + (restore ? `?restore=1&before=${Number.isFinite(before) ? before : ""}` : ""), { method: "POST", body });
+        const res = await store.importReview(body, restore ? { restore: true, before } : null);
         const r = await res.json().catch(() => ({}));
         if (res.status === 404){ toast(`The media is not in your library: <b>${esc(r.missing || "?")}</b> — add its folder and import again`, 5000); return null; }
         if (!res.ok){ toast(esc(r.detail || "Import failed"), 3500); return null; }
@@ -5571,10 +5740,8 @@ export function createAnnotator(host){
   async function loadFps(){
     const a = S.asset;
     try {
-      const info = await host.api(`/api/assets/${a.id}/info`);
-      for (const sec of info.sections || []) for (const row of sec.rows || []){
-        if (/frame rate/i.test(row[0] || "")){ const f = parseFloat(row[1]); if (f > 0 && S.asset?.id === a.id){ S.fps = f; S.fpsKnown = true; } }
-      }
+      const f = await store.fps(a);  // (0: not known)
+      if (f > 0 && S.asset?.id === a.id){ S.fps = f; S.fpsKnown = true; }
     } catch {}
     renderPanel();
   }
@@ -5735,9 +5902,9 @@ export function createAnnotator(host){
     S.light = lightEl;
     lightEl.classList.add("an-host");  // the CSS below keys on this (the lightbox and a board view share it)
     if (host.board) lightEl.classList.add("an-bhost");
-    S.dict = createDictationUI({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
+    S.dict = store.dictation ? store.dictation({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
       getEngine: () => readJSON("sight.dictation.engine", "webspeech"),
-      getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) });
+      getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) }) : null;
     S.bar = buildBar(lightEl);
     S.ui = buildPanel(lightEl);
     const t = document.createElement("div");
@@ -5763,7 +5930,7 @@ export function createAnnotator(host){
     S.b2 = S.b3 = null;
     S.layer = null;
     S.asset = null;
-    S.items.clear(); S.saved.clear(); S.sel.clear();
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.sel.clear();
     S.undo = []; S.redo = []; S.pending = []; S.adopt.clear();
     resetPF();
     host.onModeChange?.(false);
@@ -5784,7 +5951,7 @@ export function createAnnotator(host){
     S.b2 = S.b3 = null;
     S.layer = null;
     S.anchors = {};
-    S.items.clear(); S.saved.clear(); S.sel.clear(); S.crop = null;
+    S.items.clear(); S.saved.clear(); S.createdAt.clear(); S.seenAt.clear(); S.sel.clear(); S.crop = null;
     S.undo = []; S.redo = []; S.pending = [];
     S.views.clear(); S.curVk = null;
     S.pinFocus = null; S.cleanPic = false; S.hiddenReplies.clear(); S.adopt.clear();
@@ -5964,6 +6131,7 @@ export function createAnnotator(host){
       S.undo = []; S.redo = []; paintBar();
       Promise.resolve(flush()).then(() => { if (S.asset === a){ obForget(a.id); load(a); } }); // after its own pending save lands
     },
+    applyRows,
     // For the board view (canvas.js): save pending edits, drop a half-drawn gesture, the drawings' bounds, modal state.
     flush: () => flush(), abortGesture, modal: () => !!help || !!stampPop && !stampPop.hidden,
     bounds: () => { let b = null; for (const it of S.items.values()){ if (!isDrawing(it)) continue; const x = boundsOf(it); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x.slice(); } return b; },

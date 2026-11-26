@@ -7,7 +7,7 @@
 //       the provider-neutral facade (providers are registered by name; only "webspeech" exists today).
 //   createDictationUI({root, getLang, setLang, toast, floating}) -> {mic, toggle, stop, listening, ...}
 //       mic buttons + insertion at the caret (so Ctrl+Z works) + the interim bubble + language popover.
-import { hotkey } from "/static/keys.js";
+import { hotkey } from "./keys.js";
 
 // ---- provider facade ------------------------------------------------------------------------
 const Rec = () => globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition || null;
