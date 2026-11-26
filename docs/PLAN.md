@@ -35,6 +35,32 @@ every viewer (lightbox, compare, sequence, board, 3D zoom) — done (stages 1–
    `python tools/bench_grid.py --home <copy>` on the owner's machine and put the results here
    (Linux container: health 390 → 181 ms median after the Starlette switch).
 
+## Found by the R0-0 regression tests (not fixed there: R0-0 changes no app code)
+
+Each was seen while pinning today's behaviour (docs/PLAN-coreline.md, R0-0). The tests pin what the code does now;
+a fix is its own block, and changes the pinned check in the same block.
+
+1. **No next / previous file in the lightbox without a keyboard** (0.134.1 tests): ← / → / ↑ / ↓ step through the
+   grid, but there is no swipe and no button, so on a touch screen the lightbox must be closed and another tile
+   opened. CLAUDE.md asks every feature to work on touch too.
+2. **A phone-size browser cannot open a tile** (0.134.1 tests): opening waits for the grid's native `dblclick`.
+   In Chromium's phone emulation (`isMobile`, the page is zoomable: `initial-scale=1` without `user-scalable=no`) two
+   taps are a double-tap zoom and no `dblclick` comes. A touch laptop / tablet (`hasTouch` without `isMobile`) gets it;
+   the R0 tests use that. Check on a real phone before fixing (a tap-tap detector on the tile, as the board has?).
+3. **`.` on a video's last frame lands on `t = duration`** (0.134.1 tests, `stepFrame` in annotate.js): the clamp
+   lets the step go one frame past the last frame's start, so the position read-out shows `f 100` of a 100-frame
+   clip (frames 0–99). `Shift+→` lands on the last frame properly (`duration − ½ frame`).
+4. **A video's `width` / `height` in the library are its thumbnail's** (`_thumb_video` returns the 360-wide JPEG's
+   size: a 320 × 240 clip is stored as 360 × 270), not the clip's. The lightbox geometry does not use them: `attachViewer`
+   `onReady` sets the viewer's `vs.nat` from `videoWidth` / `videoHeight`, so drawings are in decoded pixels (R0b must
+   keep that; R0-0 block 2's golden-geometry tests pin it). The columns themselves stay wrong and are still read:
+   `annotate.js` `carryOver()` (item 5), `nw = g?.nw || a.width` in the export (~:5216) and the asset object built at
+   ~:3580. A future "native size from the host" (Coreline) must not read these columns for Sight.
+5. **Carrying notes over from an earlier version of a video scales its drawings wrongly** (read from the code, not run;
+   found in the 0.134.1 review): `carryOver()` scales by `fx = g.nw / p.asset.width`, the decoded width of this
+   version over the earlier version's *thumbnail* width (item 4): a 1920-wide clip gets drawings × 5.3. Images are not
+   affected (their columns are the real size). Fix with item 4, and test it with two versions of a clip.
+
 ## Ideas, not scheduled
 
 - **Note locks** (asked 2026-11-13, after rolling back the 0.45.0 lock in 0.46.1): roles — an artist (not a

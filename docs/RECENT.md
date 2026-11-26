@@ -14,6 +14,71 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.134.1 — 2026-11-26 — R0-0 block 1: regression tests of the 2D lightbox and video transport
+- **What:** the first block of the R0-0 safety net (docs/PLAN-coreline.md). Playwright tests pin how the lightbox and
+  the video transport behave *now*, before the R0 refactor. Also a timing tool for the lightbox. No app code changed
+  (only the version).
+- **Where:**
+  - `tests/r0_harness.py`, shared by every R0-0 block. `LiveCase` makes a temporary library (never the live one) with
+    the media a test writes, waits until every file is ready, and serves it in-process. `run_page()` runs a node
+    script; `assertReport()` needs no fatal error, no page errors, every check ok, and at least `min_checks` of them.
+    `needs()` skips when node / Playwright / ffmpeg / psd-tools is missing; with `SIGHT_REQUIRE_E2E=1` that is a
+    failure instead. `SIGHT_R0_REPORT=<dir>` writes the whole report as JSON. Media makers: PNG, quadrant PNG,
+    layered PSD, H.264 / MPEG-1 clips.
+  - `tests/r0_lib.cjs`: page helpers. A check is `t.ok/eq/near(name, …)`. Desktop and touch pages; a touch page is a
+    touch laptop (`hasTouch`, no `isMobile`), see PLAN.md "Found by the R0-0 regression tests" 2. Also: pinch / finger
+    drag over CDP, `vstate` / `vsettled` / `vplaying`, a Web Audio start counter (`window.__abStarts`).
+  - `tests/test_r0_lightbox.py` + `tests/r0_lightbox_e2e.cjs`, 156 checks:
+    - pictures: open, fit, zoom (digits, F, double-click, wheel about the cursor, right-drag), pan, pixelation, turn
+      and mirror kept per file, ← → ↑ ↓, closing (Esc, ✕, Space);
+    - PSD: preview, layers panel (D and the button), a layer, back to Composite;
+    - video: autoplay, Space and click (the 250 ms hold), `.` `,` Shift+← →, the position field and its menu, fps
+      from the file, bar and stage scrub (Shift-fine), loop, mute and volume, scrub sound (heard through Web Audio),
+      timeline marks (a press on a mark enters annotation mode), RAM read-out, the scrub copy, playback conversion,
+      zoom / turn / resize refit, → leaving a video stops it;
+    - touch: pinch, pan, double tap, mirror, layers, tap / drag on the video and the bar, long press.
+  - `tools/bench_lightbox.py`: stdlib + benchlib, runs on Windows. It times open image (cold / warm), next image,
+    open video, frame step and close, using real CDP input and timing inside the page. Synthetic media, or
+    `--home <copy>` with `--image` / `--video`. Run it before and after each R0 block.
+  - `docs/PLAN.md`: a new section of what the tests found (not fixed):
+    - no next / previous file on touch;
+    - phone emulation cannot open a tile;
+    - `.` on the last frame lands on `t = duration`;
+    - a video's `width` / `height` columns are its thumbnail's;
+    - so carrying notes over between versions of a video scales them wrongly.
+- **Notes:**
+  - **The grid order is the scan order** (readdir: alphabetical on NTFS, hashed on ext4, reverse creation on tmpfs).
+    `LiveCase.ui_settings` writes the temp home's `settings.json` with Name sort, which wins over localStorage. Keep
+    it in later blocks, or read the order from `.card[data-id]`.
+  - A press on a timeline mark belongs to the mark (it enters annotation mode), so scrub presses avoid them.
+  - A stage scrub counts from where it became a drag (4 px), not from the press point.
+  - A small picture opens at 100 %, never upscaled.
+  - The R0 refactor must keep these tests unchanged. The selectors used (`#lightClose`, `.vbar [data-cur]`,
+    `.view-media`, `.view-hud`, `#psdBtn` …) are the contract.
+  - Suite here before this block: 6 failures that predate it. 3 in `test_pwa`, known. 3 not looked into:
+    - `test_annot_tools`, its touch part;
+    - `test_review_page` cut / copy / paste;
+    - `test_sources` `file_uri_to_path`, a Windows path.
+    `usd-core` is not installed, so the USD tests skip. Installed here: psd-tools, watchdog, pymupdf, zstandard,
+    imageio-ffmpeg (Sight's own deps).
+- **Review:** a fresh agent reviewed the block. It broke app code on purpose to catch checks that pass vacuously
+  (`git checkout` afterwards). It found:
+  - the grid-order dependence: 6 checks failed every run on tmpfs;
+  - a hollow "turn kept per file" check;
+  - a hollow scrub-sound check (the fetch came from the toggle, not the scrub);
+  - bench crashes ("next" onto a non-image, tiles not rendered);
+  - wrong "(cold)" labels;
+  - autoplay / loop timing races;
+  - checks with no precondition;
+  - harness gaps (silent scan timeout, unasserted server start, leak on a failed set-up, a low `min_checks`);
+  - PLAN item 4 was inaccurate, and the carry-over bug behind it.
+
+  Everything is fixed, and gaps it named are covered (touch layers button, video zoom / turn, resize refit, leaving a
+  video). The second pass found the "video left is stopped" check hollow (a detached element) and fixed 600 ms waits
+  that flaked under load. Fixed too. The same reviewer confirmed every fix. Its mutations now fail the intended
+  checks: turn fallback, `saPlay` stubbed, ResizeObserver refit, the scrub copy's hide. The suite is green alone, on
+  tmpfs, and with two runs at once.
+
 ## 0.134.0 (docs) — 2026-11-25 — Plan: Sight's desktop review built into Coreline
 - **What:** `docs/PLAN-coreline.md`. The owner chose: Coreline is not ready for a tracker adapter (no review layer,
   pre-MVP). So Coreline gets its own player and commenting, built from **Sight's desktop review**: the lightbox on the
@@ -253,9 +318,3 @@ Add new entries directly below this line.
 - **Where:** app/static/index.html — `cardDrag` (the live tile drag), `restoreDragSel`, `finish()` in `ensureCard` (honours `d.restoreSel`), host hook `refsDropped`; app/static/annotate.js — `onRefDrop` calls `host.refsDropped?.()` when it takes library ids.
 - **Notes:** root cause: a tile drag selects the dragged tiles and keeps that selection when a target takes the drop; beside the lightbox `lightCompareIds()` counts the library selection as the comparison set while `light.cmpStack` is empty. The drop is fine on its own — it is the selection side effect. Backlog 4 (smart collection) re-checked, still not reproduced — one lead noted in PLAN-desktop-ui.md (the search box stays on and is ANDed with the smart rule). 15 / 16 still wait for the owner's details.
 - **Review:** a fresh reviewer agent found no bugs (checked drop / dragend / detached-tile order, annotating off, collection / board drops, OS files, overlapping drags). Its note: a video-only drop while annotating added nothing but kept the drag's selection, so the video became a compare candidate (→ `refsDropped` is called for any library ids taken while annotating). Left on purpose: a tile already selected before the drag stays selected (the user's own pick), and the touch way (*Library selection → add*, `addSelectedRefs`) keeps the selection — there the user selected the files themselves. The same reviewer confirmed the follow-up.
-
-## 0.125.0 — 2026-11-24 — Compare and sequence become modes of the viewer
-- **What:** viewing more than one file, the lightbox's top bar has **One · Sequence · Compare** (the same switch in the compare's bar): the same set one at a time, back to back (videos), or side by side, switching in place. `Space` over one of 2+ selected images / videos now opens the viewer on that set (videos only still start a sequence, as before). Compare opened beside the library (Tab) takes the viewer's place instead of covering the library. Compare's ⤢ keeps the set. Compare's bar wraps instead of squeezing labels when narrow.
-- **Where:** app/static/index.html — `VMODES`, `paintModes`, `paintLightModes` (from `paintCmpBtn`), `switchViewMode`, `lightShowSet`; `lightCompareIds` also counts a sequence's clips; `openSequence` / `endSequence` repaint (and restore the title); the Space handler seeds the set; CSS `.vmodes`, `body.light-split .cmp`; compare host `openInLight(a, ids)`, `paintModes`; app/static/compare.js — `.cmp-modes` slot painted in `build()`, ⤢ passes the layer ids, `.cmp-bar` wraps; MANUAL.
-- **Notes:** the set is `light.cmpStack` (+ the sequence's list); its order and its file objects are kept in `light.vset` (`lightSetAssets`) while it still matches — the switch passes files, not ids, since a compare can hold versions / downloads that are not in `state.items`; coming back from a compare with the same files keeps the lightbox's order. Moving the viewer to a file outside the set drops it (unchanged rule). K: with a set (also one from Space over a selection) it compares the set — versions / a note's stored comparison are reached from a single file, as before; in a sequence K still goes to versions (the switch's Compare compares the clips). A tile click beside an open compare only selects. Sequence from the switch starts (playing, at 0 — the compare's playhead is not carried) on the current file when it is a video, and keeps the set's pictures; going there reopens the lightbox (`openSequence`), so the position in a previous sequence is not kept. The lightbox bar now wraps on a narrow screen. *One* from a compare shows the selected layer. Not done: a sequence of pictures (stills with a duration), compare drawn inside the lightbox element itself (it is still the compare overlay, placed over the viewer). Backlog 18–21 are done with this.
-- **Review:** a fresh reviewer agent found: a tile click beside an open compare swapped the lightbox's file behind it (→ only selects); *One* / Sequence lost files that are not in `state.items` (versions, downloads) (→ the switch passes file objects); the set's order was scrambled on every switch (→ `light.vset`, sequence clips first); K in a sequence lost versions (→ `lightCompareIds` does not count the clips); Sequence from a later layer opened paused (→ plays); the lightbox bar pushed ✕ off a phone screen (→ wraps, 36 px touch buttons). Follow-up: ⤢ skipped the order check (→ goes through `switchViewMode`). The same reviewer confirmed every fix and found nothing new. Browser: set clip1, clip2, img1 — One → Sequence → Compare → One → K → Sequence → One; a sequence on clip 2 → One → Sequence stays on Clip 2/2 and plays; compare beside the library starts at the divider.
