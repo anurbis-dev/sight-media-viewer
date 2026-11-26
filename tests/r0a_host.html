@@ -2,7 +2,7 @@
 <!-- A host page that is not Sight (tests/r0a_store_e2e.cjs serves it at /__r0a/host.html on Sight's dev server):
      one annotator on a plain picture, with a fake store that records every call and keeps rows in memory.
      The query string sets the store: ?merges=1 (mergesOnServer), ?prefix=<queue prefix>, ?bare=1 (only the
-     required members). window.__log: [{m, a}] calls; window.__rows: id -> row; window.A: the annotator. -->
+     required members), ?frame=<px> (the frame #light that wide, R0d), ?narrowAt=<px> (host.narrowAt). window.__log: [{m, a}] calls; window.__rows: id -> row; window.A: the annotator. -->
 <html><head><meta charset="utf-8"><title>r0a host</title>
 <style>
   html, body { margin: 0; height: 100%; background: #222; color: #ddd; font: 13px sans-serif; }
@@ -50,7 +50,9 @@ const A = window.A = createAnnotator({
   putSetting: (k, v) => { rec("putSetting", [k]); settings.set(k, v); },
   author: () => "Fake Host User",
   toast: () => {},
+  ...(q.has("narrowAt") ? { narrowAt: Number(q.get("narrowAt")) } : {}),
 });
+if (q.get("frame")) document.getElementById("light").style.right = "auto", document.getElementById("light").style.width = q.get("frame") + "px";
 const light = document.getElementById("light"), wrap = document.getElementById("wrap"), pic = document.getElementById("pic");
 A.mount(light);
 A.setAsset({ id: "fake-asset-1", kind: "image", ext: ".png", name: "fake.png", width: 800, height: 500 });

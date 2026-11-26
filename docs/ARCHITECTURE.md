@@ -516,6 +516,14 @@ the tracker registry / adapters (`trackers-core.js`, `shotgrid-core.js`) are imp
 `border-strong`, `fg`, `accent`, `subtle`, `surface`, `surface-2`, `surface-3`, `muted`, `ok`, `font`, `canvas-bg`,
 `bg`, `ui-k`, `bar-h`. Sight defines none of the `--an-*` names (so its own tokens apply); another host maps its
 theme onto them (Coreline: `--an-fg: var(--ct-fg)` …). Do not define an `--an-<token>` in Sight.
+**Narrow layout (R0d):** the annotator watches its host element (ResizeObserver). Below `host.narrowAt` px of the
+host's own width (default 600; 0 = never; a board host never) the host gets `.an-narrow` and `--an-ph` (px), and
+the panel sits under the player across the host's width, `--an-ph` tall (a share of the host's height capped by the
+window: `sight.annotate.panelh`, default 45 %, 20–75 %; the top edge drags it). With the panel on, any narrow host
+gets `padding-bottom: var(--an-ph)`, so a flex / grid host lays its player out above it; the wide rules
+(`padding-right`, the bar and toast offsets, `--an-right`) are guarded by `:where(:not(.an-narrow))`, so wide is
+unchanged. The lightbox's 3D controls on its bottom edge are lifted by `translate`. Give an embedding host a definite height
+(a host whose height follows its content grows with the padding and settles over a few frames).
 Store members (`?` = optional: missing hides the control and skips the feature):
 - rows: `loadRows(scope "asset"|"board", id)` → rows; `writeRow(req, extra)` → a Response-like `{ok, status}`, with
   `req` = `{op: "create", id, body}` (the full row, an upsert) | `{op: "patch", id, body}` (only `obFields`: `data`,

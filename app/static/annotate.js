@@ -3433,6 +3433,27 @@ export function createAnnotator(host){
     hostEl.style.setProperty("--an-pw", w + "px");
     hostEl.style.setProperty("--an-pwk", `calc(${w}px / var(--an-ui-k, var(--ui-k, 1)))`);
   }
+  // ---- narrow layout (R0d, docs/PLAN-coreline.md decision 6) ----
+  // Below the breakpoint (host.narrowAt, default NARROW px of the HOST's own width, so an embedding page's container
+  // decides, not the window) the panel goes under the player: the host gets .an-narrow and --an-ph (the panel's
+  // height, a share of the host's height kept as sight.annotate.panelh; its top edge is the handle). A board
+  // (host.board) keeps its overlay on the right. host.narrowAt = 0: never narrow.
+  const NARROW = 600;
+  const PH = [0.2, 0.75, 0.45];  // min, max, default share of the host's height
+  let panelH = readJSON("sight.annotate.panelh", 0);
+  const narrowAt = () => host.board ? 0 : Number(host.narrowAt ?? NARROW) || 0;
+  const isNarrow = (hostEl) => !!hostEl?.classList.contains("an-narrow");
+  // (the height the share is taken of: capped by the window, so a host whose height follows its content — the
+  // panel's own padding adds to it — cannot grow without end)
+  const phBase = (hostEl) => Math.max(1, Math.min(hostEl.clientHeight || window.innerHeight, window.innerHeight || 800));
+  const phOf = (f) => Math.min(PH[1], Math.max(PH[0], f || PH[2]));
+  function applyNarrow(hostEl){
+    const w = hostEl.clientWidth, on = w > 0 && w < narrowAt();
+    if (hostEl.classList.contains("an-narrow") !== on) hostEl.classList.toggle("an-narrow", on);
+    if (!on){ if (hostEl.style.getPropertyValue("--an-ph")) hostEl.style.removeProperty("--an-ph"); return; }
+    const ph = Math.round(phBase(hostEl) * phOf(panelH)) + "px";
+    if (hostEl.style.getPropertyValue("--an-ph") !== ph) hostEl.style.setProperty("--an-ph", ph);  // (no write, no new resize)
+  }
   function bindPanelEdge(el, hostEl){
     const h = document.createElement("div");
     h.className = "an-edge";
@@ -3445,26 +3466,39 @@ export function createAnnotator(host){
       if (e.button !== 0) return;
       e.preventDefault();
       panelW = Number(readJSON("sight.annotate.panelw", panelW)) || 0;  // (another annotator instance may have set it)
-      drag = { id: e.pointerId, x: e.clientX, w: el.getBoundingClientRect().width };
+      panelH = Number(readJSON("sight.annotate.panelh", panelH)) || 0;
+      const r = el.getBoundingClientRect();
+      // (narrow: the top edge sets the height; the layout is fixed for the gesture)
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, w: r.width, h: r.height, narrow: isNarrow(hostEl) };
       h.classList.add("on");
       try { h.setPointerCapture(e.pointerId); } catch {}
     });
     h.addEventListener("pointermove", (e) => {
       if (!drag || e.pointerId !== drag.id) return;
+      if (drag.narrow){
+        panelH = Math.round(phOf((drag.h + drag.y - e.clientY) / phBase(hostEl)) * 1000) / 1000;
+        applyNarrow(hostEl);
+        return;
+      }
       panelW = Math.round(Math.min(panelRoom(hostEl), Math.max(PW[0], drag.w + drag.x - e.clientX)));
       applyPanelW(hostEl);
     });
     let tapAt = 0;
     const end = (e) => {
       if (!drag || e.pointerId !== drag.id) return;
-      const moved = Math.abs(e.clientX - drag.x) > 3;
+      const moved = drag.narrow ? Math.abs(e.clientY - drag.y) > 3 : Math.abs(e.clientX - drag.x) > 3;
+      const narrow = drag.narrow;
       drag = null; h.classList.remove("on");
-      writeJSON("sight.annotate.panelw", panelW);
+      if (narrow) writeJSON("sight.annotate.panelh", panelH);
+      else writeJSON("sight.annotate.panelw", panelW);
       // A double tap resets on touch (touch-action: none swallows the browser's dblclick there).
       if (!moved && e.type === "pointerup" && e.pointerType !== "mouse"){ if (Date.now() - tapAt < 400){ tapAt = 0; h.dispatchEvent(new MouseEvent("dblclick")); } else tapAt = Date.now(); }
     };
     h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
-    h.addEventListener("dblclick", () => { panelW = 0; applyPanelW(hostEl); writeJSON("sight.annotate.panelw", 0); });
+    h.addEventListener("dblclick", () => {
+      if (isNarrow(hostEl)){ panelH = 0; applyNarrow(hostEl); writeJSON("sight.annotate.panelh", 0); return; }
+      panelW = 0; applyPanelW(hostEl); writeJSON("sight.annotate.panelw", 0);
+    });
   }
   function buildPanel(lightEl){
     const el = document.createElement("aside");
@@ -3642,7 +3676,10 @@ export function createAnnotator(host){
     if (S.ui){ S.ui.hidden = !show; S.ui.classList.toggle("an-read", !S.on); }
     paintBadge();
     S.light?.classList.toggle("an-panel-on", show);
-    if (show && S.light){ panelW = Number(readJSON("sight.annotate.panelw", panelW)) || 0; applyPanelW(S.light); }  // (the width another annotator instance set)
+    if (show && S.light){
+      panelW = Number(readJSON("sight.annotate.panelw", panelW)) || 0; applyPanelW(S.light);  // (the width another annotator instance set)
+      panelH = Number(readJSON("sight.annotate.panelh", panelH)) || 0; applyNarrow(S.light);
+    }
     paintBar();
     paintBoardPanel();
     if (show) renderPanel();
@@ -5902,6 +5939,13 @@ export function createAnnotator(host){
     S.light = lightEl;
     lightEl.classList.add("an-host");  // the CSS below keys on this (the lightbox and a board view share it)
     if (host.board) lightEl.classList.add("an-bhost");
+    applyNarrow(lightEl);
+    // (the border box: the panel's padding on the host must not change what is watched — a resize loop otherwise)
+    S.narrowRO?.disconnect(); S.narrowRO = null;
+    if (!host.board && typeof ResizeObserver === "function"){
+      S.narrowRO = new ResizeObserver(() => { if (S.light === lightEl) applyNarrow(lightEl); });
+      S.narrowRO.observe(lightEl, { box: "border-box" });
+    }
     S.dict = store.dictation ? store.dictation({ host: lightEl, registerAutoClose: host.registerAutoClose, floating: ".an-nedit, .an-redit, .scp-ta", toast,
       getEngine: () => readJSON("sight.dictation.engine", "webspeech"),
       getLang: () => readJSON("sight.dictation.lang", ""), setLang: (v) => writeJSON("sight.dictation.lang", v) }) : null;
@@ -5926,6 +5970,8 @@ export function createAnnotator(host){
     cancelAnimationFrame(S.raf);
     S.raf = 0;
     S.on = false; S.stampDrag = false;
+    // (.an-narrow / --an-ph stay: the host fades out with the panel where it was; mount() sets them again)
+    S.narrowRO?.disconnect(); S.narrowRO = null;
     S.light = S.bar = S.ui = null;
     S.b2 = S.b3 = null;
     S.layer = null;
@@ -6168,7 +6214,7 @@ function injectStyles(){
 .an-textedit { position: absolute; z-index: 6; margin: 0; padding: 0; border: 1px dashed #4c9aff; outline: none; resize: none; overflow: hidden; white-space: pre; min-width: 24px; box-sizing: content-box; }
 .an-top { position: absolute; left: 50%; top: calc((var(--an-bar-h, var(--bar-h, 47px)) + 11px) / var(--an-ui-k, var(--ui-k, 1))); /* (Sight zooms it by --ui-k) */ transform: translateX(-50%); z-index: 13; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; max-width: calc(100% - 140px); }
 .an-top[hidden] { display: none; }
-.an-host.an-panel-on .an-top { left: calc(50% - var(--an-pwk, calc(320px / var(--an-ui-k, var(--ui-k, 1)))) / 2); max-width: calc(100% - var(--an-pwk, calc(320px / var(--an-ui-k, var(--ui-k, 1)))) - 140px / var(--an-ui-k, var(--ui-k, 1))); } /* (zoomed by --ui-k: --an-pwk / px are screen px ÷ k) */
+.an-host.an-panel-on:where(:not(.an-narrow)) .an-top { left: calc(50% - var(--an-pwk, calc(320px / var(--an-ui-k, var(--ui-k, 1)))) / 2); max-width: calc(100% - var(--an-pwk, calc(320px / var(--an-ui-k, var(--ui-k, 1)))) - 140px / var(--an-ui-k, var(--ui-k, 1))); } /* (zoomed by --ui-k: --an-pwk / px are screen px ÷ k) */
 .an-bar, .an-props { pointer-events: auto; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 10px; background: rgb(14 14 16 / .78); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--an-border, var(--border)); box-shadow: 0 10px 30px rgb(0 0 0 / .35); flex-wrap: wrap; justify-content: center; }
 .an-props { padding: 3px 6px; gap: 6px; font-size: 11px; color: var(--an-muted, var(--muted)); min-height: 28px; box-sizing: border-box; }
 .an-props[hidden] { display: none; }
@@ -6207,12 +6253,12 @@ function injectStyles(){
 @media (pointer: coarse) { .an-seg.ico button { width: 34px; height: 34px; } .an-seg.ico svg { width: 20px; height: 20px; } }
 .an-toast { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 30; padding: 7px 14px; border-radius: 999px; font-size: 12px; color: var(--an-fg, var(--fg)); background: rgb(10 10 11 / .82); border: 1px solid var(--an-border, var(--border)); pointer-events: none; opacity: 0; transition: opacity 160ms ease; white-space: nowrap; max-width: 80%; overflow: hidden; text-overflow: ellipsis; }
 .an-toast.on { opacity: 1; }
-.an-host.an-panel-on .an-toast { left: calc(50% - var(--an-pw, 320px) / 2); }
+.an-host.an-panel-on:where(:not(.an-narrow)) .an-toast { left: calc(50% - var(--an-pw, 320px) / 2); }
 .an-flash { position: absolute; inset: 0; z-index: 29; background: #fff; opacity: 0; pointer-events: none; }
 .an-flash.go { animation: an-flash .35s ease-out; }
 @keyframes an-flash { 0% { opacity: .35; } 100% { opacity: 0; } }
-.light.an-panel-on { padding-right: var(--an-pw, 320px); --an-right: var(--an-pw, 320px); }
-.light.an-panel-on .v3d-gear, .light.an-panel-on .v3d-panel, .light.an-panel-on .frame-pop { right: calc(var(--an-pw, 320px) + 16px); }
+.light.an-panel-on:where(:not(.an-narrow)) { padding-right: var(--an-pw, 320px); --an-right: var(--an-pw, 320px); }
+.light.an-panel-on:where(:not(.an-narrow)) .v3d-gear, .light.an-panel-on:where(:not(.an-narrow)) .v3d-panel, .light.an-panel-on:where(:not(.an-narrow)) .frame-pop { right: calc(var(--an-pw, 320px) + 16px); }
 .an-edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 9px; cursor: ew-resize; touch-action: none; z-index: 3; }
 .an-edge::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 2px; background: var(--an-accent, var(--accent, #4c8dff)); opacity: 0; transition: opacity .12s; }
 .an-edge:hover::after, .an-edge.on::after { opacity: .8; }
@@ -6375,7 +6421,7 @@ function injectStyles(){
 .an-mk:hover { transform: scale(1.35); }
 .an-cmpb { border: 1px solid var(--an-border-strong, var(--border-strong, #444)); background: transparent; color: inherit; border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
 .an-cmpb:hover { border-color: var(--an-accent, var(--accent)); }
-.cmp.an-panel-on { padding-right: var(--an-pw, 320px); --an-right: var(--an-pw, 320px); }
+.cmp.an-panel-on:where(:not(.an-narrow)) { padding-right: var(--an-pw, 320px); --an-right: var(--an-pw, 320px); }
 .cmp-annb.on { color: var(--an-accent, var(--accent)); }
 .light-bar .an-btn { position: relative; }
 .light-bar .an-btn.on { color: var(--an-accent, var(--accent)); }
@@ -6395,6 +6441,21 @@ function injectStyles(){
 .an-host.an-bhost .an-bar, .an-host.an-bhost .an-props { flex-wrap: wrap; justify-content: center; }
 .an-panel.an-board .an-rs, .an-panel.an-board .an-rsh, .an-panel.an-board .an-vers, .an-panel.an-board .an-cin,
 .an-panel.an-board .an-crow [data-act=shot], .an-panel.an-board .an-crow [data-act=region] { display: none; }
+/* Narrow layout (R0d; .an-narrow + --an-ph from annotate.js applyNarrow, never on a board): the panel sits under the
+   player across the host's width, the host keeps the player above it (padding), its top edge is the handle (a
+   grabber, taller for touch, never over the header's buttons at 10 px). The wide rules above are guarded with :where(:not(.an-narrow)) (no specificity). */
+.an-host.an-narrow.an-panel-on { padding-bottom: var(--an-ph, 45vh); }
+.an-host.an-narrow .an-panel { top: auto; left: 0; right: 0; width: auto; height: var(--an-ph, 45vh); border-left: 0; border-top: 1px solid var(--an-border, var(--border)); }
+.an-host.an-narrow .an-edge { left: 0; right: 0; top: -7px; bottom: auto; width: auto; height: 14px; cursor: ns-resize; }
+.an-host.an-narrow .an-edge::after { left: 50%; top: 5px; bottom: auto; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--an-muted, var(--muted, #888)); opacity: .5; }
+.an-host.an-narrow .an-edge:hover::after, .an-host.an-narrow .an-edge.on::after { background: var(--an-accent, var(--accent, #4c8dff)); opacity: .9; }
+@media (pointer: coarse) { .an-host.an-narrow .an-edge { top: -8px; height: 18px; } .an-host.an-narrow .an-edge::after { top: 6px; } }
+/* (the drawing bar spans the host, its rows centred: fewer rows over the picture on a phone — left: 50% with a
+   translate would leave it half the width to wrap in) */
+.an-host.an-narrow .an-top { left: calc(8px / var(--an-ui-k, var(--ui-k, 1))); right: calc(8px / var(--an-ui-k, var(--ui-k, 1))); max-width: none; transform: none; }
+.an-host.an-narrow.an-panel-on .an-toast { bottom: calc(var(--an-ph, 45vh) + 84px); }
+/* (the lightbox's 3D controls sit on its bottom edge: lifted above the panel) */
+.light.an-narrow.an-panel-on :is(.v3d-gear, .v3d-shade, .v3d-anim, .v3d-panel) { translate: 0 calc(-1 * var(--an-ph, 45vh)); }
 `;
   document.head.appendChild(st);
 }

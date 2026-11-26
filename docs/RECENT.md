@@ -14,6 +14,41 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.143.0 — 2026-11-26 — R0d: the narrow layout (notes under the player)
+- **What:** below 600 px of the annotator host's own width (a phone, a narrow lightbox / compare, a narrow
+  embedding container) the notes panel sits under the player across the width, 45 % of the height; its top edge is a
+  grabber (mouse or finger) that sets the height, double-click / double-tap resets it. The drawing bar spans the
+  width there. Wide is unchanged.
+- **Where:** `annotate.js` `applyNarrow` / `NARROW` / `PH` / `panelH`, `bindPanelEdge` (axis by mode), `mount` (a
+  ResizeObserver on the host), the CSS (narrow rules at the end; the wide rules guarded by `:where(:not(.an-narrow))`).
+  `tests/r0d_narrow_e2e.cjs` + `tests/test_r0d_narrow.py`; `tests/r0a_host.html` takes `?frame=` / `?narrowAt=`.
+  ARCHITECTURE "Annotator store" → "Narrow layout (R0d)". MANUAL (the review panel paragraph).
+- **Notes:**
+  - It is the host's width, not the window's (ResizeObserver, border box: the panel's padding must not feed back).
+    `host.narrowAt` sets the breakpoint (0 = never). A board host is never narrow (canvas.js `stripWidth` assumes a
+    right-hand panel).
+  - New setting `sight.annotate.panelh` (a share of the host's height, capped by the window; 0 = default 45 %,
+    20–75 %). `sight.annotate.panelw` is untouched.
+  - Any narrow host with the panel on gets `padding-bottom: var(--an-ph)` (an embedding host lays its player out
+    above it); the lightbox's 3D controls on its bottom edge are lifted by `translate`.
+  - Sight's lightbox in the split view (library alongside) can go under 600 px on a desktop: then it is narrow too.
+  - At a phone's size the library's inspector covers the grid, so the test opens the tile wide and then shrinks the
+    window (phone emulation cannot open a tile by taps, see r0_lightbox_e2e.cjs).
+- **Review:** a fresh agent found the wide cascade unchanged. Its findings, all fixed:
+  - unmount took `.an-narrow` off while the lightbox / compare view faded out, so the panel jumped to the right;
+  - the ResizeObserver watched the content box, which the panel's own padding changes ("ResizeObserver loop" errors);
+  - minor: an observer on a board host, an old observer not disconnected on a second mount, vertical wobble
+    blocking the wide double-tap reset, and the touch grabber reaching into the video bar.
+  The same reviewer confirmed the fixes. It found one new problem: the touch grabber reached over the header's buttons. Fixed: it ends where they begin (a test checks it). It then confirmed that fix too.
+  It also noted that a host whose height follows its content settles over a few frames, so ARCHITECTURE asks
+  embedding hosts for a definite height.
+- **Suite** (Linux, SIGHT_REQUIRE_E2E=1): every R0 test passes (incl. `test_r0_lightbox` and `test_r0_3d` with
+  psd-tools / usd-core) except R0Export's PDF check (known); `test_r0a_store` and `test_r0d_narrow` pass. Older
+  annotation / review tests: only the known failures (`test_annot_tools.test_tools`,
+  `test_review_page.test_cut_copy_paste`, `test_review_all.test_pdf_all`).
+- **For the owner (Windows):** try the lightbox with the library alongside, dragged narrow, and a phone browser on
+  the HTML review / Coreline later.
+
 ## 0.142.1 — 2026-11-26 — R0a block 5: the annotator's CSS reads host tokens through `--an-*`
 - **What:** a refactor; Sight looks the same. Every theme / layout token the annotator's stylesheet takes from the
   host goes through an `--an-<name>` property that falls back to Sight's name, so another host maps its own theme.
@@ -503,9 +538,3 @@ Add new entries directly below this line.
 - **Suite:** 9 failures, none from this block, which changes no app code:
   - `test_pwa` ×4, `test_review_all.test_pdf_all`, `test_annot_tools.test_tools`, `test_review_page.test_cut_copy_paste`, `test_sources.test_file_uri_to_path`: known;
   - new on origin/master since 0.135.2: `test_sources.DropFilesE2E` fails on a clean checkout of it too (`dropKind is not defined` in `drop_files_e2e.cjs`).
-
-## 0.138.0 — 2026-11-26 — Lightbox guides
-- **What:** a picture, PSD or video gets a Guides button in the lightbox bar: a grid with rulers (drag a guide, snap to a step or type pixels) or 1-, 2- or 3-point perspective (drag each vanishing point, set how many lines). Guides stick to the picture through pan, zoom, turn and mirror, and are remembered per file. The button is hidden for 3D and audio.
-- **Where:** new `app/static/guides.js`; `app/static/index.html` — `mountGuides`, the button, `light.guideGeom`, `passThrough` on the lightbox annotator. `MANUAL.md`, `docs/ARCHITECTURE.md`.
-- **Notes:** positions are image pixels. `sight.guides` goes through `putSetting` (a bare localStorage write would be deleted on the next start). At most 400 files are kept. No new shortcut. Not on compare, not on the phone.
-- **Review:** a fresh reviewer found one hole: changing the grid snap step saved it but left the ruler ticks on the old step until the next pan or drag (`paintMenu` `applySnap` never called `refresh()`, while the density sliders did). Fixed: both the live input and the change call `refresh()` (it only redraws the overlay, so the field keeps focus). The same reviewer confirmed that and found nothing new. The pen button and its right-click reset from 0.136.0 stayed in place; the guides button sits after the flip button.
