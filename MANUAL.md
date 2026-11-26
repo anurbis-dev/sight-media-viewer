@@ -21,6 +21,15 @@
   double-click).
 - **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
   thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held R / Alt / Shift does on a picture or video (turn, scrub).
+- **Guides** — in the lightbox of a picture, a PSD or a video, the guides button in the top bar opens **Grid**,
+  **1-point**, **2-point** or **3-point** (choose it again, or **Off**, to hide it). **Grid** puts rulers along the
+  top and left edges of the picture, in image pixels: drag down from the top ruler for a vertical guide, drag right
+  from the left ruler for a horizontal one. Guides snap to the step in that menu (1–500 px, default 10); a field
+  while dragging, or a click on a guide, types an exact pixel. Drag a guide back onto its ruler to delete it.
+  A perspective mode places a handle for each vanishing point (drag it, including outside the picture) and draws
+  lines through the picture toward it; each point has its own line count (2–40, default 8). Guides stay stuck to
+  the picture through pan, zoom, turn and mirror, and are remembered on this computer for each file. The button
+  is hidden for 3D and for audio. Esc closes the menu.
 - **File info** — in the lightbox press `I` (or the round *i* button in the top-left corner) for a translucent info
   overlay in the top-left corner, like Blender's viewport info. It shows the file's basics plus what
   only that type has: EXIF/camera data for photos, codecs/frame rate/bit depth for video, sample
@@ -78,7 +87,10 @@
 - **Annotations & review** — in the lightbox of an image, PSD, video or 3D model press `A`
   (`Shift+A` in 3D, where A flies the camera) or the pen button in the top bar. A compact toolbar
   appears at the top with a second row that always shows the settings of the current tool — or of
-  the selected drawings, which stay editable: every drawing is a vector object you can select, move,
+  the selected drawings, which stay editable. Each tool's colour, size and options are remembered for
+  the next file and the next time Sight starts. Turning annotating on always starts on the brush.
+  Right-click the pen button (long-press it with a finger) to put every tool back to the defaults;
+  right-click a tool's own icon (or long-press it) to reset only that tool. Every drawing is a vector object you can select, move,
   scale, rotate, restyle and delete at any time. With annotating off, a picture's or video's drawings still
   show while you just watch (a video's on their frames as it plays); the eye button next to the pen (or
   `Shift+H`) hides / shows them — the one eye, in the top bar, while drawing too (a board's sits next to its pen). In a 3D model a note shows a picture of each camera
@@ -232,8 +244,10 @@
     view changes: the file and the drawings on it stay as they are (drawings follow the turned /
     flipped picture). The version compare shows every file unturned and unmirrored. Mirror, flip and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
-  - **Reset the toolbar** — hold the pen button (the one that turns annotating on) for about a second: every tool's colours, sizes
-    and options, the hold time and the frame stamp's look return to their defaults (a normal click still toggles annotating).
+  - **Reset the toolbar** — right-click the pen button (the one that turns annotating on), or long-press it
+    with a finger: every tool's colours, sizes and options, the hold time and the frame stamp's look return
+    to their defaults, and the brush is in hand again (a normal click still toggles annotating). Right-click
+    one tool's icon in the drawing toolbar, or long-press it, resets only that tool.
   - **Turn by hand** — hold `R` and drag on a picture or a video: it turns about its own centre (where it is after panning, not the window centre; Shift+R too), to any angle (while
     annotating `R` is the rectangle tool, so hold `R` and Alt+drag. On a video a drag or Alt+drag scrubs, `Ctrl` held snaps it to the annotated frames. A clip with few keyframes — many phone and screen
     recordings — seeks slowly in the middle; once a scrub of it is slow Sight makes a small scrub copy
@@ -943,7 +957,7 @@
   Environment light also cast a soft shadow on it. A model opened recently is kept in
   memory (up to Settings → RAM cache) and reopens without the loading bar; a model
   bigger than that budget loads from disk every time.
-  - **Camera** — `W A S D` fly the camera (speed slider under Camera in the settings panel);
+  - **Camera** — `W A S D` fly the camera, `E` raises it and `Q` lowers it (the motion eases in and out; hold `Shift` to fly slower; speed slider under Camera in the settings panel);
     `F` frames the whole model again; `Alt+1…9` saves the current view under that digit
     (overwriting what was there) and `1…9` jumps back to it. Saved views are kept per model.
   - USD: `.usdz` is converted once into glTF when the optional usd-core library is installed; `.usd`,

@@ -915,7 +915,7 @@ body.k-alt:not(.k-rot) .view.vid, body.k-alt:not(.k-rot) .view.vid .view-media, 
         <button class="btn ghost" id="cmpSelBtn" type="button" title="Compare the selected images / videos side by side (K)" aria-label="Compare" hidden><svg class="tl-ix" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg><span class="tl-l">Compare</span><span class="tl-s">Cmp</span></button>
         <button class="btn ghost icon an-btn" id="boardNotesBtn" type="button" title="The board's notes — read them, click a picture to go there (C)" aria-label="Board notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
         <button class="btn ghost icon" id="boardEyeBtn" type="button" aria-label="Show / hide drawings" hidden></button>
-        <button class="btn ghost icon an-btn" id="boardAnnoBtn" type="button" title="Draw and write notes on the board (Shift+A)" aria-label="Annotate the board" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
+        <button class="btn ghost icon an-btn" id="boardAnnoBtn" type="button" title="Draw and write notes on the board (Shift+A). Right-click or long-press: reset every tool's settings" aria-label="Annotate the board" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
         <button class="btn ghost icon" id="helpBtn" type="button" title="Controls and shortcuts (?)" aria-label="Controls and shortcuts">?</button>
         <button class="btn ghost icon" id="infoBtn" type="button" title="Info panel" aria-label="Info panel" aria-pressed="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14.5" y="4" width="6.5" height="16" fill="currentColor" stroke="none"/></svg></button>
       </div>
@@ -948,9 +948,11 @@ import "/static/shotgrid-core.js";  // globalThis.SightShotGrid — registers th
 import "/static/coreline-core.js";  // globalThis.SightCoreline — registers the Coreline adapter (docs/CORELINE.md)
 import "/static/filter-core.js";    // globalThis.SightFilter (Filter ▾: the filter builder)
 import { convertForPlayback } from "/static/video-playable.js";
+import { mountGuides } from "/static/guides.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, turnSplat, splatHome, splatCountHint, splatLodFor, splatSource, splatBox, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
   setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
+const guides = mountGuides({ registerAutoClose: (...a) => registerAutoClose(...a), putSetting: (k, v) => putSetting(k, v) });
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 // Sidebar icon per kind (ids of the ICONS catalogue) for the Types rows when "Sidebar icons" is on.
 const KIND_ICON = { image:"image", video:"film", audio:"music", model3d:"box", document:"file", font:"font", design:"palette" };
@@ -1052,7 +1054,7 @@ const DEFAULT_V3D = {
   explode: 0,
   solidColor: "#b7bdc7", solidMetal: 0.05, solidRough: 0.85, // the Solid shading mode's material
   camFov: 50, // lightbox camera vertical field of view, degrees
-  camSpeed: 1, // WASD fly speed multiplier (1 ≈ crossing the model's bounding diagonal in ~1.7s)
+  camSpeed: 1, // steady fly speed multiplier, WASD and Q/E (1 ≈ crossing the model's bounding diagonal in ~1.7s)
   splatR: 1, splatG: 1, splatB: 1, splatOpacity: 1, // Gaussian splat tint/opacity (recolor is a plain RGB multiply, 1 = neutral)
 };
 function loadV3D(){
@@ -1912,6 +1914,8 @@ const annot = createAnnotator({
   // (a bundle import also lands on sequence clips that are not on screen: their timeline marks are re-read)
   onReviewChanged: (aid) => { scheduleRefreshItems(); scheduleMeta(); seqReviewChanged(aid); },
   onLooseDrawings: (aid, n) => paintLooseDraw(aid, n),
+  // A press on a ruler, guide or vanishing point is the guides overlay, not a stroke.
+  passThrough: (e) => !!e.target.closest?.(".gd-hit, .gd-edit"),
 });
 // The same tools on a Canvas board (annotate.js board mode): a second annotator, mounted in the board view by
 // canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
@@ -2232,15 +2236,17 @@ let threeCtls = new Map();
 // calls through these rather than touching the renderer/scene directly.
 let onV3DEnvPresetChange = null, onV3DEnvFile = null, onV3DRotate = null;
 // Camera controls of the lightbox's live 3D viewer (frame-all, saved views) — set by boot3d() once
-// the model is up, cleared by dispose3d("light3d"). camKeys holds the WASD codes currently held;
-// the viewer's render loop reads it every frame (see makeCameraRig).
+// the model is up, cleared by dispose3d("light3d") together with the smoothed fly velocity.
+// camKeys holds the fly keys currently held (WASD and Q/E); the viewer's render loop reads it
+// every frame (see makeCameraRig). Releasing a key eases the move out — velocity is zeroed only
+// when the rig is disposed, so a hidden viewer cannot keep gliding.
 let v3dCam = null;
 // Lightbox 3D inspector (materials, textures, highlight) — see makeModelInspector().
 let v3dInspect = null;
 // The lightbox model's animation ({aid, a: createAnimator from model3d-core.js}; null: no clips), set by boot3d.
 let v3dAnim = null;
 const camKeys = new Set();
-const CAM_MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
+const CAM_MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"]);
 // showInLight() sets this from the extension alone (a synchronous best guess); boot3d() corrects
 // it once the (possibly async, for .ply) splat sniff resolves and re-renders the panel to match.
 let currentAssetIsSplat = false;
@@ -3256,25 +3262,33 @@ function syncTouchSel(nSeq){
   document.getElementById("tsCmp").hidden = cmpCandidates(state.selectedIds).length < 2;
 }
 const LONG_PRESS_MS = 500;
-// Long-press (mouse or finger) on an annotate button resets the whole annotation toolbar; the click that ends
-// the press is swallowed (capture phase, so it runs before the button's own toggle), a normal click is untouched.
+// Right-click on an annotate button resets every tool's settings (and puts the brush back in hand).
+// A finger or a pen has no right button: a long-press does it. Windows also fires contextmenu when that
+// finger goes up — only a mouse acts on contextmenu, or the reset runs twice and the click still toggles
+// (the eye's onion toggle is split the same way). The click after a long-press is swallowed in capture,
+// before the button's own toggle. A normal click is untouched.
 function bindAnnoReset(btn, annots){
   if (!btn || btn._annoReset) return;
   btn._annoReset = true;
-  let timer = 0, fired = false, x = 0, y = 0;
+  let timer = 0, longed = false, lastPT = "mouse", x = 0, y = 0;
   const stop = () => { clearTimeout(timer); timer = 0; };
+  const go = () => { annots.forEach((an, i) => an.resetPrefs(i > 0)); };
   btn.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    fired = false; x = e.clientX; y = e.clientY;
+    longed = false; x = e.clientX; y = e.clientY;
+    lastPT = e.button === 2 ? "mouse" : (e.pointerType || "mouse");
     stop();
-    timer = setTimeout(() => { timer = 0; fired = true; annots.forEach((an, i) => an.resetPrefs(i > 0)); }, 700);
+    if (lastPT === "mouse") return;
+    timer = setTimeout(() => { timer = 0; longed = true; go(); }, 550);
   });
   btn.addEventListener("pointermove", (e) => { if (timer && Math.hypot(e.clientX - x, e.clientY - y) > 10) stop(); });
-  // No click follows a release outside the button: drop the flag after the click would have come, or a later
-  // keyboard activation (Enter / Space) would be swallowed.
-  for (const t of ["pointerup", "pointercancel", "pointerleave"]) btn.addEventListener(t, () => { stop(); setTimeout(() => { fired = false; }, 60); });
-  btn.addEventListener("click", (e) => { if (fired){ fired = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
-  btn.addEventListener("contextmenu", (e) => { if (fired || timer) e.preventDefault(); });  // a touch long-press must not open a menu
+  for (const t of ["pointerup", "pointercancel", "pointerleave"]) btn.addEventListener(t, stop);
+  btn.addEventListener("click", (e) => { if (longed){ longed = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  btn.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (lastPT !== "mouse") return;
+    longed = true; // a click after this menu must not also toggle annotating
+    go();
+  });
 }
 let longPress = null;
 let lastGridPtr = ""; // the last grid press's pointerType: decides a click's input (not a PointerEvent in older Safari)
@@ -4943,7 +4957,7 @@ function dispose3d(elId, defer){
   // onV3DEnvPresetChange/onV3DEnvFile are lightbox-only (the settings panel's environment
   // picker) — only clear them when it's the lightbox's own viewer being torn down, not the
   // inspector's, or closing the inspector preview would break the still-open lightbox's picker.
-  if (elId === "light3d"){ onV3DEnvPresetChange = null; onV3DEnvFile = null; onV3DRotate = null; v3dCam = null; camKeys.clear(); v3dInspect?.dispose(); v3dInspect = null; v3dAnim?.a.dispose(); v3dAnim = null; paintAnimBar(); }
+  if (elId === "light3d"){ onV3DEnvPresetChange = null; onV3DEnvFile = null; onV3DRotate = null; v3dCam?.halt(); v3dCam = null; camKeys.clear(); v3dInspect?.dispose(); v3dInspect = null; v3dAnim?.a.dispose(); v3dAnim = null; paintAnimBar(); }
   const ctl = threeCtls.get(elId);
   if (!ctl) return null;
   try { ctl.stop(); } catch {}
@@ -5281,19 +5295,29 @@ function flashV3DToast(text){
   v3dToastTimer = setTimeout(() => el.classList.remove("on"), 1400);
 }
 
-// Camera behaviour that's the same for meshes and splats in the lightbox: WASD fly (moves the
-// camera and the orbit target together, so orbiting keeps working from the new spot), frame-all
-// (F) back to the framing the model opened with, and the Alt+1…9 / 1…9 saved views. The caller
-// calls setHome() after every (re)framing and step() once per frame. `turns` is only passed by
-// the mesh viewer, which can be turned in 90° steps.
+// Camera behaviour that's the same for meshes and splats in the lightbox: fly (WASD on the view
+// axes, Q down / E up on world Y — moves the camera and the orbit target together, so orbiting
+// keeps working from the new spot), frame-all (F) back to the framing the model opened with, and
+// the Alt+1…9 / 1…9 saved views. The caller calls setHome() after every (re)framing and step()
+// once per frame. `turns` is only passed by the mesh viewer, which can be turned in 90° steps.
 function makeCameraRig(THREE, camera, controls, aid, turns){
   const home = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
-  const fwd = new THREE.Vector3(), right = new THREE.Vector3();
+  const fwd = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+  const wish = new THREE.Vector3(), vel = new THREE.Vector3();
   let extent = 1, last = 0;
-  const view = (pos, target) => { camera.position.copy(pos); controls.target.copy(target); controls.update(); };
+  const FLY_TAU = 0.18; // seconds; velocity eases toward the wish and back to 0
+  // A jump (frame, recall, restore) drops the glide, or the view would immediately slide off.
+  const view = (pos, target) => { vel.set(0, 0, 0); camera.position.copy(pos); controls.target.copy(target); controls.update(); };
+  // Same notion of "typing" as the 3D key handler: a focused slider or colour well must not stop a fly.
+  const flyTyping = () => {
+    const el = document.activeElement, tag = el && el.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    return tag === "INPUT" && !["checkbox", "radio", "range", "color", "button"].includes(el.type);
+  };
   return {
     setHome(size){
       extent = size || 1;
+      vel.set(0, 0, 0); // a reframe (open, turn) is a jump too
       home.pos.copy(camera.position);
       home.target.copy(controls.target);
     },
@@ -5314,19 +5338,39 @@ function makeCameraRig(THREE, camera, controls, aid, turns){
       if (camera.fov !== fov){ camera.fov = fov; camera.updateProjectionMatrix(); }
       const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
       last = now;
-      if (!dt || !camKeys.size) return;
-      camera.getWorldDirection(fwd);
-      right.setFromMatrixColumn(camera.matrixWorld, 0);
-      let f = 0, r = 0;
-      if (camKeys.has("KeyW")) f++;
-      if (camKeys.has("KeyS")) f--;
-      if (camKeys.has("KeyD")) r++;
-      if (camKeys.has("KeyA")) r--;
-      if (!f && !r) return;
-      fwd.multiplyScalar(f).addScaledVector(right, r).normalize().multiplyScalar(extent * 0.6 * state.v3d.camSpeed * dt);
-      camera.position.add(fwd);
-      controls.target.add(fwd);
+      // Keep integrating through the glide after the keys come up. Skip only once it has stopped
+      // and nothing is held — a released key must not cut the velocity to zero.
+      if (!dt || (vel.lengthSq() < 1e-8 * extent * extent && !camKeys.size)) return;
+      const mods = document.body.classList;
+      const go = !annot.isOn() && !mods.contains("k-alt") && !mods.contains("k-ctrl") && !flyTyping();
+      let f = 0, r = 0, u = 0;
+      if (go){
+        if (camKeys.has("KeyW")) f++;
+        if (camKeys.has("KeyS")) f--;
+        if (camKeys.has("KeyD")) r++;
+        if (camKeys.has("KeyA")) r--;
+        if (camKeys.has("KeyE")) u++; // world up, not the camera's local up
+        if (camKeys.has("KeyQ")) u--;
+      }
+      wish.set(0, 0, 0);
+      if (f || r || u){
+        camera.getWorldDirection(fwd);
+        right.setFromMatrixColumn(camera.matrixWorld, 0);
+        wish.copy(fwd).multiplyScalar(f).addScaledVector(right, r).addScaledVector(up, u);
+        const len = wish.length();
+        if (len > 1e-8) wish.multiplyScalar(1 / len);
+      }
+      // One factor on the whole wish (Shift uses the same FINE as pan / zoom) so letting go of
+      // Shift eases back to full speed instead of stepping.
+      wish.multiplyScalar(extent * 0.6 * state.v3d.camSpeed * (mods.contains("k-shift") ? FINE : 1));
+      vel.lerp(wish, 1 - Math.exp(-dt / FLY_TAU));
+      if (vel.lengthSq() < 1e-8 * extent * extent && !(f || r || u)){ vel.set(0, 0, 0); return; }
+      camera.position.addScaledVector(vel, dt);
+      controls.target.addScaledVector(vel, dt);
     },
+    // dispose3d drops the rig while the canvas is still on screen; a leftover velocity would
+    // carry the next step if the loop has not stopped yet.
+    halt(){ vel.set(0, 0, 0); },
     // Annotations: the camera as plain data, and back (damping is cut so the restored view holds).
     getView(){
       return { p: camera.position.toArray(), t: controls.target.toArray(), fov: camera.fov, turns: turns ? turns.get() : 0 };
@@ -6766,6 +6810,8 @@ function saveTurn(id, t){
 // opts.embedded: a picture that is not the lightbox asset itself (the 3D UV pane) — no thumbnail
 // placeholder and no claim on light.video / light.setZoom. Returns { fit, zoom } for its owner.
 function attachViewer(stage, a, src, opts = {}){
+  // Guides follow this picture only. The embedded UV pane must not replace the lightbox geom.
+  if (light && !opts.embedded) light.guideGeom = null;
   const isVid = a.kind === "video";
   // Images open on their thumbnail (.view-ph), already framed, and the full file stays hidden
   // (.loading) until it is loaded and decoded — otherwise a big file paints top-down at native size
@@ -6967,6 +7013,8 @@ function attachViewer(stage, a, src, opts = {}){
     const f = fitS();
     hud.textContent = Math.abs(vs.scale - f) < 0.012 ? "Frame" : Math.abs(vs.scale - 1) < 0.012 ? "100%" : Math.round(vs.scale * 100) + "%";
     if (!opts.embedded) annot.viewChanged();
+    // Guides (guides.js) stick to this picture: same geom the drawings use, including turnCss.
+    if (light && !opts.embedded){ light.guideGeom = geom; light.onGuideView?.(); }
   }
   // Zoom toward a screen point (mx,my, relative to `wrap`) instead of the viewport center —
   // keeps whatever content is under the cursor/anchor fixed in place as scale changes.
@@ -8319,9 +8367,13 @@ function toggleLight(a){
       <button class="btn ghost an-btn" id="notesBtn" type="button" style="width:40px;padding:0" title="Notes — read them, click a picture to go there (C)" aria-label="Notes" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="an-badge" hidden></span></button>
       <button class="btn ghost" id="drawEyeBtn" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
       <button class="btn ghost cmp-lbtn" id="cmpBtn" type="button" style="width:40px;padding:0" title="Compare (K)" aria-label="Compare" disabled hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
-      <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Draw &amp; write notes — the drawing tools (A · Shift+A in 3D)" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
+      <button class="btn ghost an-btn" id="annoBtn" type="button" style="width:40px;padding:0" title="Draw &amp; write notes — the drawing tools (A · Shift+A in 3D). Right-click or long-press: reset every tool's settings" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
       <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the view (Shift+M)" aria-label="Mirror" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
       <button class="btn ghost" id="mirVBtn" type="button" style="width:40px;padding:0" title="Flip the view upside down (Shift+V)" aria-label="Flip upside down" hidden><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8 17 3v5z"/><path d="M7 16l10 5v-5z"/></svg></button>
+      <span class="gd-anchor" hidden>
+        <button class="btn ghost" id="guidesBtn" type="button" style="width:40px;padding:0" title="Guides — grid rulers, or 1-, 2- or 3-point perspective" aria-label="Guides" aria-haspopup="menu" aria-expanded="false" aria-controls="guidesPop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 3v18M3 4h18"/><path d="M4 8h2.2M4 12h2.2M4 16h2.2M8 4v2.2M12 4v2.2M16 4v2.2M20 4v2.2"/><path d="M12 8v12M8 14h12" stroke-dasharray="1.6 2.2"/></svg></button>
+        <div class="top-pop gd-pop" id="guidesPop" hidden role="menu"></div>
+      </span>
       <button class="btn ghost" id="frameBtn" type="button" style="width:40px;padding:0" title="Mask &amp; corner radius" aria-label="Mask and corner radius">◱</button>
       <button class="btn ghost" id="lightHelpBtn" type="button" style="width:40px;padding:0" title="Controls and shortcuts (?)" aria-label="Controls and shortcuts">?</button>
       <button class="btn ghost" id="lightClose" type="button" style="width:40px;padding:0" aria-label="Close">✕</button>
@@ -8387,6 +8439,7 @@ function toggleLight(a){
   document.body.append(wrap);
   trackBarH(wrap, wrap.querySelector(".light-bar"));
   light = { el: wrap, id: a.id, bar: wrap.querySelector(".vbar"), snap: null, scrubbing: false, scrubT: null, video: null, audio: null, cacheTimer: 0, focusTimer: 0, focusAt: 0, closing: false, setZoom: null, seq: null, vctl: null };
+  guides.bind(light);
   bindSeqBar(wrap.querySelector(".seqbar"));
   bindVBarUi(light.bar);
   applyViewDom();  // the library beside it, if that is how it was left (Tab)
@@ -8482,12 +8535,12 @@ function lightHelpGroups(){
       [["Drag"], "Orbit (touch: one finger)"],
       [["Middle-drag"], "Pan (touch: two fingers)"],
       [["Wheel", "Right-drag"], "Zoom (touch: pinch)"],
-      [["W", "A", "S", "D"], "Fly the camera (speed: Camera in the settings panel)"],
+      [["W", "A", "S", "D", "Q", "E"], "Fly the camera — eases in and out; Q down, E up (speed: Camera in the settings panel)"],
       [["F"], splat ? "Back to the opening view" : "Frame the selection, or the whole model as it is now"],
       [["1–9"], "Recall a saved camera view"],
       [["Alt+1–9"], "Save the camera view under that digit"],
       ...(splat ? [] : [[["Shift+right-drag"], "Turn the lights"], [["Ctrl+right-drag"], "Explode: pull the parts apart (also the slider)"]]),
-      [["Shift (held)"], "Slower pan / zoom"],
+      [["Shift (held)"], "Slower pan / zoom / fly"],
     ] });
     groups.push({ group: "Model", rows: splat ? [[["G"], "View settings panel — the gear button"]] : [
       [["Ctrl+click"], "Select a mesh (again: deselect; a click on empty space clears)"],
@@ -8509,6 +8562,7 @@ function lightHelpGroups(){
       [["1–9"], "Zoom to that multiple of the native size (1 = 100 %)"],
       ...(light.turn ? [[["Shift+R"], "Turn 90°"], [["R (held) + drag"], "Turn to any angle (Shift during the drag: 15° steps; while drawing: R + Alt+drag)"]] : []),
       ...(light.mirror ? [[["Shift+M"], "Mirror — the mirror button"], [["Shift+V"], "Flip upside down — the flip button"]] : []),
+      ...(!$("guidesBtn")?.closest(".gd-anchor")?.hidden ? [[["Guides"], "Grid rulers, or 1- / 2- / 3-point perspective — the guides button in the top bar"]] : []),
       [["Shift (held)"], "Slower pan / zoom" + (vid ? " / scrub" : "")],
     ] });
   }
@@ -8651,6 +8705,9 @@ function showInLight(a, opts = {}){
   light.el.querySelector("#mirBtn").hidden = !flat;
   light.el.querySelector("#mirVBtn").hidden = !flat;
   light.el.querySelector("#annoBtn").hidden = !(flat || a.kind === "model3d");
+  light.el.querySelector(".gd-anchor").hidden = !flat;
+  light.guideGeom = null;
+  guides.setAsset(flat ? a.id : null);
   // The preview is a peek at whatever was under the cursor — it leaves the thumbnail selection
   // alone. The inspector is hidden behind the lightbox, so just stop its media from running.
   insp.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch {} });
@@ -8703,6 +8760,7 @@ function flushRotatedThumb(){
 
 function closeLight(){
   if (!light || light.closing) return;
+  guides.close();
   flushRotatedThumb();
   vMenuClose();
   light.closing = true;
@@ -9339,13 +9397,13 @@ function v3dLightRows(n){
     ${v3dSliderRow("Size (softness)", "l" + n + "size", 0, 45, 0.5, "°")}
   `;
 }
-// Shared by the mesh and splat panels — both viewers get the same WASD / saved-view camera.
+// Shared by the mesh and splat panels — both viewers get the same fly / saved-view camera.
 function v3dCameraRows(){
   return `
     <h3>Camera</h3>
     ${v3dSliderRow("Field of view", "camFov", 10, 120, 1, "°")}
-    ${v3dSliderRow("Move speed (WASD)", "camSpeed", 0.1, 4, 0.1, "×")}
-    <div class="v3d-help">WASD fly · F frame selection / all<br>Ctrl+click select mesh · Ctrl+right-drag explode<br>H hide selected · Ctrl+H hide others · Alt+H show all<br>Alt+1–9 save view · 1–9 recall</div>
+    ${v3dSliderRow("Move speed (WASD QE)", "camSpeed", 0.1, 4, 0.1, "×")}
+    <div class="v3d-help">WASD fly · Q down · E up (eases; Shift slower) · F frame selection / all<br>Ctrl+click select mesh · Ctrl+right-drag explode<br>H hide selected · Ctrl+H hide others · Alt+H show all<br>Alt+1–9 save view · 1–9 recall</div>
   `;
 }
 function renderV3DPanel(){
@@ -11976,18 +12034,19 @@ document.addEventListener("keydown", (e) => {
   }
   // 3D model open in the lightbox. Keys go by e.code (physical key) rather than e.key so they
   // work on any keyboard layout and aren't turned into other characters by Alt/Shift.
-  //   WASD          fly the camera (held keys are tracked in camKeys; the viewer's loop moves it)
+  //   W A S D       fly on the view axes; Q down, E up (world Y). Held keys live in camKeys;
+  //                 the viewer's loop eases the velocity in and out. Shift slows the fly.
   //   F             frame all — back to the view the model opened with
   //   1–9           recall the saved camera view; Alt+1–9 saves the current one
   //   Shift+1–4     base shading (solid / vertex / textured / normal)
   //   Shift+5 / 6   wireframe / x-ray overlays (combine with any base and each other)
   //   Shift+7       turn the model 90°
   //   G             view-settings panel (the gear button)
-  // Shading moved to Shift+digit and the panel from D to G so the plain digits and WASD could be
-  // used by the camera. The main inspector's D toggle below is skipped while a 3D model is open.
+  // Shading moved to Shift+digit and the panel from D to G so the plain digits and the fly keys
+  // could be used by the camera. The main inspector's D toggle below is skipped while a 3D model is open.
   const in3d = lightKeys && !$("v3dGear").hidden;
   // Only real text entry blocks these — a checkbox/slider/colour input keeps focus after a click in
-  // the settings panel, and that shouldn't stop WASD from flying the camera.
+  // the settings panel, and that shouldn't stop the camera flying.
   const typing3d = tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && !["checkbox", "radio", "range", "color", "button"].includes(e.target.type));
   // Digit keys 1–9 in the lightbox jump the open image/video/text to that multiple of its native
   // size (1 = 100%) — same digits the 3D viewer uses for camera views, so this only fires when
@@ -12018,7 +12077,9 @@ document.addEventListener("keydown", (e) => {
   if (in3d && !typing3d && !e.ctrlKey && !e.metaKey){
     const digit = /^Digit([1-9])$/.exec(e.code);
     if (v3dCam){
-      if (CAM_MOVE_KEYS.has(e.code) && !e.altKey){ e.preventDefault(); camKeys.add(e.code); return; }
+      // e.code, not hotkey(): Shift stays a modifier that slows the fly (keys.js would reject Shift+W).
+      // Q is not an annotator tool, so the annotator has to gate this itself — W/A/S/D/E never get here while it is on.
+      if (CAM_MOVE_KEYS.has(e.code) && !e.altKey && !annot.isOn()){ e.preventDefault(); camKeys.add(e.code); return; }
       if (e.code === "KeyF" && !e.altKey && !e.shiftKey){
         e.preventDefault();
         // Meshes: fit the selection (Ctrl+click / info panel) or else the whole model, measured as it
@@ -12059,9 +12120,9 @@ document.addEventListener("keydown", (e) => {
     if (lightKeys && !$("psdBtn").hidden) togglePsdPanel(); else toggleDetails();
   }
 });
-// Held-key tracking for the WASD camera — released keys are dropped regardless of what else is
-// going on, and losing window focus drops everything (a keyup would never arrive, leaving the
-// camera drifting).
+// Held-key tracking for the fly camera — released keys are dropped regardless of what else is
+// going on, and losing window focus drops everything (a keyup would never arrive). The velocity
+// is not cleared here: step() eases it out. dispose3d is what zeroes it.
 document.addEventListener("keyup", (e) => { camKeys.delete(e.code); });
 // F over the thumbnail grid scrolls it to the selection. Capture phase on window: in the split view the board's own
 // F (canvas.js, registered earlier on document) must not frame the board as well. Beside the lightbox, F on the

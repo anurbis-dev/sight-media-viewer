@@ -67,7 +67,7 @@ a fix is its own block, and changes the pinned check in the same block.
    surface whose capture listener eats clicks (`suppressClick`), so this looks like Chromium's tap suppression after a
    fling rather than the annotator. Check on a real touch screen; fix only if it shows there. `r0_tools_e2e.cjs` waits
    0.7 s before such a tap.
-7. **The picture jumps when a library card is dragged over the lightbox** (0.135.3 tests, the library split, Tab):
+7. **The picture jumps when a library card is dragged over the lightbox** (0.138.1 tests, the library split, Tab):
    once the drag is under way the view-modes bar (`.vmodes`, the compare drop targets) shows and the picture moves down
    (21 px at 1400 × 900, the surface by a bar's height). A reference image dropped there lands at the doc point under
    the pointer at the drop, i.e. off from where the user aimed before the jump. Harmless if the user keeps aiming;
