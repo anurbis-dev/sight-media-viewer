@@ -2885,10 +2885,21 @@ function syncPixelation(img, host){
 const TRK_THUMB_SLOTS = 3;
 let trkThumbRun = 0;
 const trkThumbQ = [];
+// The tile is built, then inserted. A job whose card is still detached stays queued;
+// one whose card was thrown away is dropped, so it does not hold a slot forever.
+function trkThumbAlive(img){
+  for (let n = img; n; n = n.parentElement){
+    if (n.dataset && n.dataset.id && cardPool.get(n.dataset.id) === n) return true;
+  }
+  return false;
+}
 function pumpTrkThumbs(){
-  while (trkThumbRun < TRK_THUMB_SLOTS && trkThumbQ.length){
-    const job = trkThumbQ.shift();
-    if (!job.img.isConnected || job.img.dataset.tq !== job.url) continue;
+  let i = 0;
+  while (trkThumbRun < TRK_THUMB_SLOTS && i < trkThumbQ.length){
+    const job = trkThumbQ[i];
+    if (!trkThumbAlive(job.img) || job.img.dataset.tq !== job.url){ trkThumbQ.splice(i, 1); continue; }
+    if (!job.img.isConnected){ i++; continue; }
+    trkThumbQ.splice(i, 1);
     trkThumbRun++;
     const gen = (job.img._tg || 0) + 1;
     job.img._tg = gen;
@@ -3150,6 +3161,7 @@ function renderGrid(){
     sliceEl = spaceEl = null;
     grid.innerHTML = trkListOn() ? `<div class="empty">${trkList.failed && !trkList.loading ? `Couldn't reach ${esc(trkSrc.tracker.name)}` : trkList.loading || trkList.more ? `<span class="ld ld-col">Loading ${esc(trkMedia().many)}…</span>` : `No ${esc(trkMedia().one)} matches.`}</div>`
       : `<div class="empty">Empty. Add a folder or drop one here — files stay where they are. Drop a file on the window to open it.</div>`;
+    pumpTrkThumbs();
     renderInsp();
     return;
   }
@@ -3208,6 +3220,7 @@ function renderGrid(){
     if (node === el){ node = node.nextSibling; continue; }
     sliceEl.insertBefore(el, node);
   }
+  pumpTrkThumbs();
   reportVisible(visItems);
   refreshStaleVisible(visItems);
   if (trkListOn()) trkMaybeMore(W);
