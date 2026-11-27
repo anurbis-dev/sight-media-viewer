@@ -116,6 +116,7 @@ function videoParts({ el, wrap, a, opts, host, L, apply }){
     if (!dur) return null;
     t = Math.min(dur, Math.max(0, t));
     if (L()) L().scrubT = t;
+    host.annot?.followPlayhead?.();
     host.paintVBar();
     // A drag with a short-GOP copy seeks only that copy. The full file is sought once in endScrub
     // (the timeline's pointer-up calls seekVideo while the drag is still on, so this must not

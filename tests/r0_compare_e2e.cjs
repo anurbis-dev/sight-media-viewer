@@ -4,9 +4,12 @@
 //   - compare from the library: two cards selected (Ctrl+click), the top bar's Compare button and K open it with a
 //     chip per file (name order); K / Esc close it;
 //   - its controls by key and by button: the layouts 1-4 (the stage's lay-* class, the segment's button), Swipe (S),
-//     Difference (D), a layer hidden (H, a chip click), ↑ / ↓ select a layer, F fits;
+//     Difference (D), a layer hidden (H, a chip click), ↑ / ↓ select a layer, F fits; the bar has mirror / flip and
+//     guides; the mirror button toggles the selected layer;
 //   - annotating in compare: A on (its bar), a stroke on the selected layer is a row of that layer's file, a note
-//     written there keeps the comparison (data.compare: the files, the selected one, the layout), A off; reopening
+//     written there keeps the comparison (data.compare: the files, the selected one, the layout), A off (the drawing
+//     and the eye stay on show, inside that layer so Swipe clips them); a stroke on the other file keeps both
+//     overlays; reopening
 //     the comparison from the file (K in the lightbox) brings that session back (its layout);
 //   - dropped to compare: in the lightbox with the library beside it (Tab), a card dragged onto the picture joins the
 //     lightbox's set (the ⧉ button counts 2), the button opens the comparison of both;
@@ -48,6 +51,14 @@ L.run(async (cfg, t) => {
   t.ok("the Compare button opens the comparison", await until(() => cmpOpen()));
   t.eq("…a chip per file, in name order, the first selected", (await chips()).map((c) => [c.id, c.sel]), [[A, true], [B, false]]);
   t.eq("…Stack at first", await layout(), "stack");
+  t.ok("mirror / flip buttons in the bar", await p.evaluate(() => {
+    const m = document.querySelector(".cmp #mirBtn"), v = document.querySelector(".cmp #mirVBtn");
+    return !!m && !m.hidden && !!v && !v.hidden;
+  }));
+  t.ok("guides button in the bar", await p.evaluate(() => !!document.querySelector(".cmp #guidesBtn")));
+  await p.click(".cmp #mirBtn");
+  t.ok("the mirror button turns the selected layer", await p.evaluate(() => document.querySelector(".cmp #mirBtn").classList.contains("on")));
+  await p.click(".cmp #mirBtn");
   await p.keyboard.press("KeyK");
   t.ok("K closes it", await until(async () => !(await cmpOpen())));
   await p.mouse.move(700, 400);
@@ -112,6 +123,35 @@ L.run(async (cfg, t) => {
   await p.waitForTimeout(100);
   if (await p.evaluate(() => !!document.querySelector(".cmp .an-top:not([hidden])"))) await p.keyboard.press("KeyA");
   t.ok("A / Esc: annotating off, the comparison stays", await until(async () => !(await p.evaluate(() => !!document.querySelector(".cmp .an-top:not([hidden])")))) && await cmpOpen());
+  t.ok("the drawing stays on show while watching", await until(() => p.evaluate(() => {
+    const layer = document.querySelector(".cmp .an-layer");
+    return !!layer && layer.querySelectorAll("[data-id]").length > 0;
+  })));
+  t.ok("…inside the selected layer (Swipe clips it with the video)", await until(() => p.evaluate((aid) => {
+    const ly = document.querySelector(`.cmp-ly[data-id="${aid}"]`);
+    return !!ly?.querySelector(".an-layer [data-id], .cmp-draws svg *");
+  }, A)));
+  t.ok("the eye is in the bar", await until(() => p.evaluate(() => { const e = document.querySelector(".cmp .cmp-eyeb"); return !!e && !e.hidden; })));
+  // Drawings of every file in the stack: leave A, stroke B, both layers keep their overlay.
+  await p.keyboard.press("ArrowDown");
+  await p.waitForTimeout(150);
+  await p.keyboard.press("KeyA");
+  t.ok("A on the other layer", await until(() => p.evaluate(() => !!document.querySelector(".cmp .an-top:not([hidden])"))));
+  const toPageB = (x, y) => p.evaluate(([x, y, aid]) => {
+    const m = [...document.querySelectorAll(".cmp img")].find((i) => (i.currentSrc || i.src).includes(aid) && i.getBoundingClientRect().width > 0);
+    const r = m.getBoundingClientRect(), s = Math.min(r.width / m.naturalWidth, r.height / m.naturalHeight);
+    return [r.left + (r.width - m.naturalWidth * s) / 2 + x * s, r.top + (r.height - m.naturalHeight * s) / 2 + y * s];
+  }, [x, y, B]);
+  const [bx0, by0] = await toPageB(80, 80), [bx1, by1] = await toPageB(220, 160);
+  await p.mouse.move(bx0, by0); await p.mouse.down(); await p.mouse.move(bx1, by1, { steps: 8 }); await p.mouse.up();
+  t.ok("a stroke on the other file is that file's row", await until(async () => (await rowsOf(B)).some((r) => r.kind !== "note" && r.kind !== "status")));
+  await p.keyboard.press("KeyA");
+  await until(async () => !(await p.evaluate(() => !!document.querySelector(".cmp .an-top:not([hidden])"))));
+  t.ok("each layer keeps its drawings in its swipe cell", await until(() => p.evaluate(([a, b]) => {
+    const da = document.querySelector(`.cmp-ly[data-id="${a}"] .an-layer [data-id], .cmp-ly[data-id="${a}"] .cmp-draws svg *`);
+    const db = document.querySelector(`.cmp-ly[data-id="${b}"] .an-layer [data-id], .cmp-ly[data-id="${b}"] .cmp-draws svg *`);
+    return !!da && !!db;
+  }, [A, B])));
   await p.click('.cmp .cmp-bar [data-a="close"][aria-label="Close"]');
   t.ok("the ✕ button closes it", await until(async () => !(await cmpOpen())));
   // the session comes back from the file

@@ -1,4 +1,4 @@
-// Lightbox guides for the 2D picture (image, video, PSD). Not the 3D viewer.
+// Lightbox / compare guides for the 2D picture (image, video, PSD). Not the 3D viewer.
 // Positions are image pixels and follow attachViewer's geom ({x0, y0, s, w, h, turn})
 // through pan, zoom, turn and mirror. One localStorage blob, keyed by asset id.
 //
@@ -439,7 +439,7 @@ function geom(){
   return g;
 }
 function pictureView(){
-  return bound?.el?.querySelector(".light-frame > .view") || null;
+  return bound?.guideView?.() || bound?.el?.querySelector(".light-frame > .view") || null;
 }
 function clientToView(e, view){
   const r = view.getBoundingClientRect();
@@ -528,7 +528,7 @@ function injectCss(){
   st.textContent = `
 .gd-anchor { position: relative; flex: none; display: flex; }
 .gd-anchor[hidden] { display: none; }
-.light-bar > .gd-anchor > .btn { zoom: var(--icon-k, 1); }
+.light-bar > .gd-anchor > .btn, .cmp-bar > .gd-anchor > .btn { zoom: var(--icon-k, 1); }
 .gd-pop { left: auto; right: 0; min-width: 228px; z-index: 120; touch-action: none; }
 .gd-pop[hidden] { display: none; }
 .gd-pop button.on { color: var(--accent); }
@@ -1219,7 +1219,7 @@ function close(){
   detachRoot();
   if (bound){
     bound.onGuideView = null;
-    bound.guideGeom = null;
+    try { bound.guideGeom = null; } catch {}
   }
   bound = null;
   assetId = "";

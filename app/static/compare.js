@@ -27,9 +27,11 @@
 // short-GOP proxy per clip (made when the compare opens, up to a few at once): one seek in flight,
 // the latest time
 // waits for it, and the full file is sought once when the drag ends. Until that proxy can show a
-// frame, the full file is not seeked while the pointer is down: a long-GOP seek per move lands the
-// clips on different frames and can fail a decoder (the blocked-media mark), so the compare sticks.
-// The picture stays put and every clip jumps to that frame together when the pointer goes up.
+// frame the full file is still seeked (one seek in flight, as in the lightbox): a green RAM bar does
+// not make a long-GOP seek instant, but the picture follows instead of sitting still while the copy
+// encodes. Ctrl held snaps the playhead to a frame with a drawing / note (the ticks on the bar);
+// drawings follow that playhead while the pointer is down (host.videoTime, not mouseup / "seeked").
+// Each layer paints its own drawings inside `.cmp-ly`, so a swipe clip-path cuts them with the video.
 // One the playhead has not reached jumps to its first frame, and one it has left jumps to its last.
 // The proxy stays over the full file until that frame is presented, then its decoder is dropped.
 //
@@ -42,17 +44,19 @@
 //
 // createCompare(host) — host: { api, putSetting, openInLight(asset, layerFiles) (⤢), paintModes(box, layerFiles), versionsOf(id), and for annotating:
 // onView(view) — the selected layer's viewer when its surface or its file changes (view: {asset, wrap, media,
-// isVid, geom, unturn} or null). Hiding a layer, or Over / Difference, keeps that element, so onView is not
-// called again. onPlaced() — pan / zoom / splits moved, onClose(), onAnnotButton() }.
+// isVid, geom, unturn, layerHost} or null; layerHost = that `.cmp-ly`). Hiding a layer, or Over / Difference, keeps that element, so onView is not
+// called again. onPlaced() — pan / zoom / splits moved, onTime() — the playhead moved, onClose(), onAnnotButton() }.
 // open(ids, focusId, session) / close() / isOpen() / onKey(e) (true when the key was used) / session() — the
 // set to store with a note (FORMAT.md `compare`) / pause() / seekLayer(id, t) — the selected clip's local time.
 
 import { hotkey, runHotkeys } from "/static/keys.js";
 import { convertForPlayback } from "/static/video-playable.js";
 import { cacheBarHtml } from "/static/video-cache-bar.js";
-import { attachViewerInput } from "/static/viewer-input.js";
+import { attachViewerInput, FINE_SCRUB } from "/static/viewer-input.js";
 import { setCursor } from "/static/cursors.js";
 import { HELP_HINT } from "/static/key-help.js";
+import "./review-core.js";
+const RC = globalThis.SightReviewCore;
 
 const COLORS = ["#4c9aff", "#ff9f0a", "#34c759", "#ff453a", "#af52de", "#32ade6", "#ffd60a", "#ff6482"];
 const LAYOUTS = [["stack", "Stack", "Digit1"], ["grid", "Tile", "Digit2"], ["row", "Row", "Digit3"], ["col", "Column", "Digit4"]];
@@ -135,7 +139,7 @@ export function createCompare(host){
     if (C) close();
     const el = document.createElement("div");
     el.className = "cmp";
-    // The right end of the bar is the lightbox's (notes, eye, compare, annotate, close), so every viewer looks alike.
+    // The right end of the bar is the lightbox's (notes, eye, compare, annotate, mirror, guides, close), so every viewer looks alike.
     el.innerHTML = `
       <div class="cmp-bar">
         <b>Compare</b>
@@ -151,6 +155,12 @@ export function createCompare(host){
         <button class="btn ghost cmp-eyeb" type="button" style="width:40px;padding:0" aria-label="Show / hide drawings" hidden></button>
         <button class="btn ghost cmp-lbtn on" data-a="close" type="button" style="width:40px;padding:0" title="Close the comparison (K)" aria-label="Close the comparison" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="11" height="14" rx="1.5"/><path d="M14 8h5.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M14 3v18" stroke-dasharray="2 2"/></svg></button>
         <button class="btn ghost an-btn cmp-annb" data-a="annot" type="button" style="width:40px;padding:0" title="Draw &amp; write notes on the selected layer (A) — notes go to its file and remember this comparison. Right-click or long-press: reset every tool's settings" aria-label="Annotate"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M14 20h6"/></svg></button>
+        <button class="btn ghost" id="mirBtn" type="button" style="width:40px;padding:0" title="Mirror the selected layer (Shift+M)" aria-label="Mirror"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7 3 17h5z"/><path d="M16 7l5 10h-5z"/></svg></button>
+        <button class="btn ghost" id="mirVBtn" type="button" style="width:40px;padding:0" title="Flip the selected layer upside down (Shift+V)" aria-label="Flip upside down"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8 17 3v5z"/><path d="M7 16l10 5v-5z"/></svg></button>
+        <span class="gd-anchor">
+          <button class="btn ghost" id="guidesBtn" type="button" style="width:40px;padding:0" title="Guides — grid rulers, or 1-, 2- or 3-point perspective" aria-label="Guides" aria-haspopup="menu" aria-expanded="false" aria-controls="guidesPop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 3v18M3 4h18"/><path d="M4 8h2.2M4 12h2.2M4 16h2.2M8 4v2.2M12 4v2.2M16 4v2.2M20 4v2.2"/><path d="M12 8v12M8 14h12" stroke-dasharray="1.6 2.2"/></svg></button>
+          <div class="top-pop gd-pop" id="guidesPop" hidden role="menu"></div>
+        </span>
         <button class="btn ghost" data-a="close" type="button" style="width:40px;padding:0" title="Close (Esc)" aria-label="Close">✕</button>
       </div>
       <div class="cmp-stage"></div>
@@ -173,7 +183,7 @@ export function createCompare(host){
     C = {
       el, stage: el.querySelector(".cmp-stage"), layers: [], sel: null, sound: null, splits: [],
       view: { zoom: 1, cx: 0.5, cy: 0.5 }, T: 0, playing: false, last: 0, fps: 25, raf: 0,
-      candidates: [], built: "", viewWrap: null, viewMedia: null, snaps: {}, focusDirty: true, // post the split windows on the first tick, paused or not
+      candidates: [], built: "", viewWrap: null, viewMedia: null, viewLayer: null, snaps: {}, focusDirty: true, // post the split windows on the first tick, paused or not
     };
     C.cacheTimer = setInterval(pollCaches, 500);
     host.onOpen?.(el); // (the annotator mounts on the overlay before the first rebuild reports a viewer)
@@ -193,6 +203,10 @@ export function createCompare(host){
       if (session.dir === "x" || session.dir === "y") P = { ...P, dir: session.dir };
     }
     bindUi();
+    {
+      const a = document.activeElement;
+      if (a && a !== document.body && !el.contains(a) && a.matches?.("input, textarea, select")) a.blur();
+    }
     build();
     ensureScrubs();
     requestAnimationFrame(() => el.classList.add("on"));
@@ -228,7 +242,7 @@ export function createCompare(host){
   function addLayer(a){
     const used = new Set(C.layers.map((l) => l.color));
     const color = COLORS.find((c) => !used.has(c)) || COLORS[C.layers.length % COLORS.length];
-    C.layers.push({ a, id: a.id, color, vis: true, start: 0, media: [], dur: isVideo(a) ? a.duration || 0 : 0, nw: a.width || 0, nh: a.height || 0 });
+    C.layers.push({ a, id: a.id, color, vis: true, start: 0, media: [], dur: isVideo(a) ? a.duration || 0 : 0, nw: a.width || 0, nh: a.height || 0, turn: host.loadTurn?.(a.id) || { rot: 0, mir: false, mirV: false } });
   }
   async function loadFps(){
     const v = C.layers.find((l) => isVideo(l.a));
@@ -503,7 +517,7 @@ export function createCompare(host){
       const box = document.createElement("div");
       box.className = "cmp-box" + (P.thru ? " thru" : "");
       const stack = document.createElement("div");
-      stack.className = "cmp-stack"; // blend stays inside here; the annotation layer is a sibling, painted once
+      stack.className = "cmp-stack"; // blend stays inside here; each layer's drawings live in `.cmp-ly` so Swipe clips them
       box.appendChild(stack);
       st.appendChild(box);
       for (const l of [...C.layers].reverse()){
@@ -538,7 +552,7 @@ export function createCompare(host){
     }
     C.built = structureKey();
     // The surface node changed: the annotator must bind the new one (a later retune with the same node does not).
-    C.viewWrap = null; C.viewMedia = null;
+    C.viewWrap = null; C.viewMedia = null; C.viewLayer = null;
     mountScrubs();
     applyLook();
     C.syncNow = true;
@@ -625,34 +639,55 @@ export function createCompare(host){
     paintAll();
     reportView();
   }
-  // The selected layer's viewer for the annotator: the box it is drawn in (Stack: the whole box — a drawing
-  // anywhere maps into the selected layer's picture), its media element and its geometry (object-fit: contain
-  // inside the element's box, so a layer of another shape is placed as it is shown). The same element in the
-  // same box is not reported again: hiding another layer or switching Over / Difference must not rebuild it.
+  // The selected layer's viewer for the annotator: wrap is the pointer surface (Stack: the box, tiles: the
+  // cell); layerHost is that layer's `.cmp-ly`, so the drawings sit inside the swipe clip-path. Geometry is
+  // object-fit: contain inside the media element's box. The same wrap + media + layerHost is not reported
+  // again: hiding another layer or switching Over / Difference must not rebuild it.
   function reportView(){
     if (!host.onView) return;
     const l = layer(C.sel);
-    let wrap = null, media = null;
+    let wrap = null, media = null, layerHost = null;
     if (l && l.vis){
       if (stacked()){
         wrap = C.stage.querySelector(".cmp-box");
         media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
+        layerHost = wrap ? q(wrap, ".cmp-ly", l.id) : null;
       } else {
         wrap = q(C.stage, ".cmp-cell", l.id);
         media = l.media.find((m) => m._primary && wrap?.contains(m)) || null;
+        layerHost = wrap ? q(wrap, ".cmp-ly", l.id) : null;
       }
     }
-    if (wrap === C.viewWrap && media === C.viewMedia) return;
+    if (wrap === C.viewWrap && media === C.viewMedia && layerHost === C.viewLayer) return;
     C.viewWrap = wrap;
     C.viewMedia = media;
-    if (!wrap || !media){ host.onView(null); return; }
+    C.viewLayer = layerHost;
+    if (!wrap || !media){ host.onView(null); paintMirBtns(); paintDraws(); return; }
     const geom = () => {
       const x = parseFloat(media.style.left) || 0, y = parseFloat(media.style.top) || 0;
       const w = parseFloat(media.style.width) || 1, h = parseFloat(media.style.height) || 1;
       const nw = l.nw || w, nh = l.nh || h, s = Math.min(w / nw, h / nh);
-      return { x0: x + (w - nw * s) / 2, y0: y + (h - nh * s) / 2, s, w: nw, h: nh, turn: "" };
+      const t = l.turn || { rot: 0, mir: false, mirV: false };
+      const cx = x + w / 2, cy = y + h / 2;
+      const turn = (!t.rot && !t.mir && !t.mirV) ? "" :
+        `translate(${cx}px,${cy}px) rotate(${t.rot}deg) scale(${t.mir ? -1 : 1},${t.mirV ? -1 : 1}) translate(${-cx}px,${-cy}px) `;
+      return { x0: x + (w - nw * s) / 2, y0: y + (h - nh * s) / 2, s, w: nw, h: nh, turn };
     };
-    host.onView({ asset: l.a, wrap, media, isVid: isVideo(l.a), geom, unturn: (x, y) => [x, y] });
+    const unturn = (x, y) => {
+      const t = l.turn || { rot: 0, mir: false, mirV: false };
+      if (!t.rot && !t.mir && !t.mirV) return [x, y];
+      const mx = parseFloat(media.style.left) || 0, my = parseFloat(media.style.top) || 0;
+      const w = parseFloat(media.style.width) || 1, h = parseFloat(media.style.height) || 1;
+      const cx = mx + w / 2, cy = my + h / 2, r = -t.rot * Math.PI / 180;
+      const dx = x - cx, dy = y - cy;
+      let ux = dx * Math.cos(r) - dy * Math.sin(r), uy = dx * Math.sin(r) + dy * Math.cos(r);
+      if (t.mir) ux = -ux;
+      if (t.mirV) uy = -uy;
+      return [cx + ux, cy + uy];
+    };
+    host.onView({ asset: l.a, wrap, media, isVid: isVideo(l.a), geom, unturn, layerHost });
+    paintMirBtns();
+    paintDraws();
   }
   // Positions every media element (shared zoom / pan, the frame layer's size) and the swipe regions.
   function place(){
@@ -665,31 +700,39 @@ export function createCompare(host){
       const s = Math.min(W / rw, H / rh) * C.view.zoom;
       const w = rw * s, h = rh * s;
       const x = W / 2 - C.view.cx * w, y = H / 2 - C.view.cy * h;
-      for (const m of box.querySelectorAll(".cmp-m")) Object.assign(m.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px" });
+      for (const m of box.querySelectorAll(".cmp-m")){
+        Object.assign(m.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px" });
+        const t = m._layer?.turn || { rot: 0, mir: false, mirV: false };
+        m.style.transformOrigin = "center center";
+        m.style.transform = (t.rot || t.mir || t.mirV) ? `rotate(${t.rot}deg) scale(${t.mir ? -1 : 1},${t.mirV ? -1 : 1})` : "";
+      }
     }
     host.onPlaced?.();
-    if (!swiping()) return;
-    const box = boxes[0];
-    if (!box) return;
-    const edges = [0, ...C.splits, 1], horiz = P.dir === "x";
-    // An RV wipe: layer i keeps the view up to its split line (everything before it); what lies past the line
-    // is the layers below.
-    for (const w of box.querySelectorAll(".cmp-ly[data-i]")){
-      const i = Number(w.dataset.i), b = (1 - edges[i + 1]) * 100;
-      w.style.clipPath = horiz ? `inset(0 ${b}% 0 0)` : `inset(0 0 ${b}% 0)`;
+    if (swiping()){
+      const box = boxes[0];
+      if (box){
+        const edges = [0, ...C.splits, 1], horiz = P.dir === "x";
+        // An RV wipe: layer i keeps the view up to its split line (everything before it); what lies past the line
+        // is the layers below.
+        for (const w of box.querySelectorAll(".cmp-ly[data-i]")){
+          const i = Number(w.dataset.i), b = (1 - edges[i + 1]) * 100;
+          w.style.clipPath = horiz ? `inset(0 ${b}% 0 0)` : `inset(0 0 ${b}% 0)`;
+        }
+        for (const lb of box.querySelectorAll(".cmp-lbl:not(.off)")){
+          const i = Number(lb.dataset.i);
+          if (horiz){ lb.style.left = `calc(${edges[i] * 100}% + 10px)`; lb.style.top = "10px"; lb.style.maxWidth = `calc(${(edges[i + 1] - edges[i]) * 100}% - 20px)`; }
+          else { lb.style.left = "10px"; lb.style.top = `calc(${edges[i] * 100}% + 10px)`; lb.style.maxWidth = ""; }
+          lb.hidden = edges[i + 1] - edges[i] < 0.02;
+        }
+        for (const h of box.querySelectorAll(".cmp-split")){
+          const p = C.splits[Number(h.dataset.k)] * 100;
+          h.className = "cmp-split " + (horiz ? "x" : "y");
+          h.style.left = horiz ? p + "%" : "0";
+          h.style.top = horiz ? "0" : p + "%";
+        }
+      }
     }
-    for (const lb of box.querySelectorAll(".cmp-lbl:not(.off)")){
-      const i = Number(lb.dataset.i);
-      if (horiz){ lb.style.left = `calc(${edges[i] * 100}% + 10px)`; lb.style.top = "10px"; lb.style.maxWidth = `calc(${(edges[i + 1] - edges[i]) * 100}% - 20px)`; }
-      else { lb.style.left = "10px"; lb.style.top = `calc(${edges[i] * 100}% + 10px)`; lb.style.maxWidth = ""; }
-      lb.hidden = edges[i + 1] - edges[i] < 0.02;
-    }
-    for (const h of box.querySelectorAll(".cmp-split")){
-      const p = C.splits[Number(h.dataset.k)] * 100;
-      h.className = "cmp-split " + (horiz ? "x" : "y");
-      h.style.left = horiz ? p + "%" : "0";
-      h.style.top = horiz ? "0" : p + "%";
-    }
+    paintDraws();
   }
 
   // ---- time ------------------------------------------------------------------------------------
@@ -902,7 +945,11 @@ export function createCompare(host){
             if (sc && sc.readyState >= 1 && !sc.error){
               m._want = null;
               wantTime(sc, edge + 0.1 / C.fps, C.scrubGen);
-            } else m._want = null;
+            } else {
+              // Until the copy can show, the full file still parks on the edge (lightbox: seek until ready).
+              wantTime(m, clipLocal(l) + 0.1 / C.fps);
+              if (sc) wantTime(sc, edge + 0.1 / C.fps, C.scrubGen);
+            }
           } else if (m.readyState >= 1 && !m.error && !m.seeking && m._want == null && !atPlayhead(l, m)){
             // Parked on its edge frame (frame 0 before it starts, the last frame after it ends): a rebuilt element
             // starts at 0 and a jump (End, a key) does not play it there, and the layer is drawn opaque.
@@ -920,19 +967,19 @@ export function createCompare(host){
           if (l.br){ endBridge(l, !!l.scrub?.hidden); m._want = null; }
           const sc = l.scrub;
           const want = local + 0.1 / C.fps;
-          // The proxy follows the pointer. The full file is not seeked until the drag ends, so two
-          // clips do not fight over the decoder on every move.
+          // The proxy follows the pointer. Until it can show a frame the full file is still seeked
+          // (one in flight), as in the lightbox — a green RAM bar is not a fast long-GOP seek.
           if (C.scrub && sc && sc.readyState >= 1 && !sc.error){
             m._want = null;
             if (!sc.paused) sc.pause();
             wantTime(sc, want, C.scrubGen);
             continue;
           }
-          if (sc && C.scrub){ sc.hidden = true; sc._want = null; }
-          // No proxy yet. Seeking every full file on the way down lands them on different frames
-          // (a long GOP cannot keep up) and can fail a decoder, which leaves the blocked-media
-          // mark up and the compare stuck. Hold the current picture; the release seeks them once.
-          if (C.scrub){ m._want = null; continue; } // _catch stays: the release seeks once
+          if (C.scrub){
+            if (sc){ sc.hidden = true; wantTime(sc, want, C.scrubGen); }
+            wantTime(m, want);
+            continue;
+          }
           if (force || catchUp || Math.abs(m.currentTime - want) > 0.45 / C.fps) wantTime(m, want);
           else if (l.scrub && !l.scrub.hidden) settleScrub(l, m); // (a copy left up by a fast start, already matched)
           catchUp = false;
@@ -1063,6 +1110,7 @@ export function createCompare(host){
     const dir = el.querySelector("[data-a=dir]");
     dir.hidden = !swiping();
     dir.textContent = P.dir === "x" ? "⇹ Side by side" : "⇳ Top / bottom";
+    paintMirBtns();
   }
   function paintLayers(){
     const box = C.el.querySelector(".cmp-layers");
@@ -1126,20 +1174,31 @@ export function createCompare(host){
     l.marks = null; // (asked: not again)
     let rows = [];
     try { rows = await host.api(`/api/annotations?asset_id=${encodeURIComponent(l.id)}`); } catch { return; }
-    if (!C || !C.layers.includes(l) || l.marks) return; // closed, removed, or live marks came first
+    if (!C || !C.layers.includes(l)) return; // closed or removed
     const out = [];
     const add = (t, note) => {
       if (!(t >= 0)) return;
       const m = out.find((x) => Math.abs(x.t - t) < 0.0015);
       if (m) m.note = m.note || note; else out.push({ t, note });
     };
+    const draws = [];
+    const noteIds = new Set();
     for (const r of rows || []){
       if (r.kind === "status" || r.data?.deleted) continue;
       if (r.kind !== "note") add(Number(r.data?.ctx?.t), !!r.data?.note);
-      else for (const key of Object.keys(r.data?.captions || {})) if (key.startsWith("t:")) add(Number(key.slice(2)), true);
+      else {
+        noteIds.add(r.id);
+        for (const key of Object.keys(r.data?.captions || {})) if (key.startsWith("t:")) add(Number(key.slice(2)), true);
+      }
+      if (r.kind === "note") continue;
+      const it = { id: r.id, kind: r.kind, sub: r.shape_kind || null, z: r.z_index || 0, data: r.data || {} };
+      if (RC.validItem(it)) draws.push(it);
     }
-    l.marks = out;
+    if (!Array.isArray(l.marks)) l.marks = out; // live marks from the annotator win
+    if (!l.draws){ l.draws = draws; l.noteIds = noteIds; }
     paintTimeline();
+    paintDraws();
+    host.onDraws?.();
   }
   // The annotator's own marks for a layer's file ([{t, note}]), as they change.
   function setMarks(id, marks){
@@ -1148,6 +1207,104 @@ export function createCompare(host){
     for (const l of C.layers) if (l.id === id && isVideo(l.a)){ l.marks = marks.map((m) => ({ t: m.t, note: !!m.note })); hit = true; }
     if (hit) paintTimeline();
   }
+  function setDraws(id, items, noteIds){
+    const l = C && layer(id);
+    if (!l) return;
+    l.draws = items || [];
+    l.noteIds = noteIds instanceof Set ? noteIds : new Set(noteIds || []);
+    paintDraws();
+    host.onDraws?.();
+  }
+  function layersHaveDraws(){
+    if (!C) return false;
+    return C.layers.some((l) => l.vis && (l.draws || []).length);
+  }
+  function selTime(){
+    if (!C) return null;
+    const l = layer(C.sel);
+    if (!l || !isVideo(l.a)) return null;
+    return Math.max(0, C.T - l.start / C.fps);
+  }
+  function lyOf(l){
+    const box = stacked() ? C.stage.querySelector(".cmp-box") : q(C.stage, ".cmp-cell", l.id);
+    return box ? q(box, ".cmp-ly", l.id) : null;
+  }
+  function localFrame(l){
+    const fd = 1 / (C.fps || 25);
+    const t = Math.max(0, C.T - l.start / C.fps);
+    const fs = Math.round((Math.floor(t / fd + 1e-6) + 0.01) * fd * 1000) / 1000;
+    return { t: fs, fps: C.fps };
+  }
+  function visibleDraws(l){
+    const notes = l.noteIds || new Set();
+    const at = isVideo(l.a) ? localFrame(l) : null;
+    const list = [];
+    for (const it of l.draws || []){
+      if (it.kind === "note" || it.kind === "status") continue;
+      if (it.data?.deleted) continue;
+      if (it.data?.note && !notes.has(it.data.note)) continue;
+      if (!RC.ctxVisible(it.data?.ctx, at)) continue;
+      list.push(it);
+    }
+    return list;
+  }
+  function pinNums(items){
+    const m = new Map();
+    let n = 0;
+    for (const it of items.slice().sort((a, b) => (a.z || 0) - (b.z || 0))){
+      if (RC.typeOf(it) === "pin") m.set(it.id, ++n);
+    }
+    return (it) => m.get(it.id) || 0;
+  }
+  function layerDrawGeom(l, media, hostEl){
+    const x = parseFloat(media.style.left) || 0, y = parseFloat(media.style.top) || 0;
+    const w = parseFloat(media.style.width) || 1, h = parseFloat(media.style.height) || 1;
+    const nw = l.nw || media.videoWidth || media.naturalWidth || w;
+    const nh = l.nh || media.videoHeight || media.naturalHeight || h;
+    const s = Math.min(w / nw, h / nh) || 1;
+    const t = l.turn || { rot: 0, mir: false, mirV: false };
+    const cx = x + w / 2, cy = y + h / 2;
+    const turn = (t.rot || t.mir || t.mirV)
+      ? `translate(${cx}px,${cy}px) rotate(${t.rot || 0}deg) scale(${t.mir ? -1 : 1},${t.mirV ? -1 : 1}) translate(${-cx}px,${-cy}px)`
+      : "";
+    return { ox: x + (w - nw * s) / 2, oy: y + (h - nh * s) / 2, s, w: hostEl.clientWidth || w, h: hostEl.clientHeight || h, turn };
+  }
+  // Other layers' drawings (the selected layer's are the annotator's `.an-layer` on that `.cmp-ly`).
+  // Inside the layer so Swipe's clip-path cuts them with the video.
+  function paintDraws(){
+    if (!C) return;
+    try { paintDrawsInner(); } catch (e) { console.warn("Sight: compare drawings", e); }
+  }
+  function paintDrawsInner(){
+    const hide = !!host.drawingsHidden?.();
+    for (const l of C.layers){
+      const w = lyOf(l);
+      if (!w) continue;
+      let el = w.querySelector(":scope > .cmp-draws");
+      const skip = hide || !l.vis || (l.id === C.sel && host.annotPaintsSel?.());
+      const items = skip ? [] : visibleDraws(l);
+      if (!items.length){ el?.remove(); continue; }
+      const media = l.media.find((m) => m._primary && w.contains(m));
+      if (!media){ el?.remove(); continue; }
+      const g = layerDrawGeom(l, media, w);
+      const html = RC.svgMarkup(items, pinNums(items));
+      const vb = `${RC.r2(-g.ox / g.s)} ${RC.r2(-g.oy / g.s)} ${RC.r2(g.w / g.s)} ${RC.r2(g.h / g.s)}`;
+      const sig = vb + "|" + g.turn + "|" + html;
+      if (!el){
+        el = document.createElement("div");
+        el.className = "cmp-draws";
+        el.innerHTML = `<svg class="cmp-draws-svg" xmlns="http://www.w3.org/2000/svg"></svg>`;
+        w.appendChild(el);
+      }
+      if (el.dataset.sig === sig) continue;
+      el.dataset.sig = sig;
+      el.style.transformOrigin = "0 0";
+      el.style.transform = g.turn;
+      const svg = el.firstElementChild;
+      svg.setAttribute("viewBox", vb);
+      svg.innerHTML = html;
+    }
+  }
   function paintTime(fast){
     if (!C) return;
     const [lo, hi] = range(), span = Math.max(1e-6, hi - lo);
@@ -1155,6 +1312,8 @@ export function createCompare(host){
     if (head) head.style.left = ((C.T - lo) / span * 100) + "%";
     const t = C.el.querySelector(".cmp-time");
     if (t) t.textContent = `${fmtT(C.T, C.fps)}  ·  f ${Math.round(C.T * C.fps)}${C.wait ? "  ·  loading" : ""}`;
+    host.onTime?.();
+    paintDraws();
     if (fast) return;
     C.el.querySelector(".cmp-play").textContent = C.playing ? "❚❚" : "▶";
   }
@@ -1219,12 +1378,37 @@ export function createCompare(host){
     for (const l of C.layers) for (const m of l.media) if (m.tagName === "VIDEO") m.muted = !(m._primary && l.id === C.sound);
     paintLayers();
   }
+  function stashDraws(id){
+    const pack = host.drawList?.();
+    const l = id && layer(id);
+    if (!l || !pack) return;
+    l.draws = pack.items || [];
+    l.noteIds = new Set(pack.noteIds || []);
+  }
   function select(id){
     const changed = C.sel !== id;
+    if (changed) stashDraws(C.sel);
     C.sel = id;
     C.stage.querySelectorAll(".cmp-cell").forEach((c) => c.classList.toggle("sel", c.dataset.id === id));
     paintLayers();
     if (changed) reportView();
+    else paintMirBtns();
+  }
+  function paintMirBtns(){
+    const t = layer(C.sel)?.turn || { mir: false, mirV: false };
+    C.el.querySelector("#mirBtn")?.classList.toggle("on", !!t.mir);
+    C.el.querySelector("#mirVBtn")?.classList.toggle("on", !!t.mirV);
+  }
+  // The lightbox's per-file turn / mirror, on the selected layer (Shift+M / Shift+V, the bar buttons).
+  function toggleMir(axis){
+    const l = layer(C.sel);
+    if (!l) return;
+    l.turn = { rot: l.turn?.rot || 0, mir: !!l.turn?.mir, mirV: !!l.turn?.mirV };
+    if (axis === "x") l.turn.mir = !l.turn.mir;
+    else l.turn.mirV = !l.turn.mirV;
+    host.saveTurn?.(l.id, l.turn);
+    place();
+    paintMirBtns();
   }
   function selectStep(d){
     const i = C.layers.findIndex((l) => l.id === C.sel);
@@ -1307,6 +1491,29 @@ export function createCompare(host){
   function scrubTo(t){
     setT(t, true);
     C.T = snapT(C.T);
+  }
+  // Ctrl held: the nearest annotated frame on any visible clip (the ticks), as the lightbox's
+  // scrubSnap / seqSnap. Selected layer lands through the annotator (a quarter into the frame).
+  function snapPlayhead(T, tolS){
+    let best = null, bd = tolS;
+    for (const l of vids().filter((x) => x.vis)){
+      if (l.marks === undefined) loadMarks(l);
+      for (const m of l.marks || []){
+        const mt = l.start / C.fps + m.t, d = Math.abs(mt - T);
+        if (d <= bd){ bd = d; best = { l, t: m.t, mt }; }
+      }
+    }
+    if (!best) return T;
+    if (best.l.id === C.sel){
+      const local = host.snapTime?.(best.t, 1e-6);
+      if (local != null) return best.l.start / C.fps + local;
+    }
+    return best.mt + 0.001;
+  }
+  function maybeSnap(t, ev, width){
+    if (!host.scrubSnapped?.(ev)) return t;
+    const [lo, hi] = range();
+    return snapPlayhead(t, (host.snapPx?.() || 22) / Math.max(1, width) * Math.max(1e-6, hi - lo) * (ev.shiftKey ? FINE_SCRUB : 1));
   }
   function scrubEnd(){
     C.scrub = null;
@@ -1394,6 +1601,7 @@ export function createCompare(host){
   function bindUi(){
     const el = C.el;
     el.querySelector(".cmp-bar").addEventListener("click", (e) => {
+      if (C.scrub){ C.dropScrubListeners?.(); scrubEnd(); }
       const b = e.target.closest("button");
       if (!b) return;
       const g = b.closest(".cmp-seg")?.dataset.g;
@@ -1406,6 +1614,8 @@ export function createCompare(host){
       else if (a === "thru") setPref("thru", !P.thru);
       else if (a === "dir") setPref("dir", P.dir === "x" ? "y" : "x");
     });
+    el.querySelector("#mirBtn").onclick = () => toggleMir("x");
+    el.querySelector("#mirVBtn").onclick = () => toggleMir("y");
     el.querySelector(".cmp-tl").addEventListener("click", (e) => {
       const a = e.target.closest("button")?.dataset.a;
       if (a === "play") togglePlay();
@@ -1426,9 +1636,13 @@ export function createCompare(host){
       startScrub(e, track, (ev) => {
         // Once Shift has been used the drag stays relative (letting go of Shift must not jump to the pointer).
         if (ev.shiftKey !== d.fine){ d.fine = ev.shiftKey; d.x = ev.clientX; d.T0 = C.T; if (d.fine) d.rel = true; }
-        if (!d.rel) return abs(ev);
-        const [lo, hi] = range();
-        return d.T0 + (ev.clientX - d.x) / Math.max(1, track.clientWidth) * (hi - lo) * (d.fine ? 0.1 : 1);
+        let t;
+        if (!d.rel) t = abs(ev);
+        else {
+          const [lo, hi] = range();
+          t = d.T0 + (ev.clientX - d.x) / Math.max(1, track.clientWidth) * (hi - lo) * (d.fine ? 0.1 : 1);
+        }
+        return maybeSnap(t, ev, track.clientWidth);
       });
     });
     const layers = el.querySelector(".cmp-layers");
@@ -1672,6 +1886,11 @@ export function createCompare(host){
           if (id && id !== C.sel) select(id);
         }
         // A timeline scrub is running (another finger): this press does nothing, it must not pan the picture.
+        // A leftover C.scrub from a lost pointer (no up) would freeze the stage and the bar: drop it.
+        if (C.scrub && C.scrub.pid !== e.pointerId){
+          C.dropScrubListeners?.();
+          scrubEnd();
+        }
         if (C.scrub) return {};
         // (Alt+left pans, except while annotating: there Alt+left moves a split, see wantsPress.)
         if (e.button === 0 && e.altKey && !host.annotating?.()) return "pan";
@@ -1688,10 +1907,10 @@ export function createCompare(host){
           s = { T0: C.T };
           return true;
         },
-        to: (frac) => {
+        to: (frac, ev) => {
           if (!C || !s) return;
           const [lo, hi] = range();
-          scrubTo(s.T0 + frac * (hi - lo));
+          scrubTo(maybeSnap(s.T0 + frac * (hi - lo), ev, C.stage.clientWidth));
         },
         end: () => { s = null; if (C?.scrub) scrubEnd(); },
       },
@@ -1768,7 +1987,13 @@ export function createCompare(host){
   function onKey(e){
     if (!C) return false;
     const tag = e.target?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return true;
+    if (tag === "INPUT" || tag === "TEXTAREA"){
+      // A field still focused under the overlay (library search, a closed pop) swallowed every key
+      // and looked like compare had died. Only a visible field in this overlay owns the keyboard.
+      const alive = C.el.contains(e.target) && e.target.offsetParent;
+      if (alive) return true;
+      try { e.target.blur(); } catch {}
+    }
     runHotkeys(e, [
       ["Escape", () => close()], ["KeyK", () => close()],
       ["Space", () => { if (!e.repeat) togglePlay(); }],
@@ -1785,6 +2010,7 @@ export function createCompare(host){
       ["KeyV", () => { if (swiping()) setPref("dir", P.dir === "x" ? "y" : "x"); }],
       ["KeyF", () => fit()], ["Digit0", () => actual()],
       ["KeyH", () => toggleVis(C.sel)],
+      ["Shift+KeyM", () => toggleMir("x")], ["Shift+KeyV", () => toggleMir("y")],
       ["KeyL", () => setPref("loop", !P.loop)],
     ]);
     // Everything else stays inside the compare view (the library / lightbox keys underneath
@@ -1944,6 +2170,9 @@ export function createCompare(host){
         [vid ? ["Middle-drag", "Alt+drag"] : ["Drag", "Middle-drag"], "Pan"],
         [["Double-click", "F"], "Fit"],
         [["0"], "First visible layer at 100 %"],
+        [["Shift+M"], "Mirror the selected layer — the mirror button"],
+        [["Shift+V"], "Flip the selected layer upside down — the flip button"],
+        [["Guides"], "Grid rulers, or perspective with 1, 2 or 3 vanishing points — the guides button"],
         [["Drag a split line"], "Move that split (Swipe)"],
         [["Shift (held)"], "Slower drags: scrub, zoom, pan, a split, a clip's offset"],
         [["Pinch"], "Touch: zoom and pan with two fingers"],
@@ -1951,6 +2180,7 @@ export function createCompare(host){
       ...(vid ? [{ group: "Video", rows: [
         [["Space", "Click"], "Play / pause every clip in sync (touch: tap)"],
         [["Drag"], "Scrub every clip (the view's width is the whole timeline; touch: one finger)"],
+        [["Ctrl (held)"], "While scrubbing (the picture or the timeline): snap to the nearest drawing or note frame"],
         [[",", "."], "Previous / next frame (also ← / →)"],
         [["Shift+,", "Shift+."], "10 frames back / on (also Shift+← / Shift+→)"],
         [["Home", "End"], "Start / end of the timeline"],
@@ -1963,13 +2193,15 @@ export function createCompare(host){
         [["?"], "Show / hide this list"],
         [["A"], "Annotate the selected layer (its own ? lists the drawing keys)"],
         [["C"], "Notes of the selected layer"],
+        [["Shift+H"], "Hide / show the drawings and the guides — the eye button"],
         [["Esc", "K"], "Close the comparison"],
         [["Ctrl+K"], "Command palette"],
       ] },
     ];
   }
 
-  return { open, close, isOpen: () => !!C, onKey, helpGroups, session, pause, seekLayer, relayout, setMarks, selectedId: () => C?.sel || null, wantsPress, captureView,
+  return { open, close, isOpen: () => !!C, onKey, helpGroups, session, pause, seekLayer, relayout, setMarks, setDraws, selectedId: () => C?.sel || null, wantsPress, captureView,
+    selTime, layersHaveDraws, syncDraws: paintDraws,
     ready: () => C?.fpsReady || Promise.resolve() };
 }
 
@@ -1998,7 +2230,7 @@ function injectStyles(){
 .cmp-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: grid; gap: 2px; background: #000; touch-action: none; user-select: none; }
 .cmp-stage.lay-grid, .cmp-stage.lay-row, .cmp-stage.lay-col { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); background: #19191c; }
 .cmp-box, .cmp-cell { position: relative; overflow: hidden; background: #000; isolation: isolate; min-width: 0; min-height: 0; }
-/* Blend stays in the stack. The annotation layer is a sibling of it, so it is painted once. */
+/* Blend stays in the stack. Each layer's drawings (.an-layer / .cmp-draws) live in .cmp-ly. */
 .cmp-stack { position: absolute; inset: 0; isolation: isolate; z-index: 0; }
 .cmp-ly.off, .cmp-cell.off, .cmp-lbl.off { display: none !important; }
 .cmp-cell.sel { box-shadow: inset 0 0 0 1px var(--accent); }
@@ -2006,10 +2238,13 @@ function injectStyles(){
    clipped. Without a stacking context here its proxy joins the box and covers every other swipe
    region, so a drag shows only the bottom layer. */
 .cmp-ly { position: absolute; inset: 0; pointer-events: none; isolation: isolate; }
+.cmp-draws { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+.cmp-draws svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 /* Stack: a layer covers the ones below it whole (black past its picture / under its alpha) unless See-through
    is on; then a clip outside its span is not drawn. Tile cells: an out clip just shows its edge frame. */
 .cmp-box:not(.thru) .cmp-ly { background: #000; }
 .cmp-box.thru .cmp-ly.out .cmp-m { clip-path: inset(50%); } /* (a clip-path, not opacity: see syncVideos) */
+.cmp-box.thru .cmp-ly.out .cmp-draws, .cmp-box.thru .cmp-ly.out .an-layer { visibility: hidden; }
 .cmp-m { position: absolute; object-fit: contain; max-width: none; image-rendering: auto;
   /* Windows promotes a plain <video> to a hardware overlay. Only a couple of those exist, so the
      clips that do not get one keep their old picture until playback stops. The overlay is also a

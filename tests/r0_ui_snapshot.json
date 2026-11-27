@@ -266,6 +266,12 @@
   "aria-label: Close the comparison",
   "title: Draw & write notes on the selected layer (A) — notes go to its file and remember this comparison. Right-click or long-press: reset every tool's settings",
   "aria-label: Annotate",
+  "title: Mirror the selected layer (Shift+M)",
+  "aria-label: Mirror",
+  "title: Flip the selected layer upside down (Shift+V)",
+  "aria-label: Flip upside down",
+  "title: Guides — grid rulers, or 1-, 2- or 3-point perspective",
+  "aria-label: Guides",
   "title: Close (Esc)",
   "aria-label: Close",
   "text: ✕"
@@ -274,8 +280,8 @@
   "Compare — controls",
   "Layout | 1 = Stack | 2 = Tile | 3 = Row | 4 = Column | S = Swipe on / off (Stack): split lines cut the stack, one region per layer | V = Split direction: side by side / top and bottom (Swipe) | D = Over / Difference (Stack): equal pixels go black | T = See-through (Stack): alpha and the space past a picture show the layers below",
   "Layers | ↑ / ↓ = Select the previous / next layer | H = Hide / show the selected layer | Click a chip = Hide / show that layer (while annotating: pick it to annotate) | Ctrl+click a chip = Solo that layer (again: every layer) | Middle-click a chip / × = Remove the layer | Drag a chip = Reorder the layers (touch: hold, then drag) | ⤢ = Open the file in the viewer (the set is kept) | + Add = Bring in another version",
-  "View | Wheel / Right-drag = Zoom around the cursor | Drag / Middle-drag = Pan | Double-click / F = Fit | 0 = First visible layer at 100 % | Drag a split line = Move that split (Swipe) | Shift (held) = Slower drags: scrub, zoom, pan, a split, a clip's offset | Pinch = Touch: zoom and pan with two fingers",
-  "General | ? = Show / hide this list | A = Annotate the selected layer (its own ? lists the drawing keys) | C = Notes of the selected layer | Esc / K = Close the comparison | Ctrl+K = Command palette",
+  "View | Wheel / Right-drag = Zoom around the cursor | Drag / Middle-drag = Pan | Double-click / F = Fit | 0 = First visible layer at 100 % | Shift+M = Mirror the selected layer — the mirror button | Shift+V = Flip the selected layer upside down — the flip button | Guides = Grid rulers, or perspective with 1, 2 or 3 vanishing points — the guides button | Drag a split line = Move that split (Swipe) | Shift (held) = Slower drags: scrub, zoom, pan, a split, a clip's offset | Pinch = Touch: zoom and pan with two fingers",
+  "General | ? = Show / hide this list | A = Annotate the selected layer (its own ? lists the drawing keys) | C = Notes of the selected layer | Shift+H = Hide / show the drawings and the guides — the eye button | Esc / K = Close the comparison | Ctrl+K = Command palette",
   "Touch: tap plays / pauses, one finger scrubs (pictures only: pans), two fingers pinch-zoom and pan; every option has a button in the top bar."
  ],
  "board.top": [

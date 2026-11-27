@@ -962,9 +962,12 @@ import { mountGuides } from "/static/guides.js";
 import { frameObject3d, buildExplodeRig, applyExplode, applyTurns as applyModelTurns, buildEnvTexture,
   dropDeadTextures, stlMesh, plyMesh, plyHeaderIsSplat, parseUsd, SPLAT_EXT as SPLAT_EXT_LIST, SPLAT_FILE_TYPE_BY_EXT, turnSplat, splatHome, splatCountHint, splatLodFor, splatSource, splatBox, tintGrid, FBX_TEXTURE_WAIT_MS, ENV_PRESETS, applyBaseMaterial, applyXray,
   setWireOverlay, readbackCanvas, textureQuad, createUvPainter, createAnimator, HIGHLIGHT_COLOR, highlightMaterials, meshHighlight } from "/static/model3d-core.js";
-// Guides share the eye's hidden state with the lightbox drawings (Shift+H / the eye button hide both).
+// Guides share the eye's hidden state with the drawings (Shift+H / the eye button hide both) — the
+// lightbox's annotator, or the compare's while a comparison is open.
 const guides = mountGuides({ registerAutoClose: (...a) => registerAutoClose(...a), putSetting: (k, v) => putSetting(k, v),
-  hidden: () => !!annot.hidden?.(), reveal: () => annot.setHidden?.(false), onModeChange: () => annot.repaintEye?.() });
+  hidden: () => !!(cmp?.isOpen() ? cmpAnnot : annot).hidden?.(),
+  reveal: () => (cmp?.isOpen() ? cmpAnnot : annot).setHidden?.(false),
+  onModeChange: () => (cmp?.isOpen() ? cmpAnnot : annot).repaintEye?.() });
 const KIND ={ image:"Images", video:"Video", audio:"Audio", model3d:"3D", document:"Documents", font:"Fonts", design:"Design" };
 // Sidebar icon per kind (ids of the ICONS catalogue) for the Types rows when "Sidebar icons" is on.
 const KIND_ICON = { image:"image", video:"film", audio:"music", model3d:"box", document:"file", font:"font", design:"palette" };
@@ -2052,6 +2055,8 @@ const annot = createAnnotator({
   // The eye (Shift+H) also hides / shows the guides, and shows while only guides are on.
   hasGuides: () => guides.active(),
   onHiddenChange: () => guides.refresh(),
+  // While a drag seeks the scrub copy, drawings follow scrubT, not the still-seeking full file.
+  videoTime: () => (light?.scrubT != null ? light.scrubT : null),
 });
 // The same tools on a Canvas board (annotate.js board mode): a second annotator, mounted in the board view by
 // canvas.js, which points it at each board and feeds it the camera. Drawings are free in world coordinates.
@@ -2084,7 +2089,6 @@ let cmpAnnotUsed = new Set(); // files annotated in this compare (the lightbox r
 let cmpView = null;           // the selected layer's viewer as compare last reported it (null: none visible)
 const cmpAnnot = createAnnotator({
   ...annotBase,
-  showWhileWatching: false,   // drawings only while annotating here (its eye shows while drawing)
   // The compare's own top bar has the lightbox's notes button and eye (compare.js), so the notes read the same way.
   notesBtn: () => document.querySelector(".cmp .cmp-notesb"),
   eyeBtn: () => document.querySelector(".cmp .cmp-eyeb"),
@@ -2101,7 +2105,11 @@ const cmpAnnot = createAnnotator({
   pauseVideo: () => cmp.pause(),
   seekVideo: (t) => cmp.seekLayer(cmp.selectedId(), t),
   noteExtra: () => { const sess = cmp.session(); return sess && sess.ids.length > 1 ? { compare: sess } : null; },
-  passThrough: (e) => cmp.wantsPress(e),   // a split under the finger / Alt+drag: compare's, not a stroke
+  passThrough: (e) => cmp.wantsPress(e) || !!e.target.closest?.(".gd-hit, .gd-edit"),   // a split / Alt+drag, or a guide
+  hasGuides: () => guides.active(),
+  onHiddenChange: () => { guides.refresh(); cmp.syncDraws?.(); },
+  stackHasDrawings: () => cmp.layersHaveDraws?.(),
+  videoTime: () => cmp.selTime?.(),
   captureView: (dpr) => cmp.captureView(dpr), // the screenshot is the whole comparison as shown
   onModeChange: (on) => {
     if (on && cmpAnnotAsset) cmpAnnotUsed.add(cmpAnnotAsset);
@@ -2111,7 +2119,12 @@ const cmpAnnot = createAnnotator({
   onReviewChanged: () => { scheduleRefreshItems(); scheduleMeta(); },
   onLooseDrawings: (aid, n) => paintLooseDraw(aid, n),
   // The selected layer's timeline marks, live, for compare's shared timeline (not while its rows still load).
-  marksChanged: () => { if (cmpAnnotAsset && !cmpAnnot.loading()) cmp.setMarks(cmpAnnotAsset, cmpAnnot.marks()); },
+  marksChanged: () => {
+    if (!cmpAnnotAsset || cmpAnnot.loading()) return;
+    cmp.setMarks(cmpAnnotAsset, cmpAnnot.marks());
+    const d = cmpAnnot.drawList();
+    cmp.setDraws(cmpAnnotAsset, d.items, d.noteIds);
+  },
   // The panel's versions row: open a version in the viewer / compare those versions.
   // (`keep`: as the lightbox annotator's — the file already showing re-reads its notes instead of opening again)
   openAsset: async (id, opts) => { const a = assetById(id) || await api(`/api/assets/${id}`).catch(() => null); if (!a) return; cmp.close(); if (opts?.keep && light?.id === a.id){ annot.reload(); return; } if (light) showInLight(a); else toggleLight(a); },
@@ -2121,6 +2134,7 @@ function cmpBind(){
   if (!cmpView) return false;
   if (cmpAnnotAsset !== cmpView.asset.id){ cmpAnnotAsset = cmpView.asset.id; cmpAnnot.setAsset(cmpView.asset); }
   cmpAnnot.bind2d(cmpView);
+  cmpAnnot.repaintEye();
   if (cmpAnnot.isOn()) cmpAnnotUsed.add(cmpAnnotAsset);
   return true;
 }
@@ -2145,19 +2159,44 @@ const cmp = createCompare({
   openInLight: (a, files) => switchViewMode("one", files || [a], a.id), // ⤢ = One on that layer (the set's order kept)
   paintModes: (box, files) => paintModes(box, files, "cmp"), // the One / Sequence / Compare switch in its bar
   showHelp: () => openModeHelp(),  // its "?" button
-  onOpen: (el) => { cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); bindAnnoReset(el.querySelector(".cmp-annb"), [annot, boardAnnot, cmpAnnot]); },
+  onOpen: (el) => {
+    cmpAnnotUsed = new Set(); cmpView = null; cmpAnnotAsset = null; cmpAnnot.mount(el); bindAnnoReset(el.querySelector(".cmp-annb"), [annot, boardAnnot, cmpAnnot]);
+    cmpGuideHost = { el, guideView: () => cmpView?.wrap || el.querySelector(".cmp-box, .cmp-cell:not(.off)"), guideGeom: null };
+    guides.bind(cmpGuideHost);
+  },
   onView: (view) => {
     cmpView = view;
+    if (cmpGuideHost) cmpGuideHost.guideGeom = view?.geom || null;
     // The selected layer hidden: annotating stops (a later A / ✎ refuses until a layer is shown again).
-    if (!view){ cmpAnnot.toggle(false); return; }
+    if (!view){ cmpAnnot.toggle(false); guides.setAsset(null); return; }
     cmpBind(); // (the selected layer's notes: the notes button counts them and opens them for reading)
+    guides.setAsset(view.asset.id);
+    cmpGuideHost?.onGuideView?.();
   },
-  onPlaced: () => cmpAnnot.viewChanged(),
+  onPlaced: () => { cmpAnnot.viewChanged(); cmpGuideHost?.onGuideView?.(); },
+  onTime: () => cmpAnnot.followPlayhead?.(),
+  drawingsHidden: () => !!cmpAnnot.hidden?.(),
+  annotPaintsSel: () => !cmpAnnot.hidden() && !!cmpView,
+  drawList: () => cmpAnnot.drawList?.(),
+  onDraws: () => cmpAnnot.repaintEye?.(),
   onAnnotButton: () => cmpToggleAnnot(),
   annotating: () => cmpAnnot.isOn(),
   cacheGen: () => cacheGen, // compare's focus posts carry it, so a late lightbox post cannot take the windows back
   abortAnnot: () => cmpAnnot.abortGesture(), // a second finger: a pinch drops the stroke the first one began
+  loadTurn: (id) => loadTurn(id),
+  saveTurn: (id, t) => saveTurn(id, t),
+  scrubSnapped: (e) => scrubSnapped(e),
+  snapPx: () => snapPx(),
+  snapTime: (t, tol) => cmpAnnot.snapTime(t, tol),
   onClose: () => {
+    guides.close();
+    cmpGuideHost = null;
+    if (light){
+      guides.bind(light);
+      const a = light.asset;
+      const flat = a && (a.kind === "image" || a.kind === "video" || a.ext === ".psd");
+      guides.setAsset(flat ? a.id : null);
+    }
     cmpAnnot.unmount();
     cmpAnnotAsset = null; cmpView = null;
     // Replacing this comparison with another: retire its posts, and leave the lightbox held.
@@ -2179,6 +2218,7 @@ const cmp = createCompare({
   },
 });
 let cmpAnnotAsset = null;
+let cmpGuideHost = null; // guides.js bind target while compare is open (the lightbox's is rebound on close)
 let cacheGen = 0; // bumped when the owner of the RAM windows changes (compare opens, compare closes)
 let compareSwap = 0; // openCompare calls still in flight: their close must not hand the windows back
 function bumpCacheGen(){ return ++cacheGen; }
@@ -11088,7 +11128,7 @@ document.addEventListener("keydown", (e) => {
     if (cmpAnnot.helpOpen()){ cmpAnnot.onKey(e); return; }
     if (cmpAnnot.isOn() && cmpAnnot.onKey(e)) return;
     if (!typing && !e.repeat && hotkey(e, "KeyA")){ e.preventDefault(); cmpToggleAnnot(); return; }
-    if (!typing && !cmpAnnot.isOn() && hotkey(e, "KeyC")){ e.preventDefault(); cmpAnnot.onKey(e); return; } // the notes panel, as in the lightbox
+    if (!typing && !cmpAnnot.isOn() && (hotkey(e, "KeyC") || hotkey(e, "Shift+KeyH"))){ e.preventDefault(); cmpAnnot.onKey(e); return; } // notes / the eye, as in the lightbox
     if (!typing && isHelpKey(e)){ e.preventDefault(); if (!e.repeat) openModeHelp(); return; } // the compare's controls
     if (cmp.onKey(e)) return;
     if (hotkey(e, "Shift+KeyH") || hotkey(e, "KeyC")) return;   // never the lightbox's eye / notes panel behind the compare

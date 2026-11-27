@@ -21,7 +21,7 @@
   double-click).
 - **Fit and find** — in the lightbox `F` fits the picture / video to the frame (as a double-click does); over the
   thumbnail grid `F` scrolls it to the selected files. The cursor shows what a held R / Alt / Shift does on a picture or video (turn, scrub).
-- **Guides** — in the lightbox of a picture, a PSD or a video, the guides button in the top bar opens **Grid** or
+- **Guides** — in the lightbox or version compare of a picture, a PSD or a video, the guides button in the top bar opens **Grid** or
   **Perspective** with 1, 2 or 3 vanishing points (the count beside it; choose an item again, or **Off**, to hide it). **Grid** puts rulers just
   outside the top and left edges of the picture, in image pixels: drag down from the top ruler for a vertical guide,
   drag right from the left ruler for a horizontal one. A guide may go past the picture; its ruler then reaches out
@@ -250,7 +250,8 @@
     the top of the viewer (`Shift+M`) mirrors it left to right, and the flip button next to it
     (`Shift+V`) turns it upside down; Sight remembers all three per file. Only the
     view changes: the file and the drawings on it stay as they are (drawings follow the turned /
-    flipped picture). The version compare shows every file unturned and unmirrored. Mirror, flip and the annotate
+    flipped picture). The version compare uses the same memory on the selected layer (its own mirror and
+    flip buttons, `Shift+M` / `Shift+V`). Mirror, flip and the annotate
     button show only for pictures, PSDs and video (annotate also for 3D models); documents hide them.
   - **Reset the toolbar** — right-click the pen button (the one that turns annotating on), or long-press it
     with a finger: every tool's colours, sizes and options, the hold time and the frame stamp's look return
@@ -731,7 +732,9 @@
     goes on from where you let go. A click or drag while playing starts again almost at once: each clip
     plays from its small scrub copy for a moment while the full file catches up, then the full file takes over. Each clip gets a small scrub copy (a keyframe every few frames) as soon as
     the comparison opens, and a drag shows those, so several clips follow the pointer together. Until a copy
-    is ready, the picture stays where it was; letting go jumps every clip to that frame together. A clip
+    is ready, that clip's full file is still seeked (the green RAM bar is not a fast long-GOP seek, as in the
+    viewer). `Ctrl` held while scrubbing snaps the playhead to a frame with a drawing or a note (the ticks),
+    as in the viewer — the drawings of that frame show while the pointer is still down. A clip
     you have dragged past shows its last frame, and one the playhead has not reached shows its first. The RAM cache (Settings) is shared between the clips around the playhead as soon as the comparison opens, paused or playing. Each clip has a **first-frame offset** (drag the number on its chip sideways to
     slide the clip frame by frame and line it up by eye, `Shift` slower; click it to type a number; or `[` / `]`
     for the selected clip, `Shift` ×10): where its first frame sits on the
@@ -739,7 +742,9 @@
     sits on the timeline; the green on that bar is the part of the file actually held in RAM (it grows as
     the cache fills, from the playhead, and a gap stays a gap). 🔈 picks whose sound plays.
   - The right end of the top bar is the viewer's: the notes button (`C`, reads the selected layer's notes),
-    the eye (while drawing), the compare button (closes the comparison), annotate and ✕.
+    the eye (`Shift+H`, drawings stay on show while watching, on every file in the stack that has them on
+    this frame; Swipe cuts them with that layer's video), the compare button (closes the comparison),
+    annotate, mirror / flip of the selected layer, guides and ✕.
   - **Annotate** (✎ in the top bar, or `A`): the notes panel and drawing tools of the viewer, on the
     **selected layer** — notes and drawings go to that file, at its own frame (a video layer's local
     time). While annotating, a click on a layer chip picks that layer (showing it if hidden) instead of hiding it — that is how you annotate another file. Ctrl+click still solos. A note written here remembers the

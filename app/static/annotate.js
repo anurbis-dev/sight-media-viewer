@@ -3,7 +3,9 @@
 // .srev review package (see app/review.py).
 //
 // Self-contained ES module (zero-build): index.html creates one annotator with createAnnotator()
-// and drives it from the lightbox (mount/unmount, setAsset, bind2d/bind3d, onKey).
+// and drives it from the lightbox (mount/unmount, setAsset, bind2d/bind3d, onKey). Compare binds
+// `layerHost` to the selected `.cmp-ly` and `videoTime` to the shared clock so drawings follow the
+// playhead during a scrub and sit inside the swipe.
 //
 // Board mode (host.board, S.kind "board"): a second annotator drives the Canvas board view (canvas.js). The
 // "asset" is the board ({id, kind: "board", name}), drawings are FREE in world coordinates (rows scope='board',
@@ -1128,6 +1130,13 @@ export function createAnnotator(host){
   // video itself; the lightbox lets the annotator drive the element directly.
   const vidPause = (v) => { if (host.pauseVideo) host.pauseVideo(); else if (!v.paused) v.pause(); };
   const vidSeek = (v, t) => { if (host.seekVideo) host.seekVideo(t); else v.currentTime = t; };
+  // The frame the drawings follow: the host's playhead while a scrub / shared clock is ahead of the
+  // element's currentTime (compare's C.T, the lightbox's scrubT while the copy is the picture).
+  function vidNow(){
+    const hinted = host.videoTime?.();
+    if (hinted != null && Number.isFinite(Number(hinted))) return Number(hinted);
+    return video()?.currentTime || 0;
+  }
   const frameDur = () => 1 / (S.fps || 25);
   // The frame on screen at time t is the one that started at or before it. A note / drawing made
   // there is stored at that frame's start + a hair (where stepping lands), so ctxVisible shows it on
@@ -1375,7 +1384,7 @@ export function createAnnotator(host){
   // ctxVisible's window (centred on the stored time) would then hide that frame's drawings until the
   // time moved again.
   function frameNow(){
-    if (S.kind === "video"){ const v = video(); return v ? { t: frameStart(v.currentTime), fps: S.fps } : null; }
+    if (S.kind === "video"){ return video() || host.videoTime ? { t: frameStart(vidNow()), fps: S.fps } : null; }
     if (S.kind === "model3d") return { vk: S.curVk || null };
     return null;
   }
@@ -1384,12 +1393,10 @@ export function createAnnotator(host){
   // after the last annotated frame the drawings fade in / out over ONION_EDGE seconds. Returns id → opacity (0..1)
   // for the drawings not on screen by their own frame; null when onion skin is off.
   const ONION_EDGE = 1.0;
-  // (Not in the version compare: no eye there to turn it off — host.showWhileWatching false.)
   const onionOn = () => S.onion && S.kind === "video" && !!video() && host.showWhileWatching !== false;
   function onionFade(){
-    const v = video();
     if (!onionOn()) return null;
-    const fd = 1 / (S.fps || 25), t = frameStart(v.currentTime), eps = fd / 2;
+    const fd = 1 / (S.fps || 25), t = frameStart(vidNow()), eps = fd / 2;
     const spans = [];
     for (const it of S.items.values()){
       if (!isDrawing(it)) continue;
@@ -1530,13 +1537,15 @@ export function createAnnotator(host){
   const k = () => 1 / (geom()?.s || 1); // doc units per screen px
 
   // ---- layers ---------------------------------------------------------------------------------
+  function layerHost(){ return S.b2?.layerHost || surfaceEl(); }
   function ensureLayer(){
-    const el = surfaceEl();
+    const el = layerHost();
     if (!el) return null;
     if (S.layer?.root?.isConnected && S.layer.root.parentNode === el) return S.layer;
     S.layer?.root.remove();
     // A rebind that dropped S.layer without removing the node left a second copy of every drawing.
     el.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
+    surfaceEl()?.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
     const root = document.createElement("div");
     root.className = "an-layer";
     // .an-grades: the colour correction areas (backdrop-filter over the media, under every drawing).
@@ -1612,7 +1621,7 @@ export function createAnnotator(host){
   }
   // Drawings stay on show (not editable) with annotating off: always on a board; on a picture / video during
   // ordinary viewing / playback unless the eye (S.hidden) hides them. 3D too (the camera moves them: followOff ticks).
-  // (Not in the version compare: host.showWhileWatching false — it has no eye of its own.)
+  // The version compare shows them the same way (its eye in the compare bar).
   const shownOff = () => isBoard() || (host.showWhileWatching !== false && ((!!S.b2 && (S.kind === "image" || S.kind === "video" || S.kind === "psd")) || (!!S.b3 && S.kind === "model3d")));
   // Drawings that can show at all (a deleted / hidden reply's or a deleted note's never do): the eye's subject.
   const hasDrawings = () => {
@@ -5005,7 +5014,7 @@ export function createAnnotator(host){
       S.stampKey = ""; S.stampDrag = false;
     }
     if (S.stampDrag) return;
-    const W = g.nw * g.s, H = g.nh * g.s, b = stampBox(stampText(frameStart(v.currentTime), st.mode), W, st);
+    const W = g.nw * g.s, H = g.nh * g.s, b = stampBox(stampText(frameStart(vidNow()), st.mode), W, st);
     const [x, y] = stampXY(st.pos, W, H, b);
     const key = [b.text, b.font, b.w, b.h, st.color, st.bg, st.bgOp, r2(g.ox + x), r2(g.oy + y)].join("|");
     L.stamp.hidden = false;
@@ -5119,7 +5128,7 @@ export function createAnnotator(host){
     const g = geom();
     let sig = g ? `${r2(g.ox)},${r2(g.oy)},${r2(g.s)},${g.w},${g.h}` : "";
     const v = video();
-    if (v) sig += "|" + v.currentTime.toFixed(3);
+    if (v || host.videoTime) sig += "|" + vidNow().toFixed(3);
     if (S.b3){
       const cam = curCam(), hid = curHidden();
       const ex = host.getV3D?.()?.explode;
@@ -5151,6 +5160,13 @@ export function createAnnotator(host){
     else if (followOff()) S.raf = requestAnimationFrame(tick);
   }
   function startTick(){ if (!S.raf) S.raf = requestAnimationFrame(tick); }
+  // The playhead moved (a scrub, compare's shared clock) while the element may still be seeking:
+  // repaint from vidNow() / host.videoTime, do not wait for "seeked" or mouseup.
+  function followPlayhead(){
+    if (!S.light || !(S.on || shownOff())) return;
+    S.lastSig = "";
+    startTick();
+  }
 
   // ---- screenshots / compositing --------------------------------------------------------------
   const drawItems = (cx, items) => RC.drawCanvas(cx, items, numOf);
@@ -5707,7 +5723,7 @@ export function createAnnotator(host){
     return true;
   }
   // The eye's subject: the drawings, and the lightbox guides (index.html guides.js: host.hasGuides) — one hidden state.
-  const eyeSubject = () => hasDrawings() || (!isBoard() && !!host.hasGuides?.());
+  const eyeSubject = () => hasDrawings() || !!host.stackHasDrawings?.() || (!isBoard() && !!host.hasGuides?.());
   function toggleHidden(){
     S.hidden = !S.hidden; paintBar(); paintBadge(); paintVisibility(); renderSel(); if (followOff()) startTick();
     const what = hasDrawings() || !host.hasGuides?.() ? (host.hasGuides?.() ? "Drawings and guides" : "Drawings") : "Guides";
@@ -5993,7 +6009,8 @@ export function createAnnotator(host){
     S.kind = a.ext === ".psd" ? "psd" : a.kind;
     // Always drop the overlay. Compare reuses its viewer node; leaving the old layer painted a second copy.
     S.layer?.root.remove();
-    (S.b2?.wrap || S.b3?.host)?.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
+    (S.b2?.layerHost || S.b2?.wrap || S.b3?.host)?.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
+    S.b2?.wrap?.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
     S.b2 = S.b3 = null;
     S.layer = null;
     S.anchors = {};
@@ -6063,11 +6080,13 @@ export function createAnnotator(host){
   const vidWired = new WeakSet();
   function bind2d(view){
     if (!S.light || !S.asset) return;
-    const same = S.b2?.wrap === view.wrap && S.layer?.root?.isConnected && S.layer.root.parentNode === view.wrap;
+    const hostEl = view.layerHost || view.wrap;
+    const same = S.b2?.wrap === view.wrap && S.layer?.root?.isConnected && S.layer.root.parentNode === hostEl;
     S.b2 = view;
     S.b3 = null;
     if (!same){
       S.layer?.root.remove();
+      hostEl.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
       view.wrap.querySelectorAll(":scope > .an-layer").forEach((n) => n.remove());
       S.layer = null;
     }
@@ -6137,6 +6156,12 @@ export function createAnnotator(host){
 
   return {
     mount, unmount, setAsset, bind, bind2d, bind3d, viewChanged, toggle, onKey, helpOpen: () => !!help, toggleHelp, importFile, explodeChanged,
+    followPlayhead,
+    // Compare paints the other layers from this (the selected layer's live rows).
+    drawList: () => ({
+      items: [...S.items.values()].filter((it) => it.kind !== "note" && it.kind !== "status"),
+      noteIds: [...S.items.values()].filter((it) => it.kind === "note").map((it) => it.id),
+    }),
     isOn: () => S.on, resetPrefs,
     // The eye's state, shared with the lightbox guides (guides.js hides with it); setHidden(false) shows both again.
     hidden: () => !!S.hidden,

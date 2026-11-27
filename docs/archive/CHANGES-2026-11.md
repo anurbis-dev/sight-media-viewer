@@ -2,6 +2,55 @@
 
 Older entries moved out of RECENT.md; newest first. Append-only history.
 
+## 0.140.0 — 2026-11-26 — Guides: one Perspective item, real 2- and 3-point
+- **What:** the Guides menu has one **Perspective** item with a 1 / 2 / 3 count beside it (a count turns it on; the
+  item toggles it and keeps the last count). 2-point: both vanishing points sit on one dashed horizon; moving either
+  up / down, or dragging the diamond on the horizon, moves both. 3-point: the same two plus a zenith / nadir point,
+  kept at least 5 % of the height off the horizon. Lines still radiate from each point with their own count.
+- **Where:** `app/static/guides.js` (`isPersp`, `rec.np`, `pointsFor` evening-out, `keepOffHorizon`, `moveVp`
+  horizon drag `i = -1`, `drawPersp` horizon line + tab, the menu); `app/static/index.html` help text;
+  `tests/test_guides.py` (seeds a 0.138 entry) + `tests/guides_persp_e2e.cjs`; `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:**
+  - Stored modes stay "1" / "2" / "3" (`sight.guides`), so 0.138 entries load and 0.138 can still read new ones; old
+    2- / 3-point points at different heights are shown on their mean height (rewritten on the next drag). `np` is a
+    new field (the last count).
+  - Whatever is dragged gives way: dragging point 3 keeps it off the horizon; dragging the horizon (or point 1 / 2)
+    toward point 3 makes the horizon jump past it.
+  - The horizon line takes no presses: only its tab (halfway between points 1 and 2, slid into the window when that
+    is off screen; its cursor follows a turned view). 1-point has no tab: its point moves the horizon.
+  - Not done: vertical guide lines for 2-point (verticals are simply not drawn as a fan).
+- **Review:** a fresh reviewer found no correctness bugs. It found that a full-width horizon hit band ate pen strokes,
+  pans and pinches that started on that row (now a small tab), a fixed `ns-resize` cursor that was wrong on a turned
+  view (now per angle), plain buttons inside the `role=menu` (now `menuitemradio`), MANUAL wording for 1-point, and
+  test gaps: the Esc check only read storage (now the points on screen), no turned-view case (added), a touch drag
+  that grabbed near point 3 (now the tab). The same reviewer confirmed every fix and found nothing new.
+
+## 0.139.0 — 2026-11-26 — Guides: rulers outside the picture, Ctrl+click delete, Shift+H
+- **What:** the grid's rulers lie just outside the picture's top / left edges, reach out to a guide dragged past the
+  picture, and stay inside the window when zoomed in. Ctrl+click a guide (long-press with a finger) deletes it.
+  Shift+H and the eye hide / show the guides with the drawings; the eye shows whenever guides are on. Snap sits to the
+  right of Grid in the menu.
+- **Where:** `app/static/guides.js` (`rulerFrames`, `rulerAt`, `overRuler` in view px, `deleteGuide`, the long press,
+  `hooks.hidden` / `reveal` / `onModeChange`, `active()` / `refresh()`); `app/static/annotate.js` (`eyeSubject`,
+  `toggleHidden` → `host.onHiddenChange`, API `hidden` / `setHidden` / `repaintEye`); `app/static/index.html` (the hooks
+  both ways, help text); `tests/test_guides.py` + `tests/guides_e2e.cjs`; `MANUAL.md`, `docs/ARCHITECTURE.md`.
+- **Notes:**
+  - Deliberate: at Frame fit a picture touches the window on one axis (`fitS` has no margin), so that ruler is clamped
+    into the window and lies over the picture's edge there. Goal 3 (stay in the window) wins. Not done: a fit margin
+    while the grid is on.
+  - Picking a guide mode while the eye hides things shows both again (one state).
+  - Touch: a press that moves less than 10 px (mouse 4 px) does not move or re-snap the guide, so a tap opens its field
+    and a 550 ms hold deletes it.
+  - The board / compare annotators do not pass `hasGuides`; their eye is unchanged.
+- **Review:** a fresh reviewer found: (1) the drag-to-delete test read the rulers as last drawn, so a fast flick onto
+  the ruler past its old end did not delete; the rulers are now rebuilt before the test. (2) The fit-covers-ruler case
+  (kept, see Notes). (3) The toast said "Guides" on the board / compare eye with nothing drawn; now "Drawings" when no
+  guides. (4) A report export flipped `S.hidden` without telling the guides; it now calls `onHiddenChange` on restore.
+  (5) The long press needed a perfectly still finger; touch now has a 10 px still zone. Tests added for drag-back,
+  the flick, the left ruler stretching and a 90° turn. The same reviewer confirmed all fixes. It also noted (older
+  behaviour) that a tap on an existing guide where it crosses a ruler deleted it; now delete-on-ruler needs a real drag
+  (or a fresh guide); confirmed by the same reviewer.
+
 ## 0.138.1 — 2026-11-26 — R0-0 block 3: regression tests of the write queue, settings, shots, previews, dictation
 - **What:** the third block of the R0-0 safety net (docs/PLAN-coreline.md). It pins what the annotator's plumbing does
   now. No app code changed (only the version).
