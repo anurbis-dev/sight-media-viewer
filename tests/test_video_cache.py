@@ -164,6 +164,30 @@ class VideoCache(unittest.TestCase):
         self.assertEqual(many[self.files["a"]]["bytes"], many[self.files["c"]]["bytes"])
         self.assertEqual(many[self.files["a"]]["bytes"], 5)
 
+    def test_auto_budget_and_no_cap(self) -> None:
+        # 0 = Auto: available RAM minus 2 GB (ShotGrid / Coreline media cache). A typed size is the cap;
+        # 32 MB at least, no 2048 MB ceiling.
+        orig = SlidingVideoCache.available_bytes
+        SlidingVideoCache.available_bytes = staticmethod(lambda: 10 * 1024 ** 3)
+        try:
+            self.c.configure(0)
+            self.assertEqual(self.c.limit_mb, 0)
+            self.assertEqual(self.c.budget_mb, 10 * 1024 - 2048)
+            self.c.configure(4096)
+            self.assertEqual(self.c.limit_mb, 4096)
+            self.assertEqual(self.c.budget_mb, 4096)
+            self.c.configure(16)
+            self.assertEqual(self.c.budget_mb, 32)
+            self.c.configure("nope")
+            self.assertEqual(self.c.limit_mb, 0)
+            self.assertEqual(self.c.budget_mb, 10 * 1024 - 2048)
+            SlidingVideoCache.available_bytes = staticmethod(lambda: 512 * 1024 * 1024)
+            self.c.configure(0)
+            self.assertEqual(self.c.budget_mb, 32)
+        finally:
+            SlidingVideoCache.available_bytes = orig
+        self.assertGreater(SlidingVideoCache.available_bytes(), 0)
+
     def test_stream_from_neighbour(self) -> None:
         self.c.focus(self.files["a"], 95 * MB, self.files["b"])
         self.wait()

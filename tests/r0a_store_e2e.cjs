@@ -21,6 +21,8 @@
 //             than this window's own write ignored).
 //   tokens    the annotator's CSS reads the host's tokens through --an-* (falling back to Sight's names): a host that
 //             sets --an-fg / --an-surface on its frame sees them on the panel; without them Sight's --fg / --surface.
+//   3dprev    a 3D asset whose notes load before bind3d shows screenshots and text only; bind3d paints the drawing
+//             previews (SVG over the still) without a click on a card.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -329,6 +331,39 @@ run(async (cfg, t) => {
       const live2 = await p.evaluate(([srv, mine, rid]) => globalThis.SightReviewCore.mergeRows([srv], [mine]).rows[0].data.replies.filter((x) => x.id === rid && !x.deleted).length, [unreplied, redone, rid]);
       t.eq(`${tag}: …and wins the merge over the tombstone`, live2, 1);
     } else t.ok(`${tag}: undoing a reply drops it (as before)`, !gone, gone);
+    await p.context().close();
+  }
+  // ---- 3D note previews: bind3d paints them (notes often load while S.b3 is still null) ----
+  {
+    const p = await hostPage("", null);
+    const nid = ID(0xd1), did = ID(0xd2), sid = "00000000000000aa";
+    const cam = { p: [2, 1.4, 2.2], t: [0, 0, 0], fov: 50, turns: 0 };
+    const vk = "vk00000000000001";
+    await p.evaluate(([nid, did, sid, cam, vk]) => {
+      window.__rows.set(nid, { id: nid, kind: "note", target_asset_id: "m1", data: { text: "3d note", shots: [sid], ctx: { vk, cam } } });
+      window.__rows.set(did, { id: did, kind: "shape", shape_kind: "rect", z_index: 1, target_asset_id: "m1",
+        data: { note: nid, ctx: { vk, cam }, x: -120, y: -80, w: 240, h: 160, color: "#ff3355" } });
+      window.A.setAsset({ id: "m1", kind: "model3d", ext: ".glb", name: "m.glb" });
+    }, [nid, did, sid, cam, vk]);
+    await p.waitForFunction(() => document.querySelectorAll(".an-panel .an-note").length === 1, null, { timeout: 8000 });
+    const before = await p.$eval(".an-panel", (el) => ({
+      notes: el.querySelectorAll(".an-note").length,
+      shots: el.querySelectorAll(".an-shotw").length,
+      prev: el.querySelectorAll(".an-nprev").length,
+      marks: el.querySelectorAll(".an-nprev svg > *").length,
+    }));
+    t.eq("3D notes load before bind3d: text and screenshots, no drawing preview", before, { notes: 1, shots: 1, prev: 0, marks: 0 });
+    await p.evaluate((cam) => {
+      const host = document.getElementById("wrap");
+      const cv = document.createElement("canvas"); cv.width = 32; cv.height = 32;
+      window.A.bind3d({ aid: "m1", host, getCam: () => cam, setCam: () => {}, capture: () => cv });
+    }, cam);
+    const after = await p.$eval(".an-panel", (el) => ({
+      prev: el.querySelectorAll(".an-nprev").length,
+      marks: el.querySelectorAll(".an-nprev svg > *").length,
+      shots: el.querySelectorAll(".an-shotw").length,
+    }));
+    t.ok("…bind3d paints the drawing preview without a click", after.prev >= 1 && after.marks >= 1 && after.shots === 1, after);
     await p.context().close();
   }
   // ---- CSS tokens through --an-* ----

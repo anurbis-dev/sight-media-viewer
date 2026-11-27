@@ -6132,6 +6132,7 @@ export function createAnnotator(host){
     attachInput(r.host);
     if (S.on){ r.host.classList.add("an-active"); r.annotating?.(true); }
     renderAll();
+    renderPanel();  // the note previews need the 3D stills (load() often ran while S.b3 was still null)
     startTick();
   }
 

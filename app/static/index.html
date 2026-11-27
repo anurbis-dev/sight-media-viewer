@@ -996,7 +996,7 @@ const SORT_OPTIONS = [
 // saveable as a named preset. FONT_CHOICES backs the font <select> in renderOptions(). These
 // must be defined before `state` below, since state.theme = loadTheme() reads DEFAULT_THEME.
 const DEFAULT_THEME = {
-  name: true, kind: true, created: false, res: false, size: false, videoCache: 128, videoAhead: 70,
+  name: true, kind: true, created: false, res: false, size: false, videoCache: 0, videoAhead: 70,
   snapPx: 22, // Ctrl-scrub snap to an annotated frame, in pointer px (was a fixed 10)
   // Graphite (0.54.0): Inter 13 px, compact rows, one blue accent, frameless cards captioned underneath.
   bg: "#17181b", fg: "#e9eaec", border: "#e9eaec", button: "#5b8cff", accent: "#5b8cff",
@@ -2426,7 +2426,20 @@ const CAM_MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"]);
 let currentAssetIsSplat = false;
 
 function clampTile(n){ return Math.min(TILE_MAX, Math.max(TILE_MIN, n)); }
-function clampCache(n){ return Math.min(2048, Math.max(32, Math.round(Number(n) || 128))); }
+// Settings → RAM cache: 0 = Auto (server: available RAM minus 2 GB, same as tracker media cache). A
+// typed size is the cap in MB; 32 at least, no 2048 ceiling.
+function clampCache(n){
+  const x = Math.round(Number(n));
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.max(32, x);
+}
+function cacheLimitBytes(){
+  const mb = clampCache(state.theme.videoCache);
+  if (mb > 0) return mb * 1048576;
+  const nav = Number(navigator.deviceMemory);
+  if (nav > 0) return Math.max(32, nav * 1024 - 2048) * 1048576;
+  return 8 * 1073741824;
+}
 // Percent of the video RAM window kept ahead of the playhead (the rest behind it), Settings → Video.
 function clampAhead(n){ return Math.min(90, Math.max(50, Math.round(Number(n) || 70))); }
 // How close the pointer must be (px on the scrub control) before Ctrl snaps to an annotated frame.
@@ -2440,6 +2453,8 @@ function loadTheme(){
   const t = { ...RUNTIME_DEFAULT_THEME, ...mig };
   // A saved theme without the section-title keys keeps the old look; no saved theme keeps the runtime default.
   if (Object.keys(mig).length && (mig.secColor === undefined || mig.secSize === undefined)) Object.assign(t, secFallback({ ...t, secColor: mig.secColor, secSize: mig.secSize }));
+  // 128 was the old default (and the old 32–2048 slider's midpoint-ish start); Auto is the new one.
+  if (t.videoCache === 128){ t.videoCache = 0; themeMigrated = true; }
   t.videoCache = clampCache(t.videoCache);
   t.videoAhead = clampAhead(t.videoAhead);
   t.snapPx = clampSnap(t.snapPx);
@@ -5368,7 +5383,7 @@ async function loadModel(THREE, url, ext, onProgress, aid){
 
 // ---- In-memory cache of parsed models -------------------------------------------------------------
 // Re-opening the same model (Space, close, Space …) used to re-download and re-parse it every time.
-// Parsed models are kept here up to the same RAM budget as the video cache (Settings → RAM cache),
+// Parsed models are kept here up to the same RAM budget as the video cache (Settings → RAM cache; 0 = Auto),
 // least recently used out first. The cache keeps a pristine copy that no viewer ever touches; each
 // viewer gets a clone that shares geometry and textures (the heavy parts) but owns its materials,
 // because the shading / x-ray modes mutate materials in place. Splats are not cached (Spark owns them).
@@ -5401,7 +5416,7 @@ function estimateObjBytes(obj){
 }
 
 function trimModelCache(){
-  const limit = clampCache(state.theme.videoCache) * 1048576;
+  const limit = cacheLimitBytes();
   for (const [k, e] of modelCache){
     if (modelCacheBytes <= limit) break;
     modelCache.delete(k);
@@ -5447,7 +5462,7 @@ async function loadModelCached(THREE, url, ext, onProgress, aid){
       if (!obj) return null;
       await applyCompanions(THREE, obj, aid);
       const bytes = estimateObjBytes(obj);
-      if (bytes <= clampCache(state.theme.videoCache) * 1048576){
+      if (bytes <= cacheLimitBytes()){
         for (const [k, e] of modelCache){ // drop an older version of the same file
           if (k.startsWith(prefix)){ modelCache.delete(k); modelCacheBytes -= e.bytes; }
         }
@@ -6493,7 +6508,6 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       camRig = makeCameraRig(THREE, camera, controls, aid, { get: () => getModelTurns(aid), set: turnTo });
       camRig.setHome(size);
       v3dCam = camRig;
-      bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved), pickMeshAt);
       onV3DRotate = () => turnTo((getModelTurns(aid) + 1) & 3);
       obj.traverse((c) => { if (c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
       skyOcc.markCasters(obj);
@@ -6516,6 +6530,8 @@ async function boot3d(elId, aid, url, ext, thumbUrl, hostEl){
       v3dInspect = makeModelInspector(THREE, renderer, scene, obj, origMats, aid);
       setSceneInfo(v3dInspect.summary);
       syncUvPane();
+      // After explode / anim / the inspector: bind3d paints the note stills (hidden meshes, pose, explode).
+      bindAnnot3d(el, aid, camRig, controls, (ex) => renderStill(renderer, scene, camera, explodeMap, ex, onExplodeMoved), pickMeshAt);
     }
     // Keep the thumbnail cover up until the model has actually been drawn. The first frame with the
     // model compiles its shaders and uploads its textures, which blocks the main thread; lifting the
@@ -7639,7 +7655,7 @@ function toggleLight(a){
       <span class="vtime dur" data-dur>0:00</span>
       <span class="vsndw"><button class="vib" data-snd type="button" aria-label="Sound"></button><div class="vpop" hidden><i></i><b></b></div></span>
       <button class="vib" data-loop type="button" aria-label="Loop"></button>
-      <span class="vtime vmem" data-mem title="Video RAM cache: filled / limit (Settings → RAM cache)"></span>
+      <span class="vtime vmem" data-mem title="Video RAM cache: filled / limit (Settings → RAM cache; empty = Auto)"></span>
     </div>`;
   wrap.querySelector("#lightClose").onclick = () => closeLight();
   wrap.querySelector("#lightHelpBtn").onclick = () => openModeHelp("lightbox");
@@ -10334,12 +10350,22 @@ function bindSliders(root, store, defaults, onSet){
 function bindThemeSliders(root){
   bindSliders(root, state.theme, RUNTIME_DEFAULT_THEME, (key, v) => {
     saveTheme();
-    if (key === "videoCache"){
-      trimModelCache(); // the model cache shares this budget
-      fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mb: v }) }).catch(() => {});
-    }
     if (key === "videoAhead") fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ahead: clampAhead(v) }) }).catch(() => {});
   });
+}
+function bindRamCacheField(){
+  const inp = $("videoCache");
+  if (!inp) return;
+  const apply = () => {
+    const v = clampCache(inp.value);
+    state.theme.videoCache = v;
+    inp.value = v ? String(v) : "";
+    saveTheme();
+    trimModelCache();
+    fetch("/api/video/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mb: v }) }).catch(() => {});
+  };
+  inp.onchange = apply;
+  inp.onkeydown = (ev) => { if (hotkey(ev, "Enter")){ ev.preventDefault(); inp.blur(); } };
 }
 
 function sliderRow(label, key, min, max, step, unit, title){
@@ -10482,7 +10508,8 @@ function renderOptions(){
       <div class="theme-actions"><span class="ign-msg" id="scanIgnoreMsg"></span><button class="btn ghost icon" id="scanDefaults" type="button" title="Default filters (built-in list)" aria-label="Default filters (built-in list)">${renderIconSvg("shield", "currentColor", 16)}</button><button class="btn ghost" id="scanIgnoreApply" type="button" title="Save the list, hide matching files and rescan every source">Apply</button></div>
 
       <div class="settings-sub">Video</div>
-      ${sliderRow("RAM cache", "videoCache", 32, 2048, 32, " MB")}
+      <label class="field" title="RAM for the lightbox video window and parsed 3D models. Empty = Auto: as much as the machine holds, keeping 2 GB free (the same rule as a tracker's media cache). Type a size in MB to cap it.">RAM cache (MB)
+        <input type="number" id="videoCache" min="0" step="32" placeholder="Auto" autocomplete="off" spellcheck="false" value="${t.videoCache ? t.videoCache : ""}"></label>
       ${sliderRow("Cache ahead", "videoAhead", 50, 90, 5, " %")}
       ${sliderRow("Annotation snap", "snapPx", 6, 64, 1, " px", "Ctrl (Cmd) while scrubbing a video snaps the playhead to an annotated frame within this many pixels of the pointer")}
 
@@ -10567,6 +10594,7 @@ function renderOptions(){
     inp.oninput = () => { state.theme[inp.dataset.color] = inp.value; saveTheme(); };
   });
   bindThemeSliders(el);
+  bindRamCacheField();
   attachPanScroll($("settingsBody"));
   $("fontSel").onchange = () => {
     const v = $("fontSel").value;

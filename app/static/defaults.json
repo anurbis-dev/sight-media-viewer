@@ -5,7 +5,7 @@
     "created": false,
     "res": false,
     "size": false,
-    "videoCache": 128,
+    "videoCache": 0,
     "videoAhead": 70,
     "bg": "#17181b",
     "fg": "#e9eaec",

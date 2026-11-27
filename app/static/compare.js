@@ -1063,7 +1063,7 @@ export function createCompare(host){
     C.focusDirty = false;
     const body = { items: v.map((l) => ({ id: l.id, t: clamp(C.T - l.start / C.fps, 0, l.dur), duration: l.dur })) };
     const mb = host.cacheMb?.(), ahead = host.cacheAhead?.();
-    if (mb) body.mb = mb;
+    if (mb != null) body.mb = mb; // 0 = Auto (server: available RAM minus 2 GB)
     if (ahead) body.ahead = ahead;
     if (host.cacheGen) body.gen = host.cacheGen();
     const gen = C;

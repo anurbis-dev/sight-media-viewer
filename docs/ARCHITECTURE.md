@@ -235,7 +235,10 @@ build_app_macos.sh       macOS build (dist/Sight.app); on Linux the same script 
 - RAM window (`library.py SlidingVideoCache`, fed by `POST /api/video/focus`): 1 MiB blocks; `_plan` turns
   playheads (`heads`), budget, `ahead` (body `ahead`, percent 50-90, Settings → Cache ahead `videoAhead`, default
   70) and the lightbox sequence's neighbours (body `next` / `prev` asset ids, sent by `pushVideoFocus`; loop on
-  wraps) into `_Window.ranges` (lo, hi, head, base). Past the clip's last block the rest goes to the next file's
+  wraps) into `_Window.ranges` (lo, hi, head, base). Settings → RAM cache (`videoCache`) is a size in MB, or
+  0 = Auto: available RAM minus 2 GB (`RESERVE`), the same rule as ShotGrid / Coreline's media cache. Empty
+  field = Auto; a typed size is the cap (32 MB at least, no 2048 MB ceiling). Body `mb` 0 is Auto.
+  Past the clip's last block the rest goes to the next file's
   start, before its first to the previous file's end, else to the other side. Blocks load cheapest first: ahead
   cost = distance, behind = distance × ahead / (1 − ahead), neighbours continue the cost from the clip's edge.
   Neighbours only with one playing file (the compare splits the budget, no neighbours). Not a byte-to-time map:
@@ -952,8 +955,11 @@ setV3D, openAsset, onModeChange`. The lightbox calls `mount` / `unmount`, `setAs
 `fillStage`), the 2D viewer (viewers/view2d.js) calls `bind(viewer)` (→ `bind2d({wrap, media, isVid, geom, unturn})`;
 the board and compare still call `bind2d` with their own view objects) + `viewChanged()` from
 `apply()`, `boot3d` calls `bindAnnot3d` → `bind3d({aid, host, getCam, setCam, capture,
-annotating})`; `capture()` renders and returns the WebGL canvas in the same task (no
-preserveDrawingBuffer needed). The camera rig has `getView()` / `setView()` for this.
+annotating})` after the explode rig, animator and mesh inspector exist (note stills need them);
+`bind3d` paints the notes panel the same way `bind2d` does (3D drawing previews need the stills —
+`load()` often finished while `S.b3` was still null). `capture()` renders and returns the WebGL
+canvas in the same task (no preserveDrawingBuffer needed). The camera rig has `getView()` /
+`setView()` for this.
 
 **Review API** — `POST /api/review/shots` (raw PNG/JPEG body → `{id, url}`), `GET
 /api/review/shots/{id}`, `POST /api/review/export/pdf` (client sends notes + JPEG data URLs; server

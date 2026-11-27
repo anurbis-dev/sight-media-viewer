@@ -14,7 +14,7 @@
 //   ctl()          the frame's state object (Sight: `light`, null once closed). Read / written here: video, asset,
 //                  seq, scrubT, snap, seqSnaps, focusHeld, focusAt, focusTimer, focusAbort, cacheTimer
 //   store          the store (store.video.focus / .cache, store.mediaUrl, store.convertForPlayback)
-//   cacheMb() / cacheAhead()   the RAM budget (MB) and its share ahead of the playhead (percent), clamped
+//   cacheMb() / cacheAhead()   the RAM budget (MB; 0 = Auto) and its share ahead of the playhead (percent), clamped
 //   cacheGen()     the generation of the windows' owner (bumped when compare takes them / hands them back)
 //   paintVBar()    repaint the video bar
 import { cacheBarHtml } from "../video-cache-bar.js";

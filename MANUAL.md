@@ -956,7 +956,8 @@
   playhead (a gap is left empty). A file smaller than the budget fills the whole line; that is the file
   in RAM, not a sign that scrubbing will be instant. A clip of a few seconds also gets a short-GOP scrub
   copy when it opens: a drag shows the copy, and the full file is sought once when you let go. The cache budget is
-  set in Settings → RAM cache (32–2048 MB) and it slides as you play or scrub. Settings → Cache ahead
+  set in Settings → RAM cache (empty = Auto: as much as the machine holds, keeping 2 GB free; type a size
+  in MB to cap it) and it slides as you play or scrub. Settings → Cache ahead
   (50–90 %, 70 % by default) is the part of it ahead of the playhead; the rest stays behind it, and both
   fill outwards from the playhead. In a sequence the window runs on into the next clip's start near a
   clip's end (and into the previous clip's end near its start), so a cut either way reads from memory.

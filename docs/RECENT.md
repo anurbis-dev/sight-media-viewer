@@ -14,6 +14,18 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.145.0 — 2026-11-27 — Lightbox RAM cache default Auto, no 2048 MB cap
+- **What:** Settings → RAM cache is empty = Auto (as much as the machine holds, keeping 2 GB free — the same
+  rule as a tracker's media cache). Type a size in MB only to cap it. The old 32–2048 MB slider ceiling is gone;
+  a saved 128 MB (the old default) becomes Auto.
+- **Where:** `library.py` `SlidingVideoCache` (`limit_mb` 0 = Auto, `available_bytes`, `RESERVE` 2 GB);
+  `index.html` (`clampCache`, `cacheLimitBytes`, the RAM cache field); `compare.js` sends `mb` 0; `defaults.json`;
+  `MANUAL.md`, `docs/ARCHITECTURE.md`; `tests/test_video_cache.py`.
+- **Notes:** Auto for the video window is server RAM (GlobalMemoryStatusEx / MemAvailable). Parsed 3D models in
+  the browser share the typed cap, and on Auto use `navigator.deviceMemory` minus 2 GB (8 GB when the browser
+  will not say). 32 MB is still the floor for a typed size. Compare used to skip `mb: 0` (`if (mb)`).
+- **Review:** pending.
+
 ## 0.144.0 — 2026-11-27 — Compare: drawings, eye, mirror, guides; Ctrl-snap and scrub like the viewer
 - **What:** version compare shows drawings while watching (the eye, `Shift+H`), with the lightbox's mirror /
   flip on the selected layer and the same guides button. Each file's drawings sit on that layer, cut by the

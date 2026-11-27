@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import fnmatch
 import heapq
 import logging
@@ -13,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import secrets
 import time
@@ -688,15 +690,20 @@ class SlidingVideoCache:
     and loads what is missing, cheapest first, taking the files in turn. Blocks that stay inside their window are
     never re-read, so the windows slide instead of being rebuilt. ``stream`` serves HTTP range requests from the
     blocks and falls back to disk for anything outside the windows: always correct, only ever faster.
+    Settings → RAM cache is a size in MB, or 0 = Auto — the same rule as ShotGrid / Coreline's media cache:
+    use what the machine still has, keeping ``RESERVE`` free. There is no 2048 MB ceiling; a typed size is
+    the cap.
     """
 
     CHUNK = 1024 * 1024
     AHEAD = 0.7  # default share of a window kept in front of its playhead
+    RESERVE = 2 * 1024 ** 3  # Auto: leave this much RAM for the OS / browser (ShotGrid / Coreline disk cache)
 
-    def __init__(self, budget_mb: int = 128) -> None:
+    def __init__(self, budget_mb: int = 0) -> None:
         self.lock = threading.Lock()
         self.cv = threading.Condition(self.lock)
-        self.budget = self._clamp(budget_mb) * 1024 * 1024
+        self.limit_mb = self._limit(budget_mb)  # 0 = Auto
+        self.budget = self._bytes(self.limit_mb)
         self.ahead = self.AHEAD
         self.wins: dict[str, _Window] = {}  # path -> window, in focus order
         self.heads: list[str] = []  # the files whose playheads the windows follow (the rest: sequence neighbours)
@@ -710,8 +717,66 @@ class SlidingVideoCache:
         self._thread.start()
 
     @staticmethod
-    def _clamp(mb: int) -> int:
-        return max(32, min(2048, int(mb)))
+    def _limit(mb) -> int:
+        """User setting in MB. 0 / empty / unreadable = Auto; a positive size is kept (32 MB at least)."""
+        try:
+            n = int(mb)
+        except (TypeError, ValueError):
+            return 0
+        return 0 if n <= 0 else max(32, n)
+
+    @staticmethod
+    def available_bytes() -> int:
+        """RAM the OS still has for new allocations (ShotGrid / Coreline Auto uses disk free the same way)."""
+        if os.name == "nt":
+            class _MEM(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            st = _MEM()
+            st.dwLength = ctypes.sizeof(st)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return int(st.ullAvailPhys)
+        try:
+            for line in Path("/proc/meminfo").read_text(encoding="ascii", errors="ignore").splitlines():
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        if sys.platform == "darwin":
+            try:
+                page, free, inactive, speculative, purgeable = 4096, 0, 0, 0, 0
+                for line in subprocess.check_output(["vm_stat"], text=True, timeout=2).splitlines():
+                    bits = line.split()
+                    if "page size of" in line:
+                        page = int(bits[-2])
+                    elif line.startswith("Pages free:"):
+                        free = int(bits[-1].rstrip("."))
+                    elif line.startswith("Pages inactive:"):
+                        inactive = int(bits[-1].rstrip("."))
+                    elif line.startswith("Pages speculative:"):
+                        speculative = int(bits[-1].rstrip("."))
+                    elif line.startswith("Pages purgeable:"):
+                        purgeable = int(bits[-1].rstrip("."))
+                return (free + inactive + speculative + purgeable) * page
+            except (OSError, ValueError, subprocess.SubprocessError, IndexError):
+                pass
+        return 4 * 1024 ** 3
+
+    def _bytes(self, limit_mb: int) -> int:
+        """Window budget in bytes from the user setting (0 = Auto)."""
+        if limit_mb <= 0:
+            n = (self.available_bytes() - self.RESERVE) // self.CHUNK
+            return max(32, n) * self.CHUNK
+        return max(32, int(limit_mb)) * self.CHUNK
 
     @staticmethod
     def clamp_ahead(pct) -> float:
@@ -848,9 +913,11 @@ class SlidingVideoCache:
             return {str(p): self._one(self.wins.get(str(p)), total, mb, busy) for p in paths}
 
     def configure(self, mb: int | None = None, ahead=None) -> None:
-        """Budget in MB and / or the ahead share (percent, 50-90); a change re-plans the windows at once."""
+        """Budget in MB (0 = Auto) and / or the ahead share (percent, 50-90); a change re-plans at once."""
         with self.cv:
-            nxt = self.budget if mb is None else self._clamp(mb) * 1024 * 1024
+            if mb is not None:
+                self.limit_mb = self._limit(mb)
+            nxt = self._bytes(self.limit_mb)
             share = self.ahead if ahead is None else self.clamp_ahead(ahead)
             if nxt == self.budget and abs(share - self.ahead) < 1e-9:
                 return
