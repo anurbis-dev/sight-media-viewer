@@ -14,6 +14,19 @@ Entry format (heading must be exactly `## <version> — <YYYY-MM-DD> — <title>
 
 Add new entries directly below this line.
 
+## 0.143.1 — 2026-11-27 — R0b-2: the video bar, scrub audio and RAM cache in the video module
+- **What:** pure refactor, no behaviour change meant. index.html's video bar (sound, loop, position field, fps),
+  scrub audio and RAM cache calls moved into `app/static/viewers/video-bar.js` (createVideoBar), `scrub-audio.js`
+  (createScrubAudio), `video-cache.js` (createVideoCache, paintCacheBars); `light` became `lt()` = host.ctl().
+  Server calls go through the store's new `video` namespace (sight-store.js: focus / release / cache / scrubUrl /
+  scrubAudio); `convertForPlayback` passes `kind`. index.html destructures the functions under their old names.
+- **Where:** `app/static/viewers/video-bar.js`, `scrub-audio.js`, `video-cache.js`, `video.js`; `sight-store.js`;
+  `index.html`. `docs/ARCHITECTURE.md`, `docs/PLAN-coreline.md`.
+- **Notes:** `test_r0_lightbox` + `test_r0_views` pass (Windows, SIGHT_REQUIRE_E2E=1, ffmpeg from D:\AI_dev\.testbin).
+  Review was started and did not finish. Left in index.html on purpose: the settings page's `/api/video/focus` posts
+  (mb / ahead), the sequence's own `convertForPlayback`; compare.js untouched (R0b-3).
+- **Review:** pending.
+
 ## 0.143.0 — 2026-11-26 — R0d: the narrow layout (notes under the player)
 - **What:** below 600 px of the annotator host's own width (a phone, a narrow lightbox / compare, a narrow
   embedding container) the notes panel sits under the player across the width, 45 % of the height; its top edge is a

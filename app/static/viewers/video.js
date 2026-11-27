@@ -12,6 +12,10 @@
 //   scrubSnapped(e) / scrubSnap(t, tol) / snapPx()            Ctrl-scrub snap to an annotated frame
 //   seqOnReady(el) / seqKeepStill(el) / seqAdvance() / seqScrubBegin(e, fine)   the sequence player
 //   convertForPlayback(id, onProgress, alive, kind)            the server's playback / scrub copies
+//   scrubUrl(id)                                               the scrub copy's URL (the store's video.scrubUrl)
+//
+// The bar, the sound while scrubbing and the RAM cache calls are the video module's too: video-bar.js,
+// scrub-audio.js, video-cache.js (the frame makes them once and hands their functions in as the hooks above).
 import { FINE_SCRUB } from "../viewer-input.js";
 import { mount2d } from "./view2d.js";
 
@@ -74,7 +78,7 @@ function videoParts({ el, wrap, a, opts, host, L, apply }){
   }
   function armScrubCopy(){
     if (!scEl || scEl.getAttribute("src")) return;
-    scEl.src = `/api/video/scrub/${a.id}`;
+    scEl.src = host.scrubUrl(a.id);
   }
   // The full file is the picture again: hide the proxy first, then drop its src.
   function releaseScrubCopy(){

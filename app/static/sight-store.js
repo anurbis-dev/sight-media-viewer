@@ -63,8 +63,28 @@ export function createSightStore({ api }){
     },
     // The original media (note previews seek it in a hidden <video>); `copy`: the server's playable copy.
     mediaUrl: (aid, opts) => opts?.copy ? `/api/file/${aid}?copy=${Date.now()}` : `/api/file/${aid}`,
-    // A clip no browser decoder can show: the server makes a playable copy (video-playable.js).
-    convertForPlayback: (aid, onProgress, alive) => convertForPlayback(aid, onProgress, alive),
+    // A clip no browser decoder can show: the server makes a playable copy (video-playable.js). kind "scrub":
+    // the short-GOP scrub copy of the video viewer (served at video.scrubUrl).
+    convertForPlayback: (aid, onProgress, alive, kind) => convertForPlayback(aid, onProgress, alive, kind),
+
+    // ---- the video viewer (viewers/video.js, video-cache.js, scrub-audio.js; R0b-2) ----
+    // Each resolves to the fetch Response (the caller reads it), as the calls did before they moved here.
+    video: {
+      // The RAM window (SlidingVideoCache): where the playhead is + the budget; signal aborts a stale post.
+      focus: (body, signal) => fetch("/api/video/focus", { method: "POST", headers: JSON_HDR, body: JSON.stringify(body), signal }),
+      // Drop the windows (gen: the owner's generation, so a late post of an older owner is ignored).
+      release: (gen) => fetch("/api/video/focus", { method: "POST", headers: JSON_HDR, body: JSON.stringify({ release: true, gen }) }),
+      // The blocks in RAM: one asset id (a snapshot) or a list (a sequence: { files }).
+      cache: (aids) => fetch(Array.isArray(aids) ? `/api/video/cache?aids=${aids.map(enc).join(",")}` : `/api/video/cache?aid=${enc(aids)}`),
+      // The scrub copy (convertForPlayback kind "scrub" makes it).
+      scrubUrl: (aid) => `/api/video/scrub/${aid}`,
+      // The sound for scrubbing (Library.start_scrub_audio): its state, a request to make it, a byte range of it.
+      scrubAudio: {
+        status: (aid) => fetch(`/api/video/scrub-audio?aid=${enc(aid)}`),
+        start: (aid) => fetch("/api/video/scrub-audio", { method: "POST", headers: JSON_HDR, body: JSON.stringify({ id: aid }) }),
+        range: (aid, rev, b0, b1) => fetch(`/api/video/scrub-audio/${enc(aid)}?rev=${enc(rev)}`, { headers: { Range: `bytes=${b0}-${b1}` } }),
+      },
+    },
 
     // ---- shots (screenshots, attached pictures, reference images) ----
     putShot: (blob, type) => api("/api/review/shots", { method: "POST", headers: { "content-type": type }, body: blob }),

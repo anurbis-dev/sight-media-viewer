@@ -222,7 +222,7 @@ Each block reviewed on its own.
   - **R0b-1 (done, 0.142.2):** the interface (`viewers/viewer.js`), the 2D core and the image / video modules
     (`view2d.js`, `image.js`, `video.js`: element, doc box with `opts.docSize`, zoom / pan / fit / turn, seek pump,
     scrub copy, transport), annotate.js `bind(viewer)`. index.html's `attachViewer` is the frame (`viewerHost`).
-  - **R0b-2:** the video bar (sound, loop, position field, fps from `/info`), scrub audio and the RAM cache calls move
+  - **R0b-2 (done, 0.142.3):** the video bar (sound, loop, position field, fps from `/info`), scrub audio and the RAM cache calls move
     from index.html into the video module, behind store / host hooks (`/api/video/*` through the store with R0a).
   - **R0b-3:** sequences and compare drive viewer modules instead of their own players.
 - **R0c — the 3D viewer as a module** (`model3d`): the 3D code of index.html (roughly :4941-6365 — `boot3d` :5667,

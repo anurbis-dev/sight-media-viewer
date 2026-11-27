@@ -43,7 +43,10 @@ app/static/viewer-input.js shared pointer / gesture layer for the viewers (attac
 app/static/viewers/      the viewer modules (PLAN-coreline decision 8): viewer.js = the interface (kind, surface, media,
                          docBox, geom, unturn, place / goTo, capture, fit / zoom, transport, destroy) + viewerFor(asset);
                          view2d.js = the 2D core (element, doc box, zoom / pan / fit, turn / mirror, placeholder);
-                         image.js (mountImage) and video.js (mountVideo: seek pump, scrub copy, transport). index.html's
+                         image.js (mountImage) and video.js (mountVideo: seek pump, scrub copy, transport).                          The video module's other parts: video-bar.js (createVideoBar: sound, loop, position field, fps,
+                         playhead, the track's scrub; keys sight.vsnd / .vpos / .vloop), scrub-audio.js, video-cache.js
+                         (RAM window posts and polls, the playback copy); their server calls go through the store's
+                         `video` namespace (sight-store.js). index.html's
                          `attachViewer` is only the frame: it picks the module and passes `viewerHost` (its hooks,
                          listed at the top of view2d.js / video.js). Imports inside are relative. A viewer claims the
                          lightbox through host.ctl() (Sight: `light`, read at call time) and hands itself to
